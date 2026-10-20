@@ -51630,7 +51630,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -51879,7 +51879,7 @@
      "path": "src/store/gate_decision/retention.rs",
      "purpose": "Opt-in gate-decision age sweep over the actual ORCB custody unit, and the claim client's retirement policy…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 7
      }
     },
@@ -51984,7 +51984,7 @@
      "path": "src/store/key_custody/files.rs",
      "purpose": "The local exterior backend: one owner-only directory tree beside the vault root, never inside it, so…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 27
      }
     },
     {
@@ -52004,7 +52004,7 @@
      "path": "src/store/key_custody/fork.rs",
      "purpose": "Restore planning and the fork a copy served beside its source takes (ARCH-0038 #erasure-completeness, \"Key…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -52197,6 +52197,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/known_history.rs",
+     "purpose": "The known-value index's custody client (KS-3, FIX 5684 = FIX 5503 card A; owner KEY STORE = A): the index's…",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -52263,7 +52273,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "mod": 1,
       "re-export": 16
      }
@@ -65477,7 +65487,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 117,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65703,7 +65713,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4092,
+   "source_files": 4093,
    "test_files": 902
   },
   "oneiron-android": {
@@ -85733,7 +85743,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ManagedArgs",
@@ -85748,6 +85758,16 @@
       "enum": 2,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/args/policy.rs",
+     "purpose": "The managed argv allowlist: what managed mode does with each `ServeArgs` field, and the refusal of every…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -89297,7 +89317,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -89451,9 +89471,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 53,
+   "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 899,
+   "source_files": 900,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -93437,14 +93457,15 @@
      "kind": "src",
      "notable": [
       "ArtifactHost",
-      "ArtifactHostRead"
+      "ArtifactHostRead",
+      "ArtifactLabelRefusal"
      ],
      "path": "src/lib/artifact_origin.rs",
      "purpose": "The artifact origin's naming and forwarding contract (OF-356, ARCH-0078)",
      "surface": {
-      "const": 1,
-      "enum": 1,
-      "fn": 5,
+      "const": 3,
+      "enum": 2,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -93747,7 +93768,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 13,
+      "mod": 14,
       "re-export": 9
      }
     },
@@ -93795,6 +93816,22 @@
      "surface": {
       "fn": 8,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SettingsPathReason",
+      "SettingsPathRefused"
+     ],
+     "path": "src/lib/settings_paths.rs",
+     "purpose": "The owner paths of a managed vault's settings file (`--settings-file`): the leaves that name a file or…",
+     "surface": {
+      "const": 4,
+      "enum": 1,
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -93853,9 +93890,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/lib/version.rs",
-     "purpose": "Wire version constants and SLIM gating",
+     "purpose": "Wire version constants, SLIM gating and the revisions of the additive extensions a v3 vault reports on `Ping`",
      "surface": {
       "const": 2,
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -93869,7 +93907,7 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 10,
+      "const": 12,
       "enum": 2,
       "fn": 4
      }
@@ -93894,7 +93932,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 28,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93903,7 +93941,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 27,
+   "source_files": 28,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
