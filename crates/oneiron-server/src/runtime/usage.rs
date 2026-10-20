@@ -15,8 +15,8 @@ use oneiron::llm::run_admission::{Payer, PayerAccount, PermitFacts, RunEvent, Ru
 
 use self::pricing::CatalogPrices;
 use crate::usage::{
-    UsageAllocation, UsageCostInput, UsageCostRates, UsageError, UsageEvent, UsageEventType,
-    UsageLedger, UsageMode, UsageRun, UsageTokenCounts,
+    UnpricedReason, UsageAllocation, UsageCostInput, UsageCostRates, UsageError, UsageEvent,
+    UsageEventType, UsageLedger, UsageMode, UsageRun, UsageTokenCounts,
 };
 
 mod pricing;
@@ -206,10 +206,16 @@ impl VaultUsage {
                 }) || service_quantity.is_some();
                 // A reservation is not measured provider usage. Rates that do
                 // not price the measured counts (cached tokens with no quoted
-                // cache rate) leave the call unpriced, never priced at zero.
-                let rates = rates.filter(|rates| {
-                    usage_reported && usage.is_some() && rates.prices(&token_counts)
-                });
+                // cache rate) leave the call unpriced, never priced at zero,
+                // and its record names the unquoted dimensions.
+                let measured = usage_reported && usage.is_some();
+                let unpriced = rates
+                    .as_ref()
+                    .filter(|_| measured)
+                    .map(|rates| rates.unquoted_cache(&token_counts))
+                    .filter(|dimensions| !dimensions.is_empty())
+                    .map(|dimensions| UnpricedReason::UnquotedCache { dimensions });
+                let rates = rates.filter(|rates| measured && rates.prices(&token_counts));
                 let payer = facts.payer_person.as_ref();
                 // The engine's stamp, never the run's name or a prompt.
                 let bound = facts.attribution.as_ref();
@@ -234,6 +240,7 @@ impl VaultUsage {
                     model,
                     token_counts,
                     cost_rates: rates,
+                    unpriced,
                     service_amount: 0,
                     run: Some(UsageRun {
                         instance: receipt.instance.to_hex(),

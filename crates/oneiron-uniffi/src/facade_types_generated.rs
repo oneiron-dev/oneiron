@@ -49793,6 +49793,12 @@ pub struct OracleReceipt {
     pub steps: Vec<StepOutcome>,
     #[serde(rename = "clean")]
     pub clean: bool,
+    #[serde(rename = "projector")]
+    pub projector: String,
+    #[serde(rename = "source_sha")]
+    pub source_sha: String,
+    #[serde(rename = "case_manifest_sha256")]
+    pub case_manifest_sha256: String,
 }
 
 /// `oneiron::office_body::pptx::verbs::DeckGateView`.

@@ -252,13 +252,19 @@ fn approved_ask(vault: &Vault, root: &SpendScopeId, person: EntityId) -> Result<
 }
 
 /// The owners' payer-needed ask about the launch under `root`, keyed by its
-/// payer and root: one ask per room-paid launch, put to the owners.
+/// payer and root: one ask per room-paid launch or member-funded workflow
+/// run (FIX 5417), put to the owners.
 fn payer_needed_ask(
     root: &SpendScopeId,
     person: EntityId,
 ) -> oneiron::Result<HumanDecisionRequest> {
+    let launch = if root.as_str().starts_with("workflow-member:") {
+        "A member-funded workflow run"
+    } else {
+        "A room-paid launch"
+    };
     let text = format!(
-        "A room-paid launch (root spend scope {root}) is paid for by PERSON {person}, whose own \
+        "{launch} (root spend scope {root}) is paid for by PERSON {person}, whose own \
          billing account this host cannot resolve, so its model calls are held. Bill this vault \
          for that launch's calls instead? Its payer's cap still bounds them. Answering no keeps \
          them held until the payer's own account resolves.",

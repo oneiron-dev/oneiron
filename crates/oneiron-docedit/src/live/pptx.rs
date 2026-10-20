@@ -98,9 +98,11 @@ pub struct DeckNode {
     pub geometry: GeometryProps,
     /// Placeholder kind/index as read (`p:ph`), for export evidence.
     pub placeholder: Option<(String, u32)>,
-    /// A shape's preset geometry. A live-born shape's `None` is a
-    /// rectangle; an imported shape's is a preset outside the written set,
-    /// kept as written, or custom geometry, which its payload marks.
+    /// A shape's preset geometry, or the shape a picture is cropped to
+    /// (PowerPoint's Crop to Shape: the picture keeps its media and crop). A
+    /// live-born shape's or picture's `None` is a rectangle; an imported
+    /// one's is a preset outside the written set, kept as written, or custom
+    /// geometry, which a shape's payload marks.
     #[serde(default)]
     pub preset: Option<Preset>,
     /// What a shape, picture, graphic frame or connector is written from.
@@ -819,8 +821,9 @@ pub enum DeckOp {
         #[serde(default)]
         id: Option<NodeId>,
     },
-    /// A live-born node; a shape may name its preset, and a picture,
-    /// graphic frame or connector carries the payload it is written from.
+    /// A live-born node; a shape may name its preset, and a picture the
+    /// shape it is cropped to; a picture, graphic frame or connector carries
+    /// the payload it is written from.
     AddNode {
         #[serde(default)]
         id: Option<NodeId>,
@@ -857,7 +860,9 @@ pub enum DeckOp {
         node: NodeId,
         geometry: GeometryProps,
     },
-    /// A shape's preset geometry; a shape of custom geometry takes none.
+    /// A shape's preset geometry, as Change Shape writes it, replacing a
+    /// freeform's paths; or a picture's, as Crop to Shape writes it, the
+    /// picture keeping its media and crop.
     SetPreset {
         node: NodeId,
         preset: Preset,
@@ -1018,8 +1023,8 @@ impl LiveDeck {
                 payload,
             } => {
                 self.check_parent(*parent, *kind)?;
-                if preset.is_some() && *kind != NodeKind::Shape {
-                    return Err(LiveError::Invalid("only a shape takes a preset"));
+                if preset.is_some() && !takes_preset(*kind) {
+                    return Err(LiveError::Invalid(ONLY_SHAPE_OR_PICTURE));
                 }
                 if payload
                     .as_ref()
@@ -1148,11 +1153,11 @@ impl LiveDeck {
             }
             DeckOp::SetPreset { node, preset } => {
                 let found = self.nodes.get_mut(node).ok_or(LiveError::UnknownNode)?;
-                if found.kind != NodeKind::Shape {
-                    return Err(LiveError::Invalid("only a shape takes a preset"));
+                if !takes_preset(found.kind) {
+                    return Err(LiveError::Invalid(ONLY_SHAPE_OR_PICTURE));
                 }
-                // The preset replaces custom geometry; the export's
-                // effects name it.
+                // The preset replaces a shape's custom geometry; the export's
+                // effects name it. A picture's media stays its payload.
                 if matches!(found.payload, Some(NodePayload::CustomGeometry { .. })) {
                     found.payload = None;
                 }
@@ -1501,6 +1506,14 @@ pub(crate) fn slide_of(deck: &LiveDeck, mut node: NodeId) -> Option<NodeId> {
         }
         node = found.parent?;
     }
+}
+
+const ONLY_SHAPE_OR_PICTURE: &str = "only a shape or a picture takes a preset";
+
+/// Whether a node of `kind` takes a preset: a shape's geometry, or the
+/// shape a picture is cropped to (FIX 3696).
+fn takes_preset(kind: NodeKind) -> bool {
+    matches!(kind, NodeKind::Shape | NodeKind::Picture)
 }
 
 /// What a node is written as: its preset and payload.

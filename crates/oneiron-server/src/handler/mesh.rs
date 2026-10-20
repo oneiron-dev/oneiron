@@ -105,8 +105,10 @@ mod host {
         _app: &Router,
         _limits: ConnectionLimits,
     ) -> anyhow::Result<Option<MeshHost>> {
+        // The config keeps the address, not which of the two named it.
         anyhow::bail!(
-            "{} is set, but this server was built without the `mesh` feature",
+            "a mesh bind address (--mesh-bind / {}) is set, but this server was built without \
+             the `mesh` feature",
             super::BIND_ENV
         )
     }
