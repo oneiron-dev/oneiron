@@ -6076,7 +6076,7 @@
      "path": "src/batch/secret_scan/lift_history/mod.rs",
      "purpose": "The historical lift sweep (OF-067; ARCH-0069 #mask-on-write)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 8,
       "struct": 8
@@ -6099,7 +6099,7 @@
      "path": "src/batch/secret_scan/lift_history/proposals.rs",
      "purpose": "Closing a lift proposal (OF-067)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -6119,7 +6119,7 @@
      "path": "src/batch/secret_scan/lift_history/records.rs",
      "purpose": "The entity table",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -6149,7 +6149,7 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -6180,6 +6180,16 @@
      "purpose": "Body files with keys in them (FIX 5507)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/known_marks.rs",
+     "purpose": "A file's marks for the values custody came to know after it was stored (FIX 2781)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -6220,6 +6230,16 @@
      "purpose": "A text's mask on write (OF-560): each span the door's text rules place, and each value custody already…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/wipe.rs",
+     "purpose": "Wiping owners for what a mask plan copies (FIX 1101)",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -16950,7 +16970,7 @@
      "purpose": "Guided pack setup's grants and connection checks (OF-378)",
      "surface": {
       "const": 8,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6,
       "struct": 3,
       "trait": 1
@@ -47374,7 +47394,17 @@
      "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
      "surface": {
       "const": 1,
-      "crate-vis": 13
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/known_values/forms.rs",
+     "purpose": "A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -47386,7 +47416,7 @@
      "path": "src/secret_custody/masked_files.rs",
      "purpose": "Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2)",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 3
      }
@@ -47726,7 +47756,6 @@
      "path": "src/secret_lease/grant_redeem.rs",
      "purpose": "FIX 4313: redeeming, checking, reading and tearing down a secret grant",
      "surface": {
-      "crate-vis": 1,
       "fn": 4
      }
     },
@@ -63752,7 +63781,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3,
       "re-export": 21,
       "struct": 2
@@ -64053,9 +64082,11 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
+      "EscrowAddWarning",
+      "EscrowAdded",
       "EscrowRetirement",
       "NewVaultKeyWrap",
       "ResealedEscrowCapsule",
@@ -64067,10 +64098,10 @@
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
       "crate-vis": 23,
-      "enum": 3,
-      "fn": 27,
+      "enum": 4,
+      "fn": 28,
       "re-export": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -64094,7 +64125,7 @@
      "path": "src/world_keys/vault_key/restore.rs",
      "purpose": "A cold managed restore's escrow recipients (LC FIX 5384/5385; the contract is…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -65063,7 +65094,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 134,
+     "files": 136,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66127,7 +66158,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 37,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66507,7 +66538,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4161,
+   "source_files": 4164,
    "test_files": 902
   },
   "oneiron-android": {
