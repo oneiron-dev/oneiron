@@ -25,7 +25,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::{ClaimInput, ClaimSource, EdgeActorClass, EntityId, Error, Result, Vault};
 
 /// The longest retry chain an item's binding is looked up along.
-const MAX_RETRY_DEPTH: usize = 64;
+pub(super) const MAX_RETRY_DEPTH: usize = 64;
 /// The predicate an agent's free-time suggestion for its human lands under.
 const SUGGESTION_PREDICATE: &str = "autonomy.suggestion";
 

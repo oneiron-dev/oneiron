@@ -367,8 +367,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/board_setup.rs` | src | XL | 21 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/booking_call.rs` | src | s | 4 crate-vis | — | A managed vault's attested holder the vault no longer records as its live owner, calling a booking tool on… |
 | `src/api/mcp_gateway/call_meta.rs` | src | s | 4 crate-vis | — | What a `tools/call` names in its `_meta` beside its arguments: the logical verb it runs (ARCH-0080 §3), and… |
-| `src/api/mcp_gateway/code_mode_verbs.rs` | src | L | 14 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
-| `src/api/mcp_gateway/code_mode_verbs/browser_guest.rs` | src | s | 3 crate-vis | — | A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start… |
+| `src/api/mcp_gateway/code_mode_verbs.rs` | src | L | 15 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
+| `src/api/mcp_gateway/code_mode_verbs/browser_guest.rs` | src | s | 6 crate-vis | — | A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start… |
 | `src/api/mcp_gateway/code_mode_verbs/receipt_evidence.rs` | src | s | 2 crate-vis | — | A run's receipt screenshots kept for the caller its guest call came from (FIX 2150) |
 | `src/api/mcp_gateway/code_mode_verbs/session_write.rs` | src | s | 1 crate-vis | — | A room write a session-bound code run stages, at this connector's door (WILL L11-01, S01-2a) |
 | `src/api/mcp_gateway/device_release.rs` | src | m | 10 crate-vis | — | What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a… |
@@ -705,9 +705,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_training/outbox.rs` | src | m | 3 crate-vis | — | The outbox directory as the engine's training transport: three protocol subdirectories and the vault's… |
 | `src/conversation_training/retry.rs` | src | s | 10 crate-vis | — | The anonymous training window's retry pace (TL-6, CALLS TL6_RETRY_PACE), one per endpoint a self-hosted… |
 | `src/conversation_training/shipper.rs` | src | m | 1 crate-vis | — | The self-host training shipper (TL-6, FIX 5813): the loop that carries a self-hosted vault's released offers… |
-| `src/conversation_training/shipper/stream.rs` | src | s | 5 crate-vis | — | A released offer's files, as the self-host shipper reads them (TL-6): the manifest a piece's facts come… |
+| `src/conversation_training/shipper/stream.rs` | src | s | 6 crate-vis | — | A released offer's files, as the self-host shipper reads them (TL-6): the manifest a piece's facts come… |
 | `src/conversation_training/shipper/tally.rs` | src | s | 5 crate-vis | — | The self-host shipper's counts (TL-6): what a pass did, logged once at its end in counts and classes only… |
-| `src/conversation_training/shipper/walks.rs` | src | s | 3 crate-vis | — | The self-host shipper's three walks over the vault's anonymous custody (TL-6): the withdrawals, the uploads… |
+| `src/conversation_training/shipper/walks.rs` | src | m | 3 crate-vis | — | The self-host shipper's three walks over the vault's anonymous custody (TL-6): the withdrawals, the uploads… |
 | `src/conversation_training/shipper/window.rs` | src | m | 18 crate-vis | — | The self-host shipper's requests, planned to the intake's bounds (TL-6): a window per piece packed into… |
 | `src/conversation_training/worker.rs` | src | s | 1 crate-vis | — | The outbox's periodic tick |
 | `src/credential_resume.rs` | src | s | 4 crate-vis | — | The server's check for a credential caller's call a verb hook's ask stopped (ARCH-0080 §3 Ask, OF-580) |

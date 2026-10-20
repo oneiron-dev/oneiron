@@ -16,6 +16,7 @@ use oneiron::code_run::{
 use oneiron::dreamer_runner::maintenance::{ContributionForks, ContributionReplayHost};
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{DecisionQuestion, TypedDecision};
+use oneiron::llm::mark_solo;
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_attribution::ContributionCandidate;
 use oneiron::skill_optimize::{
@@ -118,6 +119,10 @@ impl ContributionForkModel for ExactFork<'_> {
         let mut request = request.clone();
         request.model = binding.model.clone();
         request.envelope.locality = binding.locality;
+        // The two forks are compared with each other: each runs alone on an
+        // own server that batches (INF 1). The fork's request hash is its
+        // unmarked request's.
+        mark_solo(&mut request);
         // The model a raw call naming it meets, never swapped for the
         // role's route, which still clamps it: a model not served here now
         // is no replay, and no other model stands in.
