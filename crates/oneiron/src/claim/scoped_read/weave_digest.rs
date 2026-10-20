@@ -28,6 +28,7 @@ mod changes;
 mod coach;
 mod settings;
 pub use changes::WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER;
+pub use coach::WeaveDigestSettingsDrafter;
 use settings::SettingsEdit;
 pub use settings::{
     WeaveDigestFeedback, WeaveDigestSettingAnswer, WeaveDigestSettingChange,

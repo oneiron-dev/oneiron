@@ -602,6 +602,7 @@ impl Vault {
             attempt_cancels: Default::default(),
             active_wakes: Default::default(),
             code_consent_host: Default::default(),
+            coach_weave_digest_host: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
         };

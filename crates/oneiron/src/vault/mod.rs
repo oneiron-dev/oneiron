@@ -185,6 +185,9 @@ pub struct Vault {
     /// ([`Vault::install_code_consent_effect_host`]). In memory only.
     pub(crate) code_consent_host:
         std::sync::OnceLock<std::sync::Arc<dyn crate::code_run::CodeConsentEffectHost>>,
+    /// A host Coach drafts this vault's digest settings steps (FIX 5609;
+    /// [`Vault::register_coach_weave_digest_host`]). In memory only.
+    pub(crate) coach_weave_digest_host: std::sync::atomic::AtomicBool,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:

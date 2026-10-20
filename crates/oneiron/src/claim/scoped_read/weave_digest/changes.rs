@@ -21,6 +21,9 @@ use crate::error::{Error, Result};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::{EntityId, Vault};
 
+// The Coach's model drafts the step on a host Coach (FIX 5609).
+mod draft;
+
 /// The producer of the owner's notices about a Coach change to his digest
 /// settings: an ask for a proposal, a settings-changed notice for an
 /// applied or accepted change. `source.result` names the change.
@@ -185,8 +188,14 @@ impl Vault {
     /// the home node after it served (FIX 5495). Each owner is evaluated in
     /// its own short write, at most once per
     /// [`WEAVE_DIGEST_COACH_EVERY_SECS`]. A failure is logged and skipped:
-    /// it never fails the timer's own work.
+    /// it never fails the timer's own work. While a host Coach serves this
+    /// vault, its model drafts each step (FIX 5609): the timer only queues
+    /// its job, and the rule here never also runs.
     pub(super) fn coach_weave_digest_settings(&self, now: u64) {
+        if self.coach_weave_digest_host_registered() {
+            self.queue_coach_weave_digest_settings(now);
+            return;
+        }
         let owners = match self.owner_schedule_ids() {
             Ok(owners) => owners,
             Err(error) => {
@@ -225,11 +234,8 @@ impl Vault {
         Ok(owners)
     }
 
-    /// One owner's evaluation. With a step and a live Grant of the Coach that
-    /// names this owner's digest settings, the step applies, attributed to
-    /// the Coach and the Grant, with the owner's notice and its undo in the
-    /// same commit; with no such Grant, or any error reading it, it lands as
-    /// a proposal. `true`: a change applied.
+    /// One owner's evaluation by the closed-form rule, filed through
+    /// [`Self::file_coach_step_in_txn`]. `true`: a change applied.
     fn coach_owner_weave_digest(&self, owner: EntityId, now: u64) -> Result<bool> {
         {
             let txn = self.store.env.read_txn()?;
@@ -264,7 +270,7 @@ impl Vault {
                 .collect();
             let periods = self.owner_period_records_in_txn(txn, owner)?;
             let before = settings_of(&wire);
-            let Some((step, reason)) = weave_digest_coach_step(&CoachInput {
+            let Some(drafted) = weave_digest_coach_step(&CoachInput {
                 now,
                 cadence: wire.cadence,
                 sections: &before.sections,
@@ -274,61 +280,81 @@ impl Vault {
             }) else {
                 return Ok(false);
             };
-            let mut after_wire = wire;
-            if !take_step(&mut after_wire, step) {
-                return Ok(false);
-            }
-            let coach = self.coach_authority_in_txn(txn)?.entity_ref();
-            // Any error reading the Grant means a proposal, never an apply.
-            let grant = self
-                .coach_weave_digest_settings_grant_in_txn(txn, coach, owner)
-                .unwrap_or_else(|error| {
-                    tracing::warn!(?error, "the Coach's digest settings Grant was not read");
-                    None
-                });
-            let id = change_id(owner, settings.generation, step, now)?;
-            let mut change = WeaveDigestSettingChange {
-                change_ref: id.to_hex(),
-                status: Status::Pending,
-                before,
-                after: settings_of(&after_wire),
-                reason,
-                coach_ref: coach.to_hex(),
-                grant_ref: None,
-                base_generation: settings.generation,
-                after_generation: None,
-                undone_generation: None,
-                created_at: now,
-                settled_at: None,
-            };
-            let Some(grant) = grant else {
-                CHANGES.put(&self.store, txn, &(owner, id), &change)?;
-                self.notify_setting_change_in_txn(txn, owner, &change, NotificationKind::Ask, now)?;
-                return Ok(false);
-            };
-            let bytes = serde_json::to_vec(&after_wire).map_err(|_| invalid())?;
-            let generation = self.put_owner_weave_digest_schedule_in_txn(
-                txn,
-                owner,
-                &bytes,
-                SettingsEdit::Change,
-                now,
-            )?;
-            change.status = Status::Applied;
-            change.grant_ref = Some(grant.to_hex());
-            change.after_generation = Some(generation);
-            change.settled_at = Some(now);
-            CHANGES.put(&self.store, txn, &(owner, id), &change)?;
-            self.retire_answered_feedback_in_txn(txn, owner, &change)?;
-            self.notify_setting_change_in_txn(
-                txn,
-                owner,
-                &change,
-                NotificationKind::WeaveDigestSettingsChanged,
-                now,
-            )?;
-            Ok(true)
+            self.file_coach_step_in_txn(txn, owner, settings.generation, wire, drafted, now)
         })
+    }
+
+    /// Files the Coach's step and its reason on the owner's schedule row
+    /// `wire`, read in this write at settings `generation`, whether the rule
+    /// or the Coach's model chose it. With a live Grant of the Coach that
+    /// names this owner's digest settings, the step applies, attributed to
+    /// the Coach and the Grant, with the owner's notice and its undo in the
+    /// same commit; with no such Grant, or any error reading it, it lands as
+    /// a proposal. `true`: a change applied.
+    fn file_coach_step_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: EntityId,
+        generation: u64,
+        wire: WireSchedule,
+        (step, reason): (CoachStep, String),
+        now: u64,
+    ) -> Result<bool> {
+        let before = settings_of(&wire);
+        let mut after_wire = wire;
+        if !take_step(&mut after_wire, step) {
+            return Ok(false);
+        }
+        let coach = self.coach_authority_in_txn(txn)?.entity_ref();
+        // Any error reading the Grant means a proposal, never an apply.
+        let grant = self
+            .coach_weave_digest_settings_grant_in_txn(txn, coach, owner)
+            .unwrap_or_else(|error| {
+                tracing::warn!(?error, "the Coach's digest settings Grant was not read");
+                None
+            });
+        let id = change_id(owner, generation, step, now)?;
+        let mut change = WeaveDigestSettingChange {
+            change_ref: id.to_hex(),
+            status: Status::Pending,
+            before,
+            after: settings_of(&after_wire),
+            reason,
+            coach_ref: coach.to_hex(),
+            grant_ref: None,
+            base_generation: generation,
+            after_generation: None,
+            undone_generation: None,
+            created_at: now,
+            settled_at: None,
+        };
+        let Some(grant) = grant else {
+            CHANGES.put(&self.store, txn, &(owner, id), &change)?;
+            self.notify_setting_change_in_txn(txn, owner, &change, NotificationKind::Ask, now)?;
+            return Ok(false);
+        };
+        let bytes = serde_json::to_vec(&after_wire).map_err(|_| invalid())?;
+        let after = self.put_owner_weave_digest_schedule_in_txn(
+            txn,
+            owner,
+            &bytes,
+            SettingsEdit::Change,
+            now,
+        )?;
+        change.status = Status::Applied;
+        change.grant_ref = Some(grant.to_hex());
+        change.after_generation = Some(after);
+        change.settled_at = Some(now);
+        CHANGES.put(&self.store, txn, &(owner, id), &change)?;
+        self.retire_answered_feedback_in_txn(txn, owner, &change)?;
+        self.notify_setting_change_in_txn(
+            txn,
+            owner,
+            &change,
+            NotificationKind::WeaveDigestSettingsChanged,
+            now,
+        )?;
+        Ok(true)
     }
 
     /// The owner's own period records, each unopened period's dismissal read

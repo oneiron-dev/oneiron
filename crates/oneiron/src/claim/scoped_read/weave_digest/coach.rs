@@ -5,10 +5,14 @@
 //! he keeps leaving, a weekly one. Implicit signals never propose a faster
 //! rhythm or a layout change, and a step the owner declined or undid under
 //! the current settings generation is never proposed again (CALLS: FIX 5495
-//! signals and steps).
+//! signals and steps). With a host Coach serving the vault, its model drafts
+//! the step instead (FIX 5609): the engine builds its brief and checks its
+//! answer here, and this rule decides only while the model is unavailable.
 
-use super::settings::StoredFeedback;
-use super::{WeaveDigestCadence, WeaveSectionKind};
+use super::settings::{StoredFeedback, WeaveDigestFeedback};
+use super::{WeaveDigestCadence, WeaveSectionKind, invalid};
+use crate::error::Result;
+use serde::{Deserialize, Serialize};
 
 /// A daily digest whose last this many opened periods were each opened a
 /// cadence or more after they came is proposed weekly.
@@ -17,8 +21,10 @@ const LATE_OPENS_TO_SLOW: usize = 3;
 /// which has waited this many cadences, is proposed weekly.
 const DISMISSED_PERIODS_TO_SLOW: u64 = 3;
 
-/// One step the Coach may take on an Owner schedule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One step the Coach may take on an Owner schedule. Its JSON form is the
+/// `weave-digest-settings` skill's step: `{"cadence": ...}` or `{"lead": ...}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(super) enum CoachStep {
     /// Set the rhythm.
     Cadence(WeaveDigestCadence),
@@ -46,6 +52,126 @@ pub(super) struct CoachInput<'a> {
     pub(super) periods: &'a [PeriodRecord],
     /// The steps he declined or undid under the current generation.
     pub(super) refused: &'a [CoachStep],
+}
+
+/// The host's drafter of one owner's digest settings step on the Coach's
+/// model (FIX 5609). The engine builds the brief, the `weave-digest-settings`
+/// hub skill's input, and checks the answer; the drafter runs the skill on it.
+pub trait WeaveDigestSettingsDrafter {
+    /// The model's answer to `brief`, as text. `Ok(None)`: the drafter is
+    /// unavailable (no Coach or chat seat, a refused model call, or no hub
+    /// skill), and the closed-form rule decides instead.
+    ///
+    /// # Errors
+    /// A state or storage error, never read as the drafter being unavailable.
+    fn draft(&self, brief: &str) -> Result<Option<String>>;
+}
+
+/// What the Coach's model answered, as the engine admits it.
+pub(super) enum CoachDraft {
+    /// `{"step": null}`: nothing is worth changing.
+    Nothing,
+    /// One step the engine admits, with its reason to him.
+    Step(CoachStep, String),
+    /// An answer outside the skill's output, or a step the engine refuses.
+    Refused,
+}
+
+/// One period as the brief shows it.
+#[derive(Serialize)]
+struct BriefPeriod {
+    due_at: u64,
+    cadence: WeaveDigestCadence,
+    opened_at: Option<u64>,
+    dismissed: bool,
+}
+
+/// The `weave-digest-settings` skill's input, field for field.
+#[derive(Serialize)]
+struct Brief<'a> {
+    now: u64,
+    cadence: WeaveDigestCadence,
+    sections: &'a [WeaveSectionKind],
+    feedback: Option<WeaveDigestFeedback>,
+    periods: Vec<BriefPeriod>,
+    refused: &'a [CoachStep],
+}
+
+/// The skill's output: a step and its reason, or `{"step": null}`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnswerWire {
+    step: serde_json::Value,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// The brief the Coach's model reads: what the rule reads, his periods
+/// newest first, as JSON.
+pub(super) fn weave_digest_coach_brief(input: &CoachInput<'_>) -> Result<String> {
+    let mut periods: Vec<BriefPeriod> = input
+        .periods
+        .iter()
+        .map(|period| BriefPeriod {
+            due_at: period.scheduled_for,
+            cadence: period.cadence,
+            opened_at: period.opened_at,
+            dismissed: period.dismissed,
+        })
+        .collect();
+    periods.sort_by_key(|period| std::cmp::Reverse(period.due_at));
+    serde_json::to_string(&Brief {
+        now: input.now,
+        cadence: input.cadence,
+        sections: input.sections,
+        feedback: input.feedback.map(|feedback| WeaveDigestFeedback {
+            preferred_cadence: feedback.preferred_cadence,
+            lead_section: feedback.lead_section,
+            keep_current: feedback.keep_current,
+        }),
+        periods,
+        refused: input.refused,
+    })
+    .map_err(|_| invalid())
+}
+
+/// The Coach's model's answer, the one JSON object in its text, checked
+/// against what it read. Only the skill's output shapes parse. A step needs a
+/// reason that is not blank, must change his rhythm or lead with a section
+/// he already has, must not be one he refused, and never stands over his
+/// `keep_current`. The rule's thresholds and order are not gates on it.
+pub(super) fn weave_digest_coach_draft(input: &CoachInput<'_>, answer: &str) -> CoachDraft {
+    let Some(wire) = answer
+        .find('{')
+        .zip(answer.rfind('}'))
+        .and_then(|(start, end)| answer.get(start..=end))
+        .and_then(|object| serde_json::from_str::<AnswerWire>(object).ok())
+    else {
+        return CoachDraft::Refused;
+    };
+    let (step, reason) = match (wire.step, wire.reason) {
+        (serde_json::Value::Null, None) => return CoachDraft::Nothing,
+        (step, Some(reason)) => match serde_json::from_value::<CoachStep>(step) {
+            Ok(step) => (step, reason),
+            Err(_) => return CoachDraft::Refused,
+        },
+        (_, None) => return CoachDraft::Refused,
+    };
+    let reason = reason.trim();
+    let changes = match step {
+        CoachStep::Cadence(cadence) => cadence != input.cadence,
+        CoachStep::Lead(kind) => {
+            input.sections.contains(&kind) && input.sections.first() != Some(&kind)
+        }
+    };
+    if reason.is_empty()
+        || !changes
+        || input.refused.contains(&step)
+        || input.feedback.is_some_and(|feedback| feedback.keep_current)
+    {
+        return CoachDraft::Refused;
+    }
+    CoachDraft::Step(step, reason.to_owned())
 }
 
 fn cadence_word(cadence: WeaveDigestCadence) -> &'static str {
