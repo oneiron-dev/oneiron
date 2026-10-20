@@ -8,6 +8,7 @@ mod bundle_access;
 mod bundle_commit;
 mod checkpoint_roots;
 mod custody;
+mod home_handoff;
 mod machine_history;
 
 use base64::Engine;
@@ -330,6 +331,9 @@ pub(super) fn run(
             }
             "residence.machine-history" => {
                 machine_history::machine_history(server, auth, peer, request.params)
+            }
+            method if method.starts_with("residence.home_handoff.") => {
+                home_handoff::run(server, auth, peer, method, request.params)
             }
             method => custody::run(server, auth, peer, method, request.params),
         }
