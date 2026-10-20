@@ -1138,9 +1138,11 @@ fn timestamp(at: u64) -> Result<chrono::DateTime<chrono::Utc>> {
         .ok_or_else(|| invalid("office body export time"))
 }
 
+/// An office body call names at least one operation, and takes any number
+/// of them (FIX 6600, Rule 5).
 fn bounded_ops(count: usize) -> Result<()> {
-    if count == 0 || count > docx::MAX_OPS {
-        return Err(invalid("an office body call takes 1 to 256 operations"));
+    if count == 0 {
+        return Err(invalid("an office body call takes at least one operation"));
     }
     Ok(())
 }

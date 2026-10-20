@@ -3100,7 +3100,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.esign.signing.pdf": { description: "One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.esign.signing.image": { description: "Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.esign.signing.signature": { description: "Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.esign.seal.get": { description: "Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.esign.seal.get": { description: "Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.conversations.create": { description: "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.conversations.turns.create": { description: "Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.conversations.records.append": { description: "Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -5477,7 +5477,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           signature: (input: Facade.EsignSigningSignatureRequest, options?: O): FacadeReturns<"vault.esign.signing.signature">[K] => invoke("vault.esign.signing.signature", input, options, newInvocation()),
         },
         seal: {
-          /** Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it. */
+          /** Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error. */
           get: (input: Facade.EsignSealGetRequest, options?: O): FacadeReturns<"vault.esign.seal.get">[K] => invoke("vault.esign.seal.get", input, options, newInvocation()),
         },
       },

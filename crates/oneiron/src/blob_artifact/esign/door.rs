@@ -21,7 +21,8 @@
 //!   input); the bound caller only classes the act.
 //! - `vault.esign.seal.get`: the seal task's receipts for one document
 //!   and its sealed manifest once sealing lands.
-use super::document_view::{EsignDocumentTrail, EsignDocumentView};
+use super::delivery_settlement::EsignDeliveryReceipt;
+use super::document_view::{EsignDocumentTrail, EsignDocumentView, EsignSealTrail};
 use super::model::{DocumentStatus, EsignAuditActor, EsignDocument};
 use super::outbound::{EsignOutboundCommand, EsignOutboundVerb};
 use crate::consent::AuthenticatedOwner;
@@ -327,16 +328,22 @@ pub struct EsignSealedView {
     pub items: Vec<EsignSealedItemView>,
 }
 
-/// Where one document's seal stands: its folded status, every seal
-/// attempt the queue still holds for it, and its sealed manifest once
-/// one attempt sealed it.
+/// Where one document's seal stands: every seal attempt the queue still
+/// holds for it, its sealed manifest once one attempt sealed it, its
+/// delivery receipts, and its folded status, or why its trail does not read
+/// (FIX 6554).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct EsignSealView {
     pub document_ref: String,
-    pub status: DocumentStatus,
     pub attempts: Vec<EsignSealAttemptView>,
     pub sealed: Option<EsignSealedView>,
+    /// The document's delivery receipts, as `vault.esign.get` lists them,
+    /// read whether or not its trail reads.
+    pub delivery_receipts: Vec<EsignDeliveryReceipt>,
+    /// `trail`, `readable` with the folded `status`, or `unreadable` with
+    /// its error.
+    #[serde(flatten)]
+    pub trail: EsignSealTrail,
 }
 
 /// What the gate made of one e-sign dispatch.
@@ -472,12 +479,15 @@ impl Memory<'_> {
     }
 
     /// `vault.esign.seal.get`: where the document's seal task stands:
-    /// its folded status, every `esign.seal` attempt the queue holds
-    /// for it in creation order, and the sealed manifest once one
-    /// attempt sealed it. The row's refs admission reads `document_ref`
-    /// under the caller's scope first, as `vault.esign.get` does.
+    /// every `esign.seal` attempt the queue holds for it in creation
+    /// order, the sealed manifest once one attempt sealed it, its delivery
+    /// receipts, and its folded status. The row's refs admission reads
+    /// `document_ref` under the caller's scope first, as `vault.esign.get`
+    /// does. A document whose own trail does not read, or folds to no
+    /// document, answers `trail` `unreadable` with that error, its seal
+    /// attempts, manifest and delivery receipts still listed (FIX 6554).
     /// # Errors
-    /// A `document_ref` that is no id or names no signing document.
+    /// A `document_ref` that is no id, or the store's own failure.
     pub fn esign_seal_get(&self, input: &EsignSealGetRequest) -> MemoryResult<EsignSealView> {
         let document = document_id(&input.document_ref)?;
         let vault = self.vault();
@@ -498,7 +508,14 @@ impl Memory<'_> {
             })
             .collect();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let (state, _, _) = super::ledger::read_in(vault, &txn, document)?;
+        let trail = match super::ledger::trail_read_in(vault, &txn, document)? {
+            Ok((state, _, _)) => EsignSealTrail::Readable {
+                status: state.status,
+            },
+            Err(unreadable) => EsignSealTrail::Unreadable {
+                error: MemoryError::from(unreadable),
+            },
+        };
         let sealed = super::seal::CANONICAL
             .get(&vault.store, &txn, &document)?
             .map(|manifest| EsignSealedView {
@@ -519,11 +536,14 @@ impl Memory<'_> {
                     })
                     .collect(),
             });
+        let delivery_receipts =
+            super::delivery_settlement::delivery_receipts_in(vault, &txn, document)?;
         Ok(EsignSealView {
             document_ref: document.to_hex(),
-            status: state.status,
             attempts,
             sealed,
+            delivery_receipts,
+            trail,
         })
     }
 

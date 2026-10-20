@@ -37,7 +37,7 @@ pub use delivery_settlement::{
 mod ingress;
 pub use ingress::EsignIngress;
 mod document_view;
-pub use document_view::{EsignDocumentTrail, EsignDocumentView};
+pub use document_view::{EsignDocumentTrail, EsignDocumentView, EsignSealTrail};
 mod door;
 pub use door::{
     EsignCreateRequest, EsignDispatchRequest, EsignDispatchView, EsignDraftView, EsignGetRequest,

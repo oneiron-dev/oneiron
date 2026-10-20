@@ -12385,7 +12385,7 @@ impl AgentVerb {
                 "Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."
             }
             Self::VaultEsignSealGet => {
-                "Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it."
+                "Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error."
             }
             Self::VaultConversationsCreate => {
                 "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."

@@ -69,7 +69,7 @@ pub enum EsignDeliveryMint {
 /// Why one delivery stays unexported for now (FIX 6423, 6455, 6482). It
 /// waits on its own; no other delivery waits on it. The exporter logs its
 /// code, and the owner reads it on `vault.esign.get`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EsignDeliveryWait {
     /// An event of the document awaits its owner's answer.

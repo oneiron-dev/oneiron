@@ -4486,7 +4486,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def get(self, spec):
-            """Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it."""
+            """Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error."""
             return json.loads(_translate(lambda: self._client.vault_esign_seal_get(json.dumps(spec))))
     class _VaultConsolidationVerbs:
         def __init__(self, client: _NativeClient) -> None:
