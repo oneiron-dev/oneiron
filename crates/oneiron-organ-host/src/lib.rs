@@ -78,6 +78,6 @@ pub use route::{
 pub use slot::{OrganState, OrganStatus};
 pub use spec::{
     AskGrant, CallClass, FetchGrant, FetchOrigin, HostConfig, LentInput, OrganCall, OrganInput,
-    OrganSpec, OrganTier,
+    OrganSpec, OrganTier, SightedInput,
 };
 pub use wait::{OrganJob, Redrive, Redriven, Submitted};
