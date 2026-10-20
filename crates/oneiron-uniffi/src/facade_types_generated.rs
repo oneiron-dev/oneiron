@@ -288,6 +288,8 @@ pub enum CommitmentIndexOutcome {
         #[serde(rename = "route")]
         route: String,
     },
+    #[serde(rename = "stored_awaiting_approval")]
+    StoredAwaitingApproval,
 }
 
 /// `oneiron::memory::commitment_doors::types::CommitmentCreateReceipt`.

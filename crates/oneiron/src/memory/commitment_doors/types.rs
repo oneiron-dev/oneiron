@@ -171,11 +171,14 @@ pub struct CommitmentView {
     pub receipt: CommitmentLifecycleReceipt,
 }
 
+/// `stored_awaiting_approval`: a Proposed or stale series is stored with no
+/// due row until it is approved (FIX 5993).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum CommitmentIndexOutcome {
     Indexed { project_at: u64, next_due: u64 },
     StoredRrule { route: String },
+    StoredAwaitingApproval,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

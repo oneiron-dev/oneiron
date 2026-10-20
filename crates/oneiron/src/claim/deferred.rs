@@ -274,6 +274,8 @@ impl Vault {
             )?;
             let closure_decision =
                 self.complete_deferred_claim_with_checker_in_txn(txn, id, false, now, checker)?;
+            // FIX 5993: a granted commitment series projects from its grant.
+            self.index_consented_commitment_series_in_txn(txn, &body, id, now)?;
             // A Dreamer replacement granted Auto is an Auto write like any the
             // Dreamer lands, through whichever door granted it, so it counts on
             // that actor's own-rate window. The count never holds the grant.

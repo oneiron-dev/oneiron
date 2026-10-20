@@ -212,6 +212,8 @@ fn confirmed_booking_binding_in_txn(
         // proposal must not name a new booker before anyone approves it.
         if !crate::claim::claim_surfaceable(&body)
             || body.subject != ClaimSubject::Entity(*booking_ref)
+            || !crate::booking::lifecycle::booking_head_counts_in_txn(vault, rtxn, &claim_id, &body)
+                .map_err(|error| engine_failure("booking head birth read", error))?
         {
             continue;
         }

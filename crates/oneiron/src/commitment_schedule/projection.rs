@@ -75,7 +75,15 @@ pub enum CommitmentSeriesWriteOutcome {
         /// The calendar entry point that owns expansion.
         route: &'static str,
     },
+    /// The series is stored, but it is Proposed or stale, so NO due row was
+    /// written; it projects once approved (FIX 5993).
+    StoredAwaitingApproval,
 }
+
+/// FIX 5993: only an approved (or Auto) series that is not stale projects; a
+/// Proposed or stale one is stored and owes nothing yet. `false` projects
+/// every unrejected series, as before.
+const PROJECT_ONLY_CONSENTED_SERIES: bool = true;
 
 /// The series-side facts one mint needs, bundled so the minting helpers stay
 /// under the argument-count bar and cannot be called with a series record and
@@ -316,6 +324,23 @@ impl Vault {
         }
     }
 
+    /// FIX 5993: a series approved, or granted Auto, after it landed projects
+    /// from that approval's transaction, through the landed hook above.
+    pub(crate) fn index_consented_commitment_series_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim: &crate::claim::ClaimBody,
+        series_ref: &EntityId,
+        now: u64,
+    ) -> crate::Result<()> {
+        if !PROJECT_ONLY_CONSENTED_SERIES
+            || claim.predicate != crate::commitment::PREDICATE_COMMITMENT_RECORD
+        {
+            return Ok(());
+        }
+        self.index_landed_commitment_series_in_txn(wtxn, series_ref, now)
+    }
+
     /// Writes the `Project` row for a series, in the caller's transaction.
     fn index_commitment_series_in_txn(
         &self,
@@ -328,6 +353,12 @@ impl Vault {
             return Ok(CommitmentSeriesWriteOutcome::StoredRrule {
                 route: CAL_RRULE_ROUTE,
             });
+        }
+        if PROJECT_ONLY_CONSENTED_SERIES
+            && let Some(body) = self.get_claim_in_txn(&*wtxn, series_ref)?
+            && !series_projects(&body)
+        {
+            return Ok(CommitmentSeriesWriteOutcome::StoredAwaitingApproval);
         }
         let history = self.commitment_series_history_in_txn(&*wtxn, series_ref)?;
         let due_at = next_due(&payload.schedule, now, &history)?.ok_or(ScheduleError::Invalid(
@@ -625,10 +656,8 @@ impl Vault {
         let Some(body) = self.get_claim_in_txn(txn, series_ref)? else {
             return Ok(None);
         };
-        // A promise the owner rejected owes no occurrence.
-        if body.lifecycle != ClaimLifecycleStatus::Active
-            || body.approval == crate::claim::ClaimApprovalStatus::Rejected
-        {
+        // A promise the owner rejected, or has not yet approved, owes none.
+        if !series_projects(&body) {
             return Ok(None);
         }
         let Some(record) = decode_commitment_claim(&body)? else {
@@ -726,6 +755,16 @@ fn series_payload(record: &CommitmentRecord) -> ScheduleResult<CommitmentSchedul
         ));
     }
     Ok(payload)
+}
+
+/// Whether a series claim may project: active and unrejected, and with
+/// [`PROJECT_ONLY_CONSENTED_SERIES`] also Auto or Approved and not stale.
+fn series_projects(body: &crate::claim::ClaimBody) -> bool {
+    use crate::claim::ClaimApprovalStatus::{Approved, Auto, Rejected};
+    body.lifecycle == ClaimLifecycleStatus::Active
+        && body.approval != Rejected
+        && (!PROJECT_ONLY_CONSENTED_SERIES
+            || (matches!(body.approval, Auto | Approved) && !body.stale))
 }
 
 /// The `Project` row for one series and one computed due instant.

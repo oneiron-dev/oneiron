@@ -33,7 +33,7 @@ export type CommitmentLifecycleReceipt = { fulfillment_source?: CommitmentFulfil
 /** `oneiron::memory::commitment_doors::types::CommitmentView` */
 export type CommitmentView = { commitment_ref: string; obligor: CommitmentObligor; beneficiary: string; content: CommitmentContent; schedule: CommitmentSchedule; lead_seconds?: number | null; strength: CommitmentStrength; status: CommitmentStatus; birth_provenance: CommitmentBirthProvenance; series_ref?: string | null; occurrence?: CommitmentOccurrence | null; occurred_at: number; learned_at: number; evidence_turn_refs: string[]; receipt: CommitmentLifecycleReceipt }
 /** `oneiron::memory::commitment_doors::types::CommitmentIndexOutcome` */
-export type CommitmentIndexOutcome = { outcome: "indexed"; project_at: number; next_due: number } | { outcome: "stored_rrule"; route: string }
+export type CommitmentIndexOutcome = { outcome: "indexed"; project_at: number; next_due: number } | { outcome: "stored_rrule"; route: string } | { outcome: "stored_awaiting_approval" }
 /** `oneiron::memory::commitment_doors::types::CommitmentCreateReceipt` */
 export type CommitmentCreateReceipt = { commitment: CommitmentView; index: CommitmentIndexOutcome }
 /** `oneiron::memory::commitment_doors::types::CommitmentRefRequest` */

@@ -92,14 +92,14 @@ pub(super) fn aged_admission_ceiling(
     let Some(ceiling) = prepared.admission_ceiling else {
         return Ok(None);
     };
+    // An exact retry's window is anchored as before (FIX 5992).
+    let since = now_ms.saturating_sub(ceiling.window_secs);
     // The row as it stands under this lock, not the snapshot the replay
     // began from: a renewal rewrites it.
     let Some(stored) = read_intent_record_in_txn(vault, &wtxn, &record.id)? else {
         return Ok(None);
     };
-    if stored.state != IntentState::Pending
-        || stored.created_ms.max(stored.updated_ms) >= ceiling.since_ms
-    {
+    if stored.state != IntentState::Pending || stored.created_ms.max(stored.updated_ms) >= since {
         return Ok(None);
     }
     let admitted = crate::outbound_intent_ledger::admitted_calls_since_in_txn(
@@ -107,7 +107,7 @@ pub(super) fn aged_admission_ceiling(
         &wtxn,
         &prepared.server,
         &prepared.tool,
-        ceiling.since_ms,
+        since,
         Some(stored.attempt_id),
     )?;
     let count = ceiling.prior.max(admitted);
@@ -355,6 +355,13 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         return suppression_result(vault, &suppressed, false);
     }
 
+    // FIX 5992: from here a capped send's clock is the one vault reading
+    // above, not the caller's: it anchors the window, and it stamps the new
+    // ledger row's creation, budget accounting and settlement.
+    let now_ms = match prepared.admission_ceiling {
+        Some(_) if super::types::SEAT_CAP_USES_VAULT_CLOCK => dedupe_now,
+        _ => now_ms,
+    };
     // A count bound reads the ledger under THIS writer lock, after an exact
     // retry has replayed and a semantic duplicate has been suppressed above,
     // so only a new send meets it: the call is held like a parked send, with
@@ -365,7 +372,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             &wtxn,
             &prepared.server,
             &prepared.tool,
-            ceiling.since_ms,
+            now_ms.saturating_sub(ceiling.window_secs),
             None,
         )?;
         let count = ceiling.prior.max(admitted);

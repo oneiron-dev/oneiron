@@ -297,6 +297,9 @@ impl Memory<'_> {
                         route: route.to_owned(),
                     }
                 }
+                CommitmentSeriesWriteOutcome::StoredAwaitingApproval => {
+                    CommitmentIndexOutcome::StoredAwaitingApproval
+                }
             };
             Ok(CommitmentCreateReceipt {
                 commitment: self.commitment_view_in(&lane, txn, &id)?,

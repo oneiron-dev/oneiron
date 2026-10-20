@@ -157,6 +157,13 @@ pub(super) fn live_fact<T: serde::de::DeserializeOwned>(
         {
             continue;
         }
+        // FIX 5994: a head no booking process issued is no competing fact.
+        let txn = vault.store.env.read_txn().map_err(storage_failure)?;
+        if !crate::booking::lifecycle::booking_head_counts_in_txn(vault, &txn, &id, &body)
+            .map_err(storage_failure)?
+        {
+            continue;
+        }
         if found.is_some() {
             return Err(refused("booking has competing live facts"));
         }

@@ -108,15 +108,21 @@ pub(crate) struct CoActorAdmission {
 
 /// A deterministic count bound on one server and tool. Admission holds the
 /// call, never sends it, once the larger of `prior` (the host's own count)
-/// and this vault's ledger rows created at or after `since_ms` reaches `cap`.
+/// and this vault's ledger rows of the last `window_secs` reaches `cap`.
 /// It is read in the same writer transaction as the Pending insert, so two
 /// admissions cannot both take the last allowance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct AdmissionCeiling {
-    pub(crate) since_ms: u64,
+    /// The window's length; admission anchors it (FIX 5992).
+    pub(crate) window_secs: u64,
     pub(crate) prior: u32,
     pub(crate) cap: u32,
 }
+
+/// FIX 5992: a new capped send's window, and the timestamps of the ledger row
+/// it admits, read the vault's clock once under the admission writer, never
+/// the caller's `now_ms`. `false` anchors both at the caller's value.
+pub(crate) const SEAT_CAP_USES_VAULT_CLOCK: bool = true;
 
 impl PreparedEffect {
     pub(super) fn payload_hash(&self) -> [u8; 32] {

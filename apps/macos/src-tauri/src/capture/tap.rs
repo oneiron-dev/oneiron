@@ -112,26 +112,42 @@ impl SystemAudioTap {
 
 impl Drop for SystemAudioTap {
     fn drop(&mut self) {
+        // FIX 6016: a stop or destroy the HAL reports as failed may leave the
+        // IOProc able to run, so its context is then left allocated rather
+        // than freed under it; a clean teardown frees it as before.
+        let mut quiesced = true;
         // SAFETY: each object is destroyed at most once, in the order the HAL
         // requires (stop the IO before unregistering it, unregister before
         // destroying the device that carries it), and the context box outlives
         // the IOProc that reads it.
         unsafe {
             if self.proc_id.is_some() {
-                AudioDeviceStop(self.aggregate, self.proc_id);
-                AudioDeviceDestroyIOProcID(self.aggregate, self.proc_id);
+                let status = AudioDeviceStop(self.aggregate, self.proc_id);
+                quiesced &= teardown_ok("AudioDeviceStop", status);
+                let status = AudioDeviceDestroyIOProcID(self.aggregate, self.proc_id);
+                quiesced &= teardown_ok("AudioDeviceDestroyIOProcID", status);
             }
             if self.aggregate != 0 {
-                AudioHardwareDestroyAggregateDevice(self.aggregate);
+                let status = AudioHardwareDestroyAggregateDevice(self.aggregate);
+                quiesced &= teardown_ok("AudioHardwareDestroyAggregateDevice", status);
             }
             if self.tap != 0 {
                 AudioHardwareDestroyProcessTap(self.tap);
             }
-            if !self.context.is_null() {
+            if !self.context.is_null() && quiesced {
                 drop(Box::from_raw(self.context));
             }
         }
     }
+}
+
+/// Whether one teardown call succeeded; a failure is logged once, by call
+/// and status, and keeps the IOProc's context alive (FIX 6016).
+fn teardown_ok(call: &'static str, status: i32) -> bool {
+    if status != 0 {
+        tracing::warn!(call, status, "core audio teardown failed; tap context kept");
+    }
+    status == 0
 }
 
 /// A global tap: every process's output, mixed to stereo, minus nothing. The
