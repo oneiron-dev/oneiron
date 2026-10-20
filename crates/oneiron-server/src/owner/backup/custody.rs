@@ -12,7 +12,10 @@
 //! pending, or a head without the data-key wrap the key now allows (FIX
 //! 5791). No backup or save waits on a pass or refuses for one: a step that
 //! does not go through stays pending by name on the owner's status read,
-//! and the next pass retries.
+//! and the next pass retries. A managed host ships each declared `outbox:`
+//! member through the Hypnos outbox its supervisor names (FIX 5899), in the
+//! admitted background pass only: a backup that lands wakes that pass, and
+//! its own pass leaves the member to it.
 
 mod anchor_client;
 
@@ -22,9 +25,10 @@ use std::time::Duration;
 
 use oneiron::recovery::checkpoint::{
     CUSTODY_ANCHOR_PENDING, CUSTODY_FENCED, CUSTODY_NONE, CUSTODY_PUBLISHED,
-    CUSTODY_RETIREMENT_COMPLETE, CUSTODY_TARGET_PENDING, CustodyRecovery, CustodyStatus,
+    CUSTODY_RETIREMENT_COMPLETE, CUSTODY_TARGET_PENDING, CustodyOutbox, CustodyRecovery,
+    CustodyStatus,
 };
-use oneiron::store::custody_protocol::{AnchorStore, TargetSpec};
+use oneiron::store::custody_protocol::{AnchorStore, HostedKind, TargetKind, TargetSpec};
 use serde::Serialize;
 
 use self::anchor_client::HttpAnchor;
@@ -46,6 +50,12 @@ pub(crate) struct CustodyPlan {
     /// The hosted members the config declares (CALLS
     /// CUSTODY_HOSTED_TARGETS), each pending until its adapter acks.
     declared: Vec<TargetSpec>,
+    /// The Hypnos outbox a managed host ships its declared `outbox:`
+    /// members through (FIX 5899); `None` elsewhere, where they stay
+    /// `no_adapter`.
+    outbox: Option<CustodyOutbox>,
+    /// Wakes the background pass: a backup that landed asks it to ship.
+    wake: Arc<tokio::sync::Notify>,
 }
 
 impl CustodyPlan {
@@ -59,7 +69,14 @@ impl CustodyPlan {
                 .iter()
                 .filter_map(|target| TargetSpec::declared(target).ok())
                 .collect(),
+            outbox: None,
+            wake: Arc::default(),
         }
+    }
+
+    /// Whether the background pass, not a backup's own, ships `spec`.
+    fn shipped(&self, spec: &TargetSpec) -> bool {
+        self.outbox.is_some() && spec.kind() == TargetKind::Hosted(HostedKind::HypnosOutbox)
     }
 
     fn anchored(&self) -> bool {
@@ -91,6 +108,13 @@ impl OwnerHost {
     /// The host with its vault's custody anchored where `backup` names.
     pub(crate) fn anchored_at(mut self, backup: &BackupConfig) -> Self {
         self.backups.custody = CustodyPlan::of(backup);
+        self
+    }
+
+    /// The host shipping its declared `outbox:` custody members through
+    /// `outbox`, the managed host's (FIX 5899).
+    pub(crate) fn shipping_custody_to(mut self, outbox: Option<CustodyOutbox>) -> Self {
+        self.backups.custody.outbox = outbox;
         self
     }
 }
@@ -134,11 +158,15 @@ pub(crate) fn take_publishing(
 
 /// The pass right after a backup lands (FIX 5790), so no newest backup is
 /// left without its head beside it until the next tick. Never the backup's
-/// error.
+/// error. A member the outbox ships is left to the background pass, which
+/// this wakes: no outbox I/O rides the backup's response (FIX 5899).
 pub(super) fn publish_after_take(vault: &oneiron::Vault, plan: &BackupPlan) {
-    let status = publish(vault, plan);
+    let status = publish(vault, plan, false);
     if status.state != CUSTODY_PUBLISHED {
         log_pass(&status, plan.custody.anchored());
+    }
+    if plan.custody.outbox.is_some() {
+        plan.custody.wake.notify_one();
     }
 }
 
@@ -158,10 +186,11 @@ fn not_run(error: &oneiron::Error, what: &str) -> CustodyStatus {
 }
 
 /// One publication pass of `vault`'s custody to `plan`'s directory, every
-/// registered and declared member, and its anchor. A fault in the local
+/// registered and declared member, and its anchor; a member the outbox
+/// ships only when `ship` (the background pass). A fault in the local
 /// custody is the status's detail here, never the caller's error; an
 /// anchor that cannot be used leaves the anchor step pending with why.
-fn publish(vault: &oneiron::Vault, plan: &BackupPlan) -> CustodyStatus {
+fn publish(vault: &oneiron::Vault, plan: &BackupPlan, ship: bool) -> CustodyStatus {
     let (anchor, unusable) = match plan.custody.anchor(vault) {
         Ok(anchor) => (anchor, None),
         Err(error) => (None, Some(error.to_string())),
@@ -172,14 +201,19 @@ fn publish(vault: &oneiron::Vault, plan: &BackupPlan) -> CustodyStatus {
         plan.floor.as_ref(),
         &plan.dir,
     ));
-    let mut status = vault
-        .publish_custody_within(
-            &plan.dir,
-            &plan.custody.declared,
-            anchor.as_deref(),
-            Box::new(room),
-        )
-        .unwrap_or_else(|error| not_run(&error, "the custody publication pass did not run"));
+    let custody = &plan.custody;
+    let declared: Vec<TargetSpec> = custody
+        .declared
+        .iter()
+        .filter(|spec| ship || !custody.shipped(spec))
+        .cloned()
+        .collect();
+    let (dir, anchor, room) = (&plan.dir, anchor.as_deref(), Box::new(room));
+    let mut status = match custody.outbox.as_ref().filter(|_| ship) {
+        Some(outbox) => vault.publish_custody_shipping(dir, &declared, outbox, anchor, room),
+        None => vault.publish_custody_within(dir, &declared, anchor, room),
+    }
+    .unwrap_or_else(|error| not_run(&error, "the custody publication pass did not run"));
     if status.state == CUSTODY_ANCHOR_PENDING
         && let Some(unusable) = unusable
     {
@@ -276,9 +310,15 @@ impl SyncServer {
             let mut interval = tokio::time::interval(CUSTODY_TICK);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let anchored = host.backups.custody.anchored();
+            let wake = Arc::clone(&host.backups.custody.wake);
             let mut last: Option<&'static str> = None;
             loop {
-                interval.tick().await;
+                // A tick, or a backup that landed and left a shipped member
+                // to this pass (FIX 5899).
+                tokio::select! {
+                    _ = interval.tick() => {}
+                    () = wake.notified() => {}
+                }
                 let Some(admission) = admit() else {
                     continue;
                 };
@@ -293,7 +333,7 @@ impl SyncServer {
                     {
                         return status;
                     }
-                    publish(vault, &host.backups)
+                    publish(vault, &host.backups, true)
                 })
                 .await;
                 match pass {

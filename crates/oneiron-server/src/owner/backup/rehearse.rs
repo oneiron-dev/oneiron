@@ -33,6 +33,10 @@ pub(crate) struct Rehearsal {
     /// path, read off the disk for this rehearsal.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) shared_path: Option<SharedPathWarning>,
+    /// What a restore of this backup costs the vault's publisher training:
+    /// set when it brought no training link key (FIX 5892).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) training_note: Option<String>,
 }
 
 /// A directory on the live vault's path that another user could change,
@@ -191,6 +195,7 @@ fn rehearse_into(
         verified: unreadable_fields.is_empty(),
         unreadable_fields,
         shared_path: None,
+        training_note: report.training_note,
     })
 }
 

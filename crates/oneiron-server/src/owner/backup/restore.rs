@@ -29,6 +29,10 @@ pub(crate) struct Restored {
     /// not be synced: a crash before the filesystem flushes may undo the swap.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) durability_warning: Option<String>,
+    /// What the restore costs the vault's publisher training: set when it
+    /// brought no training link key (FIX 5892).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) training_note: Option<String>,
 }
 
 /// Restores `backup` over the stopped vault at `vault_path`.
@@ -281,6 +285,7 @@ fn restore_over_with(
         entities: kinds.values().sum(),
         kinds,
         durability_warning,
+        training_note: report.training_note,
     })
 }
 
@@ -303,6 +308,10 @@ pub(crate) struct RestoredFresh {
     /// proven: no custody anchor configured" with no anchor root set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) custody_note: Option<String>,
+    /// What the restore costs the vault's publisher training: set when it
+    /// brought no training link key (FIX 5892).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) training_note: Option<String>,
 }
 
 /// Why a new-host restore of a backup that names no custody head left a
@@ -359,6 +368,7 @@ pub(crate) fn restore_fresh(
                 .then_some(KEY_STAYED_ON_OLD_HOST),
             dropped_gate_decisions: report.dropped_gate_decisions,
             custody_note: report.custody_note,
+            training_note: report.training_note,
         },
     ))
 }
