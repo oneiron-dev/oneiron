@@ -80137,6 +80137,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/wire.rs",
+     "purpose": "What an MCP request counts as on the wire (FIX 1085)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -87458,11 +87468,21 @@
      "purpose": "RC42 observation-only wire counters",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 12,
       "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/wire_telemetry/http.rs",
+     "purpose": "The HTTP observer every routed request passes, and the tick that keeps the observed window",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -87783,7 +87803,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 470,
+     "files": 471,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -88224,7 +88244,7 @@
      "purpose": "The health check past a threshold (OF-520, ARCH-0044 C5)"
     },
     "wire_telemetry": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -88233,7 +88253,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 875,
+   "source_files": 877,
    "test_files": 182
   },
   "oneiron-spawn": {
