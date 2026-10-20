@@ -22392,7 +22392,7 @@
      "path": "src/dreamer_runner/free_time/items.rs",
      "purpose": "A free-time cycle's items (FIX 4453): the binding each item's attempt runs under, what it lands, and how it…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 2,
       "struct": 1
      }
@@ -22406,7 +22406,7 @@
      "path": "src/dreamer_runner/free_time/mod.rs",
      "purpose": "An agent's free time (FIX 4453, ARCH-0005b #free-time)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 1,
       "re-export": 5
@@ -22449,6 +22449,16 @@
       "enum": 2,
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/free_time/restore.rs",
+     "purpose": "FIX 6577: the `job_records` rows a restore over a live vault keeps as the live vault holds them",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -36748,7 +36758,7 @@
      "path": "src/memory/lifted_view.rs",
      "purpose": "A lifted carrier's view as the bound actor reads it (OF-067, Engine ruling G2 = b)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -37096,7 +37106,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 4
      }
     },
@@ -52918,7 +52928,7 @@
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 1
      }
     },
@@ -66102,7 +66112,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 103,
+     "files": 104,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67119,7 +67129,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4209,
+   "source_files": 4210,
    "test_files": 902
   },
   "oneiron-android": {
@@ -79689,7 +79699,7 @@
      "path": "src/ai_host/code_fix.rs",
      "purpose": "The host Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -80258,7 +80268,7 @@
      "path": "src/api/ai/chat/compaction.rs",
      "purpose": "A self agent's chat turn on its own live fork (FIX 4465 D)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -80289,6 +80299,16 @@
      "purpose": "Whether a chat turn signals its caller's durable sitting (FIX 5564; Engine #1968: an anonymous off-record…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/sources.rs",
+     "purpose": "The rows a live chat turn's call is read from (FIX 6935), ids only, for its run's permits and metered…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -90748,7 +90768,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/recall_rerank.rs",
@@ -91696,7 +91716,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 482,
+     "files": 483,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92146,7 +92166,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 964,
+   "source_files": 965,
    "test_files": 182
   },
   "oneiron-spawn": {
