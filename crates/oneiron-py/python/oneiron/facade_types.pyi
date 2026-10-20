@@ -17388,7 +17388,8 @@ class SummaryScope(TypedDict):
     session: NotRequired[str | None]
     include_forks: NotRequired[bool]
 class SummaryCreateRequest(TypedDict):
-    scope: SummaryScope
+    scope: NotRequired[SummaryScope | None]
+    note_refs: NotRequired[list[str]]
     purpose: NotRequired[str | None]
     land_on: NotRequired[str | None]
     as_record: NotRequired[bool]
