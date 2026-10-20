@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::frames::{DeltaRow, StreamConnectionId};
-use super::provenance::{ChildEvent, VerifiedOwnTaskEvent};
+use super::provenance::{ChildEvent, VerifiedDiaryReviewEvent, VerifiedOwnTaskEvent};
 
 #[derive(
     Debug,
@@ -29,10 +29,12 @@ pub enum SubscriptionScope {
     Worlds,
     Presence,
     Counts,
+    /// A read of my diary waits on my review (FIX 2879).
+    DiaryReviews,
 }
 
 impl SubscriptionScope {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::MyTasks,
         Self::MyChildren,
         Self::ConsultsToMe,
@@ -40,6 +42,7 @@ impl SubscriptionScope {
         Self::Worlds,
         Self::Presence,
         Self::Counts,
+        Self::DiaryReviews,
     ];
 }
 
@@ -72,6 +75,12 @@ pub enum BoardEvent {
         event: VerifiedOwnTaskEvent,
         line: String,
     },
+    /// A reader's reason waits on the reviewed agent's answer. The event
+    /// names the review and carries none of its content.
+    DiaryReviewPending {
+        event: VerifiedDiaryReviewEvent,
+        line: String,
+    },
     OwnTaskDone {
         event: VerifiedOwnTaskEvent,
         delta: DeltaRow,
@@ -97,7 +106,9 @@ pub enum BoardEvent {
 impl BoardEvent {
     pub const fn class(&self) -> DeliveryClass {
         match self {
-            Self::ConsultArrived { .. } | Self::OwnTaskFailed { .. } => DeliveryClass::Wake,
+            Self::ConsultArrived { .. }
+            | Self::OwnTaskFailed { .. }
+            | Self::DiaryReviewPending { .. } => DeliveryClass::Wake,
             Self::OwnTaskDone { .. } | Self::ChildDone { .. } => DeliveryClass::Carrier,
             _ => DeliveryClass::OnDemand,
         }
@@ -107,6 +118,7 @@ impl BoardEvent {
             Self::ConsultArrived { .. } => SubscriptionScope::ConsultsToMe,
             Self::OwnTaskFailed { .. } | Self::OwnTaskDone { .. } => SubscriptionScope::MyTasks,
             Self::ChildDone { .. } => SubscriptionScope::MyChildren,
+            Self::DiaryReviewPending { .. } => SubscriptionScope::DiaryReviews,
             Self::MemoriesChanged { .. } => SubscriptionScope::Memories,
             Self::PresenceChanged { .. } => SubscriptionScope::Presence,
             Self::WorldsChanged { .. } => SubscriptionScope::Worlds,

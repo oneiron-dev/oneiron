@@ -9,12 +9,18 @@
 //! subscriber's next tool result, read again there; wakes wait in the
 //! registry for a host-side adapter. The reads run on a blocking thread,
 //! outside the registry lock.
+//!
+//! Beside it, every commit starts a pass over the pending diary-read reviews
+//! (`oneiron::context_board::PendingDiaryReview`, FIX 2879): each review
+//! wakes its reviewed agent's own connections, naming the review and nothing
+//! of it. That loop runs alongside the TASK loop and never inside it.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::context_board::CommittedTaskBoardState;
-use tokio::sync::broadcast::error::RecvError;
+use oneiron::attempt_queue::AttemptQueue;
+use oneiron::context_board::{CommittedTaskBoardState, PendingDiaryReview};
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 use super::core::SyncServer;
 
@@ -49,11 +55,61 @@ impl SyncServer {
     }
 
     /// Starts the publisher. It subscribes before it returns, so no TASK
-    /// committed after this call is missed.
+    /// committed after this call is missed, and a review opened after it is
+    /// read at the latest by the pass its commit starts.
     pub(crate) fn spawn_board_publisher(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let updates = self.vault().subscribe_task_updates();
+        let commits = AttemptQueue::new(self.vault()).subscribe();
         let server = Arc::clone(self);
-        tokio::spawn(async move { server.publish_board_forever(updates).await })
+        tokio::spawn(async move {
+            tokio::join!(
+                Arc::clone(&server).publish_board_forever(updates),
+                server.publish_reviews_forever(commits),
+            );
+        })
+    }
+
+    /// One pass over the pending reviews first, then one per commit
+    /// announcement. Announcements queued meanwhile, or lost to lag, fold
+    /// into the next pass, which reads the whole pending set fresh. A failed
+    /// pass is logged and retried at the next commit; it never reaches the
+    /// write that opened the review.
+    async fn publish_reviews_forever(
+        self: Arc<Self>,
+        mut commits: tokio::sync::broadcast::Receiver<()>,
+    ) {
+        loop {
+            self.publish_pending_reviews().await;
+            match commits.recv().await {
+                Ok(()) | Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => return,
+            }
+            while matches!(commits.try_recv(), Ok(()) | Err(TryRecvError::Lagged(_))) {}
+        }
+    }
+
+    async fn publish_pending_reviews(&self) {
+        let vault = Arc::clone(self.vault());
+        let pending =
+            tokio::task::spawn_blocking(move || PendingDiaryReview::read_all(&vault)).await;
+        match pending {
+            Ok(Ok(pending)) => {
+                self.mcp_registry
+                    .lock()
+                    .await
+                    .streams_mut()
+                    .publish_diary_reviews(pending);
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "board publisher could not read pending diary reviews; it reads them again at the next commit");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "board publisher review read did not finish"
+                );
+            }
+        }
     }
 
     async fn publish_board_forever(

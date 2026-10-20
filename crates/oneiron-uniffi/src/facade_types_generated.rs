@@ -864,6 +864,12 @@ pub struct WakeEnvelope {
     pub actor_ref: String,
     #[serde(rename = "line")]
     pub line: String,
+    #[serde(
+        rename = "review_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub review_ref: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk::BoardWakeReply`.
@@ -58450,6 +58456,8 @@ pub enum SubscriptionScope {
     Presence,
     #[serde(rename = "counts")]
     Counts,
+    #[serde(rename = "diary_reviews")]
+    DiaryReviews,
 }
 
 /// `oneiron::task_verb::sdk::BoardSubscriptionRequest`.
