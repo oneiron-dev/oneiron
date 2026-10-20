@@ -283,7 +283,7 @@ impl ChangeStore {
         encode_blocks_in_store(new_store, &self.arena, w);
     }
 
-    fn encode_from(
+    pub(crate) fn encode_from(
         &self,
         start_vv: &VersionVector,
         start_frontiers: &Frontiers,

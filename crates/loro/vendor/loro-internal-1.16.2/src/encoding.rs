@@ -1,4 +1,5 @@
 pub(crate) mod arena;
+pub mod checkpoint_parts;
 pub(crate) mod fast_snapshot;
 pub(crate) mod json_schema;
 mod outdated_encode_reordered;

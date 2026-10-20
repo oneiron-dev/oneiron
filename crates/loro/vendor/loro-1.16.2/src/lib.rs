@@ -62,6 +62,16 @@ pub use loro_internal::json::{
     JsonOpContent, JsonSchema, ListOp as JsonListOp, MapOp as JsonMapOp,
     MovableListOp as JsonMovableListOp, TextOp as JsonTextOp, TreeOp as JsonTreeOp,
 };
+/// Root-map checkpoint split and join for checkpoint copies (Oneiron vendor patch).
+///
+/// See [`LoroDoc::export_root_map_checkpoint`] and [`LoroDoc::join_root_map_checkpoint`].
+pub mod checkpoint {
+    pub use loro_internal::encoding::checkpoint_parts::{
+        Atom, AtomId, Capture, CheckpointError, Classify, Field, JoinReport, Joined, OwnerId,
+        Parts, Payload, ShallowRoot, Site, SkelChange, SkelOp, Skeleton, Slot, SlotKind,
+        Unsupported, Winner,
+    };
+}
 pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
@@ -1305,6 +1315,35 @@ impl LoroDoc {
     /// ```
     pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
         self.doc.export(mode)
+    }
+
+    /// Split this document into a payload-free skeleton and one atom per value
+    /// or commit message.
+    ///
+    /// Only a quiescent document whose containers are all root maps named in
+    /// `fixed_roots` is classified, and only when `classify` proves every key
+    /// plain and gives every value and message its holders. Anything else is
+    /// [`checkpoint::Capture::Unclassified`]. The document is not changed.
+    pub fn export_root_map_checkpoint<C: checkpoint::Classify + ?Sized>(
+        &self,
+        fixed_roots: &[&str],
+        classify: &mut C,
+    ) -> checkpoint::Capture {
+        self.doc.export_root_map_checkpoint(fixed_roots, classify)
+    }
+
+    /// Rebuild native snapshot bytes from a skeleton, its opened atoms and the
+    /// ids of the erased ones.
+    ///
+    /// The bytes open with [`LoroDoc::from_snapshot`]. The join proves them
+    /// against the skeleton first and returns
+    /// [`checkpoint::CheckpointError::Diverged`] on any mismatch.
+    pub fn join_root_map_checkpoint(
+        skeleton: &checkpoint::Skeleton,
+        available: &[checkpoint::Atom],
+        erased: &[checkpoint::AtomId],
+    ) -> Result<checkpoint::Joined, checkpoint::CheckpointError> {
+        InnerLoroDoc::join_root_map_checkpoint(skeleton, available, erased)
     }
 
     /// Analyze the container info of the doc
