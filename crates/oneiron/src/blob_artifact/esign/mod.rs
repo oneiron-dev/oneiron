@@ -7,9 +7,13 @@ mod model;
 mod notice_dispatch;
 mod notice_door;
 mod notice_scope;
+mod notice_send_act;
+mod notice_unattended;
 pub use lifecycle::{EsignLifecycleRules, EsignNoticeSwitches};
 pub use notice_dispatch::{ESIGN_NOTICE_ATTEMPT_KIND, EsignNotice};
 pub use notice_door::{EsignNoticeOutcome, EsignNoticesDispatchRequest, EsignNoticesDispatchView};
+pub(crate) use notice_send_act::erase_notice_send_act_actor_in_txn;
+pub use notice_unattended::{EsignNoticeGroup, EsignUnattendedNotices};
 #[cfg(test)]
 mod tests;
 pub use ledger::PROJECT_MEMBERS_ONLY;

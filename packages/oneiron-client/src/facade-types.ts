@@ -6886,8 +6886,10 @@ export type SummaryDerivation = { request: number[]; trigger: number[]; content_
 export type ScopeSummaryMetadata = { purpose: SummaryPurpose; keep: string; derivation: SummaryDerivation }
 /** `oneiron::entity_doc::verbs::TextAnchor` */
 export type TextAnchor = { entity: string; frontier: number[]; start: number[]; end: number[]; quote: string; hash: number[] }
+/** `oneiron::entity_doc::doc_actor::DocActor` */
+export type DocActor = string
 /** `oneiron::entity_doc::document::Birth` */
-export type Birth = { entity: string; actor: string; at: number }
+export type Birth = { entity: string; actor: DocActor; at: number }
 /** `oneiron::scope_summary::public_types::SummaryReadView` */
 export type SummaryReadView = { summary_ref: string; document: string; frontier: number[]; text: string; metadata: ScopeSummaryMetadata; covers: string[]; read_refs: string[]; anchors: TextAnchor[]; birth: Birth }
 /** `oneiron::scope_summary::public_types::SummaryStatusRequest` */
@@ -6904,8 +6906,6 @@ export type SummaryKeepResult = { summary_ref: string; frontier: number[]; keep:
 export type SummaryEdit = { kind: "append_to_section"; section: TextAnchor; text: string } | { kind: "replace_quoted_span"; span: TextAnchor; text: string } | { kind: "insert_after_anchor"; anchor: TextAnchor; text: string }
 /** `oneiron::scope_summary::public_types::SummaryEditRequest` */
 export type SummaryEditRequest = { summary_ref: string; base: number[]; edits: SummaryEdit[] }
-/** `oneiron::entity_doc::doc_actor::DocActor` */
-export type DocActor = string
 /** `oneiron::entity_doc::forks::ForkStatus` */
 export type ForkStatus = "Pending" | "Merged" | "Switched" | "Rejected"
 /** `oneiron::entity_doc::forks::ForkRecord` */

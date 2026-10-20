@@ -19,6 +19,7 @@
 )]
 
 pub(crate) mod instance;
+pub(crate) mod loro;
 pub(crate) mod rows;
 
 use heed::RwTxn;
