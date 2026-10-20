@@ -403,7 +403,7 @@ pub(crate) async fn list_core_conversation_turns(
         "conversation",
     )?;
     let params = query_params(query)?;
-    let read = super::scoped_auth::private_thread_read_for_core_auth(&server.vault, &auth)?;
+    let read = super::scoped_auth::scoped_read_for_core_auth(&server.vault, &auth)?;
     core_list_conversation_turns(
         &server.vault,
         &read,
@@ -521,11 +521,10 @@ pub(crate) async fn get_core_turn(
     require_entity_type(&server, &id, ENTITY_TYPE_TURN, "turn")?;
     // A turn of a private thread the caller does not read, the opener
     // included, answers as one that is not here, before any view of it
-    // (FIX 5652). Its reply strip holds the turn it answers so too.
-    let read = super::scoped_auth::private_thread_read_for_core_auth(&server.vault, &auth)?;
-    if !core_private_threads_admit(&server.vault, &read, &id)? {
-        return Err(ApiError::not_found("turn", Some(&id.to_hex())).into());
-    }
+    // (FIX 5652); below the owner, so does one its lane does not read (FIX
+    // 5938). Its reply strip holds the turn it answers so too.
+    let read = super::scoped_auth::scoped_read_for_core_auth(&server.vault, &auth)?;
+    let lane_row = core_turn_for_read(&server.vault, &read, &id)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Full);
     if params
@@ -537,7 +536,16 @@ pub(crate) async fn get_core_turn(
             crate::error::ApiError::bad_request("unknown TURN projection", Some("with")).into(),
         );
     }
-    let Json(mut item) = project_core_entity(&server.vault, &id, view)?;
+    let Json(mut item) = match lane_row {
+        None => project_core_entity(&server.vault, &id, view)?,
+        Some((entity_type, learned_at, body)) => Json(projection::project_entity_parts(
+            &id,
+            entity_type,
+            learned_at,
+            &body,
+            view,
+        )),
+    };
     if params.with.as_deref() == Some("reply_strip") {
         let strip = server
             .vault
@@ -554,7 +562,10 @@ pub(crate) async fn get_core_turn(
 }
 
 /// The conversation's turns `read`'s caller reads (FIX 5652): a turn of a
-/// private thread it does not read, the opener included, is no row here. It
+/// private thread it does not read, the opener included, is no row here.
+/// Below the owner (`Vault::turn_doors_owner`), the conversation and each
+/// turn are read through the caller's own lane, and so is the body served;
+/// a conversation it does not read is not here (FIX 5938). A turn withheld
 /// is not projected, takes no place on a page, is never a cursor and is not
 /// counted.
 pub(crate) fn core_list_conversation_turns(
@@ -571,6 +582,10 @@ pub(crate) fn core_list_conversation_turns(
         .as_deref()
         .map(|after| parse_entity_id_param(after, "after"))
         .transpose()?;
+    let owner = core_turn_doors_owner(vault, read)?;
+    if !owner && !core_turn_admits(vault, read, false, conversation)? {
+        return Err(ApiError::not_found("conversation", Some(&conversation.to_hex())).into());
+    }
     let (ids, next_cursor) = collect_live_entity_page(
         vault,
         after,
@@ -589,24 +604,115 @@ pub(crate) fn core_list_conversation_turns(
                     core_engine_error("core conversation turns failed", error).into()
                 })
         },
-        |id| core_private_threads_admit(vault, read, id).map_err(Into::into),
+        |id| core_turn_admits(vault, read, owner, id).map_err(Into::into),
     )?;
-    let items = project_entity_ids(vault, ids, view, body_bytes)?;
+    let items = if owner {
+        project_entity_ids(vault, ids, view, body_bytes)?
+    } else {
+        project_lane_turns(vault, read, &ids, view, body_bytes)?
+    };
     let meta = match params.count_mode {
         CountMode::None => ResponseMeta::none(),
         CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
         CountMode::Exact => ResponseMeta::new(
-            count_live_conversation_turns(vault, read, conversation)?,
+            count_live_conversation_turns(vault, read, owner, conversation)?,
             CountMode::Exact,
         ),
     };
     Ok(Json(PaginatedResponse::new(items, next_cursor, meta)))
 }
 
-/// The live turns of `conversation` `read`'s caller reads (FIX 5652).
+/// Whether the TURN routes serve `read`'s caller as the vault owner
+/// (`Vault::turn_doors_owner`, FIX 5938).
+fn core_turn_doors_owner(
+    vault: &oneiron::Vault,
+    read: &oneiron::claim::ScopedRead<'_>,
+) -> Result<bool, ApiError> {
+    vault.turn_doors_owner(read).map_err(|error| {
+        tracing::error!(error = %error, "core TURN owner check failed");
+        core_engine_error("core TURN owner check failed", error)
+    })
+}
+
+/// Whether the TURN routes serve the row `id` to `read`'s caller: the
+/// owner's own read (`owner`) under each private thread alone, as before
+/// (FIX 5652); any other under its lane's whole row admission, private
+/// threads included (FIX 5938).
+fn core_turn_admits(
+    vault: &oneiron::Vault,
+    read: &oneiron::claim::ScopedRead<'_>,
+    owner: bool,
+    id: &oneiron::EntityId,
+) -> Result<bool, ApiError> {
+    if owner {
+        return core_private_threads_admit(vault, read, id);
+    }
+    read.is_entity_readable(id).map_err(|error| {
+        tracing::error!(error = %error, id = %id.to_hex(), "core TURN admission failed");
+        core_engine_error("core TURN admission failed", error)
+    })
+}
+
+/// The turn `id` as the TURN routes serve it to `read`'s caller: `None` for
+/// the owner's own read, which projects the stored row once the turn's
+/// private threads admit it (FIX 5652); for any other caller, the row its
+/// lane reads (FIX 5938). A turn neither reads answers as missing.
+fn core_turn_for_read(
+    vault: &oneiron::Vault,
+    read: &oneiron::claim::ScopedRead<'_>,
+    id: &oneiron::EntityId,
+) -> Result<Option<(u8, u64, Vec<u8>)>, EnvelopedApiError> {
+    let missing = || ApiError::not_found("turn", Some(&id.to_hex()));
+    if core_turn_doors_owner(vault, read)? {
+        if !core_private_threads_admit(vault, read, id)? {
+            return Err(missing().into());
+        }
+        return Ok(None);
+    }
+    let row = read
+        .get_entity_parts_with_receipt(id, None)
+        .map_err(|error| {
+            tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core TURN read failed");
+            core_engine_error("core TURN read failed", error)
+        })?
+        .value;
+    Ok(Some(row.ok_or_else(missing)?))
+}
+
+/// [`project_entity_ids`] below the owner: each body as `read`'s lane reads
+/// it, all in one snapshot, under one budget of `body_bytes`. A row the lane
+/// withholds there is left out.
+fn project_lane_turns(
+    vault: &oneiron::Vault,
+    read: &oneiron::claim::ScopedRead<'_>,
+    ids: &[oneiron::EntityId],
+    view: View,
+    body_bytes: usize,
+) -> Result<Vec<Value>, ApiError> {
+    let rows = read
+        .get_entities_parts_with_receipt(ids, None)
+        .map_err(|error| {
+            tracing::error!(kind = ?error.kind(), "core projection failed");
+            core_engine_error("core projection failed", error)
+        })?
+        .value;
+    let mut bodies = projection::BodyBudget::new(vault, body_bytes);
+    Ok(ids
+        .iter()
+        .zip(rows)
+        .filter_map(|(id, row)| {
+            let (entity_type, learned_at, body) = row?;
+            Some(bodies.project(id, entity_type, learned_at, &body, view))
+        })
+        .collect())
+}
+
+/// The live turns of `conversation` `read`'s caller reads (FIX 5652), each
+/// judged as [`core_turn_admits`] judges a page's (FIX 5938).
 pub(crate) fn count_live_conversation_turns(
     vault: &oneiron::Vault,
     read: &oneiron::claim::ScopedRead<'_>,
+    owner: bool,
     conversation: &oneiron::EntityId,
 ) -> Result<u64, EnvelopedApiError> {
     let mut after = None;
@@ -626,7 +732,7 @@ pub(crate) fn count_live_conversation_turns(
             })?;
         for id in &page.ids {
             if !is_deleted_shell_for_core_list(vault, id)?
-                && core_private_threads_admit(vault, read, id)?
+                && core_turn_admits(vault, read, owner, id)?
             {
                 total = total.saturating_add(1);
             }

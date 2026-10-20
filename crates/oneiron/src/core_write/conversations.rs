@@ -11,8 +11,11 @@ use super::shape::{
     AnnouncementAuthority, CoreWriteTextField, core_body_for_write, core_text_pairs,
     core_write_times, entity_id, stage_core_put, text_pairs, write_id,
 };
+use crate::authority::VerifiedSlip;
+use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::conversation::ConversationBody;
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::edge::EdgeActorClass;
+use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault, WriteActor};
 
@@ -140,17 +143,86 @@ impl Vault {
     }
 
     /// Puts one TURN, its text index and its checked ChildOf edge to the
-    /// conversation, in one batch. It wakes nothing: the served door that
-    /// calls it lands the turn. `announcement` is the writer's, which its
-    /// caller resolved: only the owner's TURN may be a platform announcement.
+    /// conversation, in one batch, for `writer`'s caller. It wakes nothing:
+    /// the served door that calls it lands the turn. `announcement` is the
+    /// writer's, which its caller resolved: only the owner's TURN may be a
+    /// platform announcement. A caller the TURN doors do not serve as the
+    /// owner ([`Vault::turn_doors_owner`]) writes only into a conversation
+    /// its own lane reads, judged in the batch's own writer (FIX 5939); the
+    /// owner writes as before. Such a TURN sits in no private thread: its
+    /// thread keys are refused here, and its one edge is to the
+    /// conversation, which no thread holds.
     /// # Errors
-    /// A target that is no conversation, a bad id, interval or body, or
-    /// the batch's ChildOf refusal.
+    /// A target that is no conversation, a bad id, interval or body, a
+    /// conversation outside `writer`'s read, or the batch's ChildOf refusal.
     pub fn write_core_conversation_turn(
         &self,
         input: &ConversationTurnCreateInput,
+        writer: &ScopedRead<'_>,
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
+        self.write_core_conversation_turn_admitted(input, announcement, |txn, conversation| {
+            Ok(self.turn_doors_owner_in(writer, txn)?
+                || writer.is_entity_readable_in(txn, conversation)?)
+        })?
+        .ok_or_else(|| {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the conversation is outside this credential's read",
+                &["Write the turn into a conversation this credential reads."],
+            )
+        })
+    }
+
+    /// [`Self::write_core_conversation_turn`] for the owner's own credential
+    /// that grants no read (FIX 6066, Engine 10-20): it writes as the owner
+    /// while `proof` is the live vault owner's own, judged in the batch's own
+    /// writer. `None`, with nothing written, for any other credential.
+    /// # Errors
+    /// As [`Self::write_core_conversation_turn`], or a broken owner check.
+    pub fn write_core_conversation_turn_as_owner(
+        &self,
+        input: &ConversationTurnCreateInput,
+        proof: &VerifiedSlip,
+        announcement: AnnouncementAuthority,
+    ) -> MemoryResult<Option<CoreEntityWriteReceipt>> {
+        self.write_core_conversation_turn_admitted(input, announcement, |txn, _| {
+            self.slip_is_owner_in(txn, proof)
+        })
+    }
+
+    /// Whether `proof` is the vault owner's own credential in `txn`, by the
+    /// owner rule a credential's read key follows
+    /// ([`Self::credential_read_key_in_txn`]): a person's, untransferred,
+    /// live, and held by the owner the binding proves.
+    fn slip_is_owner_in(&self, txn: &heed::RoTxn<'_>, proof: &VerifiedSlip) -> crate::Result<bool> {
+        let claims = proof.claims();
+        if !matches!(claims.actor_class.as_deref(), None | Some("human")) || proof.is_transferred()
+        {
+            return Ok(false);
+        }
+        let Ok(holder) = EntityId::from_hex(&claims.holder_ref) else {
+            return Ok(false);
+        };
+        let owner =
+            crate::memory::actor_is_vault_owner_in_txn(self, txn, holder, EdgeActorClass::Human)
+                .map_err(|refusal| {
+                    crate::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
+                        refusal,
+                    )))
+                })?;
+        Ok(owner && self.capability_slip_is_live_in_txn(txn, proof)?)
+    }
+
+    /// One TURN under a conversation, written only when `admits` passes the
+    /// conversation in the batch's own writer; `None`, nothing written,
+    /// when it does not.
+    fn write_core_conversation_turn_admitted(
+        &self,
+        input: &ConversationTurnCreateInput,
+        announcement: AnnouncementAuthority,
+        admits: impl FnOnce(&heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>,
+    ) -> MemoryResult<Option<CoreEntityWriteReceipt>> {
         let conversation = entity_id(&input.conversation, "conversation")?;
         match self.get_entity_type(&conversation)? {
             Some(ENTITY_TYPE_CONVERSATION) => {}
@@ -176,7 +248,8 @@ impl Vault {
         }
         let id = write_id(input.id.as_deref())?;
         let times = core_write_times(input.occurred_start, input.occurred_end, input.learned_at)?;
-        stage_core_put(
+        let outside = std::cell::Cell::new(false);
+        let committed = stage_core_put(
             self.batch(),
             &id,
             ENTITY_TYPE_TURN,
@@ -186,13 +259,23 @@ impl Vault {
             input.text.as_deref().map(text_pairs),
         )?
         .edge_checked(&id, &conversation, 1.0)
-        .commit()?;
-        Ok(CoreEntityWriteReceipt::new(
+        .commit_with_target_guard(|txn| {
+            if admits(txn, &conversation)? {
+                return Ok(());
+            }
+            outside.set(true);
+            Err(crate::Error::EntityNotFound)
+        });
+        if outside.get() {
+            return Ok(None);
+        }
+        committed?;
+        Ok(Some(CoreEntityWriteReceipt::new(
             id,
             ENTITY_TYPE_TURN,
             times.learned_at,
             core_body_for_write(ENTITY_TYPE_TURN, &input.body, announcement).into_owned(),
-        ))
+        )))
     }
 }
 
@@ -210,15 +293,17 @@ impl Memory<'_> {
     }
 
     /// `vault.conversations.turns.create`: one TURN under a conversation,
-    /// a platform announcement only while the bound actor is a live owner.
+    /// held to this handle's own read lane (FIX 5939), a platform
+    /// announcement only while the bound actor is a live owner.
     /// # Errors
     /// As [`Vault::write_core_conversation_turn`].
     pub fn conversations_turns_create(
         &self,
         input: &ConversationTurnCreateInput,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
         self.vault()
-            .write_core_conversation_turn(input, announcement)
+            .write_core_conversation_turn(input, &lane, announcement)
     }
 }
