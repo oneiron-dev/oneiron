@@ -151,15 +151,16 @@ pub(crate) fn off_room_reader_clearance_in(
     members: &[EntityId],
     caller: EntityId,
 ) -> crate::Result<Option<Scope>> {
-    if members.is_empty() || members.contains(&caller) {
-        return Ok(None);
-    }
-    let named: std::collections::BTreeSet<_> = members.iter().copied().collect();
-    if crate::workspace_roster::names_actor_in(vault, txn, &named, caller)?
+    if members.is_empty()
+        || members.contains(&caller)
         || !crate::workspace_roster::privileged_private_thread_reader_in(
             vault, txn, room, thread, caller,
         )?
     {
+        return Ok(None);
+    }
+    let named: std::collections::BTreeSet<_> = members.iter().copied().collect();
+    if crate::workspace_roster::names_actor_in(vault, txn, &named, caller)? {
         return Ok(None);
     }
     match OFF_ROOM_PRIVILEGED_READER_CLEARANCE {
