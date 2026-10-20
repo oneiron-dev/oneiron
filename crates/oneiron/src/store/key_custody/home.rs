@@ -7,9 +7,10 @@
 //! (`oneiron-custody/<namespace hex>.<vault hex>/{head, log/f<seq>}`), so no
 //! home image or backup ever holds a frozen head. The commit checks the
 //! staged bytes against the head object id and position the machine named,
-//! refuses to replace a newer position (another writer moved it), switches
-//! the head in one rename, removes every superseded head, temporary and
-//! stale stage, lists the directory again, and persists its ack under
+//! refuses to replace a newer position (another writer moved it, or a newer
+//! commit: one commit of a lineage at a time, FIX 6394), switches the head
+//! in one rename, removes every superseded head, temporary and stale stage,
+//! lists the directory again, and persists its ack under
 //! `acks/<namespace hex>.<vault hex>` before it replies. A commit retried
 //! after a lost reply answers the ack it already gave. Nothing here reads a
 //! key: heads and frames are sealed bytes the home cannot open.
@@ -28,6 +29,7 @@ use super::files::{open_dir, read_whole, replace_file};
 use super::folder::{FolderTarget, STAGE_PREFIX, held_position, ship_frame, switch_head};
 use super::head::head_position;
 use super::log::CustodyPosition;
+use super::platform;
 use super::protocol::{
     ACK_VERSION, AckOperation, AckPosition, AckRecord, EvidenceKind, Lineage, ResidenceCommit,
     TargetSpec, hex, operation_id,
@@ -141,6 +143,10 @@ impl Store {
         let acks = root.join(ACKS);
         open_dir(&acks, true, None)?;
         let ack_name = lineage_name(lineage);
+        // One commit of the lineage at a time, from the ack check through the
+        // head switch and the ack it persists: an older commit never renames
+        // its head over a newer one (FIX 6394).
+        let _lock = platform::lock_at(&acks.join(format!("{ack_name}.lock")))?;
         let operation = hex(&commit.operation_id);
         if let Some(bytes) = read_whole(&acks.join(&ack_name))? {
             let given: AckRecord =

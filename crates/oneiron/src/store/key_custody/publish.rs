@@ -16,7 +16,10 @@
 //! is ever waited on by a save or a backup: a step that does not go through
 //! stays pending by name, and the next pass retries. Each pass records where
 //! it got (`<journal>/status`, no secret in it), which the owner's status
-//! read reports.
+//! read reports. A pass older than a head a newer pass already published at
+//! one of its targets (two passes race; FIX 6394) stops at its targets: that
+//! target answers covered, and the pass acks nothing for its older position,
+//! moves no watermark, advances no anchor and records no status.
 
 use crate::error::Result;
 use crate::store::Store;
@@ -282,7 +285,8 @@ impl Store {
     /// `outboxes` (also in `given`) has its ack taken in first (FIX 5899).
     /// What happens on the way is the pass's state, recorded for the status
     /// read, never a refusal of anything; only a fault in the local custody
-    /// itself is an error.
+    /// itself is an error. A pass a newer one covered records nothing and
+    /// answers the status read (FIX 6394).
     pub(crate) fn publish_custody(
         &self,
         recipients: &CustodyRecipients,
@@ -299,8 +303,12 @@ impl Store {
             return Ok(Publication::nothing());
         }
         let journal = custody.journal()?;
-        let mut publication =
-            self.publish_pass(custody, &journal, recipients, given, outboxes, anchor)?;
+        let Some(mut publication) =
+            self.publish_pass(custody, &journal, recipients, given, outboxes, anchor)?
+        else {
+            // A newer pass covered this one and records its own status.
+            return self.custody_publication();
+        };
         if publication.state != PublicationState::Nothing {
             publication.anchor_unset = anchor.is_none();
             replace_file(journal.dir(), STATUS, &encode_status(&publication))?;
@@ -308,6 +316,9 @@ impl Store {
         Ok(publication)
     }
 
+    /// The pass [`Self::publish_custody`] records; `None` when a target held
+    /// a newer head of this log than the pass sealed: a newer pass covers it
+    /// (FIX 6394).
     fn publish_pass(
         &self,
         custody: LocalCustody<'_>,
@@ -316,9 +327,9 @@ impl Store {
         given: &[&dyn CustodyTarget],
         outboxes: &[&OutboxTarget],
         anchor: Option<&dyn AnchorStore>,
-    ) -> Result<Publication> {
+    ) -> Result<Option<Publication>> {
         if custody_empty(self, custody, journal)? {
-            return Ok(Publication::nothing());
+            return Ok(Some(Publication::nothing()));
         }
         // Every folder member an earlier pass registered is retried at its
         // own folder, whatever the configuration names now.
@@ -363,9 +374,9 @@ impl Store {
             specs.iter().any(|spec| due(spec.id(), position))
         })?;
         let (position, batch) = match sealed {
-            Sealed::Nothing => return Ok(Publication::nothing()),
+            Sealed::Nothing => return Ok(Some(Publication::nothing())),
             Sealed::Failed(position, detail) => {
-                return Ok(Publication {
+                return Ok(Some(Publication {
                     state: PublicationState::TargetPending,
                     local: Some(position),
                     published: least_acked(&set, &acks, &position),
@@ -373,7 +384,7 @@ impl Store {
                     detail: Some(detail),
                     data_key_wrapped: wrapped_before,
                     anchor_unset: anchor.is_none(),
-                });
+                }));
             }
             Sealed::Current(position) => (position, None),
             Sealed::Batch(batch) => (batch.position(), Some(batch)),
@@ -396,13 +407,13 @@ impl Store {
             None => None,
             Some(Ok(current)) => current,
             Some(Err(error)) => {
-                return Ok(pending(
+                return Ok(Some(pending(
                     PublicationState::AnchorPending,
                     least_acked(&set, &acks, &position),
                     None,
                     error.to_string(),
                     wrapped_before,
-                ));
+                )));
             }
         };
         let anchored = current
@@ -410,14 +421,17 @@ impl Store {
             .map(|record| verified_position(record, &control.anchor_key()))
             .transpose()?;
         if anchored.is_some_and(|anchored| anchored.epoch > position.epoch) {
-            return Ok(pending(
+            return Ok(Some(pending(
                 PublicationState::Fenced,
                 least_acked(&set, &acks, &position),
                 anchored,
                 "another install took this vault's custody over in a disaster recovery".into(),
                 wrapped_before,
-            ));
+            )));
         }
+        // A target holding a newer head of this log than the batch: a newer
+        // pass published it there, and that pass acks it (FIX 6394).
+        let mut covered = false;
         if let Some(batch) = &batch {
             for target in &targets {
                 let spec = target.spec();
@@ -432,6 +446,10 @@ impl Store {
                                 code: PendingCode::Failed,
                                 detail: error.to_string(),
                             }),
+                        Ok(TargetPublication::Covered) => {
+                            covered = true;
+                            Ok(())
+                        }
                         Ok(TargetPublication::Pending(pending)) => Err(pending),
                         Err(error) => Err(TargetPending {
                             code: PendingCode::Failed,
@@ -444,6 +462,12 @@ impl Store {
             }
         }
         drop(batch);
+        // This pass is older than a head already published: it reports no
+        // ack of its position as current, moves no watermark and advances
+        // no anchor. The newer pass does all three.
+        if covered {
+            return Ok(None);
+        }
         let set = journal.required_set()?;
         let acks = journal.acks()?;
         let published = least_acked(&set, &acks, &position);
@@ -474,7 +498,7 @@ impl Store {
         let unanchored = anchor.is_none() && !CUSTODY_COMPLETION_NEEDS_ANCHOR;
         if !behind.is_empty() {
             complete(if unanchored { published } else { anchored })?;
-            return Ok(pending(
+            return Ok(Some(pending(
                 PublicationState::TargetPending,
                 published,
                 anchored,
@@ -485,19 +509,19 @@ impl Store {
                     position.seq
                 ),
                 wrapped,
-            ));
+            )));
         }
         let Some(anchor) = anchor else {
             if unanchored {
                 complete(Some(position))?;
             }
-            return Ok(pending(
+            return Ok(Some(pending(
                 PublicationState::AnchorPending,
                 published,
                 None,
                 ANCHOR_UNSET.into(),
                 wrapped,
-            ));
+            )));
         };
         let done = |anchored| Publication {
             state: PublicationState::Published,
@@ -510,7 +534,7 @@ impl Store {
         };
         if anchored == Some(position) {
             complete(Some(position))?;
-            return Ok(done(position));
+            return Ok(Some(done(position)));
         }
         let expected = current
             .as_deref()
@@ -518,10 +542,10 @@ impl Store {
         let advanced = anchor.advance(expected, &anchor_record(&position, &control));
         if let Ok(AnchorAdvance::Advanced) = advanced {
             complete(Some(position))?;
-            return Ok(done(position));
+            return Ok(Some(done(position)));
         }
         complete(anchored)?;
-        Ok(pending(
+        Ok(Some(pending(
             PublicationState::AnchorPending,
             published,
             anchored,
@@ -530,7 +554,7 @@ impl Store {
                 Ok(_) => "the custody anchor moved during this pass; the next pass retries".into(),
             },
             wrapped,
-        ))
+        )))
     }
 
     /// Where this vault's custody publication stands, read without

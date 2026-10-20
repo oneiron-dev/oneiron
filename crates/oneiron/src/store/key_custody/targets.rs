@@ -6,7 +6,8 @@
 //!   is added before its first exposure and the revision rises; none is ever
 //!   dropped by a pass, a config change or an outage (no silent removal).
 //! - `acks/a.<target hex>`: the newest accepted ack per member;
-//!   `acks/p.<target hex>`: why it is pending, sanitized, with its time.
+//!   `acks/p.<target hex>`: why it is pending, sanitized, with its time;
+//!   `acks/l.<target hex>`: its publish lock (FIX 6394).
 //! - `obligations/r.<tag>.<item>.<through>.<cause>`: one per retirement
 //!   handed off by the finisher, naming its Retire frame's position;
 //!   `obligations/t.<epoch>`: the retirements a disaster recovery's landing
@@ -246,6 +247,14 @@ impl Journal {
         let lock = platform::secure(&mut options).open(self.dir().join(LOCK))?;
         platform::lock_exclusive(&lock)?;
         Ok(lock)
+    }
+
+    /// Holds `target`'s publish lock for the life of the returned file (FIX
+    /// 6394): one pass at a time reads the head the target holds, checks
+    /// that its batch extends it and switches its head in. One per member,
+    /// apart from the journal's own lock: a slow target holds up no other.
+    pub(super) fn publish_lock(&self, target: &TargetId) -> Result<File> {
+        platform::lock_at(&self.sub(ACKS)?.join(target_file("l", target)))
     }
 
     /// The required set; empty before the first registration.
