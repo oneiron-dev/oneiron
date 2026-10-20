@@ -3326,7 +3326,7 @@ class Oneiron:
         def create(self, spec: Facade.EsignCreateRequest) -> Facade.EsignDraftView:
             """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""
         def get(self, spec: Facade.EsignGetRequest) -> Facade.EsignDocumentView:
-            """Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail."""
+            """Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail, with its delivery receipts. A trail that does not read answers trail unreadable with its error, its receipts still listed."""
         @property
         def links(self) -> "Oneiron._VaultEsignLinksVerbs": ...
         def send_for_signature(self, spec: Facade.EsignDispatchRequest) -> Facade.EsignDispatchView:

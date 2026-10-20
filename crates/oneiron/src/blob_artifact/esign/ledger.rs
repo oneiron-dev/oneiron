@@ -181,9 +181,23 @@ pub(super) fn read_in(
     txn: &heed::RoTxn<'_>,
     document: EntityId,
 ) -> Result<(EsignState, Vec<EsignEventRow>, bool)> {
-    let (rows, held) = chain_in(vault, txn, document)?;
-    let state = fold(&rows)?.ok_or_else(|| invalid("unknown signing document"))?;
-    Ok((state, rows, held))
+    trail_read_in(vault, txn, document)?
+}
+/// [`read_in`], the store's own failure (the outer error) apart from a trail
+/// that does not read or folds to no document (the inner one, kept as it
+/// was): the one chain and fold classification the owner's view and a
+/// queued delivery both read (FIX 6481).
+pub(super) fn trail_read_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+) -> Result<Result<(EsignState, Vec<EsignEventRow>, bool)>> {
+    Ok(
+        chain_read_in(vault, txn, document)?.and_then(|(rows, held)| {
+            let state = fold(&rows)?.ok_or_else(|| invalid("unknown signing document"))?;
+            Ok((state, rows, held))
+        }),
+    )
 }
 /// What a queued delivery reads of `document` (FIX 6423): the state its
 /// whole chain folds to and whether an event in it awaits its owner's
@@ -195,10 +209,9 @@ pub(super) fn delivery_chain_in(
     txn: &heed::RoTxn<'_>,
     document: EntityId,
 ) -> Result<Option<(EsignState, bool)>> {
-    let Ok((rows, held)) = chain_read_in(vault, txn, document)? else {
-        return Ok(None);
-    };
-    Ok(fold(&rows).ok().flatten().map(|state| (state, held)))
+    Ok(trail_read_in(vault, txn, document)?
+        .ok()
+        .map(|(state, _, held)| (state, held)))
 }
 /// Whether an event of `document` awaits its owner's answer.
 pub(super) fn held_in(vault: &Vault, txn: &heed::RoTxn<'_>, document: EntityId) -> Result<bool> {
