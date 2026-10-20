@@ -551,7 +551,9 @@ pub(crate) fn erase_held_batch_actor_in_txn(
     };
     match settled {
         Ok(false) => HELD.put(&vault.store, wtxn, &(), &held.erased())?,
-        Ok(true) => HELD.delete(&vault.store, wtxn, &())?,
+        Ok(true) => {
+            HELD.delete(&vault.store, wtxn, &())?;
+        }
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), "an erased actor's held failure-signal batch went unsettled");
             HELD.delete(&vault.store, wtxn, &())?;
