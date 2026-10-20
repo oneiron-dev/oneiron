@@ -277,6 +277,28 @@ pub(super) fn upsert_scanned_gap_queue(
     })
 }
 
+/// The gap-scan attempt's body: [`scan_with_texts`] over `working_set`,
+/// then [`upsert_scanned_gap_queue`] with the texts it read. A user turn
+/// whose tagged MESSAGE is away from this replica (OF-534), at the scan or
+/// at the write's recheck, defers the whole scan until the promotion brings
+/// it back (FIX 3861): no gap of the set is written from part of it, and
+/// none is left to decay for it.
+pub(super) fn run_gap_scan(
+    vault: &Vault,
+    working_set: &[WorkingSetTurn],
+    now_ms: u64,
+) -> Result<crate::dreamer_wake::DreamerAttemptExecution> {
+    let scanned = scan_with_texts(vault, working_set, now_ms)
+        .and_then(|(gaps, texts)| upsert_scanned_gap_queue(vault, gaps, &texts, now_ms));
+    match scanned {
+        Ok(_) => Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed { completed_units: 0 }),
+        Err(error) if super::residency::waits_on_residency(&error) => {
+            Ok(super::residency::residency_deferral(now_ms, 0))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// A real private projection namespace. Partition identity includes the world
 /// and facet, so a branch can neither refresh nor decay a different branch.
 pub(super) fn branch_gap_projection(

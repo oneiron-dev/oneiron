@@ -53,6 +53,7 @@ mod persistence;
 mod person_about;
 mod provenance;
 pub(crate) mod redirty;
+mod residency;
 mod resident_dream;
 mod resident_for_human;
 mod resident_health;
@@ -97,6 +98,7 @@ pub(crate) use provenance::{
     decode_verified_citations, decode_verified_locators,
     encode_consolidation_evidence_with_locators, kept_decisions_value,
 };
+pub(crate) use residency::waits_on_residency;
 pub use resident_dream::{
     RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS, ResidentDreamModel, ResidentDreamPartial,
     ResidentDreamProgress, resident_of_dream_input, run_resident_dream,

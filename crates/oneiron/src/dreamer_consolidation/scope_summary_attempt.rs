@@ -5,6 +5,7 @@
 //! summary instruction, and lands the body under the Dreamer's byline. The
 //! instruction is host configuration: the engine ships no summary prompt.
 
+use super::residency::{residency_deferral, waits_on_residency};
 use super::resources::document_version;
 use super::step_charge::StepChargeTally;
 use super::support::{DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE, invalid_consolidation};
@@ -100,9 +101,15 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         if ctx.vault.composed_scope_summary_landed(attempt_id)? {
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
-        let (plan, evidence) = ctx
-            .vault
-            .plan_scope_summary(&attempt.status.payload.input)?;
+        // A source TURN partly away from this replica (OF-534) is owed: the
+        // declaration waits, queued, for the promotion (FIX 3861).
+        let (plan, evidence) = match ctx.vault.plan_scope_summary(&attempt.status.payload.input) {
+            Ok(planned) => planned,
+            Err(error) if waits_on_residency(&error) => {
+                return Ok(residency_deferral(ctx.now_ms, 0));
+            }
+            Err(error) => return Err(error),
+        };
         // FIX 4465 B: an epoch keyframe is its writer's own words, an agent's
         // first person when it wrote as itself. A third-person summary is
         // composed beside it under the Dreamer's byline and never takes it
@@ -130,15 +137,20 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let memo = plan.composition_memo(&evidence, &params_hash)?;
         // The same composition already stands: no second call, no second
         // SUMMARY; only the landing this declaration asks for.
-        if ctx.vault.reuse_composed_scope_summary(
+        match ctx.vault.reuse_composed_scope_summary(
             attempt_id,
             &plan,
             &evidence,
             &first,
             &memo,
             &params_hash,
-        )? {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        ) {
+            Ok(true) => return Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+            Ok(false) => {}
+            Err(error) if waits_on_residency(&error) => {
+                return Ok(residency_deferral(ctx.now_ms, 0));
+            }
+            Err(error) => return Err(error),
         }
         let locality = self
             .inference
@@ -281,6 +293,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 completed_units: charges.units,
             }),
             Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
+            // A source demoted while the model wrote waits for its promotion,
+            // the paid call settled, as a moved scope composes again.
+            Err(error) if waits_on_residency(&error) => {
+                Ok(residency_deferral(ctx.now_ms, charges.units))
+            }
             // A refusal at the landing door (the requester's gate, a landing
             // turn gone) is this declaration's end; the paid call still settles.
             Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),

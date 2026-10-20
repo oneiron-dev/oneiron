@@ -576,6 +576,11 @@ impl AiHost {
         // A second bind finds the first; the timer still drives the pump,
         // and the first bind's watch stands.
         let _ = self.question_timer.set(Arc::downgrade(server));
+        // The Dreamer's program runtime binds through the bound server from
+        // now on: a program held for want of it resumes (FIX 5874).
+        if let Some(bound) = self.question_timer.get().and_then(std::sync::Weak::upgrade) {
+            turn_program_host::resume_held_for_host(&bound);
+        }
         let _ = self.dreamer_fallback.get_or_init(|| {
             question_timer::DreamerFallback::spawn(
                 server,

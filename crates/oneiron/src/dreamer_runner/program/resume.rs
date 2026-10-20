@@ -14,14 +14,24 @@
 //! it, and a hold for want of a runtime, a moved pin, a gone actor, a run
 //! that no longer lines up with its checkpoint or one that ended unfinished
 //! stays held.
+//!
+//! The change that returns a hold's cause resumes it too, not only the next
+//! selection (FIX 5874, FIX 5875): a commit that stores an authority row
+//! rechecks each lapsed-authority hold, and a host that binds its program
+//! runtime resumes each hold for want of it whose waking actor it now lends
+//! to. The resumed try binds its authority, its pin and its host again at
+//! its entry, and is held again for whatever still holds it.
 
-use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::code_run::{WaitKey, program_resume_head_in_txn, wait_delivered_in_txn};
-use crate::dreamer_runner::{DreamerParkCause, DreamerRunnerStore, ParkDreamerAttempt};
+use crate::dreamer_runner::{
+    DreamerParkCause, DreamerParkedAttemptRecord, DreamerRunnerStore, ParkDreamerAttempt,
+};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::{EdgeActorClass, Vault, WriteActor};
 
+use super::super::store::PARKED;
 use super::authority::TurnProgramBound;
 use super::run::{STEP, StepState, actor_gone_in_txn, turn_program_code_run};
 use super::{ATTEMPT, PROGRAM_PARK_OWNER};
@@ -170,6 +180,138 @@ impl DreamerRunnerStore<'_> {
             );
         }
     }
+}
+
+impl DreamerRunnerStore<'_> {
+    /// Resumes, each as the same try, the programs the runtime holds for a
+    /// cause that has returned, on the change itself rather than at the next
+    /// program admission (FIX 5874, FIX 5875): a lapsed authority that
+    /// stands again with its pin, and, where `host` says this host now lends
+    /// the waking actor's programs, a want of a host. Each hold is judged
+    /// again in the writer; the resumed try binds its authority, its pin and
+    /// its host again at its entry, and is held again for whatever still
+    /// holds it. No other park is touched, nothing is timed and nothing is
+    /// refused. Returns how many it resumed.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors reading the holds or committing their resumes. A hold
+    /// whose own check or resume fails is logged and left as it is.
+    pub fn resume_returned_program_holds(
+        &self,
+        host: Option<&dyn Fn(WriteActor) -> bool>,
+        now: u64,
+    ) -> Result<usize> {
+        // Read-only first: a vault with no returned hold opens no write.
+        let due: Vec<AttemptId> = {
+            let rtxn = self.vault.store.env.read_txn()?;
+            PARKED
+                .scan(&self.vault.store, &rtxn)?
+                .into_iter()
+                .filter(|(attempt, park)| returned_hold(self.vault, &rtxn, *attempt, park, host))
+                .map(|(attempt, _)| attempt)
+                .collect()
+        };
+        if due.is_empty() {
+            return Ok(0);
+        }
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let mut resumed = 0_usize;
+        for attempt in due {
+            let Some(park) = PARKED.get(&self.vault.store, &wtxn, &attempt)? else {
+                continue;
+            };
+            if !returned_hold(self.vault, &wtxn, attempt, &park, host) {
+                continue;
+            }
+            let one = (|| -> Result<bool> {
+                let mut savepoint = self.vault.store.env.nested_write_txn(&mut wtxn)?;
+                let cleared = self
+                    .resume_parked_in_txn(&mut savepoint, attempt, PROGRAM_PARK_OWNER, now)?
+                    .is_some();
+                savepoint.commit()?;
+                Ok(cleared)
+            })();
+            match one {
+                Ok(true) => resumed += 1,
+                Ok(false) => {}
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    ?attempt,
+                    "a held turn program was not resumed; its hold stands"
+                ),
+            }
+        }
+        wtxn.commit()?;
+        if resumed > 0 {
+            self.vault.store.notify_attempt_observers();
+            // The deadline lane arms the queued tries at once.
+            self.vault.store.notify_proactivity_changes();
+        }
+        Ok(resumed)
+    }
+}
+
+impl Vault {
+    /// After a commit that stored an authority row (`noted`), resumes each
+    /// program held for a lapsed authority that stands again (FIX 5875).
+    /// Best-effort: a failure is logged, and the program kind's admission
+    /// chain still judges each hold before its next selection.
+    pub(crate) fn resume_turn_programs_after_authority_ingest(&self, noted: bool) {
+        if !noted {
+            return;
+        }
+        let resumed = DreamerRunnerStore::new(self)
+            .resume_returned_program_holds(None, self.now_recorded_at());
+        if let Err(error) = resumed {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "held turn programs were not rechecked after an authority ingest; the next \
+                 program admission rechecks them"
+            );
+        }
+    }
+}
+
+/// Whether `park` is the program runtime's own hold of `attempt` whose cause
+/// has returned at `txn`'s revision: its lapsed authority binds again, or,
+/// with `host`, a host now lends its waking actor's programs. A hold whose
+/// check fails is logged and read as not returned.
+fn returned_hold(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+    park: &DreamerParkedAttemptRecord,
+    host: Option<&dyn Fn(WriteActor) -> bool>,
+) -> bool {
+    if park.park_owner != PROGRAM_PARK_OWNER || park.cause != DreamerParkCause::Other {
+        return false;
+    }
+    let judged = match ProgramHold::of_reason(&park.reason) {
+        Some(ProgramHold::AuthorityLapsed) => vault
+            .bind_turn_program_in_txn(txn, attempt)
+            .map(|bound| matches!(bound, TurnProgramBound::Bound(_))),
+        // The host judges only whether it lends the actor's programs at all;
+        // the entry binds the authority and the run itself.
+        Some(ProgramHold::Unbound) => match host {
+            Some(lends) => ATTEMPT.get(vault, txn, &attempt).map(|stamp| {
+                stamp.is_some_and(|stamp| {
+                    EdgeActorClass::try_from_u8(stamp.actor_class)
+                        .is_some_and(|class| lends(WriteActor::new(stamp.actor, class)))
+                })
+            }),
+            None => Ok(false),
+        },
+        _ => Ok(false),
+    };
+    judged.unwrap_or_else(|error| {
+        tracing::warn!(
+            kind = ?error.kind(),
+            ?attempt,
+            "a held turn program's cause was not judged; its hold stands"
+        );
+        false
+    })
 }
 
 /// Whether `hold`'s condition is met for `attempt` at `txn`'s revision.

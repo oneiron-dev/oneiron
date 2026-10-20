@@ -170,7 +170,17 @@ pub(super) fn register_in_txn(
     let request = encode(&normalized)?;
     let key = *blake3::hash(&request).as_bytes();
     let current_input = declaration(&decode_request(input)?, &purpose.id, Some(summary));
-    let observed = observation(vault, txn, &current_input)?;
+    let observed = match observation(vault, txn, &current_input) {
+        Ok(observed) => observed,
+        // A source TURN partly away from this replica (OF-534) has no
+        // observation yet (FIX 3861): the projection takes the input's own
+        // hash, as an unreadable scope does at the commit boundary, so the
+        // first commit after the promotion that reads it re-derives.
+        Err(error) if crate::dreamer_consolidation::waits_on_residency(&error) => {
+            *blake3::hash(&encode(&current_input)?).as_bytes()
+        }
+        Err(error) => return Err(error),
+    };
     PROJECTION.put(
         &vault.store,
         txn,
