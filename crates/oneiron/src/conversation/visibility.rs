@@ -79,8 +79,7 @@ impl AudienceCache {
     /// (FIX 6487): a session's composed view, so a source or ancestor a
     /// stretch staged in its overlay meets the same window, and an overlay
     /// row never stands in for the base one. An epoch's sources resolve so
-    /// too (FIX 6548), and a revision whose sources do not resolve there is
-    /// one whose sources cannot be read, never its own words.
+    /// too (FIX 6548); one whose sources resolve nowhere reads as before.
     pub(crate) fn own_entry_readable_raw(
         &self,
         vault: &Vault,
@@ -115,10 +114,8 @@ impl AudienceCache {
             let mut sources =
                 match crate::scope_summary::word_sources_through_in(vault, dbs, txn, &id, &bytes) {
                     Ok(crate::scope_summary::WordSources::From(sources)) => sources,
-                    Ok(crate::scope_summary::WordSources::Own) => Vec::new(),
-                    Ok(crate::scope_summary::WordSources::Unresolved) | Err(_) => {
-                        return Ok(false);
-                    }
+                    Ok(_) => Vec::new(),
+                    Err(_) => return Ok(false),
                 };
             if h.entity_type == ENTITY_TYPE_CLAIM
                 && let Some(body) = bytes.get(ENTITY_METADATA_HEADER_LEN..)
