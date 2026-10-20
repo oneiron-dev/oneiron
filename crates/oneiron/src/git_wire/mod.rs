@@ -40,6 +40,7 @@ mod objects;
 mod operation;
 mod plan;
 mod process;
+mod reachable_blobs;
 mod record;
 mod repo;
 mod repository_profile;

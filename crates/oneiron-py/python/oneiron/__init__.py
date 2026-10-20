@@ -3577,7 +3577,7 @@ class Oneiron:
             """Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_clear(json.dumps(spec))))
         def push(self, spec):
-            """Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client."""
+            """Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_push(json.dumps(spec))))
     class _VaultCodeOriginAuthorityVerbs:
         def __init__(self, client: _NativeClient) -> None:

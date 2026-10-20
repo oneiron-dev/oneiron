@@ -15,6 +15,10 @@ const LFS_POINTER_VERSION_FIELD: &str = "version ";
 /// The optional `ext-N-<name> ` field family of a Git-LFS pointer file.
 const LFS_POINTER_EXT_FIELD: &str = "ext-";
 
+/// A Git-LFS pointer file is smaller than this many bytes: git-lfs reads no
+/// blob of this size or more as a pointer.
+pub const LFS_POINTER_SIZE_CUTOFF: u64 = 1024;
+
 /// One LFS pointer, paired with the repository path that carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LfsPointerIntent {

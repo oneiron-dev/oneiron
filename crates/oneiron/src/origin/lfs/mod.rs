@@ -25,7 +25,7 @@ pub use self::chunks::{
     LFS_CHUNK_AVG, LFS_CHUNK_MAX, LFS_CHUNK_MIN, LfsChunkParameters, LfsChunkRef, LfsManifest,
 };
 pub use self::oid::{LfsOid, VAULT_LFS_OID_HEX_LEN, VAULT_LFS_OID_LEN};
-pub use self::pointer::{LfsPointerIntent, LfsPushedPointer};
+pub use self::pointer::{LFS_POINTER_SIZE_CUTOFF, LfsPointerIntent, LfsPushedPointer};
 pub use self::policy::{
     DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsAssetClass, LfsPathPolicy,
 };

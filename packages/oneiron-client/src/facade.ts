@@ -2779,7 +2779,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.code.origin.mirror.get": { description: "Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.origin.mirror.set": { description: "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.origin.mirror.clear": { description: "Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.code.origin.mirror.push": { description: "Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.code.origin.mirror.push": { description: "Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.origin.authority.get": { description: "Read one served origin authority and this host identity under the owner credential.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.origin.authority.set": { description: "Cut over one existing served origin under the owner proof and expected authority epoch.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.origin.publications": { description: "Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -4909,7 +4909,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
             set: (input: Facade.OriginMirrorSetRequest, options?: O): FacadeReturns<"vault.code.origin.mirror.set">[K] => invoke("vault.code.origin.mirror.set", input, options, newInvocation()),
             /** Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes. */
             clear: (input: Facade.OriginRepoRequest, options?: O): FacadeReturns<"vault.code.origin.mirror.clear">[K] => invoke("vault.code.origin.mirror.clear", input, options, newInvocation()),
-            /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client. */
+            /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them. */
             push: (input: Facade.OriginRepoRequest, options?: O): FacadeReturns<"vault.code.origin.mirror.push">[K] => invoke("vault.code.origin.mirror.push", input, options, newInvocation()),
           },
           authority: {
