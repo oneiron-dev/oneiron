@@ -23,13 +23,16 @@
 //! them over the call's whole set before any row or edge goes, unerased,
 //! and never retag or reread a kept turn. A promotion that brings a TURN
 //! back owes it a tag pass and a sieve read ([`owe_promoted_turn_in_txn`]).
+//! A kept TURN that loses a MESSAGE keeps a list of what it lacks
+//! ([`crate::store::turn_missing`], FIX 3859): its work waits until each is
+//! back with its `PartOf` edge, and is owed then.
 
 mod left_env;
 
 #[allow(unused_imports, reason = "L03's OF-158 leave calls these")]
 pub(crate) use left_env::{LEFT_ENV_KEPT_SAMPLE, LeftEnvPurge, purge_left_shared_env_in_txn};
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
@@ -190,7 +193,8 @@ pub(crate) struct RemovedReplica {
 /// A removed TURN leaves its tag set, its sieve working state and its
 /// projection rounds through their owners' demotion leaves, which run over
 /// the call's whole set first; a kept TURN that loses a MESSAGE keeps its
-/// own, which read as absent until the message is back.
+/// own, which read as absent until the message is back. What each kept turn
+/// loses is recorded before any row goes, tagged or not (FIX 3859).
 ///
 /// One call removes at most `keep.max_removals` rows. Loop until `complete`,
 /// holding the window closed across the calls.
@@ -216,6 +220,7 @@ pub(crate) fn remove_local_replica_window_in_txn(
     report.remaining = removable.len().saturating_sub(keep.max_removals);
     let batch = &removable[..removable.len().min(keep.max_removals)];
     let removal = Removal::plan(store, txn, batch, &mut report)?;
+    super::turn_missing::record_in_txn(store, txn, &removal.missing)?;
     // The leaves read the removed rows, their edges and other turns' sets.
     crate::tagging::demote_tags_in_txn(store, txn, &removal.gone, &removal.partial)?;
     crate::dreamer_wake::demote_in_txn(store, txn, &removal.gone)?;
@@ -397,6 +402,9 @@ struct Removal {
     /// The kept TURNs a removed MESSAGE is part of: their words read partly
     /// here until promotion, so their own rows stay as they are.
     partial: BTreeSet<EntityId>,
+    /// Each of those TURNs with the removed MESSAGEs it is part of, for its
+    /// missing-membership marker.
+    missing: BTreeMap<EntityId, BTreeSet<EntityId>>,
 }
 
 impl Removal {
@@ -412,13 +420,15 @@ impl Removal {
         let mut order = batch.to_vec();
         loop {
             let gone: BTreeSet<EntityId> = order.iter().copied().collect();
-            let partial = partial_turns(store, txn, &gone)?;
+            let missing = partial_turns(store, txn, &gone)?;
+            let partial: BTreeSet<EntityId> = missing.keys().copied().collect();
             let kept = crate::tagging::demotion_kept_origins_in_txn(store, txn, &gone, &partial)?;
             if kept.is_empty() {
                 return Ok(Self {
                     order,
                     gone,
                     partial,
+                    missing,
                 });
             }
             order.retain(|id| !kept.contains(id));
@@ -429,13 +439,14 @@ impl Removal {
     }
 }
 
-/// The kept TURNs a MESSAGE in `gone` is part of, read before its edges go.
+/// The kept TURNs a MESSAGE in `gone` is part of, each with those MESSAGEs,
+/// read before their edges go.
 fn partial_turns(
     store: &Store,
     txn: &RoTxn<'_>,
     gone: &BTreeSet<EntityId>,
-) -> Result<BTreeSet<EntityId>> {
-    let mut turns = BTreeSet::new();
+) -> Result<BTreeMap<EntityId, BTreeSet<EntityId>>> {
+    let mut turns: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
     for id in gone {
         if store
             .port_entity_record(txn, id)?
@@ -450,7 +461,7 @@ fn partial_turns(
                     .port_entity_record(txn, &turn)?
                     .is_some_and(|row| row.entity_type == registry::ENTITY_TYPE_TURN)
             {
-                turns.insert(turn);
+                turns.entry(turn).or_default().insert(*id);
             }
         }
     }
@@ -460,8 +471,9 @@ fn partial_turns(
 /// What a promotion owes a TURN it brings back (OF-534), in the transaction
 /// that lands the row: demotion dropped its tag set and its sieve reading,
 /// which never sync, so an armed vault owes it a tag pass, and the sieve,
-/// whose cursor has passed it, a read. A kept TURN whose MESSAGE comes back
-/// is owed neither: its stored set and spans read again with the message.
+/// whose cursor has passed it, a read. A kept TURN whose MESSAGEs come back
+/// is owed both once the last one its missing-membership marker lists is
+/// back with its `PartOf` edge ([`crate::store::turn_missing`], FIX 3859).
 #[allow(dead_code, reason = "L03's OF-534 promotion calls this")]
 pub(crate) fn owe_promoted_turn_in_txn(
     vault: &Vault,
