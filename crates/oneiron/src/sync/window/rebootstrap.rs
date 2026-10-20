@@ -56,6 +56,9 @@ pub(crate) struct PreparedRebootstrap {
     carried: Vec<EntityId>,
     /// Root-map keys whose value the rebuilt state changed or removed.
     pub(crate) rewritten: usize,
+    /// Whether the cut failed its proof (FIX 6520): the install then owes the
+    /// erasure sweep a compaction of the window.
+    owes_compaction: bool,
 }
 
 /// Cuts window `key`'s durable state (its snapshot and every pending update)
@@ -97,13 +100,14 @@ pub(crate) fn prepare_rebootstrap(
     let rewritten = write_rebuilt_state(&doc, rebuilt)?;
     // With no key rewritten the window can keep several heads: the strict cut
     // merges them first, so the root is still its newest operation (FIX 6520).
-    let state = super::shallow::strict_window_snapshot(&doc)?;
-    let doc = doc_from_snapshot(&state)?;
+    let cut = super::shallow::strict_window_cut(&doc)?;
+    let doc = doc_from_snapshot(&cut.bytes)?;
     Ok(PreparedRebootstrap {
         key: key.clone(),
         version: doc_version_vector(&doc),
         doc,
-        state,
+        state: cut.bytes,
+        owes_compaction: !cut.proved,
         read_snapshot,
         read_updates: rows
             .iter()
@@ -120,7 +124,8 @@ impl PreparedRebootstrap {
     /// state vector fresh and the full-resync marker a shallow cut sets.
     /// Refused with nothing written when the window's carriers changed since
     /// the cut read them, or a legal hold names a row whose history it drops
-    /// (OF-470, as the compaction refuses).
+    /// (OF-470, as the compaction refuses). A cut that failed its proof owes
+    /// the erasure sweep the window, in the same transaction.
     pub(crate) fn install(self, vault: &Vault, actor: &HoldActor) -> Result<LoroDoc> {
         let window = self.key.as_str().to_owned();
         let prefix = format!("{window}:");
@@ -153,6 +158,9 @@ impl PreparedRebootstrap {
             persist_window_doc_in_txn(vault, wtxn, &self.key, &self.state, &self.version)?;
             WINDOW_UPDATE.delete_from(&vault.store, wtxn, prefix.as_bytes())?;
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &window, &[1u8])?;
+            if self.owes_compaction {
+                crate::sweep::owed::owe_window_compaction_in_txn(vault, wtxn, &self.key)?;
+            }
             write_window_svf_in_txn(vault, wtxn, &self.key)
         })?;
         Ok(self.doc)

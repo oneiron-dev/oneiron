@@ -47,6 +47,9 @@ struct TombstonePersistence<'a> {
     tombstone: &'a TombstoneValueV2,
     delete_update: Option<&'a crate::sync::window::DeleteBearingUpdate>,
     scrubbed_update_keys: &'a [String],
+    /// A history-free cut that failed its proof (FIX 6520): stored as
+    /// before, and this txn owes the erasure sweep the window.
+    owes_compaction: bool,
 }
 
 /// What a write does when the pad tombstones it staged fail to publish after
@@ -237,7 +240,7 @@ impl Vault {
                     gate,
                 )?;
                 let vv_before = window.doc.oplog_vv();
-                let (delete_update, snapshot, vv) =
+                let (delete_update, (snapshot, owes_compaction), vv) =
                     with_deletion_tombstone_observer_a_suppressed(|| -> Result<_> {
                         *doc_mutated = true;
                         apply_tombstone_to_window_doc(&window.doc, id, &value.encode())?;
@@ -263,6 +266,7 @@ impl Vault {
                         tombstone: value,
                         delete_update: delete_update.as_ref(),
                         scrubbed_update_keys: &merged_update_keys,
+                        owes_compaction,
                     },
                 )?;
                 wtxn.commit()?;
@@ -321,7 +325,7 @@ impl Vault {
         doc.commit();
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
-        let snapshot = Self::export_window_snapshot_in_mode(&doc, history_free)?;
+        let (snapshot, owes_compaction) = Self::export_window_snapshot_in_mode(&doc, history_free)?;
         let vv = doc_version_vector(&doc);
         self.finish_crdt_tombstone_persist_in_txn(
             &mut wtxn,
@@ -332,6 +336,7 @@ impl Vault {
                 tombstone: value,
                 delete_update: delete_update.as_ref(),
                 scrubbed_update_keys: &merged_update_keys,
+                owes_compaction,
             },
         )?;
         wtxn.commit()?;
@@ -612,8 +617,9 @@ impl Vault {
     /// writer deadlocks. Resolving first leaves the in-txn export a pure
     /// document operation, which is what lets the owner re-fold span the
     /// live-doc mutation. The barrier is a bridge commit outside that txn:
-    /// the tombstone commit lands on the one head it leaves, so the in-txn
-    /// cut merges nothing, short of an import landing in between.
+    /// the tombstone commit lands on the one head it leaves, and the in-txn
+    /// cut commits nothing. An import landing in between leaves that cut
+    /// unproved: stored as before, with the window owed to the sweep.
     #[cfg(feature = "sync")]
     fn resolve_window_snapshot_mode(
         &self,
@@ -631,13 +637,18 @@ impl Vault {
 
     /// Exports the window snapshot under a mode already resolved by
     /// [`Self::resolve_window_snapshot_mode`] — a pure document operation,
-    /// safe to run inside the publish transaction.
+    /// safe to run inside the publish transaction — and whether it is a
+    /// history-free cut that failed its proof (FIX 6520).
     #[cfg(feature = "sync")]
-    fn export_window_snapshot_in_mode(doc: &loro::LoroDoc, history_free: bool) -> Result<Vec<u8>> {
+    fn export_window_snapshot_in_mode(
+        doc: &loro::LoroDoc,
+        history_free: bool,
+    ) -> Result<(Vec<u8>, bool)> {
         if history_free {
-            crate::sync::window::export_history_free_window_snapshot(doc)
+            let cut = crate::sync::window::tip_window_cut(doc)?;
+            Ok((cut.bytes, !cut.proved))
         } else {
-            crate::sync::loro_support::export_snapshot(doc)
+            crate::sync::loro_support::export_snapshot(doc).map(|bytes| (bytes, false))
         }
     }
 
@@ -753,6 +764,9 @@ impl Vault {
             persistence.snapshot,
             persistence.version_vector,
         )?;
+        if persistence.owes_compaction {
+            crate::sweep::owed::owe_window_compaction_in_txn(self, wtxn, window_key)?;
+        }
         if is_hard {
             // ARCH-0038 carrier 15: pending `q:` rows for this window
             // may carry the deleted payload — drop them all (fail-closed

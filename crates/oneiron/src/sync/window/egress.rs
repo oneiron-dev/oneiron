@@ -487,11 +487,13 @@ pub(super) fn scrub_redacted_attribution_carriers(
 
 /// The window's state with no history behind its newest operation: the strict cut of
 /// [`super::shallow`], a barrier merging its heads first (FIX 6520), for local persistence only.
-/// A cut Loro did not root there is refused, typed, and nothing is stored from it. Nothing
-/// exports it: every snapshot a peer or a promotion receives is cut and checked by
-/// [`super::history_free`].
-pub(crate) fn export_history_free_window_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
-    super::shallow::strict_window_snapshot(doc)
+/// Its bytes are stored proved or not; a caller storing an unproved cut owes the erasure sweep a
+/// compaction of the window. Nothing exports it: every snapshot a peer or a promotion receives is
+/// cut and checked by [`super::history_free`].
+pub(crate) fn export_history_free_window_snapshot(
+    doc: &LoroDoc,
+) -> Result<super::shallow::StrictCut> {
+    super::shallow::strict_window_cut(doc)
 }
 
 /// Scrubs the live state and persists it: a pinned window keeps only the history
@@ -530,7 +532,7 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     }
     if history_free_window_required(vault, key)? {
         let check = super::history_free::HistoryCheck::read(vault, key, doc)?;
-        super::history_free::persisted_history_free_snapshot(doc, &check)
+        super::history_free::persisted_history_free_snapshot(vault, key, doc, &check)
     } else {
         // A shallow doc's snapshot keeps its own root.
         export_snapshot(doc)

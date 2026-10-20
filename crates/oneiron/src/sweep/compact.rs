@@ -389,10 +389,11 @@ pub(super) fn compact_window_with(
     // byte-exact, op history (the payload carrier) dropped, identity kept, VV
     // extended by exactly one barrier op when the window has several heads.
     // Nothing is written, Compacted or settled until its root is the tip.
-    let Some(cut) = crate::sync::window::strict_window_cut(&doc)? else {
+    let cut = crate::sync::window::strict_window_cut(&doc)?;
+    if !cut.proved {
         tracing::error!("sweep: shallow cut not rooted at the window's tip — deferred");
         return Ok(CompactOutcome::UnprovedDefer);
-    };
+    }
     let (shallow, vv) = (cut.bytes, cut.version.encode());
 
     let merged_keys: BTreeSet<Vec<u8>> = update_rows

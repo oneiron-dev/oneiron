@@ -372,16 +372,23 @@ pub(crate) fn history_free_snapshot(
 /// The history-free snapshot a pinned window is persisted as: [`history_free_snapshot`] when a
 /// root passes `check`, else the strict cut at its newest operation (FIX 6520): a barrier merges
 /// its heads first, so no older root keeps history a scrub took out. Persistence never fails for
-/// want of a clean root, only when Loro does not encode the strict cut's root, and then stores
-/// nothing. No export ships the stored root without checking it again.
+/// want of a clean root or a proved cut: a cut an import raced is stored as before, and window
+/// `key` owes the erasure sweep a compaction. No export ships the stored root without checking it
+/// again.
 pub(crate) fn persisted_history_free_snapshot(
+    vault: &Vault,
+    key: &WindowKey,
     doc: &LoroDoc,
     check: &HistoryCheck,
 ) -> Result<Vec<u8>> {
     match history_free_snapshot(doc, Some(check), None) {
         Err(Error::Sync(SyncError::SyncProtocolError {
             context: SyncProtocolValidation::HistoryFreeRootUnavailable,
-        })) => super::shallow::strict_window_snapshot(doc),
+        })) => {
+            let cut = super::shallow::strict_window_cut(doc)?;
+            super::shallow::owe_unproved_cut(vault, key, &cut)?;
+            Ok(cut.bytes)
+        }
         other => other,
     }
 }
