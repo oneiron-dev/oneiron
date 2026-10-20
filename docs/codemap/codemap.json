@@ -17168,7 +17168,7 @@
      "purpose": "Contact clearance: the owner's authenticated answer to one frozen contact-disclosure offer (OF-365, the…",
      "surface": {
       "const": 8,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 16,
       "struct": 3
@@ -25714,7 +25714,7 @@
       "const": 4,
       "crate-vis": 32,
       "enum": 1,
-      "fn": 16,
+      "fn": 18,
       "struct": 3
      }
     },
@@ -36840,7 +36840,7 @@
      "path": "src/memory/recall/selection.rs",
      "purpose": "What one recall narrows by, resolved once from its scope (FIX 2905): the worlds, projects, facet and kinds",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 14
      }
     },
     {
@@ -54810,7 +54810,7 @@
      "path": "src/sync/ingest/delivery.rs",
      "purpose": "Which records a federation pact delivered here, and at which consent epoch (FIX 321)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
