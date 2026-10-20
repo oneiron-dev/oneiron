@@ -157,7 +157,9 @@ impl<'v> ScopedRead<'v> {
         authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         if self.actor_key.vault_owner_ref().is_some() {
-            return Ok(true);
+            // The owner reads every source but a private thread's turn,
+            // which meets his own cut there (FIX 6410).
+            return self.private_threads_readable_in(rtxn, id, raw);
         }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -378,6 +380,49 @@ impl<'v> ScopedRead<'v> {
                 &scope,
             ))
         }
+    }
+
+    /// Whether `viewers` read the revision `raw` when it is a private
+    /// thread's notice (FIX 6473; CALLS `FIX 6473 private-thread notice
+    /// readers`): only its recipient, and a reader of the thread whose root
+    /// it names under the CURRENT rule a root is read by (FIX 5545), in its
+    /// audience now and still in the room or the vault's Owner or an Admin.
+    /// The notice names the thread, who acted and what happened, so no broad
+    /// credential reads it, the owner's included. Every other row, every
+    /// other notice included, is `true` here.
+    pub(super) fn thread_notice_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        raw: &[u8],
+        viewers: &[EntityId],
+    ) -> Result<bool> {
+        if EntityMetadataHeader::parse(raw).map(|header| header.entity_type)
+            != Some(crate::registry::ENTITY_TYPE_NOTIFICATION)
+        {
+            return Ok(true);
+        }
+        let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+        let Ok(notice) = crate::inbox::decode_notification_body(body) else {
+            return Ok(true);
+        };
+        if notice.source.producer != crate::workspace_roster::THREAD_NOTICE_PRODUCER {
+            return Ok(true);
+        }
+        let id = |text: Option<&str>| text.and_then(|text| EntityId::from_hex(text).ok());
+        let recipient = id(notice.recipient.as_deref());
+        if !viewers.is_empty() && viewers.iter().all(|viewer| Some(*viewer) == recipient) {
+            return Ok(true);
+        }
+        let Some(root) = id(notice.source.result.as_deref()) else {
+            return Ok(false);
+        };
+        crate::workspace_roster::thread_root_readable_with_read_in(
+            self.vault,
+            &self.store_read(),
+            rtxn,
+            root,
+            viewers,
+        )
     }
 
     pub(crate) fn is_claim_raw_readable_in(
