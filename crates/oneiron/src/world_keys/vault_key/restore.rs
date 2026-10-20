@@ -192,7 +192,7 @@ impl Vault {
             ));
         }
         let fresh = cap.checked_lists()?;
-        let txn = self.store.env.read_txn()?;
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
         // The restored key is held, as its rows name it, to seal the wraps.
         if STATE
             .get(&self.store, &txn, &())?
@@ -280,7 +280,7 @@ impl Vault {
         })?;
         transition.finish()?;
         let wraps: BTreeMap<String, StoredWrap> = {
-            let txn = self.store.env.read_txn()?;
+            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             WRAPS.scan(&self.store, &txn)?.into_iter().collect()
         };
         let added = fresh
