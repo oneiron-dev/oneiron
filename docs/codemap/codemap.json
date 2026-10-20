@@ -43661,6 +43661,7 @@
      "kind": "src",
      "notable": [
       "CustodyAnchorRoot",
+      "CustodyOutbox",
       "CustodyRecovery"
      ],
      "path": "src/recovery/checkpoint/custody_head.rs",
@@ -43668,9 +43669,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 3,
-      "fn": 15,
+      "fn": 17,
       "re-export": 1,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -51091,7 +51092,7 @@
      "path": "src/store/key_custody/log.rs",
      "purpose": "The keyless custody log (KS-4, FIX 5685) and the local journal it is kept in, beside the vault and outside…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 3,
       "struct": 2
      }
@@ -51103,8 +51104,38 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/outbox/files.rs",
+     "purpose": "One member's slot in the Hypnos outbox (FIX 5899): the batch directory Hypnos ships, written in the order…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/outbox/mod.rs",
+     "purpose": "The Hypnos outbox target (FIX 5899): a managed vault's hosted custody holder",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/outbox/replay.rs",
+     "purpose": "The outstanding batch's keyless record, and the intake of its ack (FIX 5899)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -51146,7 +51177,7 @@
      "purpose": "The KS-4 custody protocol (FIX 5685), public so the holders of a vault's custody outside this crate keep one…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 11,
       "enum": 8,
       "fn": 22,
       "re-export": 2,
@@ -51191,7 +51222,7 @@
      "path": "src/store/key_custody/targets.rs",
      "purpose": "The all-target acknowledgement journal (KS-4A2, FIX 5685), kept beside the keyless log in…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -64287,7 +64318,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 103,
+     "files": 106,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64513,7 +64544,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3989,
+   "source_files": 3992,
    "test_files": 902
   },
   "oneiron-android": {
@@ -85415,7 +85446,7 @@
      "path": "src/owner/backup/custody.rs",
      "purpose": "Custody heads beside the backups (KS-4A1/KS-4A2, FIX 5685)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
