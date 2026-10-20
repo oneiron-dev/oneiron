@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1084 facade rows, 3716 declarations.
+Census: 1084 facade rows, 3718 declarations.
 Inputs: 1019 of 1084 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 971 of 1084 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -2693,10 +2693,15 @@ class StateWindow(TypedDict):
     window_secs: int
     expected_goal_completions: int
     expected_engaged_days: int
+ActionModeCeiling = Literal["proposed", "auto"]
+class ActionModeEffect(TypedDict):
+    agent: EntityId
+    ceiling: ActionModeCeiling
 class ActionModeRule(TypedDict):
     mode: str
     min_index: float
     max_index: float
+    effect: NotRequired[ActionModeEffect | None]
 class ActionModePolicy(TypedDict):
     window: StateWindow
     rules: list[ActionModeRule]

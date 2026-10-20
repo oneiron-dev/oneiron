@@ -503,7 +503,7 @@
      "path": "src/agent_def/doors.rs",
      "purpose": "Vault CRUD doors over the generic entity/batch machinery",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 10
      }
@@ -4833,6 +4833,7 @@
       "ResearchBinding",
       "ResearchConfirmationSeat",
       "ResearchExecution",
+      "ResearchGoalBasis",
       "ResearchGoalPin",
       "ResearchStep",
       "ResearchTarget",
@@ -4847,9 +4848,9 @@
      "surface": {
       "crate-vis": 13,
       "enum": 6,
-      "fn": 15,
+      "fn": 16,
       "re-export": 5,
-      "struct": 16
+      "struct": 17
      }
     },
     {
@@ -10014,6 +10015,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/campaign/enrollment/approval.rs",
+     "purpose": "FIX 6424 part 2a (Engine 10-20 21:0x rulings 6 and 7): the owner's approve-once ask on one campaign…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AudienceWakeReport"
      ],
@@ -10077,7 +10088,7 @@
      "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
      "surface": {
       "crate-vis": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -10087,7 +10098,8 @@
      "path": "src/campaign/enrollment/outbound_leg.rs",
      "purpose": "Outward leg bridging persisted refs to the outbound chokepoint and the ledger",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -17319,7 +17331,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 3,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -22365,9 +22377,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "ActionModeCeiling",
+      "ActionModeEffect",
       "ActionModePolicy",
       "ActionModeProjection",
       "ActionModeRule"
@@ -22376,9 +22390,10 @@
      "purpose": "Action modes (OF-335): the owner's bands over the composite state index, each naming a mode in the owner's…",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
-      "fn": 2,
-      "struct": 3
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 3,
+      "struct": 4
      }
     },
     {
@@ -22508,10 +22523,20 @@
      "purpose": "Dreamer maintenance that applies at once (OF-023, owner ruling 10-18: \"autoapply + revert rather than…",
      "surface": {
       "const": 3,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/applied/action_mode_row.rs",
+     "purpose": "The owner's apply of an action-mode finding's ceiling patch on the applied list (FIX 1786): the finding's…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -22548,8 +22573,8 @@
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
       "const": 31,
-      "crate-vis": 9,
-      "fn": 14,
+      "crate-vis": 8,
+      "fn": 12,
       "trait": 1
      }
     },
@@ -22591,6 +22616,19 @@
      "purpose": "The Coach's draft-first skill repair (ARCH-0066 #healer, OF-418)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResearchGoalOracle"
+     ],
+     "path": "src/dreamer_runner/maintenance/coach_research.rs",
+     "purpose": "The Coach's autoresearch jobs (OF-351, FIX 886, FIX 1331), both on the host lane: execution advances a…",
+     "surface": {
+      "fn": 3,
+      "trait": 1
      }
     },
     {
@@ -22899,7 +22937,7 @@
       "crate-vis": 12,
       "fn": 1,
       "mod": 18,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -28383,17 +28421,17 @@
      "path": "src/gate/effect/admitted_approval.rs",
      "purpose": "The owner's one-send press a send's admission records on its ledger row (FIX 6362; an L12-B seam the Engine…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/effect/approval_target.rs",
      "purpose": "FIX 6424 (Engine 10-20 17:4x): an owner's approve-once press approves exactly one send",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 11
      }
     },
     {
@@ -28424,6 +28462,16 @@
      "purpose": "Standing-grant resolution plus scoped-MCP channel check and grant touch",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/effect/effect_pair.rs",
+     "purpose": "The two actor-bound effects one logical external mutation speaks for (OF-427), moved here from…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -32780,6 +32828,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinearEffectAdmission",
+      "LinearEffectHold",
+      "LinearEffectRole",
+      "LinearRoleApproval"
+     ],
+     "path": "src/linear_sync/approval.rs",
+     "purpose": "FIX 6424 part 2a (Engine 10-20 21:0x rulings 1, 2 and 8): the owner's approve-once asks on one Linear mirror…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -32800,9 +32866,9 @@
      "path": "src/linear_sync/effect.rs",
      "purpose": "External-effect admission for Linear mirror mutations",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -32875,7 +32941,7 @@
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
       "crate-vis": 3,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -40330,7 +40396,7 @@
      "purpose": "Gate input assembled from the canonical outbound request",
      "surface": {
       "crate-vis": 5,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -40375,7 +40441,7 @@
      "path": "src/outbound/dispatch_pipeline/request_binding.rs",
      "purpose": "One normalized outbound request and the single ledger replay validator",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -40785,7 +40851,7 @@
      "path": "src/outbound_chokepoint/types.rs",
      "purpose": "Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 17
      }
     },
     {
@@ -41154,8 +41220,18 @@
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_intent_ledger/pinned_approval.rs",
+     "purpose": "FIX 6424 part 2a (Engine 10-20 21:0x ruling 8, CALLS `FIX 6424 pinned Pending proof retention`): the owner's…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -48799,10 +48875,26 @@
      "path": "src/session_lifecycle.rs",
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 13,
+      "re-export": 1,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionParticipant",
+      "SessionSpeakers"
+     ],
+     "path": "src/session_lifecycle/speakers.rs",
+     "purpose": "Who spoke in a sitting (FIX 2015), kept on its lifecycle record so an ended sitting still names them after…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -49681,7 +49773,7 @@
      "path": "src/skill_attribution/host.rs",
      "purpose": "OF-397/OF-540: the execution context a host binds on a leased agent run, so its pack receipt closes attributed",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -51302,7 +51394,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 15,
+      "crate-vis": 14,
       "re-export": 11
      }
     },
@@ -65292,7 +65384,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -65656,7 +65748,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 99,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -65789,7 +65881,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 144,
+     "files": 145,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65943,7 +66035,7 @@
      "purpose": "Traversal safety caps, defined in `oneiron-contracts`"
     },
     "linear_sync": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66069,7 +66161,7 @@
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5"
     },
     "outbound_intent_ledger": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66342,7 +66434,7 @@
      "purpose": "Context-pack serialization"
     },
     "session_lifecycle": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -66673,7 +66765,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4175,
+   "source_files": 4182,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74575,7 +74667,7 @@
      "path": "src/dispatch.rs",
      "purpose": "Linear mutations through the vault's replay-first outbound dispatch door",
      "surface": {
-      "fn": 3,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -74623,7 +74715,7 @@
      "path": "src/journal.rs",
      "purpose": "Host response custody beneath the engine outbound dispatch, not a second gate",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -78999,6 +79091,16 @@
      "notable": [],
      "path": "src/ai_host/coach_host/judge_label_rechecks.rs",
      "purpose": "The host's judge-label re-checker (ARCH-0042 judge re-pin, OF-420): after an edit of the judge's rubric, the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_host/research_oracle.rs",
+     "purpose": "The research tick's goal oracle (FIX 1331)",
      "surface": {
       "crate-vis": 1
      }
@@ -90827,7 +90929,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 62,
+     "files": 63,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91284,7 +91386,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 942,
+   "source_files": 943,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -91496,6 +91598,8 @@
       "ActionBoundRequest",
       "ActionEnvelopeRequest",
       "ActionFact",
+      "ActionModeCeiling",
+      "ActionModeEffect",
       "ActionModePolicy",
       "ActionModeRule",
       "ActionTarget",
@@ -95175,8 +95279,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 891,
-      "struct": 2799
+      "enum": 892,
+      "struct": 2800
      }
     },
     {
