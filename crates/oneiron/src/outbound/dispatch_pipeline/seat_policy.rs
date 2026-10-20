@@ -9,10 +9,10 @@ use crate::outbound::capability::OutboundVerbContract;
 use crate::outbound::dispatch_types::OutboundDispatchRequest;
 use crate::outbound_chokepoint::AdmissionCeiling;
 
-/// The window a seat's daily caps count over. Dispatch stamps the ledger with
-/// the request's `occurred_at`, which is engine-clock seconds, so the window
-/// is in seconds too. A rolling day holds every send of the host's calendar
-/// day and possibly a few more, so it never counts fewer.
+/// The window a seat's daily caps count over. Admission anchors it, and
+/// stamps the ledger, at the vault's own clock in seconds (FIX 5992), so the
+/// window is in seconds too. A rolling day holds every send of the host's
+/// calendar day and possibly a few more, so it never counts fewer.
 const SEAT_CAP_WINDOW_SECS: u64 = 24 * 60 * 60;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -87,7 +87,7 @@ impl SeatLedgerCount {
             connect_requests: 0,
             dm_sends: 0,
             ceiling: Some(AdmissionCeiling {
-                since_ms: request.occurred_at.saturating_sub(SEAT_CAP_WINDOW_SECS),
+                window_secs: SEAT_CAP_WINDOW_SECS,
                 prior: u32::from(host_count),
                 cap: u32::from(cap),
             }),
