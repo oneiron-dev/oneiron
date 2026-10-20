@@ -34,6 +34,7 @@ mod handlers;
 #[cfg(unix)]
 mod host;
 mod landing;
+mod measure;
 pub mod mesh;
 mod outcome;
 #[cfg(unix)]

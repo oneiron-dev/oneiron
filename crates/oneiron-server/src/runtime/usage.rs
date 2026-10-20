@@ -4,7 +4,8 @@
 //! (OF-531), never re-read at settlement. Each call keeps the label it was
 //! admitted with, and a free-time item's call the agent, cycle, item and
 //! spend scope the engine stamped on its run before it began (FIX 4453);
-//! every other call stays unbound.
+//! every other call stays unbound. A model call carries the vault catalog's
+//! list price as it read when the call was admitted (FIX 2629).
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -12,10 +13,13 @@ use oneiron::EntityId;
 use oneiron::agent_dispatch::budget_doors::UsageEventOrigin;
 use oneiron::llm::run_admission::{Payer, PayerAccount, PermitFacts, RunEvent, RunReceipt};
 
+use self::pricing::CatalogPrices;
 use crate::usage::{
     UsageAllocation, UsageCostInput, UsageCostRates, UsageError, UsageEvent, UsageEventType,
     UsageLedger, UsageMode, UsageRun, UsageTokenCounts,
 };
+
+mod pricing;
 
 /// One host-resolved owner and authority-log vault id. Runs cannot supply or
 /// replace either. Settlements go straight to the durable idempotent ledger,
@@ -24,6 +28,9 @@ pub struct VaultUsage {
     ledger: UsageLedger,
     owner: String,
     vault_id: String,
+    /// The registry each admitted model call's list price is read from.
+    catalog: CatalogPrices,
+    /// The trusted host's explicit overrides, keyed by the exact offer.
     provider_rates: RwLock<BTreeMap<String, UsageCostRates>>,
     calls: Mutex<BTreeMap<(EntityId, String), AdmittedCall>>,
 }
@@ -36,10 +43,12 @@ struct AdmittedCall {
 }
 
 impl VaultUsage {
+    /// `catalog` is the vault whose model registry prices each admitted call.
     pub(crate) fn new(
         ledger: UsageLedger,
         owner: String,
         vault_id: String,
+        catalog: Arc<oneiron::Vault>,
     ) -> Result<Arc<Self>, UsageError> {
         // Validate the scope and read any existing rollup before binding it.
         ledger.vault_rollup(&owner, &vault_id)?;
@@ -47,6 +56,7 @@ impl VaultUsage {
             ledger,
             owner,
             vault_id,
+            catalog: CatalogPrices::new(catalog),
             provider_rates: RwLock::default(),
             calls: Mutex::default(),
         }))
@@ -63,8 +73,10 @@ impl VaultUsage {
     }
 
     /// Provider list-price facts for an offer, never the host's selling
-    /// price. Already-admitted calls keep their snapshot. Without a table,
-    /// quantities are still recorded and no money amount is invented.
+    /// price: an explicit override of the catalog's price for calls admitted
+    /// on exactly `offer`, `None` to drop it. Already-admitted calls keep
+    /// their snapshot. Without a price, quantities are still recorded and no
+    /// money amount is invented.
     pub fn set_cost_rates(
         &self,
         offer: impl Into<String>,
@@ -97,12 +109,16 @@ impl VaultUsage {
     pub(crate) fn record(&self, receipt: &RunReceipt) {
         match &receipt.event {
             RunEvent::Admitted(facts) => {
-                let rates = self
+                // The host's override for this exact offer, else the
+                // catalog's list price for the admitted model as it reads
+                // now; either is frozen on the call.
+                let overridden = self
                     .provider_rates
                     .read()
                     .expect("usage rates lock poisoned")
                     .get(&facts.offer)
                     .cloned();
+                let rates = overridden.or_else(|| self.catalog.snapshot(facts));
                 // A room-paid call bills its payer PERSON's own account, which
                 // for a live Owner is the vault's; the vault's too when the
                 // owners approved that on its payer-needed ask; a call no
@@ -188,6 +204,12 @@ impl VaultUsage {
                         || usage.input.cache_read != 0
                         || usage.input.cache_write != 0
                 }) || service_quantity.is_some();
+                // A reservation is not measured provider usage. Rates that do
+                // not price the measured counts (cached tokens with no quoted
+                // cache rate) leave the call unpriced, never priced at zero.
+                let rates = rates.filter(|rates| {
+                    usage_reported && usage.is_some() && rates.prices(&token_counts)
+                });
                 let payer = facts.payer_person.as_ref();
                 // The engine's stamp, never the run's name or a prompt.
                 let bound = facts.attribution.as_ref();
@@ -211,12 +233,7 @@ impl VaultUsage {
                     service: model.is_none().then(|| facts.subject.clone()),
                     model,
                     token_counts,
-                    // A reservation is not measured provider usage.
-                    cost_rates: if usage_reported && usage.is_some() {
-                        rates
-                    } else {
-                        None
-                    },
+                    cost_rates: rates,
                     service_amount: 0,
                     run: Some(UsageRun {
                         instance: receipt.instance.to_hex(),

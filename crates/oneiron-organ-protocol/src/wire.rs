@@ -19,7 +19,9 @@ pub const PROTOCOL: ProtocolVersion = ProtocolVersion { major: 1, minor: 1 };
 /// The first minor whose sessions carry asks.
 pub const ASKS_MINOR: u16 = 1;
 
-/// The most bytes one ask's value may take, encoded.
+/// The bytes one ask's value takes, encoded, past which the engine's
+/// `[limits]` row asks (`organ_ask_value_bytes`). A larger value is sent and
+/// read whole, under the frame's own `u32` length.
 pub const ASK_VALUE_MAX: usize = 64 * 1024;
 
 /// An input or output at or under this size rides inside the frame. A larger
@@ -358,7 +360,7 @@ pub struct Ask {
     /// This call's asks in order: 1, 2, 3.
     pub id: u32,
     pub verb: String,
-    /// At most [`ASK_VALUE_MAX`] bytes, encoded.
+    /// Past [`ASK_VALUE_MAX`] bytes, encoded, the engine's row asks.
     pub value: rmpv::Value,
 }
 
@@ -427,8 +429,8 @@ pub enum AskCode {
     NotGranted,
     /// This call's asks, or its answer bytes, are spent.
     Budget,
-    /// The ask's value is over [`ASK_VALUE_MAX`], or the answer would pass
-    /// the answer bytes left.
+    /// A fetched body a handler could not carry. The engine refuses no ask
+    /// for its value's or its answer's size (Rule 5).
     TooLarge,
     /// The handler refused the value.
     BadRequest,
