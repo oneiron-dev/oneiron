@@ -2277,7 +2277,7 @@ declare namespace Sdk {
   type WorkflowDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref?: EntityId | null };
   type WorkflowStepCapture = { requested_agent_ref: EntityId; agent_def_ref: EntityId; definition: AgentDefinitionSpec };
   type WorkflowStepRun = { ordinal: number; requested_agent_ref: EntityId; dispatched_agent_ref: EntityId; attempt_ref: EntityId; result_ref: string };
-  type WorkflowRunView = { workflow_ref: EntityId; workflow_revision: number; root_attempt_ref: EntityId; active_attempt_ref: EntityId; steps: WorkflowStepCapture[]; results: WorkflowStepRun[] };
+  type WorkflowRunView = { workflow_ref: EntityId; workflow_revision: number; root_attempt_ref: EntityId; active_attempt_ref: EntityId; steps: WorkflowStepCapture[]; results: WorkflowStepRun[]; task_ref?: EntityId | null };
   type WorkflowPersonDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref: EntityId; cap_units: number; unit: string; shown_at_ms: number };
   type WorkflowRunRequest = { root_attempt_ref: EntityId };
   type TaskTypeNodeSpec = { node_id: string; parent?: string | null; name: string };

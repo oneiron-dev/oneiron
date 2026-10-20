@@ -220,7 +220,8 @@ pub(crate) fn place_in_tree(
 ///
 /// One version names one structure in the tree's lookup scope: the fork's
 /// own prior tree, its parent's, the seed and every kept revision
-/// [`load_team_type_tree_at`] searches for `project` (`None` is the vault).
+/// [`load_team_type_tree_at`] searches for `project` (`None` is the vault,
+/// with the sibling forks of each project that lists the fork).
 /// A requested version a tree of another structure already uses there is
 /// stored at the next free version instead; the same structure at the same
 /// version stays at it. The version is chosen in the write that stores the
@@ -267,7 +268,14 @@ pub fn store_team_type_tree(
         // A kept tree that does not read stays out of the scope, which never
         // fails the write it serves.
         let mut scope = vec![parent_tree, TaskTypeTree::seeded()];
-        let revisions = kept_revisions_in_txn(vault, txn, project, vault_skill).unwrap_or_default();
+        let mut revisions =
+            kept_revisions_in_txn(vault, txn, project, vault_skill).unwrap_or_default();
+        // FIX 5215: a pin naming no project is checked against the fork's
+        // actual siblings too, as its project's lookup would read them.
+        if project.is_none() {
+            revisions
+                .extend(fork_siblings_in_txn(vault, txn, fork, vault_skill).unwrap_or_default());
+        }
         for skill in std::iter::once(fork).chain(revisions) {
             if let Ok(Some(kept)) = stored_tree_unchecked_in_txn(vault, txn, &skill) {
                 scope.push(kept);
@@ -325,6 +333,39 @@ fn same_structure(a: &TaskTypeTree, b: &TaskTypeTree) -> bool {
                 && a.split_winner == b.split_winner
                 && a.merged_into == b.merged_into
         })
+}
+
+/// The other team-shape forks of every visible project that lists `fork`
+/// among its skill forks: the siblings its tree is looked up beside when a
+/// pin names no project, as nothing else maps a fork back to its project.
+fn fork_siblings_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fork: EntityId,
+    vault_skill: EntityId,
+) -> Result<Vec<EntityId>> {
+    let Some(reader) =
+        crate::workspace_roster::ProjectReader::new(&vault.store, txn, vault.privacy_posture())?
+    else {
+        return Ok(Vec::new());
+    };
+    let mut siblings = Vec::new();
+    for (_, record, verdict) in reader.all()? {
+        let listed: Vec<EntityId> = record
+            .skill_forks
+            .iter()
+            .filter_map(|listed| EntityId::from_hex(listed).ok())
+            .collect();
+        if verdict != crate::workspace_roster::ProjectVerdict::Visible || !listed.contains(&fork) {
+            continue;
+        }
+        for sibling in listed {
+            if sibling != fork && in_lineage_in_txn(vault, txn, sibling, vault_skill)? {
+                siblings.push(sibling);
+            }
+        }
+    }
+    Ok(siblings)
 }
 
 /// The newest admitted team-shape fork among the project's skill forks.

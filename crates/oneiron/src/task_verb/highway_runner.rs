@@ -11,8 +11,10 @@
 //! Durable rows are written in the runner's transaction. The one in-memory
 //! wake a report can owe, a settled TASK's peer-result signal, is
 //! [`RunnerTaskEffects`]: run after commit where the caller has a point for
-//! it, and otherwise replayed from the binding index by the next wake pass.
+//! it, else queued in the postcommit scope of the transaction's owner, and
+//! otherwise replayed from the binding index by the next wake pass.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::Vault;
@@ -161,19 +163,21 @@ pub(crate) fn report_runner_task_in_txn(
         attempt_count: record.attempt_count,
         node_ref: local_node_in(vault, txn)?,
     };
-    memory
-        .report_in_runner_txn(
-            txn,
-            &via,
-            TaskReport {
-                task_ref,
-                attempt: Some(attempt),
-                report_key: report_key.to_owned(),
-                body,
-            },
-            judged,
-        )
-        .map(Some)
+    let receipt = memory.report_in_runner_txn(
+        txn,
+        &via,
+        TaskReport {
+            task_ref,
+            attempt: Some(attempt),
+            report_key: report_key.to_owned(),
+            body,
+        },
+        judged,
+    )?;
+    // FIX 1140: a TASK this report settled wakes its peer-result waiters
+    // when the runner's transaction commits, not at the next wake pass.
+    RunnerTaskEffects::of(&receipt).queue_in(vault, txn);
+    Ok(Some(receipt))
 }
 
 /// What a runner's caller owes once its transaction commits: the
@@ -220,6 +224,29 @@ impl RunnerTaskEffects {
             crate::llm::reconcile_peer_result_signals(vault, now)?;
         }
         Ok(())
+    }
+
+    /// Hands them to the postcommit scope of the transaction the report ran
+    /// in, whose owner runs them once it commits ([`wake_settled_tasks`]).
+    /// A transaction with no owner scope leaves them to the wake pass.
+    pub(crate) fn queue_in(self, vault: &Vault, txn: &heed::RwTxn<'_>) {
+        crate::batch::queue_settled_tasks(vault, txn, self.settled);
+    }
+}
+
+/// The peer-result wake of the TASKs one committed write settled (FIX 1140),
+/// run by the write's owner from its postcommit scope: each TASK's signal,
+/// then one reconcile for the handles its siblings settle. A wake that does
+/// not go out is logged and replayed from the binding index by the next wake
+/// pass; it never fails the write that settled the TASK.
+pub(crate) fn wake_settled_tasks(vault: &Vault, tasks: &BTreeSet<EntityId>, now: u64) {
+    for task in tasks {
+        if let Err(error) = crate::llm::send_peer_result_signal(vault, *task, now) {
+            tracing::warn!(kind = ?error.kind(), task = %task.to_hex(), "a settled TASK's peer signal did not go out; the wake pass replays it");
+        }
+    }
+    if let Err(error) = crate::llm::reconcile_peer_result_signals(vault, now) {
+        tracing::warn!(kind = ?error.kind(), "peer-result reconcile after a settling commit failed; the wake pass replays it");
     }
 }
 

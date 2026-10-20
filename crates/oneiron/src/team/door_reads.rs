@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatchTarget, SpawnPlanReceipt,
-    decode_agent_dispatch_input, team_pattern,
+    decode_agent_dispatch_input, load_team_type_tree_in_txn, team_pattern,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestKind};
 use crate::critic::review::declared_critiques_in_txn;
@@ -22,6 +22,7 @@ use crate::learning::evidence::evidence_in_txn;
 use crate::learning::read::read_learning_in_txn;
 use crate::learning::{Anchor, LearningCell};
 use crate::memory::{MemoryError, MemoryResult};
+use crate::task_type::TypeTree;
 use crate::{EntityId, Vault};
 
 use super::doors::{
@@ -410,7 +411,8 @@ fn receipt_view(receipt: &TeamReceipt) -> TeamReceiptView {
 /// settled outcome feeds; none when the receipt names no pattern skill. The
 /// read backs off through the tree the receipt was placed in, the chain
 /// settlement takes its parents from; a tree no longer kept, or one that
-/// does not read, is an issue, never the tree in force.
+/// does not read, is an issue, and the read then borrows through the tree
+/// in force, as settlement does (FIX 5253).
 fn learning_reads(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -422,13 +424,28 @@ fn learning_reads(
     };
     let executor = receipt.executor_mix();
     let cell = pattern_cell(skill.skill, &executor, &receipt.type_ref);
-    let (parents, missing) = placed_ancestry_in_txn(vault, txn, receipt);
-    if let Some(reason) = missing {
-        issues.push(unavailable(
-            "learning",
-            format!("{reason}: the read borrowed from no parent type"),
-        ));
-    }
+    let parents = match placed_ancestry_in_txn(vault, txn, receipt) {
+        (parents, None) => parents,
+        (_, Some(reason)) => match load_team_type_tree_in_txn(vault, txn, receipt.project) {
+            Ok(tree) => {
+                issues.push(unavailable(
+                    "learning",
+                    format!("{reason}: the read borrowed through the task-type tree in force"),
+                ));
+                TypeTree::from(tree).ancestors(&receipt.type_ref)
+            }
+            Err(error) => {
+                issues.push(unavailable(
+                    "learning",
+                    format!(
+                        "{reason}, and the task-type tree in force does not read: {error}: \
+                         the read borrowed from no parent type"
+                    ),
+                ));
+                Vec::new()
+            }
+        },
+    };
     let read = read_learning_in_txn(vault, txn, &cell, &parents)?;
     let estimate = &read.estimate;
     let evidence = evidence_in_txn(vault, txn, &cell.digest())?

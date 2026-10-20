@@ -33,6 +33,9 @@ pub(crate) struct PostcommitWork {
     /// Windows a WORLD delete staged its pads' `pt:` tombstones in, published
     /// only after the transaction commits (FIX 3334).
     pub(crate) pad_windows: BTreeSet<String>,
+    /// TASKs this transaction settled, whose peer-result waiters wake only
+    /// after it commits (FIX 1140).
+    pub(crate) settled_tasks: BTreeSet<EntityId>,
 }
 
 thread_local! {
@@ -111,6 +114,22 @@ pub(crate) fn queue_task_updates(
     PENDING_VAD.with(|pending| {
         if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
             queued.task_ids.extend(ids);
+        }
+    });
+}
+
+/// Mark settled TASKs for the owner's post-commit peer-result wake (FIX 1140).
+/// A rolled-back scope drops them, so no waiter wakes on a settlement that
+/// did not land; a transaction with no owner scope leaves them to the wake
+/// pass.
+pub(crate) fn queue_settled_tasks(
+    vault: &Vault,
+    txn: &RwTxn<'_>,
+    ids: impl IntoIterator<Item = EntityId>,
+) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            queued.settled_tasks.extend(ids);
         }
     });
 }

@@ -463,7 +463,7 @@ impl Vault {
             result,
             approved_vad_ids,
             proactivity_changed,
-            (task_ids, rows, room_joins, pad_windows),
+            (task_ids, rows, room_joins, pad_windows, settled_tasks),
             retirement_staged,
         ) = self.store.group_write_as(callback, None, |wtxn| {
             let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
@@ -511,6 +511,7 @@ impl Vault {
                         postcommit.rows,
                         postcommit.room_joins,
                         postcommit.pad_windows,
+                        postcommit.settled_tasks,
                     ),
                     staged != retirements_before,
                 )),
@@ -522,6 +523,16 @@ impl Vault {
             self.store.notify_proactivity_changes();
         }
         self.store.notify_task_updates(task_ids);
+        // FIX 1140: a TASK this write settled wakes its peer-result waiters
+        // now that it is durable. A wake that does not go out is left to the
+        // wake pass and never fails this write.
+        if !settled_tasks.is_empty() {
+            crate::task_verb::highway_runner::wake_settled_tasks(
+                self,
+                &settled_tasks,
+                self.store.clock.now_recorded_at(),
+            );
+        }
         // A row written after its window loaded reaches it only through the
         // live mirror.
         #[cfg(feature = "sync")]

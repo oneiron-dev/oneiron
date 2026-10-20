@@ -38,7 +38,7 @@ use crate::task_verb::highway::{
 };
 use crate::task_verb::highway_accept::{HostFence, Lane, lane_of, require_live_standard};
 use crate::task_verb::lifecycle_receipt;
-use crate::task_verb::runner_done::done_question_in;
+use crate::task_verb::runner_done::workflow_done_question;
 use crate::task_verb::wire_decode::task_verb_body_in;
 use crate::task_verb::{
     HostBinding, RunnerDoneAnswer, RunnerDoneQuestion, TaskCallReceipt, TaskExecutionState,
@@ -384,8 +384,9 @@ fn owed_in(vault: &Vault, txn: &heed::RoTxn<'_>, end: &WorkflowRunEnd) -> Result
 
 /// The "Done means met?" an ended run's settlement asks, as a leased
 /// runner's Done asks it over its result: here over the run's report NOTE,
-/// landed first so the judge reads it. `None` when the run did not
-/// complete, its TASK is no longer its to settle, or no question is owed.
+/// landed first so the judge reads it, and each settled leaf's output its
+/// binder's lane reads (FIX 5293). `None` when the run did not complete,
+/// its TASK is no longer its to settle, or no question is owed.
 pub(crate) fn done_question(
     vault: &Vault,
     end: &WorkflowRunEnd,
@@ -401,8 +402,12 @@ pub(crate) fn done_question(
     }
     let note = report_note_id(end.wrapper.id)?;
     land_report_note(vault, end, RunEnd::Completed, note)?;
-    let txn = vault.store.env.read_txn()?;
-    done_question_in(vault, &txn, end.task, note)
+    let leaves: Vec<EntityId> = end
+        .results
+        .iter()
+        .filter_map(|step| EntityId::from_hex(&step.result_ref).ok())
+        .collect();
+    workflow_done_question(vault, end.task, note, &leaves, end.bound_by)
 }
 
 /// Settles one ended run's TASK in a writer of its own, after the wrapper's
