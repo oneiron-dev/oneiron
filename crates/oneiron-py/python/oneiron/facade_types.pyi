@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1076 facade rows, 3685 declarations.
+Census: 1076 facade rows, 3688 declarations.
 Inputs: 1011 of 1076 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 965 of 1076 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
@@ -15674,6 +15674,16 @@ Preset = Literal["rect", "round_rect", "ellipse", "triangle", "right_arrow"]
 class HeldMedia(TypedDict):
     part: str
     hash: Digest
+class TableMerge(TypedDict):
+    first_row: NodeId
+    first_column: NodeId
+    last_row: NodeId
+    last_column: NodeId
+class TableBody(TypedDict):
+    rows: list[NodeId]
+    columns: list[NodeId]
+    cells: NotRequired[dict[str, dict[str, str]]]
+    merges: NotRequired[list[TableMerge]]
 ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar"]
 class ChartSeries(TypedDict):
     name: str
@@ -15736,11 +15746,8 @@ class NodePayloadHeldPictureBody(TypedDict):
     media: HeldMedia
 class NodePayloadHeldPicture(TypedDict):
     held_picture: NodePayloadHeldPictureBody
-class NodePayloadTableBody(TypedDict):
-    header: list[str]
-    rows: list[list[str | None]]
 class NodePayloadTable(TypedDict):
-    table: NodePayloadTableBody
+    table: TableBody
 class NodePayloadChartBody(TypedDict):
     family: ChartKind
     categories: list[str]
@@ -15934,6 +15941,45 @@ class XlsxBodyOpDeleteColumns(TypedDict):
     at: int
     count: int
 XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpDefineFormat | XlsxBodyOpSetFormat | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet | XlsxBodyOpSetSheetVisibility | XlsxBodyOpInsertRows | XlsxBodyOpDeleteRows | XlsxBodyOpInsertColumns | XlsxBodyOpDeleteColumns
+class TableEditInsertRowBody(TypedDict):
+    id: NotRequired[NodeId | None]
+    after: NotRequired[NodeId | None]
+class TableEditInsertRow(TypedDict):
+    insert_row: TableEditInsertRowBody
+class TableEditInsertColumnBody(TypedDict):
+    id: NotRequired[NodeId | None]
+    after: NotRequired[NodeId | None]
+class TableEditInsertColumn(TypedDict):
+    insert_column: TableEditInsertColumnBody
+class TableEditDeleteRowBody(TypedDict):
+    row: NodeId
+class TableEditDeleteRow(TypedDict):
+    delete_row: TableEditDeleteRowBody
+class TableEditDeleteColumnBody(TypedDict):
+    column: NodeId
+class TableEditDeleteColumn(TypedDict):
+    delete_column: TableEditDeleteColumnBody
+class TableEditMoveRowBody(TypedDict):
+    row: NodeId
+    after: NotRequired[NodeId | None]
+class TableEditMoveRow(TypedDict):
+    move_row: TableEditMoveRowBody
+class TableEditMoveColumnBody(TypedDict):
+    column: NodeId
+    after: NotRequired[NodeId | None]
+class TableEditMoveColumn(TypedDict):
+    move_column: TableEditMoveColumnBody
+class TableEditSetCellBody(TypedDict):
+    row: NodeId
+    column: NodeId
+    text: str
+class TableEditSetCell(TypedDict):
+    set_cell: TableEditSetCellBody
+class TableEditMerge(TypedDict):
+    merge: TableMerge
+class TableEditUnmerge(TypedDict):
+    unmerge: TableMerge
+TableEdit = TableEditInsertRow | TableEditInsertColumn | TableEditDeleteRow | TableEditDeleteColumn | TableEditMoveRow | TableEditMoveColumn | TableEditSetCell | TableEditMerge | TableEditUnmerge
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):
@@ -15984,13 +16030,18 @@ class DeckOpSetPayloadBody(TypedDict):
     payload: NodePayload
 class DeckOpSetPayload(TypedDict):
     set_payload: DeckOpSetPayloadBody
+class DeckOpEditTableBody(TypedDict):
+    node: NodeId
+    edits: list[TableEdit]
+class DeckOpEditTable(TypedDict):
+    edit_table: DeckOpEditTableBody
 class DeckOpReplaceOpaqueBody(TypedDict):
     part: str
     expected: list[int]
     replacement: list[int]
 class DeckOpReplaceOpaque(TypedDict):
     replace_opaque: DeckOpReplaceOpaqueBody
-DeckOp = DeckOpAddSlide | DeckOpAddNode | DeckOpRemoveNode | DeckOpMoveNode | DeckOpSetText | DeckOpSetRunMarks | DeckOpSetGeometry | DeckOpSetPreset | DeckOpSetPayload | DeckOpReplaceOpaque
+DeckOp = DeckOpAddSlide | DeckOpAddNode | DeckOpRemoveNode | DeckOpMoveNode | DeckOpSetText | DeckOpSetRunMarks | DeckOpSetGeometry | DeckOpSetPreset | DeckOpSetPayload | DeckOpEditTable | DeckOpReplaceOpaque
 class OfficeBodyOpsDocx(TypedDict):
     format: Literal["docx"]
     ops: list[DocxBodyOp]
@@ -16224,7 +16275,13 @@ class ConflictPayloadVsPayloadBody(TypedDict):
     node: NodeId
 class ConflictPayloadVsPayload(TypedDict):
     payload_vs_payload: ConflictPayloadVsPayloadBody
-Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload
+class ConflictCellVsCellBody(TypedDict):
+    node: NodeId
+    row: NodeId
+    column: NodeId
+class ConflictCellVsCell(TypedDict):
+    cell_vs_cell: ConflictCellVsCellBody
+Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload | ConflictCellVsCell
 class RelationshipChange(TypedDict):
     source: str
     id: str
