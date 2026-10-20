@@ -15,7 +15,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/backup_handoff.rs` | src | s | 3 struct · 1 enum · 8 fn · 3 const | BackupHandoffPolicy, BackupStageAck, HeldBackup, PrivateFile | The backup handoff between a managed vault's engine and its node's supervisor (LC backup shipper rows… |
 | `src/lib/commitment.rs` | src | s | 2 enum | QuotaWindow, Schedule | Shared recurrence vocabulary for commitments and ICS poll cadences |
 | `src/lib/conversation_training.rs` | src | m | 18 struct · 4 enum · 12 fn · 18 const | TrainingChunkV2, TrainingControlBodyV2, TrainingControlChangeV2, TrainingControlV2, TrainingFileName, TrainingFilterV2, TrainingForgetSourceV2, TrainingNoHumanReadV2 +14 | The publisher training outbox (OF-420, "Learn from my conversations"; TRAINING-LINK = C): the files a vault… |
-| `src/lib/ctl.rs` | src | m | 5 struct · 13 enum · 9 fn · 4 const | CtlBound, CtlBoundKind, CtlBoundPhase, CtlBoundResource, CtlRefusal, CtlRefusalKind, CtlRequest, CtlResponse +10 | Supervisor ctl request/response wire types and shed/slim validation |
+| `src/lib/ctl.rs` | src | m | 5 struct · 15 enum · 9 fn · 4 const | CtlBound, CtlBoundKind, CtlBoundPhase, CtlBoundResource, CtlRefusal, CtlRefusalKind, CtlRequest, CtlResponse +12 | Supervisor ctl request/response wire types and shed/slim validation |
 | `src/lib/escrow.rs` | src | s | 1 struct · 2 fn · 2 const | EscrowCapsuleReport | The vault's data-key escrow on its way to the registry (CROSS-ARCH-0022 #ov-custody, invariant 03: escrow is… |
 | `src/lib/esign_delivery.rs` | src | s | 1 struct · 3 fn · 6 const | EsignDeliveryCompleted | The e-sign delivery outbox's completion receipt (FIX 5306) |
 | `src/lib/host.rs` | src | s | 1 struct · 2 trait · 2 fn · 4 type | Host, HostLimits, PreviewPortHost | One vault-hosting contract |
@@ -26,8 +26,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/host_adapters/vsock.rs` | src | m | 4 struct · 11 fn | FirecrackerGuest, GuestLink, VsockListener, VsockStream | The microVM adapter's guest half: AF_VSOCK sockets and the Firecracker backend an engine uses when it runs… |
 | `src/lib/ledger.rs` | src | s | 3 struct · 2 fn | LedgerAck, LedgerUpdate, ManagedTrainingSetting | Vault-to-supervisor ledger push and ack wire types |
 | `src/lib/limits.rs` | src | s | 8 const | — | Wire limit constants and ready byte |
+| `src/lib/managed_backup.rs` | src | s | 1 struct · 2 enum · 2 fn · 1 const · 1 crate-vis | CheckpointSignerObservation, CheckpointSignerUnavailable, ManagedBackupFacts | What a managed vault reports of its backups on every `Ping` (Engine 10-20 row (b)): the vault id its… |
 | `src/lib/managed_holder.rs` | src | m | 5 struct · 12 fn · 1 type · 6 const | ManagedOwnerAction, ManagedOwnerHead, ManagedOwnerRequest, ManagedOwnerTranscript, ManagedWidenAction | Host-attested account actions: one managed widen request, and one request the vault owner makes in person… |
-| `src/lib/mod.rs` | src | s | 13 mod · 8 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `src/lib/mod.rs` | src | s | 13 mod · 9 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
 | `src/lib/owner_signing_recovery.rs` | src | s | 2 struct · 2 fn · 2 const | OwnerSigningRecovery, OwnerSigningRecoveryAck | Owner-signing recovery (FIX 5260): an adopted vault proves, on its supervisor's challenge, that it still… |
 | `src/lib/preview.rs` | src | s | 3 struct · 1 enum · 2 fn | PreviewEndpoint, PreviewPortDeclaration, PreviewSessionManifest, PreviewStage | A session's private, lease-bound live port, distinct from artifact publication |
 | `src/lib/secrets.rs` | src | s | 2 struct · 8 fn | Credentials, TokenHex | Spawn-token hex type, credential framing, and hex codec |
