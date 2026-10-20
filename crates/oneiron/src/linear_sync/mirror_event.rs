@@ -6,6 +6,7 @@
 //! mapping edit, the TASK, actor and report key of a title edit. A row is the
 //! replay identity of what made it and its evidence; no gate or proof reads
 //! it. A second table orders one TASK's rows by time for the provenance read.
+//! A third binds a webhook delivery id and its body to each other for good.
 //!
 //! The control row qualifies the link: whether the TASK is opted out of the
 //! mirror and the revision every mapping edit compares and moves (C6). No
@@ -63,6 +64,13 @@ const BY_TASK: SideTable<(EntityId, u64, EventKey), (), Raw> =
     SideTable::new(&side_table::LINEAR_MIRROR_EVENT_BY_TASK);
 const CONTROLS: SideTable<EntityId, LinearMirrorControl, Named> =
     SideTable::new(&side_table::LINEAR_MIRROR_CONTROL);
+const BINDINGS: SideTable<[u8; 33], [u8; 32], Raw> =
+    SideTable::new(&side_table::LINEAR_WEBHOOK_BINDING);
+
+/// A binding row's tag: the delivery key's digest, naming its body's.
+const DELIVERY_TO_BODY: u8 = 1;
+/// A binding row's tag: the body digest, naming its delivery key's.
+const BODY_TO_DELIVERY: u8 = 2;
 
 /// One stored mirror event, as the provenance read returns it. Refs and
 /// digests are lowercase hex; the external actor is the provider's own
@@ -215,6 +223,43 @@ pub(crate) fn delivery_key(delivery_id: &str) -> EventKey {
         EventDirection::IssueToTask,
         &keyed(DELIVERY_DOMAIN, &[delivery_id.as_bytes()]),
     )
+}
+
+/// Binds `delivery_id` and `body_digest` to each other for good, in the
+/// first verified preflight of the delivery and before its body is archived
+/// (C4). `false`, writing nothing, when the id is bound to another body or
+/// the body to another id; a delivery already bound to this body is `true`
+/// again, so a retry of the same id and body goes on.
+pub(crate) fn bind_delivery_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    delivery_id: &str,
+    body_digest: &[u8; 32],
+) -> Result<bool> {
+    let delivery = keyed(DELIVERY_DOMAIN, &[delivery_id.as_bytes()]);
+    let forward = binding_key(DELIVERY_TO_BODY, &delivery);
+    let backward = binding_key(BODY_TO_DELIVERY, body_digest);
+    let bound_body = BINDINGS.get(vault, txn, &forward)?;
+    let bound_delivery = BINDINGS.get(vault, txn, &backward)?;
+    if bound_body.is_some_and(|bound| bound != *body_digest)
+        || bound_delivery.is_some_and(|bound| bound != delivery)
+    {
+        return Ok(false);
+    }
+    if bound_body.is_none() {
+        BINDINGS.put(vault, txn, &forward, body_digest)?;
+    }
+    if bound_delivery.is_none() {
+        BINDINGS.put(vault, txn, &backward, &delivery)?;
+    }
+    Ok(true)
+}
+
+fn binding_key(tag: u8, digest: &[u8; 32]) -> [u8; 33] {
+    let mut key = [0; 33];
+    key[0] = tag;
+    key[1..].copy_from_slice(digest);
+    key
 }
 
 /// The key of one sent push: its operation id.
