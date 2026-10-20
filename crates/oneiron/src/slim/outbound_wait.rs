@@ -1,14 +1,17 @@
-//! A scoped live model wait over the durable step journal.
+//! Scoped live outbound waits over the durable journals: a journaled model
+//! call and an admitted effect send.
 
 use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::task::Poll;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use super::{JournaledResumeStep, ShedCause, SlimState};
+use super::{JournaledResumeStep, LiveWait, ShedCause, SlimState};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
+use crate::outbound_intent_ledger::IntentLedgerRecord;
 
 /// The host's long-outbound-wait policy. Resolves once with the observed wait
 /// in seconds. This is a shed trigger, never a timeout on the provider call.
@@ -44,12 +47,7 @@ impl Vault {
         let admission = {
             let mut state = self.slim.lock_state();
             *state = SlimState::Full;
-            self.slim
-                .model_waits
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(step);
-            ModelWait { vault: self, step }
+            self.register_live_wait(step, true)
         };
         let host = self
             .slim
@@ -88,27 +86,72 @@ impl Vault {
         drop(admission);
         output
     }
-}
 
-/// Completion, failure, unwind and cancellation all retire the live pointer
-/// and restore logical FULL residency without opening any heap component.
-struct ModelWait<'a> {
-    vault: &'a Vault,
-    step: JournaledResumeStep,
-}
+    /// Runs the one transport send of an admitted effect whose `Pending` row
+    /// is durable, as a live wait a supervisor can observe (FIX 5186). `send`
+    /// runs exactly as it would unwrapped: nothing here times, cancels or
+    /// resends it, and residency is left to the send's completion resume.
+    pub(crate) fn during_admitted_effect_send<R>(
+        &self,
+        record: &IntentLedgerRecord,
+        send: impl FnOnce() -> R,
+    ) -> R {
+        let step = JournaledResumeStep::OutboundIntent {
+            intent_id: record.id,
+            attempt_id: record.attempt_id,
+            call_seq: record.call_seq,
+            updated_ms: record.updated_ms,
+        };
+        // Selection never reads an effect send's live wait, so it registers
+        // without the transition lock and never waits behind a shed.
+        let _live = self.register_live_wait(step, false);
+        send()
+    }
 
-impl Drop for ModelWait<'_> {
-    fn drop(&mut self) {
-        let mut state = self.vault.slim.lock_state();
-        let mut waits = self
-            .vault
+    /// Registers one live wait under a fresh id. A model wait's caller holds
+    /// the controller's `state`.
+    fn register_live_wait(
+        &self,
+        step: JournaledResumeStep,
+        restores_full: bool,
+    ) -> LiveWaitScope<'_> {
+        let wait_id = self
             .slim
-            .model_waits
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(index) = waits.iter().position(|step| step.same_step(&self.step)) {
-            waits.swap_remove(index);
+            .last_wait_id
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1);
+        self.slim.lock_live_waits().push(LiveWait {
+            step,
+            wait_id,
+            started: Instant::now(),
+        });
+        LiveWaitScope {
+            vault: self,
+            wait_id,
+            restores_full,
         }
-        *state = SlimState::Full;
+    }
+}
+
+/// Completion, failure, unwind and cancellation all retire the live wait. A
+/// model wait also restores logical FULL residency without opening any heap
+/// component; an effect send leaves residency to its completion resume.
+struct LiveWaitScope<'a> {
+    vault: &'a Vault,
+    wait_id: u64,
+    restores_full: bool,
+}
+
+impl Drop for LiveWaitScope<'_> {
+    fn drop(&mut self) {
+        // A model wait retires under `state`, as it registered.
+        let state = self.restores_full.then(|| self.vault.slim.lock_state());
+        self.vault
+            .slim
+            .lock_live_waits()
+            .retain(|wait| wait.wait_id != self.wait_id);
+        if let Some(mut state) = state {
+            *state = SlimState::Full;
+        }
     }
 }

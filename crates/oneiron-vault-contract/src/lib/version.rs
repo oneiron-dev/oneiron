@@ -32,12 +32,21 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// slug binding (`artifact_public_slug_revision`, FIX 5389) on `Ping`; the
 /// latter's `--artifact-public-slug` flag is passed only to an installed
 /// engine at or after its floor, since a `Ping` comes after the flags are
-/// parsed. Supervisor and vault move to v3 together; no v2 reader is kept.
+/// parsed. The supervisor SLIM recovery surface (FIX 5186) carries a build
+/// floor too: the `slim_status` and `unslim` ctl requests and the optional
+/// `wait_id` on `Shed`, proven by `slim_recovery_revision` on `Ping`
+/// ([`SLIM_RECOVERY_REVISION`](crate::slim_control::SLIM_RECOVERY_REVISION)).
+/// A v3 vault built before it answers either request as unknown and ignores
+/// a `wait_id`, shedding unguarded, so a supervisor relies on that guard only
+/// after the vault's `Ping` reports the revision. Supervisor and vault move
+/// to v3 together; no v2 reader is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.
 /// Supervisors ping first and send `Shed` only when this holds. With a v1 peer,
-/// they skip the shed rung and retain the existing reap protocol.
+/// they skip the shed rung and retain the existing reap protocol. It proves
+/// nothing of the recovery surface (`slim_status`, `unslim`, `Shed.wait_id`):
+/// only `Ping`'s `slim_recovery_revision` does.
 #[must_use]
 pub const fn supports_slim(version: u32) -> bool {
     version >= SLIM_CONTRACT_VERSION

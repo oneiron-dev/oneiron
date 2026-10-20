@@ -2,6 +2,7 @@
 
 use oneiron_vault_contract::artifact_origin::ARTIFACT_PUBLIC_SLUG_REVISION;
 use oneiron_vault_contract::settings_paths::SETTINGS_PATHS_REVISION;
+use oneiron_vault_contract::slim_control::SLIM_RECOVERY_REVISION;
 use oneiron_vault_contract::{
     CONTRACT_VERSION, CtlRequest, CtlResponse, LegalHoldsNotProven, LegalHoldsWire,
 };
@@ -32,10 +33,15 @@ impl ManagedState {
                 managed_backup: self.backup_facts.clone(),
                 settings_paths_revision: Some(SETTINGS_PATHS_REVISION),
                 artifact_public_slug_revision: Some(ARTIFACT_PUBLIC_SLUG_REVISION),
+                slim_recovery_revision: Some(SLIM_RECOVERY_REVISION),
             }),
-            CtlRequest::Shed { cause, waited_secs } => {
+            CtlRequest::Shed {
+                cause,
+                waited_secs,
+                wait_id,
+            } => {
                 self.guard_write()?;
-                crate::managed::shed::shed(self.server.vault(), cause, waited_secs)
+                crate::managed::shed::shed(self.server.vault(), cause, waited_secs, wait_id)
             }
             CtlRequest::PrepareReap => self.prepare_reap().await,
             CtlRequest::ReapAbort => {
@@ -94,6 +100,16 @@ impl ManagedState {
                     }
                 };
                 Ok(CtlResponse::LegalHolds { legal_holds })
+            }
+            // A read: a vault frozen for reap answers it and stays frozen. A
+            // journal that does not read answers a generic refusal, never "no
+            // eligible wait".
+            CtlRequest::SlimStatus => crate::managed::shed::slim_status(self.server.vault()),
+            // Through the write gate, as `shed`: a vault frozen for reap
+            // answers the typed reap pause and stays frozen.
+            CtlRequest::Unslim => {
+                self.guard_write()?;
+                crate::managed::shed::unslim(self.server.vault())
             }
         }
     }

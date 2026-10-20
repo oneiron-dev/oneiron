@@ -15,14 +15,22 @@
 //! step (a live model wait or a `Pending` effect intent). No threshold policy,
 //! outbound reissue or intent-ledger write lives here.
 //!
+//! Each live outbound wait, a model call or an admitted effect send, also
+//! carries a monotonic start and an opaque process-local id, so a supervisor
+//! can read how long the selected step has waited and guard its shed with
+//! that observation ([`supervisor`], FIX 5186).
+//!
 //! `Reaped` is deliberately absent from [`VaultResidency`]: once the host kills
 //! the process no live [`Vault`] value exists, so process absence is the third
 //! ladder state.
 
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 
 mod outbound_wait;
 pub mod public;
+pub mod supervisor;
 pub use outbound_wait::OutboundWaitHost;
 
 use crate::Vault;
@@ -213,10 +221,27 @@ pub enum InboundResumeOutcome {
 #[derive(Debug, Default)]
 pub(crate) struct SlimController {
     state: Mutex<SlimState>,
-    /// Changed only while holding `state`, so a completed wait cannot race
-    /// selection and leave the process parked on a stale step.
-    model_waits: Mutex<Vec<JournaledResumeStep>>,
+    /// Live model waits and admitted effect sends. Model waits count toward
+    /// selection and change only while holding `state`, so a completed wait
+    /// cannot race selection and leave the process parked on a stale step.
+    /// An effect send's `Pending` row is what selection counts, so its live
+    /// wait changes under this lock alone.
+    live_waits: Mutex<Vec<LiveWait>>,
+    /// The last [`LiveWait::wait_id`] handed out. Process-local and never
+    /// persisted.
+    last_wait_id: AtomicU64,
     wait_host: Mutex<Option<Arc<dyn OutboundWaitHost>>>,
+}
+
+/// One live outbound wait: a journaled model call the engine is polling, or
+/// an admitted effect send on the wire. Nothing of its payload is kept.
+#[derive(Clone, Copy, Debug)]
+struct LiveWait {
+    step: JournaledResumeStep,
+    /// Opaque and process-local: names this one wait, never a step.
+    wait_id: u64,
+    /// Monotonic, so a wall-clock jump never stretches or shrinks a wait.
+    started: Instant,
 }
 
 impl SlimController {
@@ -227,6 +252,25 @@ impl SlimController {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Poison-recovering, like [`Self::lock_state`]. When both are taken,
+    /// `state` comes first.
+    fn lock_live_waits(&self) -> MutexGuard<'_, Vec<LiveWait>> {
+        self.live_waits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The one live wait on `step`, or `None` when none or more than one is
+    /// registered for it.
+    fn live_wait_on(&self, step: &JournaledResumeStep) -> Option<LiveWait> {
+        let waits = self.lock_live_waits();
+        let mut on_step = waits.iter().filter(|wait| wait.step.same_step(step));
+        match (on_step.next(), on_step.next()) {
+            (Some(wait), None) => Some(*wait),
+            _ => None,
+        }
     }
 }
 
@@ -242,6 +286,16 @@ enum SlimState {
 enum StepSelection {
     Selected(JournaledResumeStep),
     Blocked(ShedBlocker),
+}
+
+/// Result of steps 0 and 1, taken with the transition lock held: the shed's
+/// outcome is already decided, or `step` goes on to the drop phases.
+enum ShedAdmission {
+    Decided(ShedOutcome),
+    Admitted {
+        step: JournaledResumeStep,
+        admitted_residue: Option<SlimResidue>,
+    },
 }
 
 impl Vault {
@@ -287,45 +341,77 @@ impl Vault {
         waited_secs: u64,
         now_ms: u64,
     ) -> Result<ShedOutcome> {
-        // Defense in depth with the ctl request validator; neither layer
-        // compares the duration to a policy constant.
-        if waited_secs == 0 {
-            return Err(Error::InvalidConfig(
-                "shed requires a positive waited_secs".to_owned(),
-            ));
-        }
+        require_positive_wait(waited_secs)?;
 
         // Serialize selection through publish with inbound resume. Selecting
         // before this lock could admit stale journal evidence after a resume.
         let mut state = self.slim.lock_state();
+        match self.admit_shed(&state)? {
+            ShedAdmission::Decided(outcome) => Ok(outcome),
+            ShedAdmission::Admitted {
+                step,
+                admitted_residue,
+            } => self.drop_rebuildable_heap(
+                &mut state,
+                step,
+                admitted_residue,
+                cause,
+                waited_secs,
+                now_ms,
+            ),
+        }
+    }
+
+    /// Steps 0 and 1 of [`Self::shed_rebuildable_heap`]. The caller holds the
+    /// transition lock and keeps it through publish.
+    fn admit_shed(&self, state: &SlimState) -> Result<ShedAdmission> {
         let selection = self.select_journaled_resume_step()?;
 
         // Step 1 — admission. The guard remains held through publish.
-        let admitted_residue = match &*state {
+        let admitted_residue = match state {
             SlimState::Full => None,
             SlimState::Slim(residue) => Some(residue.clone()),
         };
         let step = match (&admitted_residue, selection) {
-            (None, StepSelection::Blocked(blocker)) => return Ok(ShedOutcome::Refused(blocker)),
+            (None, StepSelection::Blocked(blocker)) => {
+                return Ok(ShedAdmission::Decided(ShedOutcome::Refused(blocker)));
+            }
             // The pending row may simply have completed. No identity remains
             // to re-drop against, so report the existing residue unchanged.
             (Some(residue), StepSelection::Blocked(_)) => {
-                return Ok(ShedOutcome::AlreadySlim {
+                return Ok(ShedAdmission::Decided(ShedOutcome::AlreadySlim {
                     residue: residue.clone(),
                     dropped: HeapDropReport::default(),
-                });
+                }));
             }
             (Some(residue), StepSelection::Selected(step)) => {
                 if !residue.step.same_step(&step) {
-                    return Ok(ShedOutcome::Refused(
+                    return Ok(ShedAdmission::Decided(ShedOutcome::Refused(
                         ShedBlocker::AlreadySlimForDifferentStep,
-                    ));
+                    )));
                 }
                 step
             }
             (None, StepSelection::Selected(step)) => step,
         };
+        Ok(ShedAdmission::Admitted {
+            step,
+            admitted_residue,
+        })
+    }
 
+    /// Steps 2 to 4 of [`Self::shed_rebuildable_heap`] for an admitted step:
+    /// the one fixed-order drop transaction every shed runs. The caller still
+    /// holds the transition lock `state` came from.
+    fn drop_rebuildable_heap(
+        &self,
+        state: &mut SlimState,
+        step: JournaledResumeStep,
+        admitted_residue: Option<SlimResidue>,
+        cause: ShedCause,
+        waited_secs: u64,
+        now_ms: u64,
+    ) -> Result<ShedOutcome> {
         // Step 2 — sync windows.
         #[cfg(feature = "sync")]
         let dropped = match self.drop_rebuildable_sync_windows()? {
@@ -424,13 +510,13 @@ impl Vault {
                 updated_ms: record.updated_ms,
             })
             .collect();
+        // A live effect send is already counted by its Pending row above.
         pending.extend(
             self.slim
-                .model_waits
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .lock_live_waits()
                 .iter()
-                .copied(),
+                .map(|wait| wait.step)
+                .filter(|step| matches!(step, JournaledResumeStep::Model { .. })),
         );
         match pending.as_slice() {
             [] => Ok(StepSelection::Blocked(ShedBlocker::NoPendingOutboundStep)),
@@ -477,6 +563,17 @@ impl Vault {
             Err(other) => Err(other),
         }
     }
+}
+
+/// Defense in depth with the ctl request validator; neither layer compares
+/// the duration to a policy constant.
+fn require_positive_wait(waited_secs: u64) -> Result<()> {
+    if waited_secs == 0 {
+        return Err(Error::InvalidConfig(
+            "shed requires a positive waited_secs".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Maps the ledger's typed failures onto the engine error surface without
