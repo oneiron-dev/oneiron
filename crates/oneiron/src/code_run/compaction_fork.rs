@@ -183,22 +183,22 @@ pub struct LiveCompactionFork {
 
 impl LiveCompactionFork {
     /// The host's capture: `request` exactly as `rung` sends it, for
-    /// `writer` (the run's authenticated actor), under a row whose context
-    /// is `source`, with `room` input tokens left beside it on its model for
-    /// the compaction's own input.
+    /// `writer` (the run's authenticated actor), with `room` input tokens
+    /// left beside it for the compaction's own input. A capture is always
+    /// the resolved live fork: a row on `auto` resolved to it at the
+    /// breakpoint (FIX 6029), and a capture never carries `auto` itself.
     #[must_use]
     pub const fn capture(
         request: LlmRequest,
         rung: LiveForkRung,
         writer: EntityId,
-        source: SelfCompactionSource,
         room: u64,
     ) -> Self {
         Self {
             request,
             rung,
             writer,
-            source,
+            source: SelfCompactionSource::LiveFork,
             room,
         }
     }
@@ -221,7 +221,7 @@ impl LiveCompactionFork {
         self.writer
     }
 
-    /// The context the row read when it was captured.
+    /// The context it was captured to send: always the live fork.
     #[must_use]
     pub const fn source(&self) -> SelfCompactionSource {
         self.source
@@ -229,6 +229,9 @@ impl LiveCompactionFork {
 
     /// The compaction input the live model holds beside the prefix, the
     /// instruction and the reply's reserve: what sizes the flight's window.
+    /// A capture a row on `auto` resolved holds no more than its cheap
+    /// writer would, so the window still fits if the prefix goes cold before
+    /// the flight's first call (FIX 6029).
     #[must_use]
     pub const fn input_room(&self) -> u64 {
         self.room
@@ -237,8 +240,8 @@ impl LiveCompactionFork {
 
 /// A live fork its run's driver admitted (FIX 4465 C): the one Frontier-tier
 /// binding a compaction may wear. It is for a profile whose writer is
-/// `self`, under a row that selects the live fork, captured for the run's
-/// own actor. Only the driver's live admission builds one, and a backend
+/// `self`, under a row that selects the live fork or resolved `auto` to it,
+/// captured for the run's own actor. Only the driver's live admission builds one, and a backend
 /// sends a live fork only while it holds one.
 #[derive(Debug, Clone)]
 pub struct AdmittedLiveFork {

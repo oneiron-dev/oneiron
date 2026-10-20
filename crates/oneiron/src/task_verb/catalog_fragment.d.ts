@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1111 code-mode rows (1086 host rows, 25 run rows), 3738 declarations.
+// Census: 1111 code-mode rows (1086 host rows, 25 run rows), 3740 declarations.
 // Replies: 993 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
@@ -3129,7 +3129,9 @@ declare namespace Sdk {
   type EsignAuditActor = { actor: string; ip?: string | null; user_agent?: string | null };
   type EsignEventRow = { sequence: number; previous_sha256: number[]; event: EsignEvent; actor: EsignAuditActor; at: number };
   type EsignDeliveryEndReason = "document_ended" | "recipient_ended";
-  type EsignDeliveryReceipt = { attempt_ref: string; attempt_count: number; recipient: string; transition: string; reason: EsignDeliveryEndReason; at: number };
+  type EsignDeliveryWait = "document_awaits_owner" | "document_unreadable" | "notice_unreadable" | "send_unreadable";
+  type EsignDeliveryReceiptState = { state: "ended"; reason: EsignDeliveryEndReason } | { state: "waits"; reason: EsignDeliveryWait };
+  type EsignDeliveryReceipt = EsignDeliveryReceiptState & { attempt_ref: string; attempt_count: number; recipient: string; transition: string; at: number };
   type EsignDocumentView = { document_ref: string; status: DocumentStatus; awaits_owner_answer: boolean; document: EsignDocument; recipients: Record<string, RecipientState>; signatures: SignatureRow[]; rejection?: string | null; sealed_sha256: string[]; audit: EsignEventRow[]; delivery_receipts: EsignDeliveryReceipt[] };
   type EsignLinksIssueRequest = { document_ref: string; rotate?: boolean };
   type EsignIssuedLink = { recipient: string; email: string; capability: string };
