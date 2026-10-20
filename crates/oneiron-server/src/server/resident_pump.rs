@@ -567,11 +567,15 @@ fn run_bound(
         {
             tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a wake's model change was not noted in the agent's diary");
         }
-    } else if UNBOUND_LIST_KEEPS_ROUTE && !definition.models.is_empty() {
-        // FIX 4544: with no seat its list binds nothing. Under the hook the
-        // run keeps its configured route, as before lists, and the owner is
-        // told once per model it ran on; a note that fails does not stop it.
-        if let Err(error) =
+    } else if !definition.models.is_empty() {
+        // FIX 6030: with no seat the run is still held to its list; a
+        // configured route off the list refuses, naming it. Under the old
+        // hook (FIX 4544) the run keeps that route, as before lists, and the
+        // owner is told once per model it ran on; a note that fails does not
+        // stop it.
+        if !UNBOUND_LIST_KEEPS_ROUTE {
+            ensure_listed(definition, &config.model).map_err(text)?;
+        } else if let Err(error) =
             note_unbound_listed_run(vault, actor.entity_ref(), definition, &config.model)
         {
             tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a listed agent's seatless run's owner note was not recorded");
