@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::wake::validate_wake_fields;
-use super::{ManagedTrainingSetting, WakeEntry};
+use super::{ManagedTrainingSetting, WakeEntry, valid_owner_signing_challenge};
 
 /// Wire spelling is pinned to the engine's `slim::ShedCause`; the contract
 /// crate must not depend on `oneiron`, so the duplication is deliberate.
@@ -42,6 +42,20 @@ pub enum CtlRequest {
     /// ([`CtlResponse::TrainingPurge`]). A vault frozen for reap refuses it
     /// as it refuses any write.
     TrainingPurge,
+    /// Appended last (FIX 5260): an adopted vault proves its owner signing.
+    /// `challenge` is [`OWNER_SIGNING_CHALLENGE_LEN`](crate::OWNER_SIGNING_CHALLENGE_LEN)
+    /// fresh random bytes as lowercase hex, which the supervisor holds for
+    /// this vault's running generation. The vault sends an
+    /// [`OwnerSigningRecovery`](crate::OwnerSigningRecovery) proof to the
+    /// supervisor socket its ledger pushes go to, then answers
+    /// [`CtlResponse::OwnerSigningRecovered`]. It writes nothing and changes
+    /// no reap state, so a vault frozen for reap answers it too and stays
+    /// frozen. Build floor: it rides v3 with no version move, and a v3 vault
+    /// built before it answers it as an unknown request (`Ok { ok: false }`),
+    /// which a supervisor reads as not supported.
+    RecoverOwnerSigning {
+        challenge: String,
+    },
 }
 
 impl CtlRequest {
@@ -53,6 +67,12 @@ impl CtlRequest {
             CtlRequest::AlarmDue { id, reason_tag } => validate_wake_fields(id, reason_tag)?,
             CtlRequest::Shed { waited_secs, .. } => {
                 anyhow::ensure!(*waited_secs > 0, "shed requires a positive waited_secs");
+            }
+            CtlRequest::RecoverOwnerSigning { challenge } => {
+                anyhow::ensure!(
+                    valid_owner_signing_challenge(challenge),
+                    "recover_owner_signing requires a 64-digit lowercase hex challenge"
+                );
             }
             CtlRequest::PrepareReap
             | CtlRequest::ReapAbort
@@ -401,6 +421,17 @@ pub enum CtlResponse {
     /// above, and it carries no `ok` for the reason `Slim` carries none.
     TrainingPurge {
         training_purge: TrainingPurgeStateWire,
+    },
+    /// Appended last (FIX 5260): the answer to
+    /// [`CtlRequest::RecoverOwnerSigning`], whether the supervisor acked the
+    /// vault's proof. Every failure after the challenge's shape check answers
+    /// `false` (no supervisor socket, a proof that timed out, an ack that is
+    /// malformed or says no), so the supervisor asks again; only a malformed
+    /// challenge answers `Ok { ok: false }`. Its one required field
+    /// {owner_signing_recovered} is disjoint from every variant above, and it
+    /// carries no `ok` for the reason `Slim` carries none.
+    OwnerSigningRecovered {
+        owner_signing_recovered: bool,
     },
 }
 
