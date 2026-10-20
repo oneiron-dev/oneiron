@@ -5,8 +5,9 @@
 //! credential frame and checks every binding the plan names against argv and
 //! the destination's isolation, all before anything is written. In place of
 //! the ordinary open it then lands the vault through the engine's admitted
-//! restore (`Vault::restore_checkpoint_admitted`), with the managed checks in
-//! its `finish` step and the commit marker in its after-keep step. Nothing
+//! restore (`Vault::restore_checkpoint_admitted`), with the managed checks
+//! and the source's host-order legal holds (`host_holds`) in its `finish`
+//! step and the commit marker in its after-keep step. Nothing
 //! listens, no worker runs and no ctl answers before the vault is verified
 //! and kept: the boot then goes on as an ordinary start's over the same
 //! vault, and just before ctl serves and ready is said the receipt and the
@@ -14,6 +15,7 @@
 //! why there once, with the step and what the destination holds.
 
 mod commit_marker;
+mod host_holds;
 mod input;
 mod receipt;
 mod result;
@@ -24,14 +26,14 @@ use std::sync::Arc;
 
 use oneiron::federation::derivation::{DerivationBindError, DerivationOwner};
 use oneiron::recovery::checkpoint::{
-    AdmittedRestore, CheckpointKey, RestoreAdmission, RestoreAdmissionError,
+    AdmittedRestore, CheckpointKey, HostOrderHolds, RestoreAdmission, RestoreAdmissionError,
     RestoreAdmissionReason, RestoreCommitFacts, RestoreDestinationState, RestorePhase,
     RestoreReport,
 };
 use oneiron_vault_contract::restore::plan::RestoreCustodyPlan;
 use oneiron_vault_contract::restore::{
     ManagedRestoreDestination as Destination, ManagedRestoreIdentity, ManagedRestorePhase as Phase,
-    ManagedRestorePlan, ManagedRestoreResultFrame, RestoreFailureReason,
+    ManagedRestorePlan, ManagedRestoreResultFrame, RestoreFailureReason, RestoreHostHoldsStatus,
 };
 use zeroize::Zeroizing;
 
@@ -66,6 +68,9 @@ pub(super) struct ManagedRestore {
     sink: Arc<ResultSink>,
     identity: ManagedRestoreIdentity,
     plan: ManagedRestorePlan,
+    /// The source's host-order family the input pipe carried, admitted;
+    /// `None` without one. Its job takes it.
+    host_holds: Option<HostOrderHolds>,
     destination: Arc<RestoreDestination>,
     stage: Stage,
     kept: Option<Kept>,
@@ -78,6 +83,8 @@ struct Kept {
     admission: RestoreAdmission,
     /// The data directory the restore landed: (`st_dev`, `st_ino`).
     directory: (u64, u64),
+    /// Where its host-order legal holds came from.
+    host_holds: RestoreHostHoldsStatus,
 }
 
 impl ManagedRestore {
@@ -86,7 +93,8 @@ impl ManagedRestore {
     /// not a pipe's write end carries not even a refusal. Then the input
     /// pipe, its plan read to EOF and parsed (`started` goes out once it
     /// has), each binding it names checked against argv and `config`'s
-    /// settled tier, and the destination's isolation proven with every name
+    /// settled tier, the source's host-order family beside it admitted when
+    /// there is one, and the destination's isolation proven with every name
     /// it makes free. The plan's custody anchor is this process's from here
     /// on: the restore admits its custody against it, and the restored vault
     /// publishes to it.
@@ -116,7 +124,8 @@ impl ManagedRestore {
             anyhow::anyhow!("the cold restore's input was refused: {reason}")
         };
         input_pipe.map_err(unparsed)?;
-        let plan = input::read(input::adopt(input_fd)).map_err(unparsed)?.plan;
+        let input = input::read(input::adopt(input_fd)).map_err(unparsed)?;
+        let plan = input.plan;
         let identity = ManagedRestoreIdentity::of(&plan.request);
         sink.send(&ManagedRestoreResultFrame::Started {
             identity: identity.clone(),
@@ -126,13 +135,15 @@ impl ManagedRestore {
             sink.failed(Some(&identity), reason, Phase::ValidatingInput, state);
             anyhow::anyhow!("the cold restore was refused: {why}")
         };
-        input::check(&plan, managed, config.maximum_tier).map_err(|why| {
+        let invalid = |why: &str| {
             refuse(
                 RestoreFailureReason::RestoreInputInvalid,
                 Destination::Removed,
                 why.to_owned(),
             )
-        })?;
+        };
+        input::check(&plan, managed, config.maximum_tier).map_err(invalid)?;
+        let host_holds = host_holds::admit(input.host_holds, &plan).map_err(invalid)?;
         let destination = RestoreDestination::probe(&managed.data_dir, &managed.vault_name)
             .map_err(|refusal| {
                 let (reason, state) = refusal_wire(&refusal);
@@ -148,6 +159,7 @@ impl ManagedRestore {
             sink,
             identity,
             plan,
+            host_holds,
             destination: Arc::new(destination),
             stage: Stage::Credentials,
             kept: None,
@@ -172,6 +184,7 @@ impl ManagedRestore {
             sink: Arc::clone(&self.sink),
             identity: self.identity.clone(),
             plan: self.plan.clone(),
+            host_holds: self.host_holds.take(),
             destination: Arc::clone(&self.destination),
             data_dir: managed.data_dir.clone(),
             owner: managed.derivation_owner,
@@ -189,6 +202,7 @@ impl ManagedRestore {
                     report: landed.report,
                     admission: landed.admission,
                     directory: landed.directory,
+                    host_holds: landed.host_holds,
                 });
                 Ok((landed.vault, landed.rehearsal))
             }
@@ -225,6 +239,7 @@ impl ManagedRestore {
             plan: &self.plan,
             spooled,
             completed_at: oneiron_vault_contract::now_ts(),
+            host_holds: kept.host_holds,
         };
         let receipt = receipt::receipt(&context, &kept.report, &kept.admission);
         let outcome = Arc::new(RestoreOutcome::new(
@@ -323,6 +338,7 @@ struct Job {
     sink: Arc<ResultSink>,
     identity: ManagedRestoreIdentity,
     plan: ManagedRestorePlan,
+    host_holds: Option<HostOrderHolds>,
     destination: Arc<RestoreDestination>,
     data_dir: std::path::PathBuf,
     owner: DerivationOwner,
@@ -339,6 +355,7 @@ struct Landed {
     report: RestoreReport,
     admission: RestoreAdmission,
     directory: (u64, u64),
+    host_holds: RestoreHostHoldsStatus,
 }
 
 /// A restore refused, as its failure frame names it.
@@ -374,23 +391,26 @@ impl Refused {
 
 /// What the managed checks observed inside the restore, for the steps after
 /// them: the managed reason for a refusal and what it leaves at the
-/// destination, and the directory landed.
+/// destination, the directory landed, and where the host-order legal holds
+/// installed came from.
 #[derive(Default)]
 struct Observed {
     refusal: Cell<Option<(RestoreFailureReason, Destination)>>,
     directory: Cell<Option<(u64, u64)>>,
+    host_holds: Cell<Option<RestoreHostHoldsStatus>>,
 }
 
 impl Job {
     /// The delivered key checked against the plan, the destination's seal
     /// the plan's tier, the custody source beside the artifact under the
     /// plan's anchor, then the engine's restore with the managed checks and
-    /// the commit marker.
+    /// the host-order legal holds, and the commit marker.
     fn run(self) -> Result<Landed, Refused> {
         let Self {
             sink,
             identity,
             plan,
+            host_holds,
             destination,
             data_dir,
             owner,
@@ -425,7 +445,7 @@ impl Job {
         vault_config.page_seal = seal;
         let recovery = crate::owner::backup::custody_recovery(&plan.artifact, &backup, anchor);
         let observed = Observed::default();
-        let finish = |vault: &oneiron::Vault| {
+        let finish = |vault: &oneiron::Vault| -> Result<(), RestoreAdmissionError> {
             managed_checks(
                 vault,
                 &destination,
@@ -433,7 +453,12 @@ impl Job {
                 owner,
                 &dek,
                 &observed,
-            )
+            )?;
+            // The image carries no host-order family until L04's member
+            // lands (FIX 6598): only the pipe's, or none.
+            let installed = host_holds::install(vault, host_holds.as_ref(), None)?;
+            observed.host_holds.set(Some(installed));
+            Ok(())
         };
         let after_keep = |vault: &oneiron::Vault,
                           facts: &RestoreCommitFacts|
@@ -478,6 +503,11 @@ impl Job {
             report,
             admission,
             directory,
+            // `finish` ran before the keep, so it said; not known otherwise.
+            host_holds: observed
+                .host_holds
+                .get()
+                .unwrap_or(RestoreHostHoldsStatus::HostHoldsUnknown),
         })
     }
 }

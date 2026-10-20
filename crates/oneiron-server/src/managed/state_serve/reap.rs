@@ -1,6 +1,9 @@
 //! The reap freeze: the write gate a frozen vault refuses at, and the
 //! freeze, drain and export `prepare_reap` and `prepare_idle_reap` share.
 
+/// The host-order legal holds a frozen source exports (`host_order_holds`).
+mod host_holds;
+
 use std::sync::atomic::Ordering;
 
 use oneiron_vault_contract::{CtlResponse, validate_wake_entries};
@@ -72,14 +75,20 @@ impl ManagedState {
     pub(super) async fn prepare_reap(&self) -> Result<CtlResponse, ManagedError> {
         let prepared = self.freeze_drain_export().await?;
         Ok(CtlResponse::PrepareReap {
-            quiescent: prepared.in_flight == 0
-                && prepared.drained
-                && self.is_frozen()
-                && !self.live_sync_writer(),
+            quiescent: self.quiescent(prepared.in_flight, prepared.drained),
             ledger_rev: prepared.ledger_rev,
             next_wake: prepared.report.entries,
             training: prepared.report.training,
         })
+    }
+
+    /// The strict quiescence `prepare_reap` reports, from `in_flight`, the
+    /// admitted writes read once frozen, and whether the lease table
+    /// `drained`: none in flight, drained, still frozen, and no sync session
+    /// that could still commit. The idle reap's preparation judges its own,
+    /// less its backup job.
+    pub(super) fn quiescent(&self, in_flight: u64, drained: bool) -> bool {
+        in_flight == 0 && drained && self.is_frozen() && !self.live_sync_writer()
     }
 
     /// Freeze, drain, export — in that order.

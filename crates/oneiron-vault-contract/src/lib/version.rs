@@ -51,8 +51,18 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// with its backup ([`CtlRequest::PrepareIdleReap`](crate::CtlRequest::PrepareIdleReap))
 /// carries a build floor too, proven by `prepare_idle_reap: true` in `Ping`'s
 /// managed backup facts; a v3 vault built before it answers it as an
-/// unknown request. Supervisor and vault move to v3 together; no v2 reader
-/// is kept.
+/// unknown request. The host-order legal holds a cold restore carries
+/// ([`host_holds`](crate::restore::host_holds), FIX 1485: the source's
+/// `host_order_holds` ctl request, the restore input's optional
+/// `host_holds` and the receipt's `host_holds`) carry a build floor too, at
+/// the engine revision they merged in: a supervisor asks a source for its
+/// family, hands one on the input pipe and reads a receipt only with
+/// installed engines at or after it. A v3 vault built before it answers the
+/// request as an unknown request, which is never a family, and refuses an
+/// input that carries one as an unknown field; the receipt's new required
+/// field rides v3 with no version move, and no reader of a receipt without
+/// it is kept. Supervisor and vault move to v3 together; no v2 reader is
+/// kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.
