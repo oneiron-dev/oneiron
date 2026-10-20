@@ -62027,7 +62027,7 @@
      "path": "src/workspace_roster/rooms/thread_reads.rs",
      "purpose": "A room's threads as one reader reaches them (FIX 5545, Engine ruling 2026-10-19)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -86682,6 +86682,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/usage/pricing.rs",
+     "purpose": "The list price an admitted model call is metered at (FIX 2629): the vault's priced catalog row for that…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -86782,7 +86792,7 @@
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
       "crate-vis": 18,
-      "fn": 18,
+      "fn": 16,
       "re-export": 1,
       "struct": 1
      }
@@ -86796,6 +86806,16 @@
      "surface": {
       "crate-vis": 8,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/core/usage.rs",
+     "purpose": "The usage meter the trusted host binds to this vault before work starts",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -87270,7 +87290,7 @@
      "path": "src/usage/mod.rs",
      "purpose": "Provider-list metering and host-pushed vault budget limits",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -87295,8 +87315,18 @@
      "surface": {
       "crate-vis": 3,
       "enum": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/usage/pricing.rs",
+     "purpose": "Catalog list prices as fixed-point usage rates",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -88340,7 +88370,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88354,7 +88384,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 47,
+     "files": 48,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88382,7 +88412,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "usage": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -88426,7 +88456,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 879,
+   "source_files": 882,
    "test_files": 182
   },
   "oneiron-spawn": {

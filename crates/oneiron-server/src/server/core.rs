@@ -26,6 +26,7 @@ use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
 use super::windows::{SERVER_USER_ID, spawn_local_change_producer};
 
 pub(super) mod pattern_workflow;
+mod usage;
 
 /// Internal fan-out. Recovery notices never become wire frames.
 #[derive(Debug, Clone)]
@@ -682,31 +683,6 @@ impl SyncServer {
     #[must_use]
     pub fn host_account(&self) -> Arc<oneiron::llm::run_admission::HostAccount> {
         Arc::clone(&self.host_account)
-    }
-
-    /// Enables durable usage facts for the owner the trusted host resolved.
-    /// The vault id comes from the authority log, never an HTTP payload.
-    /// Bind before starting work so every admission has attribution.
-    pub fn with_usage_metering(
-        self,
-        owner: impl Into<String>,
-    ) -> Result<Self, crate::usage::UsageError> {
-        let vault_id = self.vault.authority_fold()?.vault_id.ok_or(
-            crate::usage::UsageError::InvalidField {
-                field: "vaultId",
-                message: "usage metering requires an authority-log genesis",
-            },
-        )?;
-        let vault_id = vault_id.iter().map(|byte| format!("{byte:02x}")).collect();
-        let usage =
-            crate::runtime::VaultUsage::new(self.usage_ledger.clone(), owner.into(), vault_id)?;
-        self.run_receipts.meter(usage);
-        Ok(self)
-    }
-
-    #[must_use]
-    pub fn vault_usage(&self) -> Option<Arc<crate::runtime::VaultUsage>> {
-        self.run_receipts.usage()
     }
 
     /// Writes every model call's run receipts to `receipts` instead of the
