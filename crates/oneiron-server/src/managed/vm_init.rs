@@ -326,10 +326,8 @@ fn end_leftovers() {
     // SAFETY: kill takes no pointers; -1 signals every process this one may,
     // except PID 1 and itself.
     unsafe { libc::kill(-1, libc::SIGKILL) };
-    loop {
-        match rustix::process::wait(rustix::process::WaitOptions::empty()) {
-            Ok(Some(_)) | Err(rustix::io::Errno::INTR) => {}
-            Ok(None) | Err(_) => break,
-        }
-    }
+    // Until no child is left (ECHILD), retrying an interrupted wait.
+    while let Ok(Some(_)) | Err(rustix::io::Errno::INTR) =
+        rustix::process::wait(rustix::process::WaitOptions::empty())
+    {}
 }
