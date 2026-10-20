@@ -70,7 +70,7 @@ mod projection_index;
 pub(crate) use projection_index::{
     PENDING_PRODUCER, claim_ids_for_predicate_bounded_in_txn, claim_ids_for_predicate_in_txn,
     claim_ids_for_predicate_page_in_txn, maintain_claim_projection_index,
-    remove_claim_projection_index,
+    remove_claim_projection_index, remove_claim_projection_index_in_rows,
 };
 mod put;
 mod read;
