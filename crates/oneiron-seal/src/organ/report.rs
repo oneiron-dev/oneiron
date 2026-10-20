@@ -12,16 +12,15 @@ use oneiron_organ_protocol::{ByteBuf, ErrorCode, OrganError};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use super::MAX_REPORT_JSON_BYTES;
 use crate::api::{
     ModificationLevel, Modifications, PadesProfile, RevisionKind, SignatureKind, VerifyCheckKind,
     VerifyCheckStatus, VerifyFindingCode, VerifyReport, VerifyVerdict,
 };
 
 /// A verdict, with the full report as JSON bytes: one value in the reply
-/// frame however many signatures the PDF holds, at most
-/// [`MAX_REPORT_JSON_BYTES`], and never parsed by the engine. Beside it,
-/// the revision classification, whatever the JSON's size.
+/// frame however many signatures the PDF holds, carried whole (Rule 5;
+/// past [`super::MAX_REPORT_JSON_BYTES`] the engine's row asks), and never
+/// parsed by the engine. Beside it, the revision classification.
 #[derive(Serialize)]
 pub(super) struct Verdict {
     verdict: VerifyVerdict,
@@ -36,17 +35,8 @@ impl Verdict {
     /// The verdict of `report`, the verification of `pdf` when this side
     /// holds it: without the bytes, nothing is classified through.
     pub(super) fn of(report: &VerifyReport, pdf: Option<&[u8]>) -> Result<Self, OrganError> {
-        let failed =
-            |err: serde_json::Error| OrganError::new(ErrorCode::Internal, format!("report: {err}"));
-        let mut capped = CappedJson(Vec::new());
-        let json = match serde_json::to_writer(&mut capped, report) {
-            Ok(()) => capped.0,
-            Err(err) if err.is_io() => serde_json::to_vec(&OmittedReport {
-                omitted_over_bytes: MAX_REPORT_JSON_BYTES,
-            })
-            .map_err(failed)?,
-            Err(err) => return Err(failed(err)),
-        };
+        let json = serde_json::to_vec(report)
+            .map_err(|err| OrganError::new(ErrorCode::Internal, format!("report: {err}")))?;
         Ok(Self {
             verdict: report.verdict(),
             reasons: report.reasons(),
@@ -55,29 +45,6 @@ impl Verdict {
             report_json: ByteBuf::from(json),
             classification: classification(report, pdf),
         })
-    }
-}
-
-/// What stands in for a report over [`MAX_REPORT_JSON_BYTES`].
-#[derive(Serialize)]
-struct OmittedReport {
-    omitted_over_bytes: usize,
-}
-
-/// JSON that stops at [`MAX_REPORT_JSON_BYTES`] rather than grow past it.
-struct CappedJson(Vec<u8>);
-
-impl std::io::Write for CappedJson {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self.0.len() + buf.len() > MAX_REPORT_JSON_BYTES {
-            return Err(std::io::ErrorKind::FileTooLarge.into());
-        }
-        self.0.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 

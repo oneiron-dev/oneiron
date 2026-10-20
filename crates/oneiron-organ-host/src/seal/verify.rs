@@ -17,7 +17,7 @@ use oneiron_organ_protocol::seal::{
 use sha2::{Digest, Sha256};
 
 use super::binding::AdmittedRevision;
-use super::observe::measure_input;
+use super::observe::{measure_input, measure_report};
 use super::{
     HostedSealer, PDF, VERB_VERIFY, VerifyArgs, VerifyReply, from_value, reply_invalid, to_value,
 };
@@ -45,8 +45,11 @@ impl HostedSealer<'_> {
         let (reply, _) =
             self.sized_call(self.call(VERB_VERIFY, 1, args), lent, &AskHandlers::none())?;
         match from_value(&reply)? {
-            VerifyReply::Verified(verdict) => Ok(verdict.into_classified()),
-            VerifyReply::Failed(failure) => Err(failure.into_error()),
+            VerifyReply::Verified(verdict) => {
+                measure_report(self.vault, &verdict.report_json);
+                Ok(verdict.into_classified())
+            }
+            VerifyReply::Failed(failure) => Err(failure.into_error(self.vault)),
         }
     }
 

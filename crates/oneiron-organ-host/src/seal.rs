@@ -17,15 +17,18 @@
 //! adds, classified as such. Each verification is one `seal.verify` call in
 //! a process of its own, with no handlers.
 //!
-//! No size refuses a seal (Rule 5). Each call runs in a process of its own,
-//! booked and granted memory by what it lends; the organ refuses only past
-//! the PDF format bounds; what it counted, the frames it carried and the
+//! No size or count refuses a seal (Rule 5). Each call runs in a process of
+//! its own, booked and granted memory by what it lends, and grows past
+//! that as its answers and its output need (FIX 5284); the organ refuses
+//! only past the PDF format bounds; what it counted, the asks it made, the
+//! bytes it was lent and fetched, the frames it carried, its report and the
 //! sealed PDF's size are measured against the engine's `[limits]` rows,
 //! which ask whether everything is okay and serve the call whole.
 //!
 //! Calls block, as every host call does: run them off any async runtime.
 
 mod binding;
+mod fetch;
 mod file_keys;
 mod observe;
 mod verify;
@@ -49,9 +52,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use self::binding::{RevisionArgs, SealCall};
-use self::observe::{measure_input, measure_output};
+use self::fetch::TimedFetch;
+use self::observe::{measure_asks, measure_input, measure_output, measure_report};
 use crate::error::{HostError, Unavailable};
-use crate::fetch::GuardedFetch;
 use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
 use crate::receipt::AskReceipt;
@@ -73,13 +76,7 @@ pub const REVISIONS: &str = "application/octet-stream";
 
 const SEALED_OUTPUT: &str = "sealed.pdf";
 const PDF: &str = "application/pdf";
-/// The contents ladder: 64, 128 and 256 KiB.
-const MAX_SIGNS: u32 = 3;
-const MAX_FETCHES: u32 = 32;
 const MIB: u64 = 1024 * 1024;
-/// The seal's own response caps: a CRL, and a timestamp.
-const MAX_CRL_BYTES: u64 = 8 * MIB;
-const MAX_TSA_BYTES: u64 = MIB;
 /// The most bytes a sealed PDF spans: lopdf records each object's offset
 /// as a `u32`, so neither the organ nor any later reader could parse more.
 /// A format bound; below it the output is measured, never refused.
@@ -181,25 +178,29 @@ impl SealSettings {
 }
 
 /// The seal organ's install grant: both verbs over PDFs and the engine's
-/// revisions, the identity once, at most three signatures and 32 fetches a
-/// call, fetches only inside `fetch`, and room for the sealed PDF. Its
-/// memory is a floor: each call is sized by what it lends. Its frames are
-/// bounded by the wire's own `u32` length alone, and its outputs by the
-/// PDF format bound and the call's booking.
+/// revisions, the identity, signatures (one at most for each revision the
+/// engine wrote, which [`SealCall`] holds it to) and fetches only inside
+/// `fetch`, and room for the sealed PDF. No count or size of its own
+/// refuses an ask: the seal's `[limits]` rows (`seal_identity_asks`,
+/// `seal_sign_asks`, `seal_fetch_asks`, `seal_asks`, `seal_answer_bytes`)
+/// measure them, so the grant's generic thresholds are the wire's own. Its
+/// memory is a floor: each call is sized by what it lends, and grows. Its
+/// frames are bounded by the wire's own `u32` length alone, and its outputs
+/// by the PDF format bound.
 #[must_use]
 pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
     let mut spec = OrganSpec::first_party(SEAL_ORGAN, program);
     spec.verbs = vec![VERB_SEAL.to_owned(), VERB_VERIFY.to_owned()];
     spec.media_types = vec![PDF.to_owned(), REVISIONS.to_owned()];
     spec.asks = vec![
-        AskGrant::new(ASK_IDENTITY, 1),
-        AskGrant::new(ASK_SIGN, MAX_SIGNS),
-        AskGrant::new(ASK_NET_FETCH, MAX_FETCHES),
+        AskGrant::new(ASK_IDENTITY, u32::MAX),
+        AskGrant::new(ASK_SIGN, u32::MAX),
+        AskGrant::new(ASK_NET_FETCH, u32::MAX),
     ];
-    spec.max_asks = 1 + MAX_SIGNS + MAX_FETCHES;
-    // Room for several CRLs for B-LT, inside the call's booking beside the
-    // sealed output.
-    spec.max_ask_bytes = 64 * MIB;
+    spec.max_asks = u32::MAX;
+    // Answers draw on the call's booking beside the sealed output, which
+    // grows to hold them; the seal's own row measures them.
+    spec.max_ask_bytes = u64::MAX;
     spec.memory_bytes = 1024 * MIB;
     spec.call_memory_bytes = 256 * MIB;
     spec.max_output_bytes = PDF_FORMAT_BYTES;
@@ -374,7 +375,8 @@ impl VerdictReply {
 }
 
 impl FailureReply {
-    fn into_error(self) -> EsignSealerError {
+    /// The port's error; a failed verdict's report is measured first.
+    fn into_error(self, vault: &Vault) -> EsignSealerError {
         match self {
             Self::Retryable {
                 stage,
@@ -386,9 +388,12 @@ impl FailureReply {
                 retry_after_ms,
             },
             Self::Fatal { stage, code } => EsignSealerError::Fatal { stage, code },
-            Self::VerifyFailed { verdict } => EsignSealerError::VerifyFailed {
-                verdict: Box::new(verdict.into_verdict()),
-            },
+            Self::VerifyFailed { verdict } => {
+                measure_report(vault, &verdict.report_json);
+                EsignSealerError::VerifyFailed {
+                    verdict: Box::new(verdict.into_verdict()),
+                }
+            }
             Self::BackendUnavailable { retry_after_ms } => {
                 EsignSealerError::Unavailable { retry_after_ms }
             }
@@ -467,6 +472,7 @@ impl EsignSealer for HostedSealer<'_> {
         let sign = Sign { call: &call };
         let fetch = TimedFetch {
             timeout: self.settings.fetch_timeout,
+            vault: self.vault,
         };
         let handlers = AskHandlers::none()
             .with(ASK_IDENTITY, &identity)
@@ -495,11 +501,13 @@ impl EsignSealer for HostedSealer<'_> {
                 bytes: call.suffixes(),
             },
         ];
-        let (reply, outcome) =
-            self.sized_call(self.call(VERB_SEAL, SEAL_SCHEMA, args), lent, &handlers)?;
+        let called = self.sized_call(self.call(VERB_SEAL, SEAL_SCHEMA, args), lent, &handlers);
+        // Every ask the call made, however it ended.
+        measure_asks(self.vault, &handlers.asked());
+        let (reply, outcome) = called?;
         let (evidence_sha256, requested, achieved, degraded, self_verify) =
             match from_value(&reply)? {
-                SealReply::Failed(failure) => return Err(failure.into_error()),
+                SealReply::Failed(failure) => return Err(failure.into_error(self.vault)),
                 SealReply::Sealed {
                     evidence_sha256,
                     requested,
@@ -508,6 +516,7 @@ impl EsignSealer for HostedSealer<'_> {
                     self_verify,
                 } => (evidence_sha256, requested, achieved, degraded, self_verify),
             };
+        measure_report(self.vault, &self_verify.report_json);
         let sealed = outcome
             .outputs
             .iter()
@@ -602,42 +611,6 @@ impl AskHandler for Sign<'_> {
                 signature: ByteBuf::from(signature),
             })?,
             ..Answered::default()
-        })
-    }
-}
-
-/// `net.fetch`: the host's guarded fetch, for a timestamp or a CRL only,
-/// each fetch inside the fetch timeout as well as the call's deadline, and
-/// inside the seal's own cap for its purpose, so an oversized timestamp
-/// reply is cut off before it spends the call's answer bytes.
-struct TimedFetch {
-    timeout: Duration,
-}
-
-impl AskHandler for TimedFetch {
-    fn answer(&self, ask: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
-        let deadline = ask.deadline.min(Instant::now() + self.timeout);
-        let purpose = ask.value.as_map().and_then(|fields| {
-            fields
-                .iter()
-                .find(|(key, _)| key.as_str() == Some("purpose"))
-                .and_then(|(_, value)| value.as_str())
-        });
-        // The seal's caps: a CRL may be 8 MiB, a timestamp 1 MiB.
-        let cap = match purpose {
-            Some("crl") => MAX_CRL_BYTES,
-            Some("tsa") => MAX_TSA_BYTES,
-            _ => {
-                return Err(AskRefusal::new(
-                    AskCode::NotGranted,
-                    "the seal fetches only timestamps and CRLs",
-                ));
-            }
-        };
-        GuardedFetch.answer(&AskRequest {
-            deadline,
-            max_bytes: ask.max_bytes.min(cap),
-            ..*ask
         })
     }
 }

@@ -36,7 +36,6 @@
 
 use std::future::Future;
 use std::pin::pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
@@ -79,10 +78,10 @@ pub const ASK_SIGN: &str = "seal.sign";
 pub const REVISIONS: &str = "application/octet-stream";
 /// The name of the sealed output.
 pub const SEALED_OUTPUT: &str = "sealed.pdf";
-/// The most report JSON a verdict carries. A larger report is left out,
-/// as `{"omitted_over_bytes": MAX_REPORT_JSON_BYTES}`, so its verdict
-/// still fits the reply frame: a small PDF can name thousands of
-/// signatures with long field names.
+/// The report JSON a verdict carries past which the engine's `[limits]`
+/// row asks (`seal_report_json_bytes`). Every report is carried whole,
+/// however many signatures it names (Rule 5), inside the reply frame's own
+/// `u32` length.
 pub const MAX_REPORT_JSON_BYTES: usize = 8 * 1024 * 1024;
 const PDF: &str = "application/pdf";
 
@@ -347,10 +346,7 @@ fn engine(
 ) -> Result<(SealObservations, Result<NativeSealEngine, SealError>), OrganError> {
     let config = seal_config(config)?;
     let observed = config.resource_limits.observed.clone();
-    let asks = Arc::new(CallAsks {
-        asker,
-        spent: AtomicBool::new(false),
-    });
+    let asks = Arc::new(CallAsks { asker });
     let engine = NativeSealEngine::new(
         config,
         Arc::new(AskedBackend {
@@ -363,30 +359,16 @@ fn engine(
     Ok((observed, engine))
 }
 
-/// This call's asks, shared by the signer and the fetcher. After one
-/// `budget` refusal the engine ends the call at the next ask, so none is
-/// sent: each later ask fails here, and the seal degrades (no timestamp, no
-/// validation material) or fails, as it chooses.
+/// This call's asks, shared by the signer and the fetcher. The engine
+/// spends no budget on them: it counts each against its `[limits]` rows and
+/// answers it (Rule 5), so no ask here is held back for an earlier one.
 struct CallAsks {
     asker: Asker,
-    spent: AtomicBool,
 }
 
 impl CallAsks {
     fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
-        if self.spent.load(Ordering::SeqCst) {
-            return Err(AskRefusal::new(
-                AskCode::Budget,
-                "this call's asks are spent",
-            ));
-        }
-        let answer = self.asker.ask(verb, value);
-        if let Err(refusal) = &answer
-            && refusal.code == AskCode::Budget
-        {
-            self.spent.store(true, Ordering::SeqCst);
-        }
-        answer
+        self.asker.ask(verb, value)
     }
 }
 
@@ -522,7 +504,8 @@ impl SealBackend for AskedBackend {
 }
 
 /// Every fetch, as an ask: the engine's guarded fetch, inside the grant's
-/// allowlist. The seal fetches only timestamps and CRLs.
+/// allowlist. The seal fetches only timestamps and CRLs. A body comes back
+/// whole: the engine measures its size against its `[limits]` rows.
 struct AskedFetcher {
     asks: Arc<CallAsks>,
 }
@@ -530,10 +513,9 @@ struct AskedFetcher {
 #[async_trait]
 impl SealFetcher for AskedFetcher {
     async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, FetchError> {
-        let caps = FetchPolicy::default();
-        let (purpose, cap) = match request.purpose {
-            FetchPurpose::Timestamp => ("tsa", caps.max_tsa_bytes),
-            FetchPurpose::Crl => ("crl", caps.max_crl_bytes),
+        let purpose = match request.purpose {
+            FetchPurpose::Timestamp => "tsa",
+            FetchPurpose::Crl => "crl",
             FetchPurpose::Ocsp | FetchPurpose::AuthorityInformationAccess => {
                 return Err(FetchError::Denied);
             }
@@ -566,9 +548,6 @@ impl SealFetcher for AskedFetcher {
             return Err(FetchError::InvalidResponse);
         }
         let body = reply.data.map(|data| data.to_vec()).unwrap_or_default();
-        if body.len() > cap {
-            return Err(FetchError::ResponseTooLarge);
-        }
         Ok(FetchResponse {
             body,
             content_type: answer.content_type,

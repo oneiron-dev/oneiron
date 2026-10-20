@@ -31,8 +31,8 @@ pub mod spin;
 
 #[cfg(unix)]
 pub use frame::{
-    FrameError, recv_frame, recv_frame_polled, recv_frame_polled_len, recv_frame_until, send_frame,
-    send_frame_if, send_frame_until,
+    FrameError, recv_frame, recv_frame_polled, recv_frame_polled_len, recv_frame_polled_reserved,
+    recv_frame_until, send_frame, send_frame_if, send_frame_until,
 };
 #[cfg(unix)]
 pub use region::{MappedRegion, SharedRegion};

@@ -383,7 +383,7 @@ pub fn recv_frame<T: DeserializeOwned>(
     stream: &UnixStream,
     limit: u32,
 ) -> Result<(T, Vec<OwnedFd>), FrameError> {
-    recv_frame_with(stream, limit, Wait::Syscall).map(|(msg, fds, _)| (msg, fds))
+    recv_frame_with(stream, limit, Wait::Syscall, |_| Ok(())).map(|(msg, fds, ..)| (msg, fds))
 }
 
 /// [`recv_frame`] for a socket in nonblocking mode: the frame waits in
@@ -407,7 +407,24 @@ pub fn recv_frame_polled_len<T: DeserializeOwned>(
     stream: &UnixStream,
     limit: u32,
 ) -> Result<(T, Vec<OwnedFd>, u32), FrameError> {
-    recv_frame_with(stream, limit, Wait::Poll(None))
+    recv_frame_with(stream, limit, Wait::Poll(None), |_| Ok(()))
+        .map(|(msg, fds, len, ())| (msg, fds, len))
+}
+
+/// [`recv_frame_polled_len`], with room for the body reserved before it is
+/// read: once the header and its descriptors are in, `reserve` gets the
+/// body's declared length before anything is allocated for it, and may
+/// wait for room. What it returns comes back with the frame, so the caller
+/// holds the room for as long as the frame's bytes live.
+///
+/// # Errors
+/// As [`recv_frame`], plus whatever `reserve` returns.
+pub fn recv_frame_polled_reserved<T: DeserializeOwned, L>(
+    stream: &UnixStream,
+    limit: u32,
+    reserve: impl FnOnce(u32) -> Result<L, FrameError>,
+) -> Result<(T, Vec<OwnedFd>, u32, L), FrameError> {
+    recv_frame_with(stream, limit, Wait::Poll(None), reserve)
 }
 
 /// Received descriptors are close-on-exec from the moment they exist, so no
@@ -440,14 +457,16 @@ pub fn recv_frame_until<T: DeserializeOwned>(
     limit: u32,
     deadline: Option<Instant>,
 ) -> Result<(T, Vec<OwnedFd>), FrameError> {
-    recv_frame_with(stream, limit, Wait::until(deadline)).map(|(msg, fds, _)| (msg, fds))
+    recv_frame_with(stream, limit, Wait::until(deadline), |_| Ok(()))
+        .map(|(msg, fds, ..)| (msg, fds))
 }
 
-fn recv_frame_with<T: DeserializeOwned>(
+fn recv_frame_with<T: DeserializeOwned, L>(
     stream: &UnixStream,
     limit: u32,
     wait: Wait,
-) -> Result<(T, Vec<OwnedFd>, u32), FrameError> {
+    reserve: impl FnOnce(u32) -> Result<L, FrameError>,
+) -> Result<(T, Vec<OwnedFd>, u32, L), FrameError> {
     let mut header = [0u8; HEADER];
     let mut got = 0;
     let mut fds = Vec::new();
@@ -491,6 +510,9 @@ fn recv_frame_with<T: DeserializeOwned>(
             limit,
         });
     }
+    // The room first, then the body: nothing is allocated for a frame its
+    // receiver has not made room for.
+    let lease = reserve(len)?;
     let mut body = vec![0u8; len as usize];
     let mut filled = 0;
     let body_flags = if wait.polls() {
@@ -508,5 +530,5 @@ fn recv_frame_with<T: DeserializeOwned>(
         }
     }
     shape::check(&body).map_err(FrameError::Protocol)?;
-    Ok((rmp_serde::from_slice(&body)?, fds, len))
+    Ok((rmp_serde::from_slice(&body)?, fds, len, lease))
 }
