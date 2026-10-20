@@ -81,14 +81,17 @@ fn parse_cursor(value: &str) -> Option<JoinSubject> {
 /// or the pen it acts through), an agent from its seat or a Ready receipt for
 /// the requested thread or the room. A private thread's participants are
 /// read by its audience alone (FIX 2951), and a thread hidden from the
-/// reader refuses as an unknown one does.
+/// reader refuses as an unknown one does. Last, the vault's Owner or an
+/// Admin in a private thread's audience reads that thread's participants
+/// with no standing in the room (FIX 5638): `true` when it reads on that
+/// alone.
 fn require_reader_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     branch: Option<EntityId>,
     actor: EntityId,
-) -> Result<()> {
+) -> Result<bool> {
     super::participation::require_thread_audience_in(vault, txn, room, branch, actor)?;
     let now = vault.store.clock.now_recorded_at();
     let reads = match participant_in_txn(vault, txn, actor, now)? {
@@ -101,7 +104,19 @@ fn require_reader_in_txn(
                 || subject.is_some_and(|subject| audience.contains(&subject.id()))
         }
     };
-    if reads { Ok(()) } else { Err(invalid()) }
+    if reads {
+        return Ok(false);
+    }
+    match branch {
+        Some(root)
+            if super::audience::privileged_private_thread_reader_in(
+                vault, txn, room, root, actor,
+            )? =>
+        {
+            Ok(true)
+        }
+        _ => Err(invalid()),
+    }
 }
 
 /// One subject's facts and its standing now, before the reader's lane
@@ -134,11 +149,18 @@ impl Memory<'_> {
             None => None,
         };
         let (room, branch, actor) = (request.room, request.branch, self.actor());
-        {
+        let off_room = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            require_reader_in_txn(self.vault(), &txn, room, branch, actor)?;
-        }
-        if !turns_readable(&self.room_read_worlds(room)?) {
+            require_reader_in_txn(self.vault(), &txn, room, branch, actor)?
+        };
+        // One reading a private thread off the room (FIX 5638) reads it
+        // under that thread's ceiling and lane alone, never the room's.
+        let thread = branch.filter(|_| off_room);
+        let worlds = match thread {
+            Some(root) => self.thread_read_worlds(room, root)?,
+            None => self.room_read_worlds(room)?,
+        };
+        if !turns_readable(&worlds) {
             return Ok(ParticipantsPage {
                 rows: Vec::new(),
                 next_after: None,
@@ -148,7 +170,7 @@ impl Memory<'_> {
         loop {
             let (folded, exhausted) = self.participants_after(room, branch, start, limit + 1)?;
             start = folded.last().map(|row| row.subject).or(start);
-            rows.extend(self.readable_participants(folded)?);
+            rows.extend(self.readable_participants(room, thread, folded)?);
             if rows.len() > limit || exhausted {
                 break;
             }
@@ -238,8 +260,14 @@ impl Memory<'_> {
     }
 
     /// The rows among `folded` with a cause the reader's lane admits: a
-    /// cause naming a turn or TASK is kept only when that record is.
-    fn readable_participants(&self, folded: Vec<Folded>) -> MemoryResult<Vec<ParticipantView>> {
+    /// cause naming a turn or TASK is kept only when that record is. With
+    /// `thread`, the lane is that thread's of `room` ([`Self::for_thread_projection`]).
+    fn readable_participants(
+        &self,
+        room: EntityId,
+        thread: Option<EntityId>,
+        folded: Vec<Folded>,
+    ) -> MemoryResult<Vec<ParticipantView>> {
         let ids: BTreeSet<EntityId> = folded
             .iter()
             .flat_map(|row| {
@@ -251,7 +279,13 @@ impl Memory<'_> {
         let ids: Vec<_> = ids.into_iter().collect();
         let mut admitted = BTreeSet::new();
         if !ids.is_empty() {
-            let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+            let projection = thread
+                .map(|root| self.for_thread_projection(room, root))
+                .transpose()?;
+            let memory = projection
+                .as_ref()
+                .map_or(self, crate::memory::RoomTurnHandle::memory);
+            let lane = memory.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
             for chunk in ids.chunks(128) {
                 let reads: Vec<_> = chunk
                     .iter()

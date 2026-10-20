@@ -10842,14 +10842,15 @@
     },
     {
       "name": "vault.rooms.messages",
-      "description": "One page of the turns in a room this reader may read.",
-      "input": "RoomRequest",
+      "description": "One page of the turns in a room this reader may read; with thread_ref, of that one thread alone.",
+      "input": "crate::workspace_roster::RoomMessagesRequest",
       "output": "crate::workspace_roster::RoomPage",
-      "call": "memory.rooms_messages_page(crate::EntityId::from_hex(&input.room_ref)?, input.after.as_deref().map(crate::EntityId::from_hex).transpose()?, input.limit.unwrap_or(256))?",
+      "call": "memory.rooms_messages_selected(&input)?",
       "scope": "Read",
       "mcp_fields": {
         "room_ref": "room_ref",
-        "turn_ref": "after"
+        "turn_ref": "after",
+        "thread_ref": "thread_ref"
       },
       "mcp_required_fields": [
         "room_ref"
@@ -10875,6 +10876,10 @@
           {
             "name": "limit",
             "type": "Option<usize>"
+          },
+          {
+            "name": "thread_ref",
+            "type": "Option<String>"
           }
         ]
       }

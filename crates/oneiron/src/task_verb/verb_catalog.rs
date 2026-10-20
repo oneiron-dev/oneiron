@@ -8103,7 +8103,7 @@ impl AgentVerb {
             Self::TasksAnswer => &["spec"],
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
-            Self::VaultRoomsMessages => &["room_ref", "turn_ref"],
+            Self::VaultRoomsMessages => &["room_ref", "turn_ref", "thread_ref"],
             Self::VaultRoomsParticipants => &["spec", "room_ref"],
             Self::VaultRoomsRender => &["room_ref"],
             Self::VaultRoomsFind => &["room_ref", "turn_ref"],
@@ -11642,7 +11642,9 @@ impl AgentVerb {
             Self::VaultRoomsList => {
                 "The caller's rooms its own grants admit; inside a room turn, only that room."
             }
-            Self::VaultRoomsMessages => "One page of the turns in a room this reader may read.",
+            Self::VaultRoomsMessages => {
+                "One page of the turns in a room this reader may read; with thread_ref, of that one thread alone."
+            }
             Self::VaultRoomsParticipants => {
                 "One page of who took part in a room or one of its threads, each with its causes and whether it may take part now."
             }
