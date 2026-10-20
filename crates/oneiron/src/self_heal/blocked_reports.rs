@@ -4,7 +4,10 @@
 //! `self_report`) and one pending Issues row, and wakes the Coach. The report
 //! is the agent's own word: it never arms the failure ladder or a tripwire,
 //! and its detail stays in the fenced receipt. A report on a session overlay
-//! stays off the record and files nothing.
+//! stays off the record and files nothing. A filed report keeps the source a
+//! code fix replays (`source`, FIX 2343).
+use std::ops::Bound;
+
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +15,7 @@ use super::{
     DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
     DiagnosticSourceKind, diagnostic_event_id, encode_diagnostic_event_body,
 };
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::code_run::blocked::BlockedCategory;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::failure_ladder::{BlockedReportRef, ingest_report_blocked};
@@ -19,6 +23,12 @@ use crate::limit_ask::EngineLimit;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Result, Vault};
+
+mod source;
+pub(crate) use source::{
+    BlockedRunHost, BlockedRunRequest, RunWorlds, blocked_source_in,
+    erase_blocked_source_actor_in_txn,
+};
 
 /// Reports waiting for the Coach. Key: the receipt.
 const PENDING: SideTable<EntityId, BlockedIssue, Named> =
@@ -64,13 +74,16 @@ impl Vault {
     /// Files one witnessed report for the Coach and wakes its Issues job.
     /// Idempotent per receipt: a step re-run that witnesses the same report
     /// again files nothing new. The stored detail is measured against
-    /// `limits.blocked_detail_bytes` and kept whole.
+    /// `limits.blocked_detail_bytes` and kept whole. The report keeps what
+    /// its run's `host` knows of the run, the source its code fix replays
+    /// (FIX 2343), whole and measured, in the same commit.
     pub(crate) fn file_blocked_report(
         &self,
         receipt: EntityId,
         reporter: EntityId,
         run: Option<EntityId>,
         reported_at: u64,
+        host: BlockedRunHost,
     ) -> Result<()> {
         {
             let txn = self.store.env.read_txn()?;
@@ -114,6 +127,18 @@ impl Vault {
         let body = encode_diagnostic_event_body(&event)?;
         let diagnostic = diagnostic_event_id(&event.detector_id, &body);
         self.emit_diagnostic_event(&diagnostic, &event)?;
+        let source = source::BlockedReplaySource {
+            worlds: run_worlds(self, host.attempt)?,
+            request: host.request,
+            run_ref: host.run_ref,
+            code_run: run,
+            reporter,
+            reported_at,
+        };
+        let _ = self.measure_limit(
+            EngineLimit::MaintenanceTextBytes,
+            source.longest_text() as u64,
+        );
         let now = self.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
             if PENDING.contains(&self.store, &*txn, &receipt)?
@@ -137,6 +162,7 @@ impl Vault {
             if let Some(run) = run {
                 BY_RUN.put(&self.store, txn, &by_run_key(run, receipt), &reported_at)?;
             }
+            source::put_in_txn(self, txn, &receipt, &source)?;
             DreamerRunnerStore::new(self).enqueue_coach_issues_in_txn(txn, None, None, now)
         })?;
         self.store.notify_attempt_observers();
@@ -213,17 +239,39 @@ pub(crate) fn settled_issue(vault: &Vault, key: &EntityId) -> Result<Option<Issu
     settled_in_txn(vault, &txn, key)
 }
 
-/// Up to `limit` reports waiting for the Coach, oldest receipt id first.
+/// Up to `limit` reports waiting for the Coach after the receipt `after`
+/// (from the first, with none), oldest receipt id first: one page of a read
+/// its caller takes on to the end (FIX 1554).
 pub(crate) fn pending_blocked_issues(
     vault: &Vault,
+    after: Option<EntityId>,
     limit: usize,
 ) -> Result<Vec<(EntityId, BlockedIssue)>> {
     let txn = vault.store.env.read_txn()?;
-    Ok(PENDING
-        .scan(&vault.store, &txn)?
-        .into_iter()
+    let start = after.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
+    PENDING
+        .iter_range(&vault.store, &txn, start, Bound::Unbounded)?
         .take(limit)
-        .collect())
+        .collect()
+}
+
+/// The worlds a run's host scoped it to (FIX 2343): those of the agent
+/// dispatch `attempt` it served, its scope's and its task's, or none for a
+/// run its host bound to no attempt.
+fn run_worlds(vault: &Vault, attempt: Option<AttemptId>) -> Result<RunWorlds> {
+    let Some(attempt) = attempt else {
+        return Ok(RunWorlds::Unscoped);
+    };
+    let txn = vault.store.env.read_txn()?;
+    let Some(record) = AttemptQueue::new(vault).get_in_txn(&txn, attempt)? else {
+        return Ok(RunWorlds::Unproved);
+    };
+    Ok(
+        match crate::failure_signals::dispatch_worlds_in(vault, &txn, &record)? {
+            Some(worlds) => RunWorlds::Scoped { worlds },
+            None => RunWorlds::Unproved,
+        },
+    )
 }
 
 /// Whether any report waits for the Coach.

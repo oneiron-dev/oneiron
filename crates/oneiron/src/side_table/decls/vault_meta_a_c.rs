@@ -395,6 +395,12 @@ side_tables! {
     /// settles it, so a failing attempt's ladder case carries its own reports (OF-418). Key: id16
     /// of the run, then id16 of the receipt.
     COACH_BLOCKED_RUN: VaultMeta b"coach:blocked_run:v1:" Raw;
+    /// The source a `self.report_blocked` receipt's code fix replays (FIX 2343): the instructions,
+    /// briefing and task of the model request the run's host bound before the call, whole, or
+    /// none for a caller that gave this engine no request, with the run, reporter and scope.
+    /// Kept after the Coach settles the report. Key: id16 of the receipt.
+    COACH_BLOCKED_SOURCE: VaultMeta b"coach:blocked_source:v1:" Named Authored
+        => crate::self_heal::blocked_reports::erase_blocked_source_actor_in_txn;
     /// Where the Coach's contribution checks resume: the credit key and skill of the last
     /// candidate a pass put to its replay host, cleared once a pass reaches the end of the credit
     /// table. Key: ().
@@ -402,6 +408,10 @@ side_tables! {
     /// The proposed heal the Coach filed for a blocked report or a failure-ladder case, so a
     /// replay files none twice. Key: id16 of the receipt or the case.
     COACH_ISSUE_SETTLED: VaultMeta b"coach:issue_settled:v1:" Named;
+    /// A blocked report filed while a `coach.issues` attempt held its lease (FIX 1554): the
+    /// attempt's lease generation, consumed in the commit that settles it, which queues one
+    /// successor while reports wait. Key: id16 of the attempt.
+    COACH_ISSUES_REDRIVE: VaultMeta b"coach:issues_redrive:v1:" Named;
     /// A case where a person changed the decision ladder's answer, kept until the Coach's
     /// person-threshold run reads it. Key: id16 of the source the host bound the answer to.
     COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named;

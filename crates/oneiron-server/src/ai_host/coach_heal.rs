@@ -4,8 +4,8 @@
 //! propose-only door for each, judged by the Coach's own seat (else the
 //! host's decision ladder). What lands is a
 //! proposed heal in the owner's run tray; nothing is repaired here. A case
-//! routed to `skill_edit` asks the Coach's skill author for a revision of its
-//! skill, which the heal carries as a gated candidate. The
+//! or a report routed to `skill_edit` asks the Coach's skill author for a
+//! revision of its skill, which the heal carries as a gated candidate. The
 //! code-fix run a filed heal wakes (OF-380) and the answer to an agent-health
 //! card's ask (OF-568) ride the same queue. Each code-fix run also replays
 //! the publisher's pinned candidates the worker started with, and after it
@@ -192,19 +192,21 @@ fn run_one(
         wording: WORDING.to_owned(),
         budget: DECIDE_BUDGET,
     };
+    // A case's or a report's `skill_edit` heal drafts its revision on the
+    // Coach's author (FIX 2496).
+    let author = CoachSkillAuthor::new(
+        Arc::downgrade(server),
+        tokio::runtime::Handle::current(),
+        DRAFT_BUDGET_UNITS,
+    );
     if admitted.status.payload.attempt_type == COACH_ISSUES_FACET {
-        let run = vault.run_coach_issues(admitted, &decisions, now)?;
+        let run = vault.run_coach_issues(admitted, &decisions, &author, now)?;
         tracing::debug!(
             proposed = run.proposed,
             deferred = run.deferred,
             "the Coach read the blocked reports"
         );
     } else {
-        let author = CoachSkillAuthor::new(
-            Arc::downgrade(server),
-            tokio::runtime::Handle::current(),
-            DRAFT_BUDGET_UNITS,
-        );
         vault.run_coach_heal(admitted, &decisions, &author, now)?;
     }
     Ok(())

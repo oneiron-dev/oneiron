@@ -659,6 +659,9 @@ impl<'a> DreamerRunnerStore<'a> {
                     record
                 }
             };
+            // FIX 1554: a report filed while a Coach Issues run held its
+            // lease gets its successor in the commit that settles the run.
+            self.redrive_coach_issues_in_txn(wtxn, record, input.now)?;
             if decode_dreamer_attempt_payload(&record.payload).is_ok_and(|payload| {
                 payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
             }) {
@@ -792,6 +795,9 @@ impl<'a> DreamerRunnerStore<'a> {
                         now: input.now,
                     },
                 )?;
+                // FIX 1554: as at completion, a failed Coach Issues run's
+                // successor is queued in the commit that settles it.
+                self.redrive_coach_issues_in_txn(wtxn, &record, input.now)?;
                 // A free-time item that fails settles its spend scope and
                 // ends Failed unless it already has its receipt (FIX 4453).
                 super::free_time::end_free_time_item_in_txn(
