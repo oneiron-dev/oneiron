@@ -21,6 +21,7 @@ pub mod merge;
 pub mod models;
 pub mod native_mail;
 pub mod oneironer;
+mod page_seal;
 mod recall;
 pub mod remote_embedder;
 mod self_heal;
