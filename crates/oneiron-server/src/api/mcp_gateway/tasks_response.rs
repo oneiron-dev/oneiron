@@ -1541,6 +1541,8 @@ fn mcp_agent_verb_input(
         "vault.agents.spawn" => a.spec.clone().ok_or_else(invalid),
         "vault.tasks.cancel_force" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.branches.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.runs.pause" => a.spec.clone().ok_or_else(invalid),
+        "vault.runs.resume" => a.spec.clone().ok_or_else(invalid),
         "vault.consults.get" => a.spec.clone().ok_or_else(invalid),
         "vault.workspace.establish" => a.spec.clone().ok_or_else(invalid),
         "vault.workspace.members.onboard" => a.spec.clone().ok_or_else(invalid),
@@ -4100,6 +4102,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.runs.branches.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.runs.pause" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.runs.resume" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consults.get" => {
@@ -15219,6 +15227,22 @@ async fn execute_agent_verb_row(
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.runs.pause" => {
+            let input: oneiron::task_verb::run_control::RunControlRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_runs_pause(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.runs.resume" => {
+            let input: oneiron::task_verb::run_control::RunControlRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_runs_resume(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

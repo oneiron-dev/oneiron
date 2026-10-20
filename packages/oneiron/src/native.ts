@@ -692,6 +692,8 @@ vaultAgentsSpawnGet(input: unknown): unknown
 vaultAgentsSpawn(input: unknown): unknown
 vaultTasksCancelForce(input: unknown): unknown
 vaultRunsBranchesGet(input: unknown): unknown
+vaultRunsPause(input: unknown): unknown
+vaultRunsResume(input: unknown): unknown
 vaultConsultsGet(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown

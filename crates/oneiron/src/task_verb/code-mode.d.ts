@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1109 code-mode rows (1084 host rows, 25 run rows), 3735 declarations.
-// Replies: 991 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1111 code-mode rows (1086 host rows, 25 run rows), 3738 declarations.
+// Replies: 993 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2330,6 +2330,9 @@ declare namespace Sdk {
   type CancelForceReceipt = { task_ref: EntityId; effected: boolean; forced: number; branches: RunBranchView[] };
   type RunBranchesRequest = { task_ref: EntityId };
   type RunBranchesView = { task_ref: EntityId; branches: RunBranchView[] };
+  type RunControlRequest = { branch: string; note?: string | null };
+  type RunControlEffect = "paused" | "already_paused" | "resumed" | "already_resumed";
+  type RunControlReceipt = { effect: RunControlEffect; branch: RunBranchView };
   type ConsultReadRequest = { task_ref: EntityId };
   type ConsultDisposition = "completed" | "rejected" | "failed" | "expired" | "abandoned" | "cancelled";
   type ConsultSummaryView = { kind: "answer"; evidence_refs: ConsultPayloadRef[] } | { kind: "abstained"; reason_ref: ConsultPayloadRef };
@@ -5999,12 +6002,16 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
     checkpoint(input: Sdk.CheckpointReadRequest): Promise<Sdk.CheckpointView | null | StoredResult>;
+    /** Pauses one queued or scheduled branch of a run by its attempt id: the vault owner pauses any branch, any other caller only a branch of a TASK it owns. A repeat answers already_paused; a running branch is not paused. */
+    pause(input: Sdk.RunControlRequest): Promise<Sdk.RunControlReceipt | StoredResult>;
     /** Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it. */
     program(input: Sdk.ProgramRunRequest): Promise<Sdk.ProgramRunView | null | StoredResult>;
     /** Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it. */
     program_checkpoint(input: Sdk.ProgramCheckpointRequest): Promise<Sdk.ProgramCheckpointView | null | StoredResult>;
     /** Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body. */
     program_step(input: Sdk.SettledProgramStepRequest): Promise<Sdk.SettledProgramStepView | null | StoredResult>;
+    /** Resumes one paused branch of a run by its attempt id: the vault owner resumes any branch, any other caller only a branch of a TASK it owns. A repeat answers already_resumed. */
+    resume(input: Sdk.RunControlRequest): Promise<Sdk.RunControlReceipt | StoredResult>;
     /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
     review(input: Sdk.RunReviewRequest): Promise<Sdk.RunReview | StoredResult>;
     /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */

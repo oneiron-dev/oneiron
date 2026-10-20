@@ -27,7 +27,9 @@
 //!
 //! # The fold
 //!
-//! The root's seed starts each member it names with the whole thread. The
+//! The root's seed starts each member it names with the whole thread, but
+//! one this vault erased from the room or hard, whose place is the root's
+//! stand-in for them though the seed's bytes still name them (FIX 6095). The
 //! edits then apply in TURN id order, the creation-time order every thread
 //! projection sorts by: an add with full history gives the whole thread, an
 //! add from now gives the turns from the edit's own on, and a remove ends
@@ -234,25 +236,44 @@ impl AudienceEvent {
     }
 }
 
-/// `event` with each actor it names that this vault erased named as no one
-/// (FIX 5640): read by this vault's own hard-delete marker, as every carrier
-/// copy is ([`crate::deletion::ACTOR_ERASE_CARRIER_SOURCE`]).
+/// `event`, an edit of a thread of `room`, with each actor it names that this
+/// vault erased named as no one (FIX 5640): read by this vault's own
+/// hard-delete marker, as every carrier copy is
+/// ([`crate::deletion::ACTOR_ERASE_CARRIER_SOURCE`]), and by its own
+/// room-person erase marker for `room`, so a copy it never held, a new id
+/// included, names no one this vault erased from the room (FIX 6094).
 pub(super) fn erased_here_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    room: EntityId,
     mut event: AudienceEvent,
 ) -> Result<AudienceEvent> {
     if let Some(by) = event.by.id()
-        && vault.carrier_actor_erased_in_txn(txn, &by)?
+        && erased_from_room_in(vault, txn, room, by)?
     {
         event.by = RosterActor::Erased;
     }
     if let Some(person) = event.person.live()
-        && vault.carrier_actor_erased_in_txn(txn, &person)?
+        && erased_from_room_in(vault, txn, room, person)?
     {
         event.person = AudiencePerson::erased(event.root, person);
     }
     Ok(event)
+}
+
+/// Whether this vault erased `person` from `room`: by its own hard-delete
+/// marker, or by its room-person erase marker for `room` in either phase,
+/// the sweep under way or done (FIX 6094, 6095). Erase is one-way.
+fn erased_from_room_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    person: EntityId,
+) -> Result<bool> {
+    Ok(vault.carrier_actor_erased_in_txn(txn, &person)?
+        || crate::conversation::ROOM_ERASURES
+            .get(&vault.store, txn, &(room, person))?
+            .is_some())
 }
 
 /// The audience edit the live TURN `id` carries, with its thread binding;
@@ -456,15 +477,18 @@ pub(super) fn removed_person_in(
     )
 }
 
-/// The audience of the private thread rooted at `root`, whose root names
-/// `seed`: the seed with every edit of the root folded in, read on base
-/// whatever view the root was read in (ARCH-0052: authority reads base).
-/// Every edit is read, however many (rule 5); one whose TURN is not here
-/// has not arrived yet. A person the edits forgot folds under the root's
-/// stand-in for them (module docs).
+/// The audience of the private thread rooted at `root` in `room`, whose root
+/// names `seed`: the seed with every edit of the root folded in, read on
+/// base whatever view the root was read in (ARCH-0052: authority reads
+/// base). Every edit is read, however many (rule 5); one whose TURN is not
+/// here has not arrived yet. A person the edits forgot folds under the
+/// root's stand-in for them (module docs), and so does one this vault erased
+/// from `room` or hard whom the seed names, the seed's bytes kept as they
+/// are (FIX 6095): erase is one-way.
 pub(crate) fn fold_audience_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    room: EntityId,
     root: EntityId,
     seed: &BTreeSet<EntityId>,
 ) -> Result<FoldedAudience> {
@@ -516,10 +540,15 @@ pub(crate) fn fold_audience_in(
             _ => person,
         }
     };
-    let mut members: BTreeMap<_, _> = seed
-        .iter()
-        .map(|id| (key(AudiencePerson::Live(*id), None), None))
-        .collect();
+    let mut members = BTreeMap::new();
+    for id in seed {
+        let person = if erased_from_room_in(vault, txn, room, *id)? {
+            AudiencePerson::erased(root, *id)
+        } else {
+            key(AudiencePerson::Live(*id), None)
+        };
+        members.insert(person, None);
+    }
     for (turn, event) in events {
         let person = key(event.person, Some(turn));
         match (event.op, event.history) {

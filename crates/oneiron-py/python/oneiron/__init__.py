@@ -3828,6 +3828,12 @@ class Oneiron:
         @property
         def branches(self) -> "Oneiron._VaultRunsBranchesVerbs":
             return Oneiron._VaultRunsBranchesVerbs(self._client)
+        def pause(self, spec):
+            """Pauses one queued or scheduled branch of a run by its attempt id: the vault owner pauses any branch, any other caller only a branch of a TASK it owns. A repeat answers already_paused; a running branch is not paused."""
+            return json.loads(_translate(lambda: self._client.vault_runs_pause(json.dumps(spec))))
+        def resume(self, spec):
+            """Resumes one paused branch of a run by its attempt id: the vault owner resumes any branch, any other caller only a branch of a TASK it owns. A repeat answers already_resumed."""
+            return json.loads(_translate(lambda: self._client.vault_runs_resume(json.dumps(spec))))
         def step(self, spec):
             """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
             return json.loads(_translate(lambda: self._client.vault_runs_step(json.dumps(spec))))

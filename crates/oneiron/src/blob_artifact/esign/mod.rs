@@ -25,7 +25,7 @@ pub use model::{
 mod capability;
 mod ceremony;
 mod delivery_capability;
-pub use delivery_capability::{EsignDeliveryLink, EsignDeliveryMint};
+pub use delivery_capability::{EsignDeliveryLink, EsignDeliveryMint, EsignDeliveryWait};
 mod delivery_settlement;
 pub use delivery_settlement::{EsignDeliveryEndReason, EsignDeliveryReceipt};
 mod ingress;
