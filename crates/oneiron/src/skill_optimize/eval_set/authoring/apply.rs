@@ -421,7 +421,8 @@ fn record_cases(
                     draw_probability: None,
                     source_at: candidate.at,
                 };
-                match vault.record_eval_case(&draft, now) {
+                match vault.record_eval_case_sourced(&draft, candidate.source_rows.as_deref(), now)
+                {
                     Ok(case) => {
                         report.cases_recorded += 1;
                         case.id
@@ -440,6 +441,7 @@ fn record_cases(
                 reference: label.reference.clone(),
                 weight: 1.0,
                 at: label.at,
+                source_rows: label.source_rows.clone(),
             };
             match vault.label_eval_case(&case, label) {
                 Ok(_) => report.labels_added += 1,

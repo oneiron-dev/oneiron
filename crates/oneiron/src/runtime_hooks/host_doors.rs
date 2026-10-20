@@ -76,6 +76,8 @@ pub struct HostWakeResult {
     pub queue_head: Vec<EntityId>,
     pub attempt: String,
     pub already_queued: bool,
+    /// Timer only: every job the wake queued carries it as its run id, beneath `attempt`.
+    pub request_id: Option<crate::dreamer_wake::NightStepRequestId>,
 }
 
 /// Names an existing durable spend scope. Its cap's policy is Suspend;
@@ -155,26 +157,39 @@ pub fn wake_as_owner(
         input: rmpv::Value::Nil,
         parent_attempt: None,
     };
-    let outcome = crate::dreamer_wake::request_wake_in_txn(
-        &DreamerRunnerStore::new(vault),
-        &mut txn,
-        input.wake_kind.trigger(),
-        payload,
-        Some(format!("host.wake:{}", invocation.to_hex())),
-        None,
-        vault.now_recorded_at(),
-    )?;
+    let request_id = matches!(input.wake_kind, HostWakeKind::Timer)
+        .then(|| crate::dreamer_wake::NightStepRequestId::from_invocation(invocation));
+    let outcome = match request_id {
+        Some(request_id) => crate::dreamer_wake::request_night_step_in_txn(
+            &DreamerRunnerStore::new(vault),
+            &mut txn,
+            Some(format!("host.wake:{}", invocation.to_hex())),
+            request_id,
+            vault.now_recorded_at(),
+        )?,
+        None => crate::dreamer_wake::request_wake_in_txn(
+            &DreamerRunnerStore::new(vault),
+            &mut txn,
+            input.wake_kind.trigger(),
+            payload,
+            Some(format!("host.wake:{}", invocation.to_hex())),
+            None,
+            vault.now_recorded_at(),
+        )?,
+    };
     let (status, already_queued) = match outcome {
         EnqueueDreamerAttemptOutcome::Enqueued(status) => (status, false),
         EnqueueDreamerAttemptOutcome::Existing(status) => (status, true),
     };
     txn.commit().map_err(crate::Error::from)?;
     vault.store.notify_attempt_observers();
+    vault.store.notify_proactivity_changes();
     Ok(HostWakeResult {
         wake_kind: input.wake_kind,
         queue_head: input.queue_head,
         attempt: crate::entity_id::bytes_to_hex_lower(status.attempt.id.as_bytes()),
         already_queued,
+        request_id,
     })
 }
 

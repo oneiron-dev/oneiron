@@ -249,7 +249,7 @@ pub(crate) async fn build_server(
     // through.
     let broker = crate::models::BrokerContext::for_serve(&vault, config);
     let (embedder, gpu_poller) = build_embedder(&vault, config, broker.as_ref()).await?;
-    let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;
+    let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone(), None).await?;
 
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.

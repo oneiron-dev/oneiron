@@ -12,6 +12,7 @@ mod deadline;
 mod driver;
 mod grain;
 mod legibility;
+mod night_step;
 pub(crate) mod nightly;
 mod observation;
 mod policy;
@@ -30,6 +31,8 @@ pub use self::deadline::*;
 pub use self::driver::*;
 pub use self::grain::*;
 pub use self::legibility::*;
+pub use self::night_step::NightStepRequestId;
+pub(crate) use self::night_step::request_night_step_in_txn;
 pub(crate) use self::observation::{
     ActiveWakes, StepCalls, StepClaimed, StepTerminal, checkpoint_resumable_in_txn,
     record_call_terminal_in_txn, record_checkpoint_in_txn,
