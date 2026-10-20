@@ -85454,6 +85454,7 @@
      "notable": [
       "DistillArgs",
       "ExportArgs",
+      "FetchArgs",
       "OneironerCommand",
       "PublishArgs",
       "QualifyArgs",
@@ -85466,7 +85467,7 @@
      "surface": {
       "enum": 4,
       "fn": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -86817,7 +86818,7 @@
      "path": "src/embedder/local/model_manager.rs",
      "purpose": "Where the local model's files live, and how they get there",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 24
      }
     },
     {
@@ -86885,7 +86886,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -88130,6 +88131,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/state_serve/admission.rs",
+     "purpose": "The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until…",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/state_serve/boot_keys.rs",
      "purpose": "The vault data key's boot steps (moved out of `state_serve`): the page seal a managed vault opens with, its…",
      "surface": {
@@ -88174,7 +88185,7 @@
      "path": "src/managed/state_serve/reap.rs",
      "purpose": "The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 4
      }
     },
@@ -89352,13 +89363,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/release.rs",
+     "purpose": "The shipped Oneironer releases, and the fetch that places one on this machine (FIX 6828)",
+     "surface": {
+      "crate-vis": 21
      }
     },
     {
@@ -90206,7 +90227,7 @@
      "path": "src/server/housekeeping.rs",
      "purpose": "The host's half of the engine's housekeeping",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 19
      }
     },
     {
@@ -91664,7 +91685,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 60,
+     "files": 61,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91692,7 +91713,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91820,7 +91841,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 960,
+   "source_files": 962,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -96231,6 +96252,7 @@
       "IdleBackupFailure",
       "IdleBackupState",
       "IdleBackupWire",
+      "IdleReapInFlight",
       "IdleReapWire"
      ],
      "path": "src/lib/managed_backup/idle_reap.rs",
@@ -96239,7 +96261,7 @@
       "const": 2,
       "enum": 2,
       "fn": 5,
-      "struct": 3
+      "struct": 4
      }
     },
     {
