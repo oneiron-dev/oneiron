@@ -106,6 +106,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.credentials_fd.is_some(),
         ArgvUse::Read,
     ),
+    (
+        "custody-anchor-credentials-fd",
+        |args| args.custody_anchor_credentials_fd.is_some(),
+        ArgvUse::Read,
+    ),
     ("vsock-guest", |args| args.vsock_guest, ArgvUse::Read),
     (
         "keystore-dir",

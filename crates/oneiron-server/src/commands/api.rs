@@ -228,8 +228,6 @@ pub(crate) fn signed_binding(token: &str, key_env: &str) -> anyhow::Result<Strin
 }
 
 pub(super) fn signed_binding_for_seed(token: &str, seed: &str) -> anyhow::Result<String> {
-    use ed25519_dalek::{Signer, SigningKey};
-    let slip = oneiron::authority::CapabilitySlip::from_token(token)?;
     anyhow::ensure!(
         seed.len() == 64 && seed.bytes().all(|b| b.is_ascii_hexdigit()),
         "binding seed must be 64 hex characters"
@@ -239,11 +237,21 @@ pub(super) fn signed_binding_for_seed(token: &str, seed: &str) -> anyhow::Result
         .chunks_exact(2)
         .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap_or(""), 16))
         .collect::<Result<_, _>>()?;
-    let key = SigningKey::from_bytes(
+    signed_binding_with_seed(
+        token,
         &bytes
             .try_into()
             .map_err(|_| anyhow::anyhow!("invalid binding seed length"))?,
-    );
+    )
+}
+
+/// [`signed_binding_for_seed`] from the holder's 32-byte binding seed itself:
+/// the one signer the CLI and the custody anchor door's client share. Return
+/// a JSON header value, never the binding seed.
+pub(crate) fn signed_binding_with_seed(token: &str, seed: &[u8; 32]) -> anyhow::Result<String> {
+    use ed25519_dalek::{Signer, SigningKey};
+    let slip = oneiron::authority::CapabilitySlip::from_token(token)?;
+    let key = SigningKey::from_bytes(seed);
     let current_binding_key = slip
         .caveats
         .last()
