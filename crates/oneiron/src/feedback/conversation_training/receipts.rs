@@ -30,7 +30,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-use super::anonymous::{TrainingPieceState, TrainingTransport};
+use super::anonymous::{PieceFilesProblem, TrainingPieceState, TrainingTransport, files_problem};
 use super::custody::{CustodyKey, SUBMISSION, SUBMISSIONS, SubmissionCustody, SubmissionState};
 use super::lifecycle::TrainingSubmissionId;
 
@@ -125,6 +125,12 @@ pub struct AnonymousReceiptView {
     pub at: Option<u64>,
     /// The sealed bytes the intake holds so far, while it uploads.
     pub progress: Option<u64>,
+    /// A local problem with its outbox files that keeps it from shipping
+    /// (FIX 6916), while it is still to upload; `None` when none stands. It
+    /// names no file, path or code.
+    pub files_problem: Option<PieceFilesProblem>,
+    /// When the shipper first found that problem, unix seconds.
+    pub files_problem_since: Option<u64>,
 }
 
 /// Where a submission stands in local custody.
@@ -247,6 +253,7 @@ fn kind_range(
 fn own_submission(id: TrainingSubmissionId, row: SubmissionCustody) -> PersonTrainingSubmission {
     let receipt = row.receipt.map(|mark| mark.status);
     let progress = row.anonymous.progress();
+    let files = files_problem(&row);
     let anonymous = if row.transport == TrainingTransport::Anonymous {
         Some(AnonymousReceiptView {
             state: row.anonymous.state,
@@ -254,6 +261,8 @@ fn own_submission(id: TrainingSubmissionId, row: SubmissionCustody) -> PersonTra
             reason: row.anonymous.reason,
             at: row.anonymous.at,
             progress,
+            files_problem: files.map(|mark| mark.problem),
+            files_problem_since: files.map(|mark| mark.since),
         })
     } else {
         None

@@ -5,17 +5,24 @@
 //! the bounds take, and applies each answer before the next request. A
 //! walk that stops (its endpoint waits, a request's time ran out, or the
 //! shipper is stopping) resumes from the start of the page it was on.
+//!
+//! A piece whose files do not read ships nothing and is read again next
+//! pass, as before; when what a pass found differs from what its row holds,
+//! the row takes it, and a window from it that ships clears it (FIX 6916).
 
 use std::path::Path;
 use std::time::Instant;
 
-use oneiron::feedback::{ANONYMOUS_PAGE, AnonymousUploadWork};
+use oneiron::feedback::{
+    ANONYMOUS_PAGE, AnonymousFilesSeen, AnonymousUploadWork, PieceFilesProblem,
+    TrainingSubmissionId,
+};
 use oneiron_vault_contract::conversation_training::{
     PIECE_BATCHES_PATH, PIECE_RECEIPTS_PATH, PieceBatchResultV1, PieceEntryV1, PieceReceiptAskV1,
     PieceReceiptCursorAskV1, PieceWithdrawalV1, decode_piece_receipt_page,
 };
 
-use super::stream::Piece;
+use super::stream::{Piece, Unreadable};
 use super::tally::Unread;
 use super::window::{self, FROM_START, JSON, STATUS_PACE, Window};
 use super::{Pass, Sent, Shipment};
@@ -98,11 +105,12 @@ impl Pass<'_> {
                 .filter(|work| self.state.ready(work.id, now))
                 .collect();
             let offers = self.shipper.offers.as_path();
-            let Some((shipments, unread)) = self.admitted(|| read_pieces(offers, due)) else {
+            let Some((shipments, unread, found)) = self.admitted(|| read_pieces(offers, due))
+            else {
                 return Ok(());
             };
             self.tally.unread(unread);
-            if !self.ship(&shipments)? {
+            if !self.files(&found)? || !self.ship(&shipments)? {
                 return Ok(());
             }
             self.state.uploads_after = next;
@@ -127,10 +135,14 @@ impl Pass<'_> {
             };
             let sealed = sealed?;
             self.tally.unread(sealed.unread);
+            if !self.files(&sealed.found)? {
+                return Ok(false);
+            }
             if sealed.entries.is_empty() {
                 rest = following;
                 continue;
             }
+            let shipped = sealed.shipped;
             let entries = sealed.entries.len();
             let batch = window::batch(sealed.entries, Vec::new());
             let encoded = window::encode(&batch, sealed.parts)?;
@@ -138,7 +150,7 @@ impl Pass<'_> {
             match self.send(route, &encoded.content_type, encoded.body, decode_results) {
                 Sent::Answered(results) => {
                     self.tally.windows += entries;
-                    if !self.apply_results(&results)? {
+                    if !self.apply_results(&results)? || !self.files(&shipped)? {
                         return Ok(false);
                     }
                     rest = following;
@@ -147,6 +159,20 @@ impl Pass<'_> {
                 Sent::Stop => return Ok(false),
             }
         }
+        Ok(true)
+    }
+
+    /// Records on their rows what this pass found of pieces' files (FIX
+    /// 6916), in the vault's one writer; nothing when nothing changed.
+    /// Whether the walk goes on.
+    fn files(&self, seen: &[AnonymousFilesSeen]) -> anyhow::Result<bool> {
+        if seen.is_empty() {
+            return Ok(true);
+        }
+        let Some(recorded) = self.admitted(|| self.vault.anonymous_piece_files(seen)) else {
+            return Ok(false);
+        };
+        recorded?;
         Ok(true)
     }
 
@@ -232,21 +258,45 @@ fn decode_results(body: &[u8]) -> Option<PieceBatchResultV1> {
 }
 
 /// The pieces of `due` whose manifests in `offers` read, each with where
-/// it resumes; the rest counted, and read again next pass.
-fn read_pieces(offers: &Path, due: Vec<AnonymousUploadWork>) -> (Vec<Shipment>, Unread) {
+/// it resumes; the rest counted, and read again next pass, with each whose
+/// row does not hold that problem yet (FIX 6916).
+fn read_pieces(
+    offers: &Path,
+    due: Vec<AnonymousUploadWork>,
+) -> (Vec<Shipment>, Unread, Vec<AnonymousFilesSeen>) {
     let mut shipments = Vec::with_capacity(due.len());
     let mut unread = Unread::default();
+    let mut found = Vec::new();
     for work in due {
         match Piece::read(offers, work.id) {
             Ok(piece) => shipments.push(Shipment {
+                id: work.id,
                 code: work.code,
                 piece,
                 cursor: work.cursor.unwrap_or(FROM_START),
+                files_problem: work.files_problem,
             }),
-            Err(unreadable) => unread.add(unreadable),
+            Err(unreadable) => {
+                unread.add(unreadable);
+                found.extend(changed(work.id, work.files_problem, unreadable));
+            }
         }
     }
-    (shipments, unread)
+    (shipments, unread, found)
+}
+
+/// The problem a pass found of a piece's files, when its row holds another
+/// one, or none (FIX 6916).
+fn changed(
+    id: TrainingSubmissionId,
+    held: Option<PieceFilesProblem>,
+    unreadable: Unreadable,
+) -> Option<AnonymousFilesSeen> {
+    let problem = unreadable.problem();
+    (held != Some(problem)).then_some(AnonymousFilesSeen {
+        id,
+        problem: Some(problem),
+    })
 }
 
 /// One batch's windows, their bytes read and sealed.
@@ -257,6 +307,11 @@ struct Sealed {
     parts: Vec<(String, Vec<u8>)>,
     /// The windows whose files did not read, left out.
     unread: Unread,
+    /// Their problems their rows do not hold yet (FIX 6916).
+    found: Vec<AnonymousFilesSeen>,
+    /// The pieces among the entries whose rows hold a problem, which a
+    /// window that ships clears.
+    shipped: Vec<AnonymousFilesSeen>,
 }
 
 /// Reads the bytes of each of `windows` (the windows of `shipments`, in
@@ -267,6 +322,8 @@ fn seal(offers: &Path, shipments: &[Shipment], windows: Vec<Window>) -> anyhow::
         entries: Vec::with_capacity(windows.len()),
         parts: Vec::new(),
         unread: Unread::default(),
+        found: Vec::new(),
+        shipped: Vec::new(),
     };
     for (mut window, shipment) in windows.into_iter().zip(shipments) {
         if window.end > window.start {
@@ -274,9 +331,17 @@ fn seal(offers: &Path, shipments: &[Shipment], windows: Vec<Window>) -> anyhow::
                 Ok(bytes) => sealed.parts.extend(window.seal(bytes)?),
                 Err(unreadable) => {
                     sealed.unread.add(unreadable);
+                    let found = changed(shipment.id, shipment.files_problem, unreadable);
+                    sealed.found.extend(found);
                     continue;
                 }
             }
+        }
+        if shipment.files_problem.is_some() {
+            sealed.shipped.push(AnonymousFilesSeen {
+                id: shipment.id,
+                problem: None,
+            });
         }
         sealed.entries.push(window.entry);
     }

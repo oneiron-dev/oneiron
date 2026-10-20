@@ -128,12 +128,13 @@ pub use self::consent::{
     feedback_logical_send_ref, prepare_feedback_preview, validate_feedback_approval,
 };
 pub use self::conversation_training::{
-    ANONYMOUS_PAGE, AnonymousApplied, AnonymousReceiptView, AnonymousRefusal, AnonymousStatusWork,
-    AnonymousUploadWork, AnonymousWithdrawalWork, ConversationSource, ConversationTrainingChoice,
-    Eligibility, IntakeReceiptKey, IntakeRecipient, NoChoicesYet, PersonTrainingReceipts,
-    PersonTrainingSubmission, PublisherTrainingLifecycle, ReceiptCursor, ReceivedTrainingReceipt,
-    ReleaseDecision, SealedTrainingOffer, SignedTrainingControl, TrainingControlId,
-    TrainingCustody, TrainingOfferPass, TrainingPieceState, TrainingQueued, TrainingReceiptPage,
+    ANONYMOUS_PAGE, AnonymousApplied, AnonymousFilesSeen, AnonymousReceiptView, AnonymousRefusal,
+    AnonymousStatusWork, AnonymousUploadWork, AnonymousWithdrawalWork, ConversationSource,
+    ConversationTrainingChoice, Eligibility, IntakeReceiptKey, IntakeRecipient, NoChoicesYet,
+    PersonTrainingReceipts, PersonTrainingSubmission, PieceFilesProblem,
+    PublisherTrainingLifecycle, ReceiptCursor, ReceivedTrainingReceipt, ReleaseDecision,
+    SealedTrainingOffer, SignedTrainingControl, TrainingControlId, TrainingCustody,
+    TrainingOfferPass, TrainingPieceState, TrainingQueued, TrainingReceiptPage,
     TrainingReceiptsCursor, TrainingScope, TrainingSubmissionId, TrainingTransport,
     TrainingUnavailable, TrainingUpkeep, TrainingUsedRun, TrainingWithheld, Withheld, eligible,
 };

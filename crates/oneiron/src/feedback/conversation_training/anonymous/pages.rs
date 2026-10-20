@@ -20,6 +20,7 @@ use super::super::custody::{
     put_submission_in,
 };
 use super::super::lifecycle::TrainingSubmissionId;
+use super::files::PieceFilesProblem;
 use super::{TrainingPieceState, TrainingTransport};
 
 /// CALLS TL6_ANON_PAGE: the rows one shipper page lists, the pace the
@@ -37,6 +38,9 @@ pub struct AnonymousUploadWork {
     /// Where the intake's last signed receipt says the upload resumes;
     /// `None` from its start.
     pub cursor: Option<PieceCursorV1>,
+    /// The files problem a pass recorded on it (FIX 6916); `None` when
+    /// none stands.
+    pub files_problem: Option<PieceFilesProblem>,
 }
 
 /// One anonymous piece to withdraw.
@@ -193,6 +197,18 @@ fn anonymous_page<T>(
 
 /// The upload work of an anonymous row, when it has any.
 fn upload_work(id: TrainingSubmissionId, row: &SubmissionCustody) -> Option<AnonymousUploadWork> {
+    upload_due(row).then(|| AnonymousUploadWork {
+        id,
+        code: oneiron_vault_contract::hex(&row.piece),
+        cursor: row.anonymous.cursor(),
+        files_problem: row.anonymous.files_problem.map(|mark| mark.problem),
+    })
+}
+
+/// Whether an anonymous row is still to upload, whatever the vault's
+/// setting: published, its files still here, no withdrawal intent, and not
+/// yet taken whole, filtered, refused or removed.
+pub(super) fn upload_due(row: &SubmissionCustody) -> bool {
     let piece = &row.anonymous;
     let settled = matches!(
         piece.state,
@@ -204,12 +220,7 @@ fn upload_work(id: TrainingSubmissionId, row: &SubmissionCustody) -> Option<Anon
                 | TrainingPieceState::Removed
         )
     );
-    let due = row.state == SubmissionState::Published && row.files && !piece.withdraw && !settled;
-    due.then(|| AnonymousUploadWork {
-        id,
-        code: oneiron_vault_contract::hex(&row.piece),
-        cursor: piece.cursor(),
-    })
+    row.state == SubmissionState::Published && row.files && !piece.withdraw && !settled
 }
 
 /// The withdrawal work of an anonymous row, when it has any.

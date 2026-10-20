@@ -62,8 +62,9 @@ mod release;
 mod source;
 
 pub use self::anonymous::{
-    ANONYMOUS_PAGE, AnonymousApplied, AnonymousRefusal, AnonymousStatusWork, AnonymousUploadWork,
-    AnonymousWithdrawalWork, TrainingPieceState, TrainingTransport,
+    ANONYMOUS_PAGE, AnonymousApplied, AnonymousFilesSeen, AnonymousRefusal, AnonymousStatusWork,
+    AnonymousUploadWork, AnonymousWithdrawalWork, PieceFilesProblem, TrainingPieceState,
+    TrainingTransport,
 };
 pub use self::crypto::{IntakeReceiptKey, IntakeRecipient};
 pub use self::lifecycle::{

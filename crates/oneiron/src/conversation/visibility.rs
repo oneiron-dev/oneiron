@@ -13,7 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod private_sources;
 pub(crate) use private_sources::{
-    private_threads_readable_raw_in, private_threads_readable_with_read_in,
+    private_thread_word_turns_in, private_threads_readable_raw_in,
+    private_threads_readable_with_read_in,
 };
 
 /// Immutable ledger snapshots, keyed by the version read in the caller's

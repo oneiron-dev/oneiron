@@ -40,8 +40,8 @@ use axum::routing::get;
 use oneiron::authority::{ConversationLearningView, ConversationTrainingView};
 use oneiron::error::RecordError;
 use oneiron::feedback::{
-    AnonymousReceiptView, PersonTrainingReceipts, PersonTrainingSubmission, TrainingPieceState,
-    TrainingReceiptsCursor,
+    AnonymousReceiptView, PersonTrainingReceipts, PersonTrainingSubmission, PieceFilesProblem,
+    TrainingPieceState, TrainingReceiptsCursor,
 };
 use oneiron::world_keys::PolicyRevision;
 use oneiron_vault_contract::conversation_training::TrainingReceiptStatusV2;
@@ -314,6 +314,14 @@ struct AnonymousReceipt {
     at: Option<u64>,
     /// The sealed bytes the intake holds so far, while it uploads.
     progress: Option<u64>,
+    /// A local problem with the piece's outbox files that keeps it from
+    /// shipping (FIX 6916), while it is still to upload: `missing` or
+    /// `mismatched`; null when none stands. It clears once a window ships.
+    /// It names no file, path or code.
+    files_problem: Option<&'static str>,
+    /// When the shipper first found that problem, unix seconds; null when
+    /// none stands.
+    files_problem_since: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -372,6 +380,8 @@ fn anonymous_receipt(view: AnonymousReceiptView) -> AnonymousReceipt {
         reason: view.reason,
         at: view.at,
         progress: view.progress,
+        files_problem: view.files_problem.map(PieceFilesProblem::as_str),
+        files_problem_since: view.files_problem_since,
     }
 }
 
