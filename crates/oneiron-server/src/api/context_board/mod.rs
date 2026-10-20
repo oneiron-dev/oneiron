@@ -779,3 +779,45 @@ pub(crate) async fn describe_self_for_auth(
         .map_err(|_| crate::error::ApiError::internal_server_error("self brief encoding failed"))?;
     Ok((value, sources))
 }
+
+/// The rendered board one live chat turn reads (FIX 6794), and the rows it
+/// served.
+pub(crate) struct ChatBoard {
+    /// The one board frame, fenced and attributed by its renderer.
+    pub(crate) block: String,
+    /// Every row the board served.
+    pub(crate) rows: Vec<oneiron::EntityId>,
+}
+
+/// The board for a chat turn's `query`, hydrated as `ai.reply` hydrates its
+/// own ([`context_board_hydrate`]): retrieval through the shared context
+/// pack, its MEMORIES projection and the rendered frame, under `auth`'s own
+/// credential where it reads. `reader`, the answering agent's definition,
+/// shapes the optional recall by its profile; `conversation`, when it
+/// exists, narrows the read to its room's audience. A refusal answers its
+/// status.
+pub(crate) async fn chat_board(
+    server: &Arc<SyncServer>,
+    auth: CoreAuth,
+    conversation: Option<oneiron::EntityId>,
+    reader: oneiron::EntityId,
+    query: &str,
+) -> Result<ChatBoard, axum::http::StatusCode> {
+    let request: ContextBoardRequest = serde_json::from_value(serde_json::json!({
+        "retrieval": {
+            "conversation_id": conversation.map(|id| id.to_hex()),
+            "query": query,
+            "reader": {"definition": reader.to_hex()},
+            "limit": super::default_limit(),
+        },
+    }))
+    .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    let (served, Json(context)) =
+        context_board_hydrate(auth, State(Arc::clone(server)), Ok(Json(request)))
+            .await
+            .map_err(|refused| axum::response::IntoResponse::into_response(refused).status())?;
+    Ok(ChatBoard {
+        block: context.board,
+        rows: served.0.rows,
+    })
+}

@@ -49,6 +49,10 @@ pub(crate) struct AnswerBreakpoint {
     instructions_digest: Option<String>,
     /// A reused prefix's kept breakpoint: the new reply keeps it again.
     source: Option<ChatBreakpoint>,
+    /// The call carries a recalled context board (FIX 6794): its reply keeps
+    /// no seed, whose sources cover only the log, so no replay sends the
+    /// recalled rows again past an erase or a narrowed read.
+    recalled: bool,
 }
 
 /// A chat turn's self mode and the log its caller read.
@@ -115,6 +119,7 @@ impl SelfChat {
         self,
         reader: WriteActor,
         locality: CallerLocality,
+        recalled: bool,
     ) -> AnswerBreakpoint {
         let instructions_digest = self.mode.instructions().map(digest_hex);
         AnswerBreakpoint {
@@ -124,6 +129,7 @@ impl SelfChat {
             reader,
             instructions_digest,
             source: None,
+            recalled,
         }
     }
 }
@@ -178,9 +184,11 @@ pub(super) fn enter(
         reader,
         instructions_digest,
         source,
+        recalled,
     } = breakpoint;
     let seed = match source {
         Some(source) => Some(source),
+        None if recalled => None,
         None => log
             .as_ref()
             .and_then(|log| capture_seed(mode.agent(), reader, log, instructions_digest, admitted)),
@@ -499,6 +507,7 @@ pub(crate) fn reuse_chat_breakpoint(
             reader: WriteActor::new(actor, class),
             instructions_digest: seed.instructions_digest.clone(),
             source: Some(seed),
+            recalled: false,
         },
         craft,
     }))

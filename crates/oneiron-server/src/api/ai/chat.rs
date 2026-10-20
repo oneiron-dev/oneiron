@@ -61,7 +61,7 @@ fn refused(status: StatusCode, code: &str, message: impl Into<String>) -> Refuse
     Box::new(refusal(status, code, message))
 }
 use crate::ai_host::payer_funding::room_launch_funding;
-use crate::ai_host::{AiHandle, CHAT_ROLE, TurnGuard};
+use crate::ai_host::{AiHandle, TurnGuard};
 use crate::api::credential_memory;
 use crate::api::facade::{self, DoorClaim};
 use crate::auth::{CoreAuth, CoreScope};
@@ -71,6 +71,7 @@ use crate::voice_host::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 
 mod compaction;
 mod hook_ask;
+mod recall;
 mod sitting;
 
 pub(crate) use compaction::{
@@ -387,7 +388,13 @@ pub(super) async fn chat_turn(
         }
         _ => None,
     };
-    let response = match start_turn(&auth, &server, peer, locality, &headers, payload) {
+    // FIX 6794: the turn reads the vault's memory through the context board,
+    // before anything is written.
+    let board = match &payload {
+        Ok(Json(request)) => recall::turn_board(&server, &auth, request).await,
+        Err(_) => None,
+    };
+    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, board) {
         Ok(started) if started.stream => return streamed(started, claim),
         Ok(started) => whole(started).await,
         Err(refused) => *refused,
@@ -431,6 +438,7 @@ fn start_turn(
     locality: oneiron::claim::CallerLocality,
     headers: &axum::http::HeaderMap,
     payload: Result<Json<ChatTurnRequest>, JsonRejection>,
+    board: Option<String>,
 ) -> Result<Started, Refused> {
     // A turn reads the agent and the conversation, and writes both turns.
     for scope in [CoreScope::Read, CoreScope::Write] {
@@ -527,26 +535,27 @@ fn start_turn(
     messages.push(text_message(LlmMessageRole::User, request.text.clone()));
     // Admitted through its role before anything is written: a vault route
     // this server cannot serve refuses here, with no call made.
-    let mut admitted = server
-        .ai
-        .admit_role(&vault, CHAT_ROLE, chat_request(&seat, messages))
-        .map_err(|refusal| match refusal {
-            RoleRefusal::NoSeat => refused(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "no_model_configured",
-                refusal.to_string(),
-            ),
-            RoleRefusal::RouteNotServed { .. } => refused(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "model_route_not_served",
-                refusal.to_string(),
-            ),
-            RoleRefusal::Refused(_) => refused(
-                StatusCode::PAYMENT_REQUIRED,
-                "turn_not_admitted",
-                refusal.to_string(),
-            ),
-        })?;
+    // FIX 6794: the board rides after the stable history, right before the
+    // newest User (FIX 6676's layout); a role that does not admit it with
+    // the board admits the turn as it was.
+    let (admitted, recalled) = recall::admit(&server.ai, &vault, &seat, messages, board);
+    let mut admitted = admitted.map_err(|refusal| match refusal {
+        RoleRefusal::NoSeat => refused(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no_model_configured",
+            refusal.to_string(),
+        ),
+        RoleRefusal::RouteNotServed { .. } => refused(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "model_route_not_served",
+            refusal.to_string(),
+        ),
+        RoleRefusal::Refused(_) => refused(
+            StatusCode::PAYMENT_REQUIRED,
+            "turn_not_admitted",
+            refusal.to_string(),
+        ),
+    })?;
     if self_chat.is_some() {
         compaction::mark_prefix(&mut admitted.request);
     }
@@ -704,7 +713,7 @@ fn start_turn(
             keepalive,
             mark,
             breakpoint: self_chat
-                .map(|chat| chat.breakpoint(WriteActor::new(actor, class), locality)),
+                .map(|chat| chat.breakpoint(WriteActor::new(actor, class), locality, recalled)),
             today: None,
             craft,
         },
