@@ -29,7 +29,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/actor_claims/archive.rs` | src | s | 3 crate-vis | — | Domain-owned inert restore of learned actor rows |
 | `src/actor_claims/archive_references.rs` | src | s | 2 crate-vis | — | Typed actor evidence references for credential-safe archive serialization |
 | `src/actor_claims/candidate.rs` | src | m | 5 struct · 1 enum · 2 fn · 6 crate-vis | CraftCandidateAnswer, CraftCandidateView, CraftCandidatesRequest, CraftCandidatesView, CraftVerdict, CraftVerdictView | The resident-dreaming candidate inlet (OF-490): a resident's own dreaming proposes craft notes about itself… |
-| `src/actor_claims/craft_read.rs` | src | m | 1 struct · 10 fn · 1 const | CraftNote | A resident's own craft as its runs read it (OF-490): the lessons and failure modes the system learned about… |
+| `src/actor_claims/craft_read.rs` | src | m | 1 struct · 11 fn · 1 const | CraftNote | A resident's own craft as its runs read it (OF-490): the lessons and failure modes the system learned about… |
 | `src/actor_claims/distill.rs` | src | m | 3 struct · 1 trait · 3 fn · 3 crate-vis | SessionActorDistiller, SessionDistillBrief, SessionDistillTurn, SessionDistillUtterance | CHAT lane: session-end distill jobs, turn readers, and the distill run |
 | `src/actor_claims/evidence.rs` | src | s | 1 struct · 3 fn · 5 crate-vis | ActorClaimEvidence | Typed evidence inlets for the `actor.*` write door |
 | `src/actor_claims/mod.rs` | src | s | 8 re-export · 8 crate-vis | — | ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR… |
@@ -955,7 +955,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/versions.rs` | src | m | 12 crate-vis | — | Explicit read frontiers keep the scoped lane's current and historic gates |
 | `src/claim/scoped_read/visibility.rs` | src | m | 3 fn · 12 crate-vis | — | — |
 | `src/claim/scoped_read/weave_correction.rs` | src | L | 2 struct · 1 enum · 5 fn · 3 crate-vis | WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection | Authenticated wrong labels emitted by the live weave report: one on a link, and one on a claim, project or… |
-| `src/claim/scoped_read/weave_digest.rs` | src | L | 3 struct · 2 enum · 10 fn · 1 const · 2 re-export · 9 crate-vis | StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule, WeaveScheduleHold | Per-reader report schedules (OF-499) |
+| `src/claim/scoped_read/weave_digest.rs` | src | L | 3 struct · 2 enum · 10 fn · 1 const · 2 re-export · 10 crate-vis | StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule, WeaveScheduleHold | Per-reader report schedules (OF-499) |
 | `src/claim/scoped_read/weave_digest/changes.rs` | src | m | 4 fn · 1 const · 2 crate-vis | — | The Coach's changes to an owner's digest settings (FIX 5495; DEC-0005 policy residence) |
 | `src/claim/scoped_read/weave_digest/coach.rs` | src | s | 4 crate-vis | — | The Coach's rule for an owner's digest settings (FIX 5495): closed-form, no model call, over the owner's own… |
 | `src/claim/scoped_read/weave_digest/settings.rs` | src | m | 5 struct · 1 enum · 17 crate-vis | WeaveDigestFeedback, WeaveDigestSettingAnswer, WeaveDigestSettingChange, WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo, WeaveDigestSettings | The owner's own digest settings record (FIX 5495): the generation every change to his Owner schedule bumps… |
@@ -1802,7 +1802,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/tests.rs` | test | L | 1 crate-vis | — | — |
 | `src/dreamer_wake/tests/cleanup_lane.rs` | test | s | — | — | — |
 | `src/dreamer_wake/tests/coach_tune.rs` | test | s | — | — | The Coach's nightly retrieval tune (owner ruling 2026-10-16): a Timer wake runs it on the Dreamer's runner… |
-| `src/dreamer_wake/types.rs` | src | m | 6 struct · 3 enum · 1 trait · 2 fn · 2 crate-vis | DreamerAttemptExecution, DreamerAttemptExecutor, LandingRequestNotice, RunWakePass, WakeAttemptContext, WakeMilestoneAuthor, WakePassReport, WakePassStop +2 | Wake request and outcome vocabulary plus the executor contract |
+| `src/dreamer_wake/types.rs` | src | m | 7 struct · 3 enum · 1 trait · 4 fn · 2 crate-vis | DreamerAttemptExecution, DreamerAttemptExecutor, LandingRequestNotice, RunWakePass, WakeAttemptContext, WakeAttemptMeter, WakeMilestoneAuthor, WakePassReport +3 | Wake request and outcome vocabulary plus the executor contract |
 | `src/edge.rs` | src | m | 3 struct · 2 enum · 2 fn · 2 re-export · 15 crate-vis | DecodedEdgeValue, EdgeConfirmationStatus, EdgeInfo, EdgeProvenanceFlags, EdgeValueLayout | Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo` |
 | `src/edge/kind.rs` | src | s | 1 enum · 4 fn · 1 const | EdgeKind | The one edge-kind list: each variant with its stored byte and its snake_case name, generating `EdgeKind` and… |
 | `src/edge/tests.rs` | test | s | — | — | — |
@@ -4689,8 +4689,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_segment.rs` | src | s | 1 fn · 7 const · 1 crate-vis | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
 | `src/wave_orchestration.rs` | src | m | 8 struct · 2 enum · 2 trait · 18 fn · 3 const · 1 re-export | BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveApplyOutcome, WaveOrchestrator, WavePlan, WavePlanReceipt, WavePlanRequest +4 | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
 | `src/wave_orchestration/tests.rs` | test | s | — | — | Wave-orchestration tests (ONE-1905) |
-| `src/web_fetch.rs` | src | L | 13 struct · 6 enum · 2 trait · 22 fn · 2 type · 2 const · 1 re-export | CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope, FetchResult, FirecrawlRenderer +13 | OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a… |
+| `src/web_fetch.rs` | src | L | 13 struct · 6 enum · 2 trait · 22 fn · 2 type · 2 const · 2 re-export | CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope, FetchResult, FirecrawlRenderer +13 | OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a… |
 | `src/web_fetch/door.rs` | src | s | 2 struct · 1 fn | WebCrawlRequest, WebFetchRequest | Typed inputs for the two acquisition doors |
+| `src/web_fetch/egress.rs` | src | s | 2 struct · 3 fn · 1 const · 2 crate-vis | HostedEgressGuard, HostedInfrastructureRefusal | The managed (hosted) node's web-fetch egress guard (SCAN C447) |
 | `src/web_fetch/ladder.rs` | src | m | 6 fn · 13 crate-vis | — | Private ladder-driver internals: the rung-slot requirement and check, the per-rung and per-page… |
 | `src/web_fetch/render.rs` | src | m | 16 crate-vis | — | Private rendering support for the OF-444 ladder: URL parsing, normalization, validation, and credential… |
 | `src/web_fetch/tests.rs` | test | XL | — | — | — |

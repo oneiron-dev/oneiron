@@ -207,7 +207,7 @@
      "purpose": "A resident's own craft as its runs read it (OF-490): the lessons and failure modes the system learned about…",
      "surface": {
       "const": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 1
      }
     },
@@ -11993,7 +11993,7 @@
      "purpose": "Per-reader report schedules (OF-499)",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 10,
       "re-export": 2,
@@ -23371,6 +23371,7 @@
       "LandingRequestNotice",
       "RunWakePass",
       "WakeAttemptContext",
+      "WakeAttemptMeter",
       "WakeMilestoneAuthor",
       "WakePassReport",
       "WakePassStop",
@@ -23382,8 +23383,8 @@
      "surface": {
       "crate-vis": 2,
       "enum": 3,
-      "fn": 2,
-      "struct": 6,
+      "fn": 4,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -60623,7 +60624,7 @@
       "const": 2,
       "enum": 6,
       "fn": 22,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 13,
       "trait": 2,
       "type": 2
@@ -60640,6 +60641,22 @@
      "purpose": "Typed inputs for the two acquisition doors",
      "surface": {
       "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostedEgressGuard",
+      "HostedInfrastructureRefusal"
+     ],
+     "path": "src/web_fetch/egress.rs",
+     "purpose": "The managed (hosted) node's web-fetch egress guard (SCAN C447)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -64829,7 +64846,7 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)"
     },
     "web_fetch": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -64866,7 +64883,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4023,
+   "source_files": 4024,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76770,7 +76787,7 @@
      "path": "src/ai_host/resident_craft.rs",
      "purpose": "A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
