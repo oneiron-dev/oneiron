@@ -19,6 +19,7 @@ pub(crate) use self::esign_delivery::{
     EsignDeliveryCall, esign_approval_digest_from_frozen_payload, esign_delivery_call_in_txn,
     esign_delivery_grant_in_txn,
 };
+pub use self::govern::outbound_approve_once_digest;
 pub use self::pipeline::OutboundDispatchPipeline;
 pub(crate) use self::pipeline::RecordedDispatch;
 pub(super) use self::policy_risk::GATE_OUTCOME_PENDING;

@@ -1,7 +1,7 @@
 //! Bind OF-108 to the same credential, selected worlds and policy as recall.
 use std::sync::Arc;
 
-use super::{Memory, MemoryError, MemoryResult, RecallScope, recall_kinds};
+use super::{Memory, MemoryError, MemoryResult, RecallScope};
 use crate::pipeline::WorldScope;
 use crate::speculative::scoped::SpeculativeReadScope;
 use crate::speculative::{SpeculativeSession, SpeculativeSessionConfig};
@@ -20,21 +20,21 @@ impl Memory<'_> {
                 "speculative session belongs to another vault",
             ));
         }
-        let worlds = self.recall_worlds(scope)?;
+        // The one resolution recall reads its scope by (FIX 5006).
+        let selection = self.recall_selection(scope, None)?;
+        let selection = self.recall_faceted(selection, scope, None)?;
         let mut key = self.read_key()?;
-        if let Some(worlds) = &worlds {
+        if let Some(worlds) = &selection.worlds {
             key = key.within_worlds(worlds.clone());
         }
         let read = SpeculativeReadScope {
             key,
-            worlds: worlds.map_or(WorldScope::All, WorldScope::WorldSet),
-            corpus: self.selected_projects(scope)?,
-            facet: scope
-                .facet
-                .as_deref()
-                .map(|reference| self.resolve_ref(reference))
-                .transpose()?,
-            kinds: recall_kinds(scope)?,
+            worlds: selection
+                .worlds
+                .map_or(WorldScope::All, WorldScope::WorldSet),
+            corpus: selection.projects,
+            facet: selection.facet,
+            kinds: selection.kinds.listed().map(<[u8]>::to_vec),
         };
         Ok(SpeculativeSession::new(vault, config).with_scope(read))
     }

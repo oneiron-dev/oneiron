@@ -74,7 +74,8 @@ impl From<oneiron::recovery::checkpoint::RestoreEpoch> for RestoreRecord {
 pub(crate) struct LastExport {
     pub(crate) at: String,
     pub(crate) format: String,
-    pub(crate) bytes: u64,
+    /// The copy's length, where its door read it back (FIX 6427).
+    pub(crate) bytes: Option<u64>,
     pub(crate) by: String,
 }
 
@@ -90,12 +91,18 @@ pub(crate) fn locate(
     let backups = backup::list(plan)?;
     let (last_export, secret_scan, restores, custody) = match vault {
         Some(vault) => (
-            vault.export_receipts()?.pop().map(|receipt| LastExport {
-                at: super::stamp::rfc3339_secs(receipt.at),
-                format: receipt.format,
-                bytes: receipt.bytes,
-                by: receipt.by,
-            }),
+            // The audit also keeps off-record room copies; this is the
+            // last whole-vault one (FIX 6427).
+            vault
+                .export_receipts()?
+                .into_iter()
+                .rfind(|receipt| receipt.scope == oneiron::memory::ExportAuditScope::WholeVault)
+                .map(|receipt| LastExport {
+                    at: super::stamp::rfc3339_secs(receipt.at),
+                    format: receipt.format,
+                    bytes: receipt.bytes,
+                    by: receipt.by,
+                }),
             Some(vault.secret_scan_mode()?),
             Some(
                 vault

@@ -935,6 +935,7 @@ impl Lift<engine::OutboundIntentReceipt> for OutboundIntentReceipt {
             gate_outcome: value.gate_outcome,
             gate_decision_ref: value.gate_decision_ref,
             gate_reason_codes: value.gate_reason_codes,
+            approval_digest: value.approval_digest,
             deduped: value.deduped,
         })
     }

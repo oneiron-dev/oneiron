@@ -5,6 +5,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 
 use serde::{Deserialize, Serialize};
 
+use super::export_audit::{ExportAuditScope, ExportCopy, record_export};
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::Vault;
 use crate::authority::{ActSurface, HostActionAuthority, OwnerAct, OwnerActKind, VerifiedSlip};
@@ -13,7 +14,6 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::verify_actor_binding_in_txn;
 use crate::settings::ReadDestination;
-use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
 
 /// The export target. `archive` (the default) is the whole vault: one ZIP of
@@ -37,33 +37,6 @@ pub struct ExportOptions {
 pub const EXPORT_TARGET_ARCHIVE: &str = "archive";
 /// The `format` that names the lossy OKF bundle.
 pub const EXPORT_TARGET_OKF: &str = "okf";
-
-/// One whole-vault export, written by the call that renders it, so every
-/// owner can see that the vault left and in what shape. Never the bytes. A
-/// receipt that cannot be written is logged and does not withhold the export.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ExportReceipt {
-    /// Vault clock seconds.
-    pub at: u64,
-    pub format: String,
-    pub bytes: u64,
-    /// BLAKE3 of the archive, lowercase hex.
-    pub digest: String,
-    /// The exporting actor as hex, or `host` for a host-root export.
-    pub by: String,
-    /// OF-490: each agent whose diaries this export read, with the reason.
-    pub diary_reads: Vec<crate::batch::export::ExportDiaryRead>,
-    /// The owner's act this export carried out, on a door that records one
-    /// (Engine 10-19 02:4x): kind [`OwnerActKind::Export`], on the whole
-    /// vault's reserved target, by the owner the export's snapshot
-    /// revalidated, with where he said so (audit only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub act: Option<OwnerAct>,
-}
-
-const EXPORT_RECEIPTS: SideTable<u64, ExportReceipt, Named> =
-    SideTable::new(&side_table::EXPORT_RECEIPT);
 
 /// One export: the archive, or the OKF bundle. On the wire the ZIP is
 /// standard base64.
@@ -391,16 +364,6 @@ impl Vault {
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
         host_owner_export_admitted(self, &txn, proof)
     }
-
-    /// Every whole-vault export receipt, oldest first.
-    pub fn export_receipts(&self) -> crate::Result<Vec<ExportReceipt>> {
-        let txn = self.store.env.read_txn()?;
-        Ok(EXPORT_RECEIPTS
-            .scan(&self.store, &txn)?
-            .into_iter()
-            .map(|(_, receipt)| receipt)
-            .collect())
-    }
 }
 
 /// The owner a host root exports as, in `txn`: the one it acts as under
@@ -521,7 +484,9 @@ fn render_export(
 
 /// One export written to `sink` as it is built (FIX 2766): the archive is
 /// never held whole, and its digest and length are read back from `sink`
-/// for the export's receipt.
+/// for the export's receipt. The receipt is the vault's export audit row,
+/// the copy `reader`'s, and each private thread the archive carries that
+/// he is not in is told of it (FIX 6427).
 fn render_export_to<W: Read + Write + Seek>(
     vault: &Vault,
     opts: &ExportOptions,
@@ -533,7 +498,8 @@ fn render_export_to<W: Read + Write + Seek>(
 ) -> MemoryResult<(MemoryExportReceipt, Vec<EntityId>)> {
     let name = opts.format.as_deref().unwrap_or(EXPORT_TARGET_ARCHIVE);
     let include_secrets = opts.include_secrets.unwrap_or(true);
-    let (mut sink, export) = match name {
+    let exporter = reader.entity_ref();
+    let (mut sink, mut export) = match name {
         EXPORT_TARGET_ARCHIVE => vault.export_whole_vault_with_admission(
             destination,
             include_secrets,
@@ -551,32 +517,22 @@ fn render_export_to<W: Read + Write + Seek>(
     };
     let format = export.manifest().format.clone();
     let (bytes, digest) = written_digest(&mut sink).map_err(crate::Error::from)?;
-    let receipt = ExportReceipt {
-        at: vault.store.clock.now_recorded_at(),
-        format: name.to_owned(),
-        bytes,
-        digest: digest.clone(),
-        by: by.name.to_owned(),
-        diary_reads: export.diary_reads().to_vec(),
-        act: by.act,
-    };
     // Export is never gated: a vault that cannot take one more write (a full
     // map, a failing disk) still hands the owner their data, and says so.
-    if let Err(error) = vault.with_write_txn_grouped(|txn| {
-        let sequence = match EXPORT_RECEIPTS
-            .iter_rev_from(&vault.store, txn, &[])?
-            .next()
-        {
-            None => 0,
-            Some(row) => row?
-                .0
-                .checked_add(1)
-                .ok_or(crate::Error::IndexOverflow("export receipt sequence"))?,
-        };
-        EXPORT_RECEIPTS.put(&vault.store, txn, &sequence, &receipt)
-    }) {
-        tracing::warn!(%error, "whole-vault export served without its receipt");
-    }
+    record_export(
+        vault,
+        ExportCopy {
+            scope: ExportAuditScope::WholeVault,
+            exporter,
+            format: name.to_owned(),
+            bytes: Some(bytes),
+            digest: Some(digest.clone()),
+            by: by.name.to_owned(),
+            diary_reads: export.diary_reads().to_vec(),
+            act: by.act,
+            thread_roots: std::mem::take(&mut export.thread_roots),
+        },
+    );
     Ok((
         MemoryExportReceipt {
             format,

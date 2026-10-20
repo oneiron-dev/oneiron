@@ -48,6 +48,11 @@ pub(super) struct FrozenOutboundPayload<'a> {
     /// The typed admission proof is separate ledger metadata, not payload.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) native_mail_logical_ref: Option<&'a str>,
+    /// FIX 6424: the logical send ref a non-mail press pins, for a family
+    /// whose admitted press is recomposed from these bytes (e-sign); elided
+    /// for every other send.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) approval_send_ref: Option<&'a str>,
     pub(super) has_opted_in: bool,
     pub(super) has_permission: bool,
     // Preserve the caller's dial too: a manifest can map both values to the
