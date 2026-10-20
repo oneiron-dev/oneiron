@@ -15,6 +15,11 @@ pub(super) const CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY: &str = "federated_or
 /// (engine-owned scope-map pattern, like `federated_original_source`).
 pub(crate) const CLAIM_SCOPE_EVIDENCE_TAINT_KEY: &str = "evidence_taint";
 pub(crate) const CLAIM_SCOPE_DEMOTION_RUNG_KEY: &str = "demotion_rung";
+/// Scope key carrying a claim's initial ClaimOf weight. It sits in the
+/// candidate's canonical body scope, so a MACHINE birth signs it with the
+/// rest of the body (OF-023 B2: a curator revert stands its copy at the
+/// target's prior weight).
+pub(crate) const CLAIM_SCOPE_INITIAL_CLAIM_OF_WEIGHT_KEY: &str = "initial_claim_of_weight";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ClaimDemotionRung {
@@ -109,6 +114,56 @@ pub(crate) fn claim_demotion_rung(body: &ClaimBody) -> Result<Option<ClaimDemoti
         Some("weakened") => Ok(Some(ClaimDemotionRung::Weakened)),
         Some("stale") => Ok(Some(ClaimDemotionRung::Stale)),
         _ => Err(Error::InvalidClaimBody("malformed demotion rung")),
+    }
+}
+
+/// The ClaimOf weight a claim is born with: the initial-weight entry in its
+/// scope map, else the ClaimOf default. `None` for an edge subject, which has
+/// no ClaimOf edge. The candidate materializer and both machine-history fold
+/// entry points read this one value, so the stored edge and signed replay
+/// agree. An absent entry, or a scope that is not a map, is the default; a
+/// duplicate entry, a value that is not a finite weight in 0..1, or an entry
+/// on an edge subject is a fail-closed [`Error::InvalidClaimBody`].
+pub(crate) fn claim_initial_claim_of_weight(body: &ClaimBody) -> Result<Option<f32>> {
+    let entry = match &body.scope {
+        Some(Value::Map(entries)) => {
+            match single_map_value(entries, CLAIM_SCOPE_INITIAL_CLAIM_OF_WEIGHT_KEY) {
+                MapValue::Missing => None,
+                MapValue::Duplicate => {
+                    return Err(Error::InvalidClaimBody("duplicate initial ClaimOf weight"));
+                }
+                MapValue::Present(value) => Some(
+                    unit_interval_f32(value)
+                        .ok_or(Error::InvalidClaimBody("malformed initial ClaimOf weight"))?,
+                ),
+            }
+        }
+        _ => None,
+    };
+    match (body.subject, entry) {
+        (ClaimSubject::Entity(_), weight) => Ok(Some(
+            weight.unwrap_or(crate::vault::CLAIM_OF_DEFAULT_WEIGHT),
+        )),
+        (ClaimSubject::Edge { .. }, None) => Ok(None),
+        (ClaimSubject::Edge { .. }, Some(_)) => Err(Error::InvalidClaimBody(
+            "initial ClaimOf weight requires an entity subject",
+        )),
+    }
+}
+
+/// `scope` without its initial ClaimOf weight entry, for a writer that copies
+/// an existing claim's scope onto another claim. The weight is the copied
+/// claim's own birth fact, so the new claim is born at the default. A map the
+/// strip leaves empty is no scope, as if the entry had never been written.
+pub(crate) fn without_initial_weight(scope: Option<Value>) -> Option<Value> {
+    match scope {
+        Some(Value::Map(mut entries)) => {
+            let before = entries.len();
+            entries
+                .retain(|(key, _)| key.as_str() != Some(CLAIM_SCOPE_INITIAL_CLAIM_OF_WEIGHT_KEY));
+            (entries.len() == before || !entries.is_empty()).then_some(Value::Map(entries))
+        }
+        scope => scope,
     }
 }
 

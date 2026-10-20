@@ -12150,7 +12150,7 @@
      "path": "src/claim/source_trust.rs",
      "purpose": "Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 26,
       "enum": 2,
       "struct": 1
      }
@@ -13079,7 +13079,7 @@
      "path": "src/code_run/dispatcher/human_speech.rs",
      "purpose": "Ask-human durable waits and executor speech witnessing",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -21861,7 +21861,7 @@
      "purpose": "The Coach's heal and Issues jobs (ARCH-0066 #coach, OF-418)",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -21880,13 +21880,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/coach_repair.rs",
      "purpose": "The Coach's draft-first skill repair (ARCH-0066 #healer, OF-418)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -26105,11 +26105,21 @@
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
       "const": 5,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 9,
       "fn": 5,
       "struct": 6,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/failure_signals/code_fix/subject.rs",
+     "purpose": "What a code fix reads of the real failure behind its source: the text and every world it touched, a failure…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -46895,14 +46905,24 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/self_heal/blocked_reports.rs",
      "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/blocked_reports/source.rs",
+     "purpose": "A blocked report's replay source (FIX 2343, OF-380)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -49844,6 +49864,8 @@
       "RejectedSkillEdit",
       "RejectedSkillEditReason",
       "SkillEditDraft",
+      "SkillFailureContext",
+      "SkillFailureReport",
       "SkillOptimizeAuthor",
       "SkillOptimizeBrief"
      ],
@@ -49854,7 +49876,7 @@
       "crate-vis": 3,
       "enum": 2,
       "fn": 3,
-      "struct": 2,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -62522,7 +62544,7 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 24,
       "mod": 1,
       "re-export": 1,
@@ -63990,7 +64012,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -64564,7 +64586,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -64909,7 +64931,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4026,
+   "source_files": 4028,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70202,7 +70224,7 @@
      "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
      "surface": {
       "enum": 1,
-      "fn": 9,
+      "fn": 11,
       "mod": 15,
       "re-export": 5,
       "struct": 1
@@ -79841,7 +79863,7 @@
      "path": "src/api/mcp_gateway/booking_call.rs",
      "purpose": "A managed vault's attested holder the vault no longer records as its live owner, calling a booking tool on…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {

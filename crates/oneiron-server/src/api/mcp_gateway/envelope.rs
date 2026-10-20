@@ -1,7 +1,7 @@
 //! JSON-RPC envelope types and request dispatch.
 
 use super::call_meta::MCP_INVOCATION_META;
-use super::owner_call::resolve_mcp_caller;
+use super::booking_call::resolve_handshake_caller;
 use super::tool_receipt::mcp_call_receipt;
 use super::{
     ensure_mcp_actor_matches, execute_mcp_tool, mcp_actor_result, mcp_admit_scoped_call,
@@ -617,7 +617,7 @@ pub(crate) async fn handle_mcp_request(
     match request.method.as_str() {
         "initialize" => {
             let actor =
-                resolve_mcp_caller(mode, &request_id, headers, connection, locality, server)
+                resolve_handshake_caller(mode, &request_id, headers, connection, locality, server)
                     .await?
                     .toward(peer);
             // It states the credential's scope, so it is released as every
@@ -641,12 +641,13 @@ pub(crate) async fn handle_mcp_request(
         }
         // Actor-free, but a caller is still REQUIRED, as for every method.
         "notifications/initialized" => {
-            resolve_mcp_caller(mode, &request_id, headers, connection, locality, server).await?;
+            resolve_handshake_caller(mode, &request_id, headers, connection, locality, server)
+                .await?;
             Ok(json!({}))
         }
         "oneiron/wakes" => {
             let actor =
-                resolve_mcp_caller(mode, &request_id, headers, connection, locality, server)
+                resolve_handshake_caller(mode, &request_id, headers, connection, locality, server)
                     .await?
                     .toward(peer);
             super::wakes::poll(server, &actor, request.params).await
@@ -655,15 +656,16 @@ pub(crate) async fn handle_mcp_request(
         // not be byte-identical across credentials, and the whole point of an
         // immutable registration is that it is the same bytes for everyone.
         // A caller is still REQUIRED (its credential, or the owner a managed
-        // vault's supervisor attested), just never reflected.
+        // vault's supervisor attested), just never reflected. A stale owner
+        // sign-in's booking caller is listed the booking tools alone (FIX 5934).
         "tools/list" => {
-            let _actor =
-                resolve_mcp_caller(mode, &request_id, headers, connection, locality, server)
+            let actor =
+                resolve_handshake_caller(mode, &request_id, headers, connection, locality, server)
                     .await?
                     .toward(peer);
             Ok(json!({
                 "surfaceMode": mode.as_str(),
-                "tools": server.mcp_surface(mode).listing(),
+                "tools": super::booking_call::tools_listing(server, mode, &actor),
             }))
         }
         "tools/call" => {
