@@ -2011,7 +2011,7 @@
      "path": "src/attempt_queue/encoding.rs",
      "purpose": "Storage key derivation and LMDB row encode/decode for the attempt queue",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 19
      }
     },
     {
@@ -32108,7 +32108,7 @@
      "path": "src/linear_sync/mirror_event.rs",
      "purpose": "The mirror's durable event rows and each TASK's mirror control (OF-427)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "struct": 2
      }
     },
@@ -32189,7 +32189,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LinearExternalActor",
