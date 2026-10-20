@@ -166,7 +166,8 @@ pub(super) fn tolerant_approval<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<ConnectorCallApproval>, D::Error> {
     Ok(match Option::<StoredApproval>::deserialize(deserializer)? {
         Some(StoredApproval::Read(approval)) => Some(approval),
-        Some(StoredApproval::Unread(_unread)) | None => None,
+        Some(StoredApproval::Unread(_unread)) => None,
+        None => None,
     })
 }
 

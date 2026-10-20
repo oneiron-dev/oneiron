@@ -633,11 +633,14 @@ fn drop_requests_in_txn(
     let mut dropped = Vec::new();
     for row in REQUESTS.iter_raw_from(store, wtxn, &[])? {
         let (key, value) = row?;
-        let Ok(key) = <[u8; 16]>::try_from(key.as_slice()) else {
+        let Some(request_ref) = <[u8; 16]>::try_from(key.as_slice())
+            .ok()
+            .and_then(|key| EntityId::from_bytes(key).ok())
+        else {
             continue;
         };
         if !REQUESTS.decode_value(&value).is_ok_and(|row| keep(&row)) {
-            dropped.push(EntityId::from_bytes_unchecked(key));
+            dropped.push(request_ref);
         }
     }
     for request_ref in dropped {
