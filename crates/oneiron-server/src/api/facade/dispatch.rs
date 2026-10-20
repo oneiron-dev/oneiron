@@ -23246,6 +23246,40 @@ async fn vault_models_manifest_replace(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_models_oneironer_bind(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.models.oneironer.bind")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.models.oneironer.bind", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.models.oneironer.bind", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_models_oneironer_bind(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_models_routes_read(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -33213,6 +33247,47 @@ async fn self_browser_handover(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn self_browser_switch_engine(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.switch_engine")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.switch_engine", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.browser.switch_engine", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::self_browser_switch_engine(
+            server,
+            auth,
+            call.session()?,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_claims_supersede(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -34814,6 +34889,7 @@ pub(crate) async fn call_verb(
         "vault.skills.outcomes.get" => vault_skills_outcomes_get(server, call, input).await,
         "vault.models.manifest.read" => vault_models_manifest_read(server, call, input).await,
         "vault.models.manifest.replace" => vault_models_manifest_replace(server, call, input).await,
+        "vault.models.oneironer.bind" => vault_models_oneironer_bind(server, call, input).await,
         "vault.models.routes.read" => vault_models_routes_read(server, call, input).await,
         "vault.models.routes.replace" => vault_models_routes_replace(server, call, input).await,
         "vault.models.roles.read" => vault_models_roles_read(server, call, input).await,
@@ -35257,6 +35333,7 @@ pub(crate) async fn call_verb(
         "self.browser.library.retired" => self_browser_library_retired(server, call, input).await,
         "self.browser.library.run" => self_browser_library_run(server, call, input).await,
         "self.browser.handover" => self_browser_handover(server, call, input).await,
+        "self.browser.switch_engine" => self_browser_switch_engine(server, call, input).await,
         "vault.claims.supersede" => vault_claims_supersede(server, call, input).await,
         "self.fold" => self_fold(server, call, input).await,
         "self.compact" => self_compact(server, call, input).await,

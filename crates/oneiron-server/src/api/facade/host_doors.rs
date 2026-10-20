@@ -1251,6 +1251,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         }
         "vault.models.manifest.read"
         | "vault.models.manifest.replace"
+        | "vault.models.oneironer.bind"
         | "vault.models.routes.read"
         | "vault.models.routes.replace"
         | "vault.models.roles.read"

@@ -11779,6 +11779,21 @@
       "section": false
     },
     {
+      "name": "vault.models.oneironer.bind",
+      "description": "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides.",
+      "input": "crate::llm::manifest::doors::OneironerBind",
+      "output": "crate::llm::manifest::ModelManifest",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.models.oneironer.bind\", &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.models.routes.read",
       "description": "Reads one independent model slot route with its manifest pin and effective resident narrowing.",
       "input": "crate::llm::manifest::doors::ModelRouteRead",
@@ -13334,6 +13349,23 @@
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserHandoverInput>",
         "description": "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record.",
+        "host_door_caller": true,
+        "openapi": true
+      }
+    },
+    {
+      "name": "self.browser.switch_engine",
+      "description": "Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself.",
+      "input": "crate::task_verb::sdk::BrowserSwitchEngineInput",
+      "output": "crate::task_verb::sdk::BrowserSwitchEngineOutput",
+      "call": "oneiron_browser::BrowserAnswer::of(driver.switch_engine(input)?)",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSwitchEngineInput>",
+        "description": "Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself.",
         "host_door_caller": true,
         "openapi": true
       }

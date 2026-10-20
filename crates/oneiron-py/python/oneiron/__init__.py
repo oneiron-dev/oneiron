@@ -4072,6 +4072,9 @@ class Oneiron:
         def manifest(self) -> "Oneiron._VaultModelsManifestVerbs":
             return Oneiron._VaultModelsManifestVerbs(self._client)
         @property
+        def oneironer(self) -> "Oneiron._VaultModelsOneironerVerbs":
+            return Oneiron._VaultModelsOneironerVerbs(self._client)
+        @property
         def routes(self) -> "Oneiron._VaultModelsRoutesVerbs":
             return Oneiron._VaultModelsRoutesVerbs(self._client)
         @property
@@ -4095,6 +4098,12 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."""
             return json.loads(_translate(lambda: self._client.vault_models_manifest_replace(json.dumps(spec))))
+    class _VaultModelsOneironerVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bind(self, spec):
+            """Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."""
+            return json.loads(_translate(lambda: self._client.vault_models_oneironer_bind(json.dumps(spec))))
     class _VaultModelsRoutesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5222,6 +5231,9 @@ class Oneiron:
         def handover(self, spec):
             """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
             return json.loads(_translate(lambda: self._client.self_browser_handover(json.dumps(spec))))
+        def switch_engine(self, spec):
+            """Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."""
+            return json.loads(_translate(lambda: self._client.self_browser_switch_engine(json.dumps(spec))))
     class _SelfBrowserLibraryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

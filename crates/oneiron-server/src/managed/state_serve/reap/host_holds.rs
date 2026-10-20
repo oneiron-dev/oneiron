@@ -1,5 +1,6 @@
 //! The source half of the host-order legal holds a cold restore carries
-//! (FIX 1485): `host_order_holds`, answered under the reap freeze.
+//! (FIX 1485): `host_order_holds`, its pages and its confirm (FIX 6820),
+//! answered under the reap freeze.
 
 use std::sync::atomic::Ordering;
 
@@ -19,7 +20,10 @@ impl ManagedState {
     /// after it; anything else answers not proven, never an empty family.
     /// Each page reads the family again, whole, in one read transaction, and
     /// names its id, so a family that changed between pages answers
-    /// `export_changed`. It writes no hold, keeps nothing between pages and
+    /// `export_changed`. A cursor at the family's end is the confirm (FIX
+    /// 6820): the same checks and the same read, answered with no bytes
+    /// while the family is still the cursor's and `export_changed` once it
+    /// is not. It writes no hold, keeps nothing between pages and
     /// changes no reap state; the lease drain is the one `prepare_reap`
     /// runs.
     pub(in crate::managed::state_serve) async fn host_order_holds(

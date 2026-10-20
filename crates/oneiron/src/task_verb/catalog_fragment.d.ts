@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1118 code-mode rows (1093 host rows, 25 run rows), 3770 declarations.
-// Replies: 998 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1120 code-mode rows (1095 host rows, 25 run rows), 3781 declarations.
+// Replies: 1000 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2639,6 +2639,7 @@ declare namespace Sdk {
   type ModelManifest = { version: number; roles: Record<string, ModelBinding>; routes: Record<string, ModelLocality>; verdict?: VerdictBinding | null; seat_policy?: SeatPolicy | null };
   type TeacherProbeApproval = { probe_id: string; model: ModelId; binding_hash: string; f1_millionths: number; policy_hash: string; holder_ref?: string | null };
   type ModelManifestReplace = { manifest: ModelManifest; teacher_approval?: TeacherProbeApproval | null };
+  type OneironerBind = { expected_checkpoint_sha16?: string | null; expected_stack_sha16?: string | null };
   type ModelRouteRead = { slot: ModelSlot };
   type ModelRouteView = { slot: ModelSlot; pin?: ModelLocality | null; route?: ModelLocality | null };
   type ModelRouteReplace = { slot: ModelSlot; route: ModelLocality };
@@ -2925,7 +2926,14 @@ declare namespace Sdk {
   type ActionTarget = { ref?: string | null; name?: string | null; locator?: string | null; point?: ViewportPoint | null };
   type NoEffectReason = "no_observable_change";
   type ActionFact = { kind: "click_no_effect"; engine: BrowserEngine; target: ActionTarget; reason: NoEffectReason; window_ms: number } | { kind: "type_no_effect"; engine: BrowserEngine; target: ActionTarget; reason: NoEffectReason; window_ms: number } | { kind: "navigate_no_effect"; engine: BrowserEngine; url: string; reason: NoEffectReason; window_ms: number };
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null };
+  type SwitchComponent = "url" | "cookies" | "cookie" | "local_storage" | "session_storage" | "storage" | "scroll" | "tab";
+  type SwitchCarried = { component: SwitchComponent; origin?: string | null; count?: number | null };
+  type SwitchLoss = "not_collected" | "engine_refuses" | "engine_ignores" | "limit" | "host_capacity" | "read_failed" | "seed_failed" | "readback_mismatch" | "redirected" | "not_web_page" | "other_tab";
+  type SwitchNotCarried = { component: SwitchComponent; origin?: string | null; cookies?: string[]; attribute?: string | null; count?: number | null; reason: SwitchLoss };
+  type SwitchStage = "start" | "attach" | "cookies" | "navigate";
+  type SwitchOutcome = { state: "switched" } | { state: "unchanged" } | { state: "failed"; stage: SwitchStage; code: string; detail: string };
+  type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reason: string; url: string; carried?: SwitchCarried[]; not_carried?: SwitchNotCarried[]; outcome: SwitchOutcome };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null };
   type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
   type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null };
@@ -3706,6 +3714,9 @@ declare namespace Sdk {
   type LibraryRunOutput = { workflow: string; status: SubgoalStatus; unmet?: number[]; batch: BatchOutput };
   type BrowserLibraryRunOutput = BrowserAnswer<LibraryRunOutput>;
   type BrowserHandoverOutput = BrowserAnswer<HandoverOutput>;
+  type SwitchEngineInput = { engine: BrowserEngine; reason: string };
+  type SwitchEngineOutput = { receipt: EffectReceipt; observation?: ObservationPage | null };
+  type BrowserSwitchEngineOutput = BrowserAnswer<SwitchEngineOutput>;
   type BoardRefreshRequest = { frame_epoch?: number | null };
   type BoardVerbOutput = unknown;
   type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts";
@@ -4021,6 +4032,8 @@ declare namespace self {
     screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.BrowserScreenshotOutput | StoredResult>;
     /** Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor. */
     select(input: Sdk.SelectInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
+    /** Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself. */
+    switch_engine(input: Sdk.SwitchEngineInput): Promise<Sdk.BrowserSwitchEngineOutput | StoredResult>;
     /** Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next. */
     type(input: Sdk.TypeInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
     /** Reads back a held image by its ref. */
@@ -5499,6 +5512,10 @@ declare const vault: Sdk.VaultHost & {
       read(input: Sdk.EmptyRequest): Promise<Sdk.ModelManifest | null | StoredResult>;
       /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides. */
       replace(input: Sdk.ModelManifestReplace): Promise<Sdk.ModelManifest | StoredResult>;
+    };
+    oneironer: {
+      /** Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides. */
+      bind(input: Sdk.OneironerBind): Promise<Sdk.ModelManifest | StoredResult>;
     };
     roles: {
       /** Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt. */
