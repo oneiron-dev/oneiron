@@ -39,25 +39,35 @@ pub(crate) fn response_erased_error(what: &'static str) -> Error {
 }
 
 /// The preview text of a result whose record an erase retired.
-const CODE_RUN_OUTPUT_PREVIEW_ERASED: &str =
+pub(crate) const CODE_RUN_OUTPUT_PREVIEW_ERASED: &str =
     "[preview erased: its owner's erase retired this result]";
 
 /// What a checkpoint carries of the replay record `value`: its outcomes and
 /// previews, the record with each outcome failed and each preview withheld
-/// as the stub its erased disposition keeps whole. `None` for a record with
-/// no call and no output, and for one that does not decode.
+/// as the stub its erased disposition keeps whole, a verb's answer keeping
+/// the rows it was served from as the live erased form does (FIX 6535).
+/// `None` for a record with no call and no output, and for one that does not
+/// decode.
 pub(crate) fn replay_carriage(value: &[u8]) -> Option<ResponseCarriage> {
     let mut record = REPLAY_RECORDS.decode_value(value).ok()?;
     if record.bridge_calls.is_empty() && record.outputs.is_empty() {
         return None;
     }
     for call in &mut record.bridge_calls {
+        let rows = match decode_self_dispatch_outcome(&call.outcome) {
+            Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.rows),
+            Ok(_) => None,
+            Err(_) => Some(None),
+        };
         call.outcome =
             self_dispatch_outcome_value(&SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect,
                 error: RESPONSE_ERASED.to_owned(),
             }))
             .ok()?;
+        if let Some(rows) = rows {
+            keep_erased_answer_rows(&mut call.outcome, rows.as_deref());
+        }
     }
     for output in &mut record.outputs {
         output.preview.text = CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();

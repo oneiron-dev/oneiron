@@ -310,6 +310,10 @@ pub struct StoreCore {
     /// Legal-hold refusals waiting for their hold log: the refusing
     /// transaction rolls back (OF-470). Never persisted.
     pub(crate) legal_hold_refusals: super::legal_hold::LegalHoldRefusals,
+    /// Content-free, per-vault: bumped after each committed legal-hold
+    /// release and each hold maintenance pass, so a deferred delete that a
+    /// standing hold kept asks again (FIX 1488). Never persisted.
+    pub(crate) backup_hold_rechecks: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault digest deadline invalidation. The host
     /// subscribes before reading its first deadline; no process-global timer.
     pub(crate) proactivity_updates: tokio::sync::watch::Sender<u64>,

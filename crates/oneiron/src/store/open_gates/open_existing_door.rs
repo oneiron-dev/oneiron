@@ -192,6 +192,7 @@ impl Store {
             )),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             legal_hold_refusals: crate::store::legal_hold::LegalHoldRefusals::default(),
+            backup_hold_rechecks: tokio::sync::watch::channel(0).0,
             clock,
             group_commit: crate::store::GroupCommit::default(),
             diagnostics: Diagnostics::default(),

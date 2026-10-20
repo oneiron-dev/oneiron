@@ -36,7 +36,8 @@ pub(crate) use self::records::{
     StagedSinks, code_run_body_file_of_row, code_run_body_row_key, code_run_inline_body_of_row,
 };
 pub(crate) use self::replay_bodies::{
-    RESPONSE_ERASED, replay_carriage, replay_owners, response_erased_error,
+    CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
+    response_erased_error,
 };
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::{
