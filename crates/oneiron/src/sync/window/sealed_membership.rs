@@ -26,6 +26,17 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
+/// What proves a row left a sealed window (CALLS:
+/// SEALED_MIRROR_DEPARTURE_PROOF).
+enum DepartureProof {
+    /// A CLAIM held here whose world or learned month, read here, names
+    /// another window. This machine's row decides, so a holder of an older
+    /// copy may drop a carrier until a holder of the newer one seals again.
+    HeldClaimResidesElsewhere,
+}
+
+const SEALED_MIRROR_DEPARTURE_PROOF: DepartureProof = DepartureProof::HeldClaimResidesElsewhere;
+
 /// Where a row held here resides.
 #[derive(Clone)]
 struct Residence {
@@ -61,6 +72,9 @@ pub(super) fn drop_departed_carriers(
     doc: &LoroDoc,
     window_key: &WindowKey,
 ) -> Result<bool> {
+    match SEALED_MIRROR_DEPARTURE_PROOF {
+        DepartureProof::HeldClaimResidesElsewhere => {}
+    }
     let (Some(world), Some(month)) = (window_key.world(), window_key.as_str().get(..7)) else {
         return Ok(false);
     };
