@@ -17,14 +17,19 @@ doctest = false
 [dependencies]
 aes-gcm = { version = "=0.11.1", default-features = false, features = ["aes", "alloc", "zeroize"] }
 argon2 = { version = "=0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+# The sealed artifacts' clear codec (`backup`): their digests, and the named
+# MessagePack the engine writes their key header and commitment in.
+blake3 = { workspace = true }
 chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc", "zeroize"] }
 ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["alloc", "fast", "zeroize"] }
 hkdf = "=0.13.0"
 # Direct only to turn on their providers' wiping of internal MAC and hash state.
 hmac = { version = "=0.13.0", features = ["zeroize"] }
 poly1305 = { version = "=0.9.1", features = ["zeroize"] }
+rmp-serde = { workspace = true }
 ml-kem = { version = "=0.3.2", features = ["zeroize"] }
 rand_core = "=0.10.1"
+serde = { workspace = true }
 sha2 = { version = "=0.11.0", features = ["zeroize"] }
 sha3 = { version = "=0.11.0", features = ["zeroize"] }
 slh-dsa = { version = "=0.2.0-rc.5", features = ["zeroize"] }

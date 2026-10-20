@@ -97,8 +97,8 @@ impl FileKey {
         Self {
             vault_id,
             instance,
-            body: Kek::from_bytes(*raw),
-            lines: Kek::from_bytes(*lines),
+            body: Kek::from_bytes_ref(&raw),
+            lines: Kek::from_zeroizing(lines),
             raw,
         }
     }

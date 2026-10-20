@@ -11,13 +11,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use getrandom::SysRng;
+use oneiron_crypto::backup::{ARTIFACT_SEAL_EPOCH as EPOCH, ARTIFACT_SEAL_SUITE as AEAD};
 use oneiron_crypto::{
     Argon2Cost, Envelope, Kek, OpenKey, OpenPolicy, SealKey, SealParams, WrapType, seal,
 };
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::super::artifact::{AEAD, CHUNK_LEN, EPOCH, ZSTD_LEVEL};
+use super::super::artifact::{CHUNK_LEN, ZSTD_LEVEL};
 use super::{Carrier, Getter};
 use crate::error::{Error, Result};
 use crate::store::CustodyKind;
