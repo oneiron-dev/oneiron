@@ -110,7 +110,7 @@ pub(in crate::batch) fn mask_batch_ops(
     // back, shape or none (OF-560 C). A replayed batch reads only what it
     // wrote before.
     let known = if masks {
-        KnownValues::load_backfilled_in_txn(store, wtxn)?.map(Arc::new)
+        KnownValues::load_in_writer(store, wtxn)?.map(Arc::new)
     } else {
         None
     };

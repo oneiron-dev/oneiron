@@ -11013,6 +11013,7 @@ class CriticObservation(TypedDict):
     branch_attempt_ref: EntityId
     association: CriticAssociation
     declared_attempt_ref: NotRequired[EntityId | None]
+    review_verdict_ref: NotRequired[EntityId | None]
     artifact_id: str
     target_ref: str
     type_ref: TypeStamp

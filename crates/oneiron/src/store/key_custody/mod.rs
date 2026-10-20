@@ -43,7 +43,9 @@ pub(crate) use self::files::{EntryState, LocalCustody, custody_present};
 pub(crate) use self::folder::FolderTarget;
 pub(crate) use self::fork::{CustodyPlan, ForkedCustodyDir, Requirement};
 pub(crate) use self::head::{CUSTODY_HEAD_WRAP_CONTEXT, CustodyRecipients};
-pub(crate) use self::identity::{CustodyBinding, CustodyId, CustodyKind, CustodySubject};
+pub(crate) use self::identity::{
+    CustodyBinding, CustodyId, CustodyKind, CustodySecret, CustodySubject,
+};
 pub(in crate::store) use self::identity::{decode_native_path, encode_native_path};
 pub(crate) use self::outbox::OutboxTarget;
 pub(crate) use self::publish::{CUSTODY_COMPLETION_NEEDS_ANCHOR, Publication, PublicationState};

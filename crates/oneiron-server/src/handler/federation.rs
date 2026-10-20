@@ -1,5 +1,7 @@
 //! Authenticated selector fetches with durable defer and current-grant replay.
 
+use std::ops::ControlFlow;
+
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
 use super::window_sync::{
@@ -14,6 +16,9 @@ use oneiron::sync::federation_burst::{
 };
 use oneiron::sync::{WindowKey, filtered_window_doc_for_peer};
 
+/// `Break` when `session_gone` finds the socket's caller gone once the window
+/// has loaded (FIX 6313): nothing is sent or completed for it, and the
+/// connection ends as the gate before dispatch ends it.
 pub(super) async fn handle_selector_fetch(
     server: &SyncServer,
     key: &WindowKey,
@@ -21,7 +26,8 @@ pub(super) async fn handle_selector_fetch(
     payload: &[u8],
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
-) -> Result<(), ProtocolError> {
+    session_gone: &(dyn Fn() -> bool + Sync),
+) -> Result<ControlFlow<()>, ProtocolError> {
     state.bind_window_sync_mode(WindowSyncMode::Selector)?;
     // Owner/shared-secret upgrade is NOT a stable peer identity. The MACed,
     // live app-tier credential must name the actual granted principal.
@@ -83,12 +89,19 @@ pub(super) async fn handle_selector_fetch(
         let mut retry = request_id.to_vec();
         retry.extend_from_slice(request);
         send(direct_tx, key, window_sub_tags::SELECTOR_DEFERRED, &retry)?;
-        return Ok(());
+        return Ok(ControlFlow::Continue(()));
     }
     let window = server
         .serve_window(key)
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
+    // FIX 6313: the load may wait, and the session the gate before dispatch
+    // found live may have gone meanwhile. The work prepared above stays as it
+    // is; nothing of it is exported or completed for a gone session.
+    if session_gone() {
+        tracing::warn!("credential revoked — refusing sync message and closing");
+        return Ok(ControlFlow::Break(()));
+    }
     let doc = window.doc.clone();
     let filtered = filtered_window_doc_for_peer(
         server.vault.as_ref(),
@@ -105,7 +118,8 @@ pub(super) async fn handle_selector_fetch(
     send(direct_tx, key, window_sub_tags::UPDATE, &delta)?;
     prepared
         .complete(server.vault.as_ref())
-        .map_err(map_selector_filter_err)
+        .map_err(map_selector_filter_err)?;
+    Ok(ControlFlow::Continue(()))
 }
 
 fn send(
