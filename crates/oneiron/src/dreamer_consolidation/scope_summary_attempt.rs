@@ -210,12 +210,18 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let step_hash = request
             .canonical_hash()
             .map_err(|_| invalid_consolidation("summary request did not hash"))?;
+        // A NOTE set's summary is in no conversation: its step is about the
+        // first NOTE whose text it reads (FIX 5757).
+        let subject = match &plan.scope {
+            Some(scope) => scope.conversation,
+            None => first,
+        };
         let step_ctx = DurableStepContext {
             vault: ctx.vault,
             attempt_id,
             run_id: attempt.status.attempt.run_id.clone(),
             envelope_actor: self.actor,
-            subject: plan.scope.conversation,
+            subject,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
         };

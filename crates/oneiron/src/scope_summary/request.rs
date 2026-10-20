@@ -5,8 +5,8 @@ use super::codec::{invalid, parse_scope, scope_value};
 use super::derivation::{self, ScopeSummaryMetadata, SummaryDerivation};
 use super::doors::{
     LandedHeader, ScopeSources, SummaryContent, header_landed_in_txn, land_in_txn, mint_in_txn,
-    reply_lane, scope_sources_in_txn, settle_header, standing_composition_in_txn,
-    validate_landing_in_txn,
+    note_sources_in_txn, reply_lane, scope_sources_in_txn, settle_header,
+    standing_composition_in_txn, validate_landing_in_txn,
 };
 use super::purpose::SummaryPurpose;
 use crate::attempt_queue::AttemptId;
@@ -28,6 +28,9 @@ const REQUEST_VERSION: u64 = 2;
 pub(super) const SOURCES_KEY: &str = "sources";
 const SUMMARY_ID_DOMAIN: &[u8] = b"oneiron:dreamer-scope-summary:v1";
 const MEMO_DOMAIN: &[u8] = b"oneiron:dreamer-scope-summary-memo:v2";
+/// The purpose a NOTE set's summary takes unless its caller names another
+/// (FIX 5757): never a session recap.
+const NOTE_SET_PURPOSE: &str = "note_summary";
 
 /// What the caller asks the Dreamer to summarize; never caller-authored prose.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,8 +47,12 @@ pub enum ScopeSummaryTarget {
     /// a room's summary need not be its whole conversation. Each must be a
     /// record the scope summarizes, now and at every later read of the
     /// declaration, and there must be one. Nothing lands on a turn.
+    ///
+    /// With no `scope`, the sources are NOTEs named by id (FIX 5757): each a
+    /// live NOTE its requester reads, now and at every later read, and the
+    /// summary stands alone, in no conversation.
     Sources {
-        scope: ScopeSelector,
+        scope: Option<ScopeSelector>,
         sources: Vec<EntityId>,
     },
 }
@@ -67,7 +74,8 @@ pub struct ScopeSummaryQueued {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScopeSummaryPlan {
     pub(crate) input: Vec<u8>,
-    pub(crate) scope: ScopeSelector,
+    /// `None` for a NOTE set's summary, which has no conversation.
+    pub(crate) scope: Option<ScopeSelector>,
     pub(crate) members: Vec<EntityId>,
     pub(crate) sources: Vec<EntityId>,
     pub(crate) land_on: Option<EntityId>,
@@ -86,7 +94,8 @@ impl ScopeSummaryPlan {
     pub(crate) fn observation(&self, evidence: &[u8; 32]) -> Result<[u8; 32]> {
         let mut hasher = blake3::Hasher::new();
         hasher.update(MEMO_DOMAIN);
-        hasher.update(&derivation::encode(&scope_value(&self.scope))?);
+        let scope = self.scope.as_ref().map_or(Value::Nil, scope_value);
+        hasher.update(&derivation::encode(&scope)?);
         hasher.update(evidence);
         hasher.update(&self.policy_frontier);
         let metadata = serde_json::to_vec(&(&self.purpose, &self.keep, &self.editor_text))
@@ -202,7 +211,7 @@ pub(super) fn plan_in_txn(
             scope,
             land_on,
             as_record,
-        } => (scope, land_on, as_record, None),
+        } => (Some(scope), land_on, as_record, None),
         ScopeSummaryTarget::Sources { scope, sources } => (scope, None, false, Some(sources)),
         ScopeSummaryTarget::Thread { trunk } => {
             let selected = selected_thread_in_txn(vault, txn, trunk)?
@@ -221,19 +230,32 @@ pub(super) fn plan_in_txn(
             {
                 return Err(invalid("selected thread differs from bounded span"));
             }
-            (scope, Some(trunk), false, None)
+            (Some(scope), Some(trunk), false, None)
         }
     };
     if as_record && land_on.is_none() {
         return Err(invalid("as_record requires land_on"));
     }
-    if let Some(turn) = land_on {
-        validate_landing_in_txn(vault, txn, &scope, &turn)?;
-    }
-    let ScopeSources { members, sources } = scope_sources_in_txn(vault, txn, &scope)?;
-    let sources = match admitted {
-        Some(admitted) => admitted_sources(sources, &admitted)?,
-        None => sources,
+    let ScopeSources { members, sources } = match &scope {
+        Some(scope) => {
+            if let Some(turn) = land_on {
+                validate_landing_in_txn(vault, txn, scope, &turn)?;
+            }
+            let ScopeSources { members, sources } = scope_sources_in_txn(vault, txn, scope)?;
+            let sources = match admitted {
+                Some(admitted) => admitted_sources(sources, &admitted)?,
+                None => sources,
+            };
+            ScopeSources { members, sources }
+        }
+        // A NOTE set has no conversation to resolve: its NOTEs are read in
+        // this writer, as its requester reads them (FIX 5757).
+        None => note_sources_in_txn(
+            vault,
+            txn,
+            request.requester,
+            admitted.as_deref().unwrap_or_default(),
+        )?,
     };
     if sources.is_empty() {
         return Err(invalid("summary scope covers no records"));
@@ -288,6 +310,7 @@ impl Vault {
                     },
                 ..
             } => "sub_agent_merge_artifact",
+            ScopeSummaryTarget::Sources { scope: None, .. } => NOTE_SET_PURPOSE,
             _ => "session_recap",
         };
         let previous = derivation::current_in_txn(self, txn, request, purpose)?;
@@ -449,7 +472,7 @@ impl Vault {
                 self,
                 txn,
                 id,
-                &plan.scope,
+                plan.scope.as_ref(),
                 author,
                 now,
                 SummaryContent {
@@ -553,11 +576,15 @@ pub(super) fn encode_request(request: &ScopeSummaryRequest) -> Value {
             entries.push((Value::from("trunk"), hex(trunk)));
         }
         // The set is declared sorted and once each, so the same set is the
-        // same declaration whatever order a caller named it in.
+        // same declaration whatever order a caller named it in. A NOTE set
+        // declares a nil scope.
         ScopeSummaryTarget::Sources { scope, sources } => {
             let sources: std::collections::BTreeSet<&EntityId> = sources.iter().collect();
             entries.extend([
-                (Value::from("scope"), scope_value(scope)),
+                (
+                    Value::from("scope"),
+                    scope.as_ref().map_or(Value::Nil, scope_value),
+                ),
                 (
                     Value::from(SOURCES_KEY),
                     Value::Array(sources.into_iter().map(hex).collect()),
@@ -596,7 +623,11 @@ pub(super) fn decode_request(input: &Value) -> Result<ScopeSummaryRequest> {
     let requester = WriteActor::new(id(field("requester"))?, class);
     let target = match (field("scope"), field("trunk"), field(SOURCES_KEY)) {
         (Some(scope), None, Some(Value::Array(sources))) => ScopeSummaryTarget::Sources {
-            scope: parse_scope(scope)?,
+            scope: if scope.is_nil() {
+                None
+            } else {
+                Some(parse_scope(scope)?)
+            },
             sources: sources
                 .iter()
                 .map(|source| id(Some(source)))
