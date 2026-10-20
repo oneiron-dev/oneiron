@@ -12,6 +12,8 @@ mod launcher;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
+mod socket_lifetime;
+#[cfg(target_os = "linux")]
 mod supervisor;
 #[cfg(target_os = "linux")]
 mod wire;

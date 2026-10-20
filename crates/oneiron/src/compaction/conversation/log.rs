@@ -3,7 +3,9 @@
 //! transcript a turn action's history is read from: a DAG conversation's
 //! branch to its HEAD, any other's time order. Each summary that landed for
 //! the conversation stands in for the turns it covers once its reader reads
-//! every one of them and its words stand. The retained ledger is the log
+//! every one of them, re-reads each pinned turn of its evidence to the
+//! fingerprint its landing pinned, and reads its words. A summary any of
+//! that misses for leaves its turns raw. The retained ledger is the log
 //! and the evidence: a caller's own lines are neither, and none of them is
 //! given a ref here.
 //!
@@ -17,7 +19,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::ConversationTurnSpan;
 use super::storage::{ConversationLandingReceipt, conversation_receipts_in};
+use crate::claim::ScopedRead;
+use crate::compaction::self_writer::hex32;
 use crate::compaction::{CompactionWindowMessage, decode_epoch_summary_body};
+use crate::dreamer_consolidation::{ConversationSpanRead, conversation_span_text_in};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::{
     MAX_TRANSCRIPT_PAGE_TURNS, Memory, MemoryResult, TranscriptTurn, WitnessAuthor,
@@ -114,10 +119,14 @@ pub fn read_chat_log(
         .map(read_turn)
         .collect::<MemoryResult<Vec<_>>>()?;
     let reader = WriteActor::new(memory.actor(), memory.actor_class());
+    // The reader's whole key, with its credential's, locality's and room
+    // turn's ceilings, resolved before the snapshot: the room resolver opens
+    // its own. A summary's evidence and words are read under it.
+    let evidence_read = vault.scoped_read(memory.read_key()?);
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let read: BTreeSet<EntityId> = turns.iter().map(|turn| turn.id).collect();
-    // Summaries whose turns the reader reads, every one, and whose words
-    // stand.
+    // Summaries whose turns the reader reads, every one, whose evidence
+    // still reads to its pins as this reader, and whose words stand.
     let mut standing: Vec<(ConversationLandingReceipt, String)> = Vec::new();
     let mut covering: BTreeMap<EntityId, usize> = BTreeMap::new();
     for receipt in conversation_receipts_in(&vault.store, &txn, conversation)? {
@@ -133,7 +142,10 @@ pub fn read_chat_log(
         {
             continue;
         }
-        let Some(text) = summary_words(vault, &txn, &receipt.summary)? else {
+        if !evidence_reads_as_pinned(&evidence_read, &txn, &evidence.turns)? {
+            continue;
+        }
+        let Some(text) = summary_words(&evidence_read, &txn, &receipt.summary)? else {
             continue;
         };
         for span in &evidence.turns {
@@ -298,21 +310,46 @@ fn read_turn(turn: &TranscriptTurn) -> MemoryResult<ReadTurn> {
     })
 }
 
-/// The words of a landed summary while they stand.
+/// Whether every pinned turn of a summary's evidence reads, as `read` in
+/// `txn`, to the fingerprint its landing pinned. A turn the reader may not
+/// read now, or one that reads other words, rows, authors or stream state
+/// than it was cut from, keeps the summary out: its turns render raw.
+fn evidence_reads_as_pinned(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    spans: &[ConversationTurnSpan],
+) -> MemoryResult<bool> {
+    let Some(pins) = spans
+        .iter()
+        .map(|span| Some((span.turn, hex32(&span.fingerprint)?)))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Ok(false);
+    };
+    Ok(matches!(
+        conversation_span_text_in(read, txn, &pins)?,
+        ConversationSpanRead::Ready(_)
+    ))
+}
+
+/// The words of a landed summary while they stand, read as `read`: the
+/// summary's own row and its sources' disclosure fence admit them.
 fn summary_words(
-    vault: &Vault,
+    read: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     summary: &EntityId,
 ) -> MemoryResult<Option<String>> {
-    let Some(record) =
-        crate::ports::EntityStoreRead::port_entity_record(&vault.store, txn, summary)?
+    let Some((kind, _, body)) = read
+        .get_entities_parts_in_txn(txn, std::slice::from_ref(summary))?
+        .pop()
+        .flatten()
     else {
         return Ok(None);
     };
-    if record.entity_type != crate::registry::ENTITY_TYPE_SUMMARY {
+    if kind != crate::registry::ENTITY_TYPE_SUMMARY {
         return Ok(None);
     }
-    Ok(decode_epoch_summary_body(&record.body)
+    Ok(decode_epoch_summary_body(&body)
         .ok()
         .map(|body| body.text)
         .filter(|text| !text.trim().is_empty()))

@@ -234,6 +234,68 @@ impl OffRecordSession<'_> {
         self.stage_session_rows(route, id, occurred, learned_at, &needs, ops)
     }
 
+    /// [`Self::stage_session_claim`], the row derived from each of
+    /// `sources` (FIX 5977): one `DerivedFrom` edge to each, staged in the
+    /// same write as the row, under the same gate and encoding. Each source
+    /// must be a row the room reads, so the claim never lands without its
+    /// lineage.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::stage_session_claim`]; [`Error::EntityNotFound`] for a
+    /// source the room does not read.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "stage_session_claim's own axes, then the sources the row derives from"
+    )]
+    pub(crate) fn stage_session_derived_claim(
+        &self,
+        route: &SessionWriteRoute,
+        id: EntityId,
+        candidate: ClaimCandidate,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+        sources: &[EntityId],
+    ) -> Result<String> {
+        crate::batch::reject_family_owned_candidate(&candidate)?;
+        let body = candidate.into_claim_body(envelope, self.vault.default_facet()?)?;
+        self.session_gate_check(id, &body, envelope)?;
+        let data = crate::claim::encode_claim_body(&body)?;
+        let mut ops = vec![BatchOp::Put {
+            id,
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }];
+        let mut needs = Vec::new();
+        if let ClaimSubject::Entity(subject) = body.subject {
+            needs.push(subject);
+            ops.push(BatchOp::Edge {
+                src: id,
+                kind: EdgeKind::ClaimOf,
+                tgt: subject,
+                weight: crate::vault::CLAIM_OF_DEFAULT_WEIGHT,
+                vad: Vad::NEUTRAL,
+            });
+        }
+        for source in sources {
+            needs.push(*source);
+            ops.push(BatchOp::Edge {
+                src: id,
+                kind: EdgeKind::DerivedFrom,
+                tgt: *source,
+                weight: 1.0,
+                vad: Vad::NEUTRAL,
+            });
+        }
+        self.stage_session_rows(route, id, occurred, learned_at, &needs, ops)
+    }
+
     /// Whether a run bound to a session writes `verb` into its room
     /// ([`Self::prepare_session_write`]): `vault.notes.create` and
     /// `vault.claims.upsert`.

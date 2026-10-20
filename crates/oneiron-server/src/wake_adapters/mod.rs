@@ -7,8 +7,10 @@
 //! a Claude Code Stop hook. Set `inbox = false` for immediate helper/pane
 //! delivery. Helpers take a JSON batch on stdin; exit zero acknowledges it.
 //! A boot command takes that same batch as its initial stdin, not shell text.
-//! Live helper/pane/boot delivery also carries coalesced STREAM frames; the
-//! offline inbox stores notices only, never frame replay.
+//! A tmux pane is typed only a fixed nudge line of hex TASK ids, never the
+//! batch: the batch stays in the inbox for `wake inbox`. Live helper and
+//! boot delivery also carry coalesced STREAM frames; the offline inbox
+//! stores notices only, never frame replay.
 //! Nothing here selects policy for human notifications or lives in the engine.
 
 pub(crate) mod board_stream;

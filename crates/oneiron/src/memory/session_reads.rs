@@ -157,9 +157,10 @@ impl<'s> SessionReadContext<'s> {
         Ok(SessionAnswer::Answered { output, rows })
     }
 
-    /// The run's own `vault.search` in the room, on the key's surfaceable
-    /// lane: each posting admitted inside the scan, and every hit admitted
-    /// again before it is released, as a canonical run's narrowed search is.
+    /// The run's own `vault.search` in the room, on the key's lane serving
+    /// `claims`: each posting admitted inside the scan, and every hit
+    /// admitted again before it is released, as a canonical run's narrowed
+    /// search is.
     ///
     /// # Errors
     ///
@@ -168,8 +169,9 @@ impl<'s> SessionReadContext<'s> {
         &self,
         query: &str,
         limit: usize,
+        claims: ClaimReadStatus,
     ) -> crate::Result<Vec<ScoredEntity>> {
-        let lane = self.lane(ClaimReadStatus::Surfaceable);
+        let lane = self.lane(claims);
         let hits = self
             .session
             .search_text_scoped_routed(self.route, &self.view, &lane, query, limit)?;

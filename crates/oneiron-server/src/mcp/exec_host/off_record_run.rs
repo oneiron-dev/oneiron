@@ -6,7 +6,7 @@ use std::sync::Arc;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
     AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, GatedActorWrite,
-    RunCall, SelfAgentVerbCall, SessionWriteAdmission, SessionWriteCeiling,
+    RunCall, SelfAgentVerbCall, SelfEffect, SessionWriteAdmission, SessionWriteCeiling,
 };
 use oneiron::engine_executor::{EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime};
 use oneiron::memory::HostWriteOrigin;
@@ -66,9 +66,9 @@ pub(crate) struct OffRecordRunSession {
 /// wherever the caller or the vault runs. A write the run stages in the room
 /// is admitted the same way, under the room's own write gate, and its
 /// credential is checked again where the write lands (S01-2a). It forwards
-/// no verb (a run's verbs stage in the room or are refused there), and
-/// admits every call the run serves itself as a host that binds no door
-/// does.
+/// no verb (a run's verbs stage in the room or are refused there), keys the
+/// run's own search on its caller (FIX 5976), and admits every other call
+/// the run serves itself as a host that binds no door does.
 struct OffRecordRunDoor {
     vault: Arc<Vault>,
     caller: CoreAuth,
@@ -130,8 +130,22 @@ impl AgentVerbDoor for OffRecordRunDoor {
         }))
     }
 
-    fn admit_run_call(&self, _: RunCall) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        Ok(None)
+    /// The run's own `vault.search` reads on the caller's key, in the room,
+    /// each posting admitted on that key's lane (FIX 5976). Every other call
+    /// the run serves itself is admitted as a host that binds no door does.
+    fn admit_run_call(
+        &self,
+        call: RunCall,
+    ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        match call {
+            RunCall::Bridge(SelfEffect::MemorySearch) => self.caller_key().map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    /// The keyed search drops only rows the caller may not read.
+    fn keyed_search_surfaceable_only(&self) -> bool {
+        false
     }
 
     fn admit_session_read(&self, _: AgentVerb) -> Result<ScopedReadActorKey, AgentVerbRefusal> {

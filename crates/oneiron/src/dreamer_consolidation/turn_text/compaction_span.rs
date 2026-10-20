@@ -5,9 +5,12 @@
 //! reads by: its exact projected text, its children in stored order, in its
 //! author's bucket. Each turn's fingerprint is compared with the pin its
 //! landing declared. Nothing else is read: no raw body, no summary and no
-//! home.
+//! home. A chat log reads the same span as its own reader, in its own
+//! snapshot ([`conversation_span_text_in`]), before a summary stands in for
+//! the turns it covers.
 
 use super::{collect_in, dreamer_read, residency_deferred, snapshot};
+use crate::claim::ScopedRead;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -39,8 +42,23 @@ pub(crate) fn conversation_span_text(
 ) -> Result<ConversationSpanRead> {
     let read = dreamer_read(vault)?;
     let txn = snapshot(vault)?;
+    conversation_span_text_in(&read, &txn, turns)
+}
+
+/// Reads `turns`, each with the fingerprint its landing pinned, as `read`
+/// in the caller's `txn`: the TURN rows through `read`, their MESSAGE rows
+/// as the same actor under the relationship gate.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn conversation_span_text_in(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    turns: &[(EntityId, [u8; 32])],
+) -> Result<ConversationSpanRead> {
     let ids: Vec<EntityId> = turns.iter().map(|(turn, _)| *turn).collect();
-    let rows = read.get_entities_parts_in_txn(&txn, &ids)?;
+    let rows = read.get_entities_parts_in_txn(txn, &ids)?;
     let mut texts = Vec::with_capacity(turns.len());
     for ((turn, pin), row) in turns.iter().zip(rows) {
         let Some((kind, _, body)) = row else {
@@ -49,7 +67,7 @@ pub(crate) fn conversation_span_text(
         if kind != ENTITY_TYPE_TURN {
             return Ok(ConversationSpanRead::Unreadable);
         }
-        let text = match collect_in(&read, &txn, turn, &body, &mut 0) {
+        let text = match collect_in(read, txn, turn, &body, &mut 0) {
             Ok(text) => text,
             Err(Error::InvalidClaimBody(reason)) if residency_deferred(reason) => {
                 return Ok(ConversationSpanRead::Deferred);
