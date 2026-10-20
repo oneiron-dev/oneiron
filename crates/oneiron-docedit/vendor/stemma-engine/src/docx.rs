@@ -64,6 +64,12 @@ pub enum DocxError {
     /// normalized for Word compatibility. This is an engine/package invariant,
     /// never an input tolerance.
     InvalidWrittenZip(String),
+    /// The package's XML would build more than one parse's budget allows
+    /// ([`crate::parse_budget`]); refused before any tree is built.
+    ParseLimitExceeded {
+        bound: crate::parse_budget::ParseBound,
+        limit: u64,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -156,6 +162,14 @@ impl DocxArchive {
 
             files.push(DocxFile { name, data });
         }
+        // One XML budget across every part, charged before any reader builds
+        // a tree from this archive.
+        crate::parse_budget::admit_parts(files.iter().map(|file| file.data.as_slice())).map_err(
+            |bound| DocxError::ParseLimitExceeded {
+                bound,
+                limit: bound.limit(),
+            },
+        )?;
         Ok(Self { files })
     }
 
