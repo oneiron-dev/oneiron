@@ -65,6 +65,11 @@ pub(crate) fn reverse_rematerialize_for_sealing(
     doc: &LoroDoc,
     window_key: &WindowKey,
 ) -> Result<u32> {
+    // A carrier of a row that left the window leaves the mirror first (FIX
+    // 536); one that fails to is left for the next seal.
+    if let Err(error) = super::sealed_membership::drop_departed_carriers(vault, doc, window_key) {
+        tracing::warn!(%error, window = %window_key.as_str(), "sealed mirror kept departed rows");
+    }
     reverse_rematerialize_scan(vault, doc, window_key, super::Withhold::Nothing, None, true)
 }
 

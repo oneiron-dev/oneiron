@@ -303,6 +303,9 @@ fn confirm_leave(
     while !complete {
         complete = vault.with_write_txn_grouped(|wtxn| purge(wtxn, &mut receipt))?;
     }
+    // The claim keys the purge's removed ledger rows used go now that it
+    // committed (FIX 5749); one that fails waits for a later pass.
+    vault.finish_gate_decision_retirements_after_commit();
     Ok(receipt)
 }
 
