@@ -351,15 +351,16 @@ pub(crate) fn settle_training_offer_in_txn(
 /// outcome for the offer skill that drafted it, on the model it ran on, in
 /// the same transaction; an unknown one is none.
 /// # Errors
-/// An unknown offer, a check before the check date, no or bad refs, a blank
-/// note, a negative or non-finite observation, or storage errors.
+/// An unknown offer, a check before the check date, bad refs, no refs on a
+/// check that judged whether the promise held (an unknown one may name none),
+/// a blank note, a negative or non-finite observation, or storage errors.
 pub fn record_offer_check(
     vault: &Vault,
     offer: &EntityId,
     input: OfferCheckInput,
     at: u64,
 ) -> Result<OfferCheck> {
-    refs(&input.receipt_refs, true)?;
+    refs(&input.receipt_refs, input.held.is_some())?;
     amount(input.observed_monthly_cost)?;
     amount(input.observed_score)?;
     if let Some(note) = &input.note {
