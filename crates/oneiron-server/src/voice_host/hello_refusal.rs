@@ -140,8 +140,8 @@ pub(super) fn refused(refusal: Refusal) -> io::Error {
 
 /// Answers a hello refused before its call was admitted with its one
 /// `refused` line ([`Refusal`]); a failure that is no refusal of the caller
-/// is answered `unavailable`. A peer that reads nothing holds the loop up
-/// for [`REFUSAL_WRITE`] at most.
+/// is answered `unavailable`. A peer that reads nothing holds its own call,
+/// and the server's stop, for [`REFUSAL_WRITE`] at most.
 pub(super) async fn refuse(stream: &mut UnixStream, error: &io::Error) {
     let refusal = error
         .get_ref()
