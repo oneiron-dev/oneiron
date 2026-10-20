@@ -9015,7 +9015,7 @@ class SecretLiftRequest(TypedDict):
     start: NotRequired[bool]
     close: NotRequired[SecretLiftClose | None]
 SecretScanMode = Literal["on", "off"]
-LiftTrigger = Literal["switch", "owner"]
+LiftTrigger = Literal["switch", "owner", "known_value"]
 LiftFamily = Literal["records", "attempts", "side_rows", "carriers"]
 class LiftCounts(TypedDict):
     family: LiftFamily

@@ -226,7 +226,8 @@ impl Store {
     /// the same bytes the holder already holds is not written again; any
     /// other is published and synced, and its Mint journaled, at a slot past
     /// every slot the holder has, and its reference commits with `wtxn`. The
-    /// binding is pinned in the same transaction.
+    /// binding is pinned in the same transaction. Returns whether an entry
+    /// was published: `false` for one the holder already held (FIX 2781).
     ///
     /// # Errors
     ///
@@ -238,7 +239,7 @@ impl Store {
         holder: &EntityId,
         generation: u32,
         entry: impl FnOnce(&[u8; 32]) -> KnownEntry,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if self.core.gate_custody_archived() {
             return Err(Error::Store(StoreError::ArchivedVault));
         }
@@ -264,7 +265,7 @@ impl Store {
             if custody.state(&id)? == EntryState::Live
                 && custody.read(&id)?.expose() == secret.expose()
             {
-                return Ok(());
+                return Ok(false);
             }
         }
         let slot = match refs.slots().max().max(custody.newest_generation(&subject)?) {
@@ -275,7 +276,8 @@ impl Store {
         };
         custody.publish_minted(&subject.at(slot), &secret)?;
         refs.0.push(HistoryRef { generation, slot });
-        HISTORY.put(self, wtxn, holder, &refs)
+        HISTORY.put(self, wtxn, holder, &refs)?;
+        Ok(true)
     }
 
     /// The index's master and every holder's live history, read in the
