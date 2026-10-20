@@ -83883,7 +83883,7 @@
      "path": "src/commands/api.rs",
      "purpose": "`oneiron api …` — the bash/curl lane of the packaging ladder",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1
      }
     },
@@ -84262,9 +84262,19 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/serve/hooks.rs",
+     "purpose": "The vault's one hook sandbox and the fact-hook runner that runs on it, for plain and managed serve",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -86345,7 +86355,7 @@
      "path": "src/managed/host.rs",
      "purpose": "Managed process entry behind the shared six-verb Host contract",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -87665,7 +87675,7 @@
      "path": "src/owner/backup/custody.rs",
      "purpose": "Custody heads beside the backups (KS-4A1/KS-4A2, FIX 5685)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -87676,6 +87686,16 @@
      "purpose": "The HTTP custody anchor (FIX 5788, CALLS CUSTODY_ANCHOR_URL): a host whose own disks would roll back with…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/custody/anchor_credentials.rs",
+     "purpose": "The owner credential a custody anchor door admits (FIX 5788), handed to the process that calls the door on a…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -89643,7 +89663,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 42,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -89902,7 +89922,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90023,7 +90043,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 904,
+   "source_files": 906,
    "test_files": 182
   },
   "oneiron-spawn": {
