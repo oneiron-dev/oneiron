@@ -964,7 +964,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 2,
       "re-export": 23
      }
@@ -1194,6 +1194,16 @@
       "fn": 7,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/spend_handoff.rs",
+     "purpose": "FIX 5661 seam (L09's spend tree, Engine-approved 10-20 11:5x): a home move carries each free-time cycle's…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -21638,7 +21648,7 @@
      "path": "src/dreamer_runner/free_time/cycle.rs",
      "purpose": "A free-time cycle (FIX 4453): its owner-set clock, its opening on the elected home, and its end",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 2,
       "struct": 3
@@ -21679,6 +21689,36 @@
      "path": "src/dreamer_runner/free_time/erase.rs",
      "purpose": "An erased agent's free time (FIX 5664): the erase of an actor takes its free-time rows with it, in the…",
      "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/free_time/handoff.rs",
+     "purpose": "FIX 5661: the free-time families a home move carries, as adapters on L03's carrier C1…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/free_time/handoff/cycle_rows.rs",
+     "purpose": "FIX 5661: every free-time cycle a home move carries, closed history included",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/free_time/handoff/item_rows.rs",
+     "purpose": "FIX 5661: the free-time items a home move carries: each item with no receipt whose try was queued on the old…",
+     "surface": {
       "crate-vis": 1
      }
     },
@@ -21691,7 +21731,7 @@
      "path": "src/dreamer_runner/free_time/items.rs",
      "purpose": "A free-time cycle's items (FIX 4453): the binding each item's attempt runs under, what it lands, and how it…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "fn": 1,
       "struct": 1
      }
@@ -21705,14 +21745,14 @@
      "path": "src/dreamer_runner/free_time/mod.rs",
      "purpose": "An agent's free time (FIX 4453, ARCH-0005b #free-time)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 1,
       "re-export": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FreeTimeCadence",
@@ -21726,7 +21766,7 @@
      "purpose": "The owner's free-time policy for one agent (FIX 4453): the total budget one cycle may spend, the cycle's…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 3,
       "struct": 4
@@ -22801,7 +22841,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 25,
       "fn": 17,
       "struct": 1
      }
@@ -53547,7 +53587,17 @@
      "path": "src/sync/home_handoff/mod.rs",
      "purpose": "FIX 5661 C1: the typed home-to-home handoff carrier",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/home_handoff/registry.rs",
+     "purpose": "FIX 5661 seam (Engine-approved 10-20 11:5x): the tables this build registers with the carrier, and the…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -63620,7 +63670,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 53,
+     "files": 54,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64110,7 +64160,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 96,
+     "files": 99,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64929,7 +64979,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 211,
+     "files": 212,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -65127,7 +65177,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4044,
+   "source_files": 4049,
    "test_files": 902
   },
   "oneiron-android": {
