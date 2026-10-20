@@ -6775,7 +6775,7 @@
     },
     {
       "name": "vault.usage.events.remove_undecodable",
-      "description": "Removes one listed undecodable usage event while it still holds the reviewed bytes and still does not decode, rebuilds the usage rollup without it and answers the receipt kept in the same write, for the owner or an agent whose own Grant names this verb.",
+      "description": "Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb.",
       "input": "crate::memory::usage_repair::UsageRepairRemoveRequest",
       "output": "crate::memory::usage_repair::UsageRepairReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.usage.events.remove_undecodable\", &input)?",
