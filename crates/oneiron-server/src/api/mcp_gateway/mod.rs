@@ -18,6 +18,7 @@ mod tasks_response;
 mod tool_receipt;
 mod verb_hooks;
 mod wakes;
+mod wire;
 
 pub(crate) use self::actor_dispatch::{
     ensure_mcp_actor_matches, execute_mcp_tool, mcp_params, mcp_tool_validation_error,
