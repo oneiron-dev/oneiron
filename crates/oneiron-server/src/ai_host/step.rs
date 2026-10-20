@@ -168,6 +168,11 @@ impl StepRunner {
         {
             messages.push(message(LlmMessageRole::System, instructions.clone()));
         }
+        // A member's bound run reads its context on their own lane: the
+        // step is told how many rows that lane left out (FIX 5416).
+        if let Some(notice) = context.narrowed_notice() {
+            messages.push(message(LlmMessageRole::System, notice.body));
+        }
         let briefing = context.briefing.filter(|text| !text.trim().is_empty());
         if let Some(briefing) = &briefing {
             messages.push(message(LlmMessageRole::User, briefing.clone()));
