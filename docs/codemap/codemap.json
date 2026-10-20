@@ -42911,8 +42911,7 @@
      "path": "src/provenance/birth.rs",
      "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
      "surface": {
-      "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 9,
       "struct": 3
