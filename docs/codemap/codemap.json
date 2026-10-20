@@ -7978,6 +7978,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/lifecycle/authorship.rs",
+     "purpose": "Engine authorship of booking lifecycle heads (FIX 5994)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -8047,7 +8057,7 @@
      "path": "src/booking/lifecycle/mod.rs",
      "purpose": "ONE-1813 [BK-02] booking lifecycle verbs",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 5
      }
     },
@@ -15325,7 +15335,7 @@
      "path": "src/commitment_schedule/projection.rs",
      "purpose": "The durable projection layer: series indexing, occurrence minting, and the close hook",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -39861,7 +39871,7 @@
      "path": "src/outbound_chokepoint/types.rs",
      "purpose": "Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -46692,7 +46702,7 @@
      "path": "src/secret_lease/doors.rs",
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 9
      }
     },
@@ -63586,7 +63596,7 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 78,
+     "files": 79,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65002,7 +65012,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4033,
+   "source_files": 4034,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81817,7 +81827,7 @@
      "path": "src/auth/machine_proof.rs",
      "purpose": "The machine a request names",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -81827,7 +81837,7 @@
      "path": "src/auth/managed_request.rs",
      "purpose": "The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
