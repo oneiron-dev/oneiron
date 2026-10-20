@@ -310,7 +310,7 @@ pub(super) fn seal_bundles(
             }
         };
         let locators = locators_of(bundle.role, &bundle.plain, &bundle.owner)?;
-        let kek = Kek::from_bytes(*compartment.key);
+        let kek = Kek::from_bytes_ref(&compartment.key);
         let count = u32::try_from(bundle.plain.chunks(PIECE_LEN).len()).map_err(|_| corrupt())?;
         let mut stream = Vec::new();
         let mut pieces = Vec::new();
@@ -379,7 +379,7 @@ pub(in crate::recovery::checkpoint) fn open_bundle(
         .ok_or_else(corrupt)?;
     let custody = required.custody_id()?;
     let count = u32::try_from(bundle.pieces.len()).map_err(|_| corrupt())?;
-    let kek = Kek::from_bytes(*key);
+    let kek = Kek::from_bytes_ref(key);
     let mut next = 0_u64;
     let mut plain = Vec::new();
     for (at, piece) in bundle.pieces.iter().enumerate() {
