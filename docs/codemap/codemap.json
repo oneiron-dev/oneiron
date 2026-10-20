@@ -3155,7 +3155,7 @@
      "path": "src/authority/invitee_slip.rs",
      "purpose": "FIX 1925: an invitee's own credential",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -26271,7 +26271,7 @@
      "purpose": "Cross-vault same_as links and per-pact share consent (FED-07)",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4
      }
@@ -26422,7 +26422,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "mod": 2,
       "re-export": 18
      }
@@ -40237,7 +40237,7 @@
      "path": "src/overlay_db/accessors.rs",
      "purpose": "ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -59461,6 +59461,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/vault/transactions/sync_state_reclaim.rs",
+     "purpose": "One page of a host cache's expiry reclaim through the generic host door (FIX 5951): a host table with no…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/vault/vector_evidence.rs",
      "purpose": "Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it",
      "surface": {
@@ -64749,7 +64759,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64835,7 +64845,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4020,
+   "source_files": 4021,
    "test_files": 902
   },
   "oneiron-android": {
@@ -84036,6 +84046,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/idempotency/reclaim.rs",
+     "purpose": "Reclaim of expired idempotency entries (FIX 5951)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -87795,7 +87815,7 @@
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through"
     },
     "idempotency": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -88007,7 +88027,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 872,
+   "source_files": 873,
    "test_files": 182
   },
   "oneiron-spawn": {
