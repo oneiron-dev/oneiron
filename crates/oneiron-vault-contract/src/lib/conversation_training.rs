@@ -101,6 +101,28 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// The anonymous training window (TL-6): the per-piece wire a self-host
+/// engine ships its offers and withdrawals over, keyed by each piece's C.
+mod piece;
+/// The window's shape checks and decoders.
+mod piece_check;
+/// The window's paging-invariant facts digest.
+mod piece_facts;
+
+pub use self::piece::{
+    PIECE_BATCHES_PATH, PIECE_CHALLENGE_PATH, PIECE_ERROR_CAPACITY_BUSY,
+    PIECE_ERROR_INVALID_INSTALL_CHECK, PIECE_ERROR_RECIPIENT_REFRESH_REQUIRED,
+    PIECE_ERROR_SPLIT_REQUIRED, PIECE_ERROR_UNAVAILABLE, PIECE_FACTS_DOMAIN, PIECE_KEYS_PATH,
+    PIECE_RECEIPT_DOMAIN, PIECE_RECEIPTS_PATH, PIECE_ROUTE_PREFIX, PIECE_WIRE_VERSION,
+    PieceBatchResultV1, PieceBatchV1, PieceBoundsV1, PieceChunkV1, PieceCursorV1, PieceEntryV1,
+    PieceErrorBodyV1, PieceErrorV1, PieceFactsHeadV1, PieceFinalV1, PieceInstallCheckV1,
+    PieceMetaPageV1, PieceOutcomeV1, PiecePartV1, PieceReceiptAskV1, PieceReceiptBodyV1,
+    PieceReceiptCursorAskV1, PieceReceiptEntryV1, PieceReceiptPageV1, PieceReceiptV1,
+    PieceResultV1, PieceStateV1, PieceWithdrawalV1, TrainingKeysV1, piece_receipt_signed_message,
+};
+pub use self::piece_check::{decode_piece_batch, decode_piece_receipt_page, decode_training_keys};
+pub use self::piece_facts::{PieceFactsDigest, piece_facts_digest};
+
 /// The wire schema version of every file below.
 pub const TRAINING_SCHEMA_VERSION: u32 = 2;
 /// The type tag of a [`TrainingOfferV2`].
