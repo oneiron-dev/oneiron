@@ -52128,7 +52128,7 @@
      "path": "src/store/key_custody/platform.rs",
      "purpose": "The one platform seam of key custody's files (KS-2A, Engine 10-20 04:1x): every open, directory sync, lock…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -52162,7 +52162,7 @@
       "const": 1,
       "crate-vis": 11,
       "enum": 8,
-      "fn": 22,
+      "fn": 23,
       "re-export": 2,
       "struct": 9,
       "trait": 3
@@ -52205,7 +52205,7 @@
      "path": "src/store/key_custody/targets.rs",
      "purpose": "The all-target acknowledgement journal (KS-4A2, FIX 5685), kept beside the keyless log in…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -53627,7 +53627,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/custody.rs",
