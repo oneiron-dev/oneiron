@@ -6374,12 +6374,13 @@
       "DeckOutlineProposeRequest",
       "DeckOutlineRefRequest",
       "DeckOutlineSettleRequest",
-      "DeckOutlineView"
+      "DeckOutlineView",
+      "KeptOutlineOmissionReason"
      ],
      "path": "src/blob_artifact/deck_creation/mod.rs",
      "purpose": "Typed outline approval, design and emission doors over the native deck engine",
      "surface": {
-      "enum": 1,
+      "enum": 2,
       "mod": 2,
       "struct": 10
      }
@@ -24693,7 +24694,7 @@
      "path": "src/edit_roundtrip/session_validate.rs",
      "purpose": "Edit session seam and validation",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 2,
       "struct": 5,
@@ -67497,7 +67498,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/driver.rs",
@@ -67507,7 +67508,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/driver/handles.rs",
@@ -67589,7 +67590,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 41,
       "trait": 2
      }
@@ -67679,6 +67680,18 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HandleRetention"
+     ],
+     "path": "src/retention.rs",
+     "purpose": "The host's memory floor, as a browser session's live-handle registry meets it (C013)",
+     "surface": {
+      "trait": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -67726,7 +67739,7 @@
     "driver": {
      "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "file+dir",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref"
     },
@@ -67765,6 +67778,13 @@
      "layout": "file",
      "purpose": "An effect receipt's screenshot kept past its session (FIX 2150)"
     },
+    "retention": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The host's memory floor, as a browser session's live-handle registry meets it (C013)"
+    },
     "session": {
      "files": 1,
      "impl_vault": false,
@@ -67775,7 +67795,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 14,
+   "source_files": 15,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -70301,7 +70321,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/live/chart_labels.rs",
@@ -70830,7 +70850,7 @@
      "path": "src/retained_opc/package/parts.rs",
      "purpose": "The add-part and remove-part doors",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 12,
       "struct": 1
      }
@@ -78151,7 +78171,7 @@
      "path": "src/api/esign/editor_budget.rs",
      "purpose": "Router-owned admission for editor computation",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -86518,7 +86538,17 @@
      "path": "src/server/browser_seats.rs",
      "purpose": "The run browsers live on this host (CUA-001), each in its run's seat as the run desktops do…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/browser_seats/handles.rs",
+     "purpose": "A run browser's live-handle registry, charged to the host's retained-memory line…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -88121,7 +88151,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88193,7 +88223,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 874,
+   "source_files": 875,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -90025,6 +90055,7 @@
       "JoinSubject",
       "KeepUndo",
       "KeptOutline",
+      "KeptOutlineOmissionReason",
       "KeptProposal",
       "KeyValueAddress",
       "KeyValueDeleteReceipt",
@@ -92038,7 +92069,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 873,
+      "enum": 874,
       "struct": 2771
      }
     },
