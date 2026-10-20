@@ -3,6 +3,11 @@
 //! named by a locator built from its role, its name and its named
 //! ancestors. Its live handle is minted once the rows are read
 //! (`driver::handles`); here the row's `ref` stays empty.
+//!
+//! A link row's destination (`url`) and a heading row's level (`level`),
+//! as the tree names them, ride beside the row, never in it or its locator:
+//! the capture joins them to its DOM read (`driver::row_metadata`, FIX
+//! 6851), and a settle poll's fingerprint hashes the row's fields as before.
 
 use crate::Row;
 use serde_json::Value;
@@ -75,11 +80,20 @@ const STATES: &[&str] = &[
 const NAME_CHARS: usize = 200;
 
 /// A row, the DOM node it was read from, and the frame whose document
-/// holds it, when the tree names one.
+/// holds it, when the tree names one; with a link row's destination and a
+/// heading row's level as the tree names them.
 pub(crate) struct Line {
     pub(crate) row: Row,
     pub(crate) backend_node: Option<u64>,
     pub(crate) frame: Option<String>,
+    pub(crate) ax_url: Option<String>,
+    pub(crate) ax_level: Option<u32>,
+}
+
+/// Whether a row of `role` is a control, whose text the outline folds into
+/// its name.
+pub(crate) fn is_control(role: &str) -> bool {
+    CONTROLS.contains(&role)
 }
 
 struct Node<'a> {
@@ -193,12 +207,31 @@ impl<'a> Walk<'a> {
             value,
             states,
             depth: u16::try_from(self.scope.len()).unwrap_or(u16::MAX),
+            href: None,
+            level: None,
+            datetimes: Vec::new(),
+            unavailable: Vec::new(),
         };
         let backend_node = node.raw.get("backendDOMNodeId").and_then(Value::as_u64);
+        // Only a link's `url` is its destination and only a heading's
+        // `level` its rank: a document, an image or a list item names
+        // its own. Chromium writes the level as a number, Lightpanda as a
+        // decimal string.
+        let ax_url = (node.role == "link")
+            .then(|| state(node.raw, "url"))
+            .flatten()
+            .filter(|url| !url.is_empty());
+        let ax_level = (node.role == "heading")
+            .then(|| state(node.raw, "level"))
+            .flatten()
+            .and_then(|level| level.trim().parse::<u32>().ok())
+            .filter(|level| *level > 0);
         self.out.push(Line {
             row,
             backend_node,
             frame: frame.map(str::to_owned),
+            ax_url,
+            ax_level,
         });
     }
 }

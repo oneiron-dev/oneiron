@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1085 facade rows, 3710 generated types.
+// UniFFI census: 1085 facade rows, 3713 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1037.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -56480,7 +56480,42 @@ pub struct RowSplice {
     pub delete_count: u64,
 }
 
-/// `oneiron_browser::Row`.
+/// `oneiron_browser::row::RowGapField`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RowGapField {
+    #[serde(rename = "href")]
+    Href,
+    #[serde(rename = "level")]
+    Level,
+    #[serde(rename = "datetime")]
+    Datetime,
+}
+
+/// `oneiron_browser::row::RowGapReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RowGapReason {
+    #[serde(rename = "no_dom_node")]
+    NoDomNode,
+    #[serde(rename = "stale_node")]
+    StaleNode,
+    #[serde(rename = "outside_dom_read")]
+    OutsideDomRead,
+    #[serde(rename = "read_failed")]
+    ReadFailed,
+    #[serde(rename = "unresolvable")]
+    Unresolvable,
+}
+
+/// `oneiron_browser::row::RowFieldGap`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RowFieldGap {
+    #[serde(rename = "field")]
+    pub field: RowGapField,
+    #[serde(rename = "reason")]
+    pub reason: RowGapReason,
+}
+
+/// `oneiron_browser::row::Row`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct Row {
     #[serde(rename = "ref")]
@@ -56497,6 +56532,18 @@ pub struct Row {
     pub states: Option<Vec<String>>,
     #[serde(rename = "depth")]
     pub depth: u16,
+    #[serde(rename = "href", default, skip_serializing_if = "Option::is_none")]
+    pub href: Option<String>,
+    #[serde(rename = "level", default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<u32>,
+    #[serde(rename = "datetimes", default, skip_serializing_if = "Option::is_none")]
+    pub datetimes: Option<Vec<String>>,
+    #[serde(
+        rename = "unavailable",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub unavailable: Option<Vec<RowFieldGap>>,
 }
 
 /// `oneiron_browser::observation::Rebound`.

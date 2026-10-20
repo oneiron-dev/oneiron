@@ -23,6 +23,7 @@
 //! `MemoryFloor`, and the session stays.
 
 use super::CdpDriver;
+use super::row_metadata;
 use crate::observation::HandleInfo;
 use crate::outline::{self, Line};
 use crate::retention::HandleRetention;
@@ -529,23 +530,27 @@ impl CdpDriver {
 
     /// Reads the front tab and mints its rows: the one place a row gets its
     /// live handle. The documents are sampled before and after the outline
-    /// is read; a page that moved between them is read again, and one that
-    /// never held still mints handles bound to this read alone.
+    /// and the rows' DOM read (`row_metadata`, FIX 6851); a page that moved
+    /// between them is read again, both reads together, and one that never
+    /// held still mints handles bound to this read alone.
     pub(super) fn capture(&mut self) -> Result<Capture, BrowserError> {
         let mut tries = 0;
-        let (documents, ax) = loop {
+        let (documents, ax, mut lines, dom) = loop {
             let before = self.documents()?;
             let ax = self.ax_nodes()?;
+            let lines = outline::lines(&ax);
+            let dom = self.read_dom(&lines);
             let after = self.documents()?;
             tries += 1;
             if before == after {
-                break (Some(after), ax);
+                break (Some(after), ax, lines, dom);
             }
             if tries >= SAMPLE_TRIES {
-                break (None, ax);
+                break (None, ax, lines, dom);
             }
         };
-        let lines = outline::lines(&ax);
+        row_metadata::fill(&mut lines, &dom);
+        drop(dom);
         let target = self.target.clone();
         let missing = self.handles.missing(&target, documents.as_ref(), &lines);
         let gone = self.gone_nodes(&missing);

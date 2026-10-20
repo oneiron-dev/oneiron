@@ -39,6 +39,7 @@ mod observation;
 mod outline;
 mod receipt_evidence;
 mod retention;
+mod row;
 #[cfg(feature = "driver")]
 mod session;
 mod switch;
@@ -61,31 +62,13 @@ pub use observation::{
 pub use oneiron_container::{GuestLimits, ImageRef};
 pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};
 pub use retention::HandleRetention;
+pub use row::{Row, RowFieldGap, RowGapField, RowGapReason};
 #[cfg(feature = "driver")]
 pub use session::{BrowserGuest, BrowserGuestStarter, BrowserSession, StartedGuest};
 pub use switch::{
     EngineSwitchRecord, StoragePhase, SwitchCarried, SwitchComponent, SwitchEngineInput,
     SwitchEngineOutput, SwitchLoss, SwitchNotCarried, SwitchOutcome, SwitchStage,
 };
-
-/// One element a program can read or act on.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct Row {
-    /// The row's live handle: on a page, its DOM node in its document, never
-    /// reused within the session; on a desktop, its locator.
-    #[serde(rename = "ref")]
-    pub target: String,
-    /// The row's semantic locator (its role, name and named ancestors): what
-    /// a replay program stores, resolved on the page as it is then.
-    pub locator: String,
-    pub role: String,
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub states: Vec<String>,
-    pub depth: u16,
-}
 
 /// The page as rows, in outline order. With `full` it holds every row. Without,
 /// it is an ordered edit of observation `base_seq` of the same `scope`, which

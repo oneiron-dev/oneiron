@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1085 facade rows, 3735 declarations.
+Census: 1085 facade rows, 3738 declarations.
 Inputs: 1020 of 1085 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 972 of 1085 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -18474,6 +18474,11 @@ BrowserAnswer = BrowserAnswerItem[T]
 class RowSplice(TypedDict):
     start: int
     delete_count: int
+RowGapField = Literal["href", "level", "datetime"]
+RowGapReason = Literal["no_dom_node", "stale_node", "outside_dom_read", "read_failed", "unresolvable"]
+class RowFieldGap(TypedDict):
+    field: RowGapField
+    reason: RowGapReason
 class Row(TypedDict):
     ref: str
     locator: str
@@ -18482,6 +18487,10 @@ class Row(TypedDict):
     value: NotRequired[str | None]
     states: NotRequired[list[str]]
     depth: int
+    href: NotRequired[str | None]
+    level: NotRequired[int | None]
+    datetimes: NotRequired[list[str]]
+    unavailable: NotRequired[list[RowFieldGap]]
 class Rebound(TypedDict):
     old: str
     new: str

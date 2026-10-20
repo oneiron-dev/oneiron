@@ -119,7 +119,10 @@ impl HostSelfDispatcher<'_> {
             let answer = door.call(&call, &origin, invocation)?;
             return Ok(connector_call_answer(
                 call.verb,
-                answered(self.keep_no_secret_value(call.verb, answer)),
+                worded(
+                    answered(self.keep_no_secret_value(call.verb, answer)),
+                    &**door,
+                ),
             ));
         };
         // Every write before this one in the step met its receipt: a write
@@ -156,9 +159,11 @@ impl HostSelfDispatcher<'_> {
             // A held connector call parks before its receipt keeps it, so a
             // resumed step parks on the same call again: on its code consent
             // wait when one was bound to it, else on the call itself.
-            Ok(answer) => {
-                self.code_consent_answer(consent_site.as_ref(), call.verb, answered(answer))?
-            }
+            Ok(answer) => self.code_consent_answer(
+                consent_site.as_ref(),
+                call.verb,
+                worded(answered(answer), &**door),
+            )?,
             Err(Error::VerbHook(stop)) if matches!(*stop, VerbHookStop::Hidden { .. }) => {
                 answered(Err(AgentVerbRefusal {
                     code: VERB_HOOK_HIDDEN.to_owned(),
@@ -574,6 +579,30 @@ fn answered(
         },
         SelfDispatchOutcome::AgentVerb,
     )
+}
+
+/// A `browser_unsupported` refusal its door worded (FIX 6887) carries those
+/// words as its reason codes: they name the verb that serves what was
+/// refused (`self.browser.switch_engine` to the other engine). Every other
+/// answer stands as [`answered`] made it.
+fn worded(outcome: SelfDispatchOutcome, door: &dyn AgentVerbDoor) -> SelfDispatchOutcome {
+    match outcome {
+        SelfDispatchOutcome::Denied(mut denied)
+            if denied.outcome
+                == oneiron_browser::BrowserError::Unsupported(String::new()).code() =>
+        {
+            if let Some(words) = door
+                .refusal_words()
+                .filter(|words| words.code == denied.outcome)
+            {
+                denied.reason_codes = std::iter::once(words.message)
+                    .chain(words.suggestions)
+                    .collect();
+            }
+            SelfDispatchOutcome::Denied(denied)
+        }
+        outcome => outcome,
+    }
 }
 
 /// `connector.call`'s answer as the run takes it (ONE-2510): a call held for

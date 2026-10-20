@@ -9,8 +9,11 @@
 //! before its Page domain was on. The pages' committed top-level origins
 //! and an engine switch's one-shot seed document ride the same routing
 //! (`state`), as do the storage reads a Chromium document sends as it is
-//! left, kept in the session's snapshots (`storage`).
+//! left, kept in the session's snapshots (`storage`). A message past the
+//! pipe's bound, or a reply it cannot parse, fails only its own call, and
+//! the pipe reads on (`overrun`, FIX 6851).
 
+mod overrun;
 mod state;
 mod storage;
 mod websocket;
@@ -28,7 +31,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 /// The largest message the pipe reads. A 1,366 px PNG screenshot in base64
-/// is a few MiB; a message past this closes the pipe.
+/// is a few MiB; a message past this fails only its own call, or is
+/// dropped as an event, and the pipe reads on (`overrun`).
 const MAX_MESSAGE: u64 = 32 << 20;
 
 /// The Page events that start or make a navigation, of any frame of a
@@ -217,12 +221,41 @@ fn read_replies(
         buf.clear();
         match (&mut reader).take(MAX_MESSAGE).read_until(0, &mut buf) {
             Ok(0) | Err(_) => return,
-            Ok(_) if buf.last() != Some(&0) => return,
-            Ok(_) => {}
+            Ok(_) if buf.last() == Some(&0) => {}
+            // A message that reached the bound before its end fails only its
+            // own call, and the pipe reads on past it.
+            Ok(read) if u64::try_from(read) == Ok(MAX_MESSAGE) => {
+                let prefix = &buf[..buf.len().min(overrun::PREFIX)];
+                if !overrun::oversize_message_policy(pipe, prefix) || !skip_message(&mut reader) {
+                    return;
+                }
+                continue;
+            }
+            Ok(_) => return,
         }
         buf.pop();
         if !route(pipe, relay, &buf) {
             return;
+        }
+    }
+}
+
+/// Reads past the rest of a message, through its NUL end, keeping none of
+/// it: false once the pipe ended first.
+fn skip_message(reader: &mut impl BufRead) -> bool {
+    loop {
+        let (used, ended) = match reader.fill_buf() {
+            Ok([]) => return false,
+            Ok(bytes) => match bytes.iter().position(|byte| *byte == 0) {
+                Some(at) => (at + 1, true),
+                None => (bytes.len(), false),
+            },
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => return false,
+        };
+        reader.consume(used);
+        if ended {
+            return true;
         }
     }
 }
@@ -234,8 +267,9 @@ fn route(
     relay: Option<&Arc<dyn oneiron_container::EgressRelay>>,
     bytes: &[u8],
 ) -> bool {
-    let Ok(message) = serde_json::from_slice::<Value>(bytes) else {
-        return true;
+    let message = match serde_json::from_slice::<Value>(bytes) {
+        Ok(message) => message,
+        Err(error) => return overrun::unreadable(pipe, bytes, &error),
     };
     let Some(id) = message.get("id").and_then(Value::as_u64) else {
         count_navigation(&pipe.navigations, &message);
