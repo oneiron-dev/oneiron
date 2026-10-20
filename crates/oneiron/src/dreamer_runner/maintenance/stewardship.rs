@@ -5,9 +5,12 @@
 //! gone quiet past its period lands one reach-out. The reach-out applies at
 //! once (OF-023): it lands Auto with a receipt the owner reverts, and the
 //! inbox's finding notice tells them; a reach-out the Gate parks waits in the
-//! run tray as before. It cites the newest record read, or the person when
-//! the vault holds none yet. No tie strength is scored: the quiet stretch is
-//! the only signal, and the rule says how long.
+//! run tray as before. The quiet stretch runs from the person's last touch:
+//! the newer of the newest record read about them and the newest contact
+//! with them (a `comm.last_touch` head the Dreamer reads). The reach-out
+//! cites whichever that is, or the person when the vault holds neither yet.
+//! No tie strength is scored: the quiet stretch is the only signal, and the
+//! rule says how long.
 //!
 //! A rule with a draft route also lets the host draft the follow-up through
 //! the representation seam ([`Vault::stewardship_draft_requests`] →
@@ -250,7 +253,10 @@ impl Vault {
     /// representation seam, once. The request is derived again here, so a
     /// reach-out the owner reverted or declined, or a rule they removed,
     /// meanwhile drafts nothing; the queued draft carries the reach-out and
-    /// lands only while it still stands.
+    /// lands only while it still stands. The planner, its checks and the
+    /// stored draft run outside any writer; the plan's row, its queued
+    /// landing and the reach-out's draft mark then commit in one write
+    /// (FIX 1000), so a crash between them drafts nothing twice.
     pub fn schedule_stewardship_draft(
         &self,
         proposal: EntityId,
@@ -259,12 +265,29 @@ impl Vault {
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         let rules = self.stewardship_rules()?.ok_or_else(invalid)?;
         let authority = self.dreamer_authority()?.entity_ref();
-        let request = draft_request(self, &dreamer_reader(self)?, &rules, authority, proposal)?
+        let draft = draft_request(self, &dreamer_reader(self)?, &rules, authority, proposal)?
             .ok_or_else(invalid)?;
-        let outcome =
-            self.schedule_follow_up(&request.request, proposal, request.revision, planner, now)?;
-        self.with_write_txn_grouped(|txn| DRAFTED.put(&self.store, txn, &proposal, &now))?;
-        Ok(outcome)
+        let plan = self.prepare_follow_up(&draft.request, proposal, draft.revision, planner)?;
+        self.with_write_txn_grouped(|txn| {
+            // The writer's own snapshot: still undrafted, the reach-out still
+            // stands at the drafted revision, and its rule still routes this
+            // draft.
+            if DRAFTED.contains(&self.store, &*txn, &proposal)? {
+                return Err(invalid());
+            }
+            let (body, revision) =
+                standing_reach_out_in_txn(self, &*txn, authority, proposal)?.ok_or_else(invalid)?;
+            let rules = RULES.get(&self.store, &*txn, &())?.ok_or_else(invalid)?;
+            if revision != draft.revision
+                || !draft_route(&rules, &body)?
+                    .is_some_and(|(_, route)| draft.drafted_by(rules.owner, route))
+            {
+                return Err(invalid());
+            }
+            let outcome = plan.enqueue_in_txn(self, txn, now)?;
+            DRAFTED.put(&self.store, txn, &proposal, &now)?;
+            Ok(outcome)
+        })
     }
 }
 
@@ -307,9 +330,10 @@ impl DreamerRunnerStore<'_> {
 }
 
 /// Lands one reach-out per due rule, applied at once. A rule stays due on the
-/// same newest record, and its reach-out is content-keyed, so a replayed
-/// night lands nothing twice and a reverted reach-out never lands again; a
-/// new record about the person starts a new stretch.
+/// same last touch, and its reach-out is content-keyed, so a replayed night
+/// lands nothing twice and a reverted reach-out never lands again; a new
+/// record about the person, or a newer contact with them, starts a new
+/// stretch.
 pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> Result<()> {
     let Some(rules) = vault.stewardship_rules()? else {
         return Ok(());
@@ -317,7 +341,7 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
     let reader = dreamer_reader(vault)?;
     let mut due = Vec::new();
     for rule in &rules.rules {
-        let newest = recent(vault, &reader, rule.person, 1)?.into_iter().next();
+        let newest = last_touch(vault, &reader, rule.person, now)?;
         let quiet_since = newest.map_or(rule.since, |(_, at)| at);
         let due_at = quiet_since.saturating_add(rule.every_secs);
         if now < due_at {
@@ -423,12 +447,16 @@ fn dreamer_reader(vault: &Vault) -> Result<ScopedRead<'_>> {
 
 /// The newest records about `person` the Dreamer reads and may cite, newest
 /// first, each with when it happened. The Dreamer's own claims are not a
-/// record of the person.
+/// record of the person. With `text_only`, a record whose value is not text
+/// (a `comm.last_touch` head's map, say) is passed over before the newest are
+/// taken: a draft cites text alone, and the representation loader refuses
+/// any other source.
 fn recent(
     vault: &Vault,
     reader: &ScopedRead<'_>,
     person: EntityId,
     limit: usize,
+    text_only: bool,
 ) -> Result<Vec<(EntityId, u64)>> {
     let ids = vault.claims_for_subject(&person)?;
     let mut found = Vec::new();
@@ -446,6 +474,7 @@ fn recent(
                 || body.stale
                 || body.lifecycle != ClaimLifecycleStatus::Active
                 || !claim_evidence_admissible(&body)
+                || (text_only && body.value.as_str().is_none())
                 || !vault.claim_consolidation_eligible(
                     &row.id,
                     crate::gate::ConsolidationReader::RepresentationSource,
@@ -459,6 +488,100 @@ fn recent(
     found.sort_by_key(|&(id, at)| (std::cmp::Reverse(at), id));
     found.truncate(limit);
     Ok(found)
+}
+
+/// The person's newest message-level contact the Dreamer reads (FIX 998):
+/// each effective, standing `comm.last_touch` head about them, the newest by
+/// its contact's own time, with the head that says so for evidence. It reads
+/// through the Dreamer's relationship-granted read alone, never the raw
+/// contact cache.
+fn last_contact(
+    vault: &Vault,
+    reader: &ScopedRead<'_>,
+    person: EntityId,
+    now: u64,
+) -> Result<Option<(EntityId, u64)>> {
+    let ids = vault.claims_for_subject(&person)?;
+    let mut found = Vec::new();
+    for chunk in ids.chunks(READ_CHUNK) {
+        let reads: Vec<PointRead<'_>> = chunk.iter().map(|id| PointRead::id(*id)).collect();
+        for row in reader.read(&reads, None)?.value.into_iter().flatten() {
+            let Some(bytes) = row.body.as_deref() else {
+                continue;
+            };
+            if row.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            let body = crate::claim::decode_claim_body(bytes, true)?;
+            if body.predicate != crate::comm::PREDICATE_COMM_LAST_TOUCH {
+                continue;
+            }
+            // A head that does not read as a contact record is none.
+            let Ok(claim) = crate::comm::CommClaim::from_claim_body(&body) else {
+                continue;
+            };
+            if let crate::comm::CommClaimValue::LastTouch {
+                party_ref,
+                occurred_at,
+                ..
+            } = claim.value
+                && party_ref == person
+                && claim.is_standing()
+                && claim.is_effective_at(now)
+            {
+                found.push((row.id, occurred_at));
+            }
+        }
+    }
+    Ok(found
+        .into_iter()
+        .min_by_key(|&(id, at)| (std::cmp::Reverse(at), id)))
+}
+
+/// The person's last touch (FIX 998): the newer of the newest record about
+/// them and their newest message-level contact, with the claim that says so.
+/// With no contact history the newest record stands alone, as before; on a
+/// tie it is the record.
+fn last_touch(
+    vault: &Vault,
+    reader: &ScopedRead<'_>,
+    person: EntityId,
+    now: u64,
+) -> Result<Option<(EntityId, u64)>> {
+    let record = recent(vault, reader, person, 1, false)?.into_iter().next();
+    let contact = last_contact(vault, reader, person, now)?;
+    Ok(contact.into_iter().chain(record).max_by_key(|&(_, at)| at))
+}
+
+/// The person and draft route the owner's rules name for the reach-out
+/// `body`, when its rule still routes drafts.
+fn draft_route<'a>(
+    rules: &'a StewardshipRules,
+    body: &ClaimBody,
+) -> Result<Option<(EntityId, &'a StewardshipDraftRoute)>> {
+    let ClaimSubject::Entity(person) = body.subject else {
+        return Ok(None);
+    };
+    let value: serde_json::Value =
+        serde_json::from_str(body.value.as_str().ok_or_else(invalid)?).map_err(|_| invalid())?;
+    Ok(rules
+        .rules
+        .iter()
+        .find(|rule| rule.person == person && value["rule"].as_str() == Some(rule.id.as_str()))
+        .and_then(|rule| rule.draft.as_ref())
+        .map(|route| (person, route)))
+}
+
+impl StewardshipDraftRequest {
+    /// Whether `route`, in rules set by `owner`, still drafts this request.
+    fn drafted_by(&self, owner: EntityId, route: &StewardshipDraftRoute) -> bool {
+        self.request.owner == owner
+            && self.instruction == route.instruction
+            && self.request.verb == route.verb
+            && self.request.channel == route.channel
+            && self.request.target == route.target
+            && self.request.voice == route.voice
+    }
 }
 
 /// The draft request one claim makes, when it is a standing reach-out of
@@ -480,25 +603,14 @@ fn draft_request(
             None => return Ok(None),
         }
     };
-    let ClaimSubject::Entity(person) = body.subject else {
+    let Some((person, route)) = draft_route(rules, &body)? else {
         return Ok(None);
     };
-    let value: serde_json::Value =
-        serde_json::from_str(body.value.as_str().ok_or_else(invalid)?).map_err(|_| invalid())?;
-    let Some(rule) = rules
-        .rules
-        .iter()
-        .find(|rule| rule.person == person && value["rule"].as_str() == Some(rule.id.as_str()))
-    else {
-        return Ok(None);
-    };
-    let Some(route) = &rule.draft else {
-        return Ok(None);
-    };
-    let evidence: Vec<RepresentationSourceRef> = recent(vault, reader, person, DRAFT_EVIDENCE)?
-        .into_iter()
-        .map(|(claim, _)| RepresentationSourceRef { claim })
-        .collect();
+    let evidence: Vec<RepresentationSourceRef> =
+        recent(vault, reader, person, DRAFT_EVIDENCE, true)?
+            .into_iter()
+            .map(|(claim, _)| RepresentationSourceRef { claim })
+            .collect();
     if evidence.is_empty() {
         return Ok(None);
     }

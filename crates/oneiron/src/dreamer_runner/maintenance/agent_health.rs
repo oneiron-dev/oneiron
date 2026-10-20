@@ -638,6 +638,11 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
                 touched.insert(key);
             }
         }
+        // A touched card can arm the digest on its own (FIX 1979): its
+        // deadline is read again once this write commits.
+        if !touched.is_empty() {
+            crate::batch::queue_proactivity_change(vault, txn);
+        }
         Ok(touched.len() as u64)
     })
 }
@@ -1806,6 +1811,17 @@ pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLe
     Ok(items)
 }
 
+/// The first time in `[from, to)` that `card` was opened, updated or
+/// settled, if any: the one period test [`Vault::agent_health_cards_between`]
+/// and the digest's cadence and assembly share (FIX 1979).
+pub(super) fn card_touched_in(card: &AgentHealthCard, from: u64, to: u64) -> Option<u64> {
+    [Some(card.opened_at), Some(card.updated_at), card.outcome_at]
+        .into_iter()
+        .flatten()
+        .filter(|at| (from..to).contains(at))
+        .min()
+}
+
 /// Every card in `txn`, concern first and newest first within a tone, as
 /// [`Vault::agent_health_cards_between`] orders them: the weave report reads
 /// them in its own snapshot (OF-568).
@@ -2059,12 +2075,7 @@ impl Vault {
             .scan(&self.store, &rtxn)?
             .into_iter()
             .map(|(_, card)| card)
-            .filter(|card| {
-                let touched = |at: u64| at >= from && at < to;
-                touched(card.opened_at)
-                    || touched(card.updated_at)
-                    || card.outcome_at.is_some_and(touched)
-            })
+            .filter(|card| card_touched_in(card, from, to).is_some())
             .collect();
         cards.sort_by(|left, right| {
             right
@@ -2098,6 +2109,8 @@ impl Vault {
                 .ok_or(Error::EntityNotFound)?;
             settle(&mut card, by, outcome, self.store.clock.now_recorded_at());
             CARDS.put(&self.store, txn, &key, &card)?;
+            // A settled card can arm the digest on its own (FIX 1979).
+            crate::batch::queue_proactivity_change(self, txn);
             Ok(card)
         })
     }
@@ -2144,6 +2157,8 @@ impl Memory<'_> {
             }
             settle(&mut card, self.actor(), input.outcome.into(), at);
             CARDS.put(&self.vault().store, txn, &key, &card)?;
+            // A settled card can arm the digest on its own (FIX 1979).
+            crate::batch::queue_proactivity_change(self.vault(), txn);
             Ok(ConcernCardSummary::of(&card))
         })
     }

@@ -491,8 +491,9 @@ recorded tuning config (its role models, prompt hash and pass dials, plus the
 Coach's retrieval weights) by how often you accepted its reviewed proposals,
 and files a retune proposal naming the surfaces a backbone change or a score
 drop implicates. Both land in the owner run tray (`/v1/owner/runs`), one
-run per night. Approve a curator run and its next pass applies each demotion
-whose target is unchanged since grading; a retune proposal is advice only and
+run per night. Approve a curator run and each demotion whose target is
+unchanged since grading applies once the approval commits (one that cannot
+apply then waits for the next pass); a retune proposal is advice only and
 changes nothing.
 
 The vault cleanup pass proposes archives and archives nothing until you
