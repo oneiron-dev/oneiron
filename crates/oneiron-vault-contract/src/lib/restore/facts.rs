@@ -13,6 +13,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::framing::ManagedRestoreDestination;
+use super::host_holds::RestoreHostHoldsStatus;
 use super::plan::{
     EscrowRole, RestoreArtifactKind, RestoreEvidence, RestorePlan, RestoreSourceExpectation,
 };
@@ -72,6 +73,10 @@ pub struct ManagedRestoreReceipt {
     pub evidence: RestoreEvidence,
     /// Where each added recipient's escrow report stands at this start.
     pub escrow_spool: Vec<RestoreSpoolObservation>,
+    /// Where the restored vault's host-order legal holds came from, or
+    /// `host_holds_unknown`, which the supervisor alerts on and which never
+    /// fails the restore. Nothing of any hold.
+    pub host_holds: RestoreHostHoldsStatus,
 }
 
 /// The engine's restore report.
