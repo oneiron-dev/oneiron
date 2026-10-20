@@ -167,7 +167,7 @@ impl CheckpointKey {
                 .subkey_opened(&prelude.vault_id, unlock, SEAL_CONTEXT)?;
         Ok(Self {
             vault_id: prelude.vault_id,
-            kek: Kek::from_bytes(*key),
+            kek: Kek::from_zeroizing(key),
             custody_wrap: opened.subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT),
             trust: Trust::Nobody,
             opened: Some(opened),
@@ -229,7 +229,7 @@ impl Vault {
         self.unlock_vault_key()?;
         Ok(CheckpointKey {
             vault_id: *self.vault_id().as_bytes(),
-            kek: Kek::from_bytes(*self.vault_subkey(SEAL_CONTEXT)?),
+            kek: Kek::from_zeroizing(self.vault_subkey(SEAL_CONTEXT)?),
             custody_wrap: self.vault_subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?,
             trust: Trust::Device(self.device_keystore()?),
             opened: None,
@@ -247,7 +247,7 @@ impl Vault {
             carried,
             CheckpointKey {
                 vault_id: *self.vault_id().as_bytes(),
-                kek: Kek::from_bytes(*key),
+                kek: Kek::from_zeroizing(key),
                 custody_wrap: self.vault_subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?,
                 trust: Trust::Nobody,
                 opened: None,

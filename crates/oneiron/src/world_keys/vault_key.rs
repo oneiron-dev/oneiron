@@ -79,9 +79,12 @@ impl VaultDataKey {
     }
 
     /// The key a managed node's supervisor delivered, copied into a handle
-    /// that wipes it on drop.
+    /// that wipes it on drop: zero-filled first, then filled, so no plain
+    /// copy is made on the way (FIX 6048).
     pub(super) fn delivered(bytes: &[u8; 32]) -> Self {
-        Self(Zeroizing::new(*bytes))
+        let mut guarded = Zeroizing::new([0u8; 32]);
+        guarded.copy_from_slice(bytes);
+        Self(guarded)
     }
 
     /// `BLAKE3-derive_key("oneiron/vault-key-commitment/v1", vault id ‖ key)`: it
@@ -202,6 +205,14 @@ impl StoredWrap {
 pub(super) struct WrapDigest {
     id: String,
     envelope: [u8; 32],
+}
+
+/// A passkey's PRF output as a KEK: copied once into guarded storage, then
+/// the raw bytes wiped where they came, before anything can return (FIX 6048).
+fn passkey_kek(prf: &mut [u8; 32]) -> Kek {
+    let kek = Kek::from_bytes_ref(prf);
+    zeroize::Zeroize::zeroize(prf);
+    kek
 }
 
 /// A host-chosen name inside a wrap id: 1 to 64 of `A-Z a-z 0-9 . _ -`.
@@ -404,7 +415,7 @@ impl CarriedVaultKey {
                         continue;
                     };
                     held = true;
-                    attempt(stored, &UnlockSecret::Kek(Kek::from_bytes(*seed)));
+                    attempt(stored, &UnlockSecret::Kek(Kek::from_zeroizing(seed)));
                 }
                 if !held {
                     return Err(refused(
@@ -422,7 +433,7 @@ impl CarriedVaultKey {
             }
             VaultKeyUnlock::Passkey { credential, prf } => {
                 check_name(credential)?;
-                let secret = UnlockSecret::Kek(Kek::from_bytes(*prf));
+                let secret = UnlockSecret::Kek(Kek::from_bytes_ref(prf));
                 for stored in named(VaultKeyWrapKind::Passkey {
                     credential: (*credential).to_owned(),
                 }) {
@@ -584,7 +595,7 @@ impl Vault {
         let install = self.prepare_install_signing()?;
         let seed = super::machine::slot_seed(keystore.as_ref(), &self.vault_key_slot(install))?;
         Ok((
-            Kek::from_bytes(*seed),
+            Kek::from_zeroizing(seed),
             VaultKeyWrapKind::Device {
                 install: install.to_hex(),
             },
@@ -915,12 +926,13 @@ impl Vault {
     }
 
     /// Unlocks the vault data key with one passkey's PRF output.
-    pub fn unlock_vault_key_with_passkey(&self, credential: &str, prf: [u8; 32]) -> Result<()> {
+    pub fn unlock_vault_key_with_passkey(&self, credential: &str, mut prf: [u8; 32]) -> Result<()> {
+        let kek = passkey_kek(&mut prf);
         check_name(credential)?;
         let kind = VaultKeyWrapKind::Passkey {
             credential: credential.to_owned(),
         };
-        self.unlock_vault_key_with(&kind.id(), &UnlockSecret::Kek(Kek::from_bytes(prf)))
+        self.unlock_vault_key_with(&kind.id(), &UnlockSecret::Kek(kek))
     }
 
     /// Unlocks the vault data key with the secret of an escrow wrap's recipient: a
@@ -1018,14 +1030,15 @@ impl Vault {
     pub fn add_vault_key_passkey(
         &self,
         credential: &str,
-        prf: [u8; 32],
+        mut prf: [u8; 32],
     ) -> Result<VaultKeyWrapInfo> {
+        let kek = passkey_kek(&mut prf);
         check_name(credential)?;
         self.add_vault_key_wrap(
             VaultKeyWrapKind::Passkey {
                 credential: credential.to_owned(),
             },
-            &WrapSecret::Kek(Kek::from_bytes(prf)),
+            &WrapSecret::Kek(kek),
         )
     }
 
@@ -1108,7 +1121,7 @@ impl Vault {
     pub fn add_vault_key_wrap_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
-        wrap: NewVaultKeyWrap<'_>,
+        mut wrap: NewVaultKeyWrap<'_>,
     ) -> Result<VaultKeyWrapInfo> {
         match wrap {
             NewVaultKeyWrap::Device => {
@@ -1127,13 +1140,17 @@ impl Vault {
                     Some(owner),
                 )
             }
-            NewVaultKeyWrap::Passkey { credential, prf } => {
+            NewVaultKeyWrap::Passkey {
+                credential,
+                ref mut prf,
+            } => {
+                let kek = passkey_kek(prf);
                 check_name(credential)?;
                 self.add_vault_key_wrap_checked(
                     VaultKeyWrapKind::Passkey {
                         credential: credential.to_owned(),
                     },
-                    &WrapSecret::Kek(Kek::from_bytes(prf)),
+                    &WrapSecret::Kek(kek),
                     Some(owner),
                 )
             }
