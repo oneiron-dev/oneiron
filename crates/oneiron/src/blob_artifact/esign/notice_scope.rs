@@ -126,8 +126,10 @@ impl NoticeScope<'_> {
     }
 
     /// One claimed notice of `document` through the email send gate. A
-    /// narrowed call queues its delivery only while its lane still reaches
-    /// the document in the snapshot that queues it.
+    /// narrowed call's send records a gate decision, and queues its
+    /// delivery, only while its lane still reaches the document in the
+    /// writer that records the decision and in the snapshot that queues it
+    /// (FIX 6404).
     /// # Errors
     /// As [`Vault::dispatch_esign_notice`].
     pub(super) fn dispatch(
@@ -141,7 +143,7 @@ impl NoticeScope<'_> {
             Self::Unrestricted => vault.dispatch_esign_notice(attempt, request),
             Self::Credential(lane) => {
                 vault.dispatch_esign_notice_in_scope(attempt, request, &|txn| {
-                    reaches_in(lane, txn, document)
+                    reaches(lane, txn, document)
                 })
             }
             Self::Unattended(notices) => {
@@ -167,12 +169,25 @@ fn bounded_by_whole_vault(proof: &VerifiedSlip) -> bool {
 /// Whether `lane` reads the record [`NOTICE_SCOPE_TARGET`] names for
 /// `document` in `txn`, as a ref its caller names resolves, the lane's owner
 /// standing proved again in that snapshot.
-fn reaches_in(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>, document: EntityId) -> Result<()> {
+/// # Errors
+/// The read's own failure.
+fn reaches(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>, document: EntityId) -> Result<bool> {
     let target = NOTICE_SCOPE_TARGET.record(document);
     let policy = lane.live_policy_manifest_in(txn)?;
-    if lane.is_ref_readable_with_policy_in(txn, &policy, &target)? {
+    lane.is_ref_readable_with_policy_in(txn, &policy, &target)
+}
+
+/// [`reaches`], a document out of the lane's reach refused as [`unreached`].
+fn reaches_in(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>, document: EntityId) -> Result<()> {
+    if reaches(lane, txn, document)? {
         Ok(())
     } else {
-        Err(invalid("unknown signing document"))
+        Err(unreached())
     }
+}
+
+/// The refusal of a signing document a narrowed credential's lane does not
+/// reach: the answer a document that is no signing document gets.
+pub(super) fn unreached() -> crate::Error {
+    invalid("unknown signing document")
 }

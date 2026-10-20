@@ -1399,7 +1399,7 @@
      "path": "src/agent_dispatch/workflow/workflow_task.rs",
      "purpose": "A saved workflow that realizes a TASK (FIX 4391), on the dispatch side: the bound admission, the wrapper…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 4
      }
     },
@@ -6586,18 +6586,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignDeliveryLink",
-      "EsignDeliveryMint"
+      "EsignDeliveryMint",
+      "EsignDeliveryWait"
      ],
      "path": "src/blob_artifact/esign/delivery_capability.rs",
      "purpose": "Fresh signing links at delivery export (FIX 5238 option 3, the owner's KEY STORE = A ruling: no recoverable…",
      "surface": {
       "crate-vis": 3,
-      "enum": 1,
-      "fn": 3,
+      "enum": 2,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -6712,7 +6713,7 @@
      "purpose": "Claims are the document state machine",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 3
      }
     },
@@ -6812,7 +6813,7 @@
      "path": "src/blob_artifact/esign/notice_scope.rs",
      "purpose": "FIX 6220: a world-, facet- or record-scoped credential sends its own e-sign notices…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -56516,7 +56517,7 @@
      "path": "src/task_verb/create_validation.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1
      }
     },
@@ -56696,13 +56697,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/highway_runner/workflow_try/binder.rs",
      "purpose": "Who binds a saved workflow's run to a TASK, as the door that took the request proved them (FIX 5316): the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -56712,7 +56713,7 @@
      "path": "src/task_verb/highway_runner/workflow_try/recorded_right.rs",
      "purpose": "A binder's settlement on the right its bind recorded (FIX 5349)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -56809,7 +56810,7 @@
      "surface": {
       "crate-vis": 40,
       "fn": 1,
-      "mod": 4,
+      "mod": 5,
       "re-export": 27
      }
     },
@@ -57034,6 +57035,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunControl",
+      "RunControlEffect",
+      "RunControlReceipt",
+      "RunControlRequest"
+     ],
+     "path": "src/task_verb/run_control.rs",
+     "purpose": "Pause and resume of one run branch (DOOR-100, FIX 4501, Engine 10-20 on the C002 pattern)…",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -57055,7 +57073,7 @@
      "path": "src/task_verb/run_doors.rs",
      "purpose": "The owner's run doors over one TASK's branches (DOOR-100, ARCH-0026 `#run-tree`)…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 3,
       "struct": 11
@@ -57651,7 +57669,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1102
+      "fn": 1104
      }
     },
     {
@@ -65629,7 +65647,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 199,
+     "files": 200,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -65799,7 +65817,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4100,
+   "source_files": 4101,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74988,7 +75006,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1073
+      "fn": 1075
      }
     },
     {
@@ -76202,7 +76220,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1074
+      "fn": 1076
      }
     },
     {
@@ -92575,6 +92593,9 @@
       "RunChangeOutcome",
       "RunChangeVerdict",
       "RunCompensation",
+      "RunControlEffect",
+      "RunControlReceipt",
+      "RunControlRequest",
       "RunNotUndone",
       "RunNotUndoneReason",
       "RunReview",
@@ -93435,8 +93456,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 877,
-      "struct": 2777
+      "enum": 878,
+      "struct": 2779
      }
     },
     {
