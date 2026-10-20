@@ -338,13 +338,17 @@ impl Vault {
     }
     /// Connector content loader for this typed reference. A connector never
     /// resolves a bare mutable claim or substitutes today's generated text.
+    /// It loads the recipient's text: the reviewed content without its
+    /// evidence markers (FIX 999), while the stored review copy keeps them.
     pub fn read_representation_content(&self, reference: &str) -> Result<Vec<u8>> {
         let id = content_proposal_id(reference)?;
         let approved = self.approved_representation(&id)?;
         if reference != approved.record.packet.content_ref()? {
             return Err(invalid());
         }
-        crate::compaction::output::restore_output(self, approved.record.packet.content)
+        let bytes =
+            crate::compaction::output::restore_output(self, approved.record.packet.content)?;
+        Ok(recipient_text(&approved.record.packet, bytes))
     }
 }
 fn require_owner(vault: &Vault, owner: &AuthenticatedOwner, plan: &LiveProposal) -> Result<()> {
@@ -478,6 +482,67 @@ fn content_proposal_id(reference: &str) -> Result<EntityId> {
     let suffix = reference.strip_prefix(CONTENT_PREFIX).ok_or_else(invalid)?;
     let (id, _) = suffix.split_once(':').ok_or_else(invalid)?;
     EntityId::from_hex(id).map_err(|_| invalid())
+}
+/// The recipient's text of an approved plan (FIX 999): the reviewed bytes
+/// less exactly the packet's own `[<claim>@<revision>]` citation markers,
+/// the spaces each one leaves, and each line that held only markers (the
+/// closing line a pre-materialized draft adds), with the trailing blank
+/// lines such a closing line leaves. Nothing else moves, and an empty result
+/// still loads.
+fn recipient_text(packet: &super::Packet, bytes: Vec<u8>) -> Vec<u8> {
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => return error.into_bytes(),
+    };
+    let markers: Vec<String> = packet
+        .evidence
+        .iter()
+        .chain(&packet.voice)
+        .map(RepresentationCitation::marker)
+        .collect();
+    let mut lines = Vec::new();
+    // Whether a markers-only line was dropped after the last line of text.
+    let mut dropped_tail = false;
+    for line in text.split('\n') {
+        let (kept, removed) = strip_markers(line, &markers);
+        if removed && kept.trim().is_empty() {
+            dropped_tail = true;
+            continue;
+        }
+        if !kept.trim().is_empty() {
+            dropped_tail = false;
+        }
+        lines.push(kept);
+    }
+    let mut out = lines.join("\n");
+    if dropped_tail {
+        out.truncate(out.trim_end().len());
+    }
+    out.into_bytes()
+}
+/// `line` without `markers`, and whether it held one. The spaces before a
+/// marker go with it unless a word follows it; a marker that opens the line
+/// takes the spaces after it instead, so the line's indent stays.
+fn strip_markers(line: &str, markers: &[String]) -> (String, bool) {
+    let mut kept = String::with_capacity(line.len());
+    let mut rest = line;
+    let mut removed = false;
+    while let Some((at, len)) = markers
+        .iter()
+        .filter_map(|marker| rest.find(marker.as_str()).map(|at| (at, marker.len())))
+        .min()
+    {
+        kept.push_str(&rest[..at]);
+        rest = &rest[at + len..];
+        removed = true;
+        if kept.trim().is_empty() {
+            rest = rest.trim_start_matches([' ', '\t']);
+        } else if !rest.starts_with(char::is_alphanumeric) {
+            kept.truncate(kept.trim_end_matches([' ', '\t']).len());
+        }
+    }
+    kept.push_str(rest);
+    (kept, removed)
 }
 fn expected_intent(approved: &ApprovedRepresentation) -> Result<OutboundIntent> {
     let packet = &approved.record.packet;
