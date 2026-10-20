@@ -9,6 +9,7 @@ use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
+pub(crate) mod checkpoint;
 
 pub(super) const STATE: SideTable<EntityId, RevisionState, Named> =
     SideTable::new(&side_table::ENTITY_REVISION_STATE);

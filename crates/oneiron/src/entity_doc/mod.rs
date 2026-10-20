@@ -6,6 +6,7 @@
 
 #[cfg(feature = "sync")]
 mod carried;
+pub(crate) mod checkpoint;
 mod citation_floor;
 mod doc_actor;
 mod document;

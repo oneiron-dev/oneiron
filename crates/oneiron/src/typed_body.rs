@@ -28,6 +28,7 @@ use loro::{CommitOptions, ExportMode, Frontiers, LoroDoc};
 use serde::{Deserialize, Serialize};
 
 mod body_actor;
+pub(crate) mod checkpoint;
 mod lift;
 mod receipts;
 pub use self::body_actor::BodyActor;
