@@ -3,7 +3,8 @@
 //! Replies are matched to calls by id. Network events cross the host proxy,
 //! for every page the guest opens; the DOM driver still polls for its
 //! observations and its tabs. Each page session's navigation events are
-//! counted, for the driver's change check (FIX 6680).
+//! counted, for the driver's change check (FIX 6680), and a JavaScript
+//! dialog a page opens is answered at once, as before its Page domain was on.
 
 use crate::BrowserError;
 use serde_json::{Value, json};
@@ -173,6 +174,7 @@ fn read_replies(
         };
         let Some(id) = message.get("id").and_then(Value::as_u64) else {
             count_navigation(&pipe.navigations, &message);
+            answer_dialog(pipe, &message);
             if let Some(relay) = &relay {
                 network_event(pipe.clone(), Arc::clone(relay), message);
             }
@@ -210,6 +212,31 @@ fn count_navigation(navigations: &Navigations, event: &Value) {
     {
         *count += 1;
     }
+}
+
+/// Answers a JavaScript dialog a page opened, at once, as headless Chromium
+/// answers one when no client holds the page's Page domain: an alert,
+/// confirm or prompt is dismissed (`accept: false`), and a beforeunload is
+/// accepted, so the page is left. Called on the pipe reader, which must
+/// never wait for its own CDP reply: the answer goes from its own thread,
+/// and one that fails changes nothing.
+fn answer_dialog(pipe: &Pipe, event: &Value) {
+    if event["method"].as_str() != Some("Page.javascriptDialogOpening") {
+        return;
+    }
+    let Some(session) = event["sessionId"].as_str().map(str::to_owned) else {
+        return;
+    };
+    let accept = event.pointer("/params/type").and_then(Value::as_str) == Some("beforeunload");
+    let pipe = pipe.clone();
+    std::thread::spawn(move || {
+        let _ = pipe.call(
+            Some(&session),
+            "Page.handleJavaScriptDialog",
+            json!({"accept": accept}),
+            Instant::now() + std::time::Duration::from_secs(30),
+        );
+    });
 }
 
 /// Called on the pipe reader, which must never wait for its own CDP reply.
