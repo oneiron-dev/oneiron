@@ -18,7 +18,8 @@
 //! the record of, in the list's snapshot, and of any other room nothing,
 //! never a refusal (FIX 6500); one bounded by the whole vault, and a handle
 //! bound to no credential, lists every room's. A credential's proof is read
-//! again in the list's snapshot, a whole-vault one's too (FIX 6502): one
+//! again in the list's snapshot, a whole-vault one's too (FIX 6502), and so
+//! is the slip of one whose lane does not build (FIX 6641): one
 //! revoked or expired by then is refused as the scoped read refuses it,
 //! naming that credential. The room's history is read whole, however long
 //! (rule 5): no cap, no count refusal.
@@ -94,10 +95,14 @@ impl Memory<'_> {
         });
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        // Its proof, read again in this snapshot (FIX 6502).
-        if let Some((_, Some(lane))) = &presented
-            && !lane.proof_live_in(&txn)?
-        {
+        // Its proof, read again in this snapshot (FIX 6502); one whose lane
+        // did not build has its slip read again itself (FIX 6641).
+        let live = match (&presented, self.presented_credential()) {
+            (Some((_, Some(lane))), _) => lane.proof_live_in(&txn)?,
+            (Some((_, None)), Some(proof)) => vault.capability_slip_is_live_in_txn(&txn, proof)?,
+            _ => true,
+        };
+        if !live {
             return Err(MemoryError::from(Error::InvalidClaimBody(
                 "scoped read credential no longer live",
             )));

@@ -102,17 +102,23 @@ pub(crate) fn admit_room_turn_map(key: Option<&WindowKey>, map: &LoroMap) -> Res
     Ok(())
 }
 
-/// Writes into `doc` the turn row this vault holds for TURN `id`, unless the
-/// window's row already carries every message, message quote and bound task
-/// of it and its conversion. A row the window holds is extended, never
-/// replaced, so another machine's binding is not lost and two machines settle
-/// on one row; a window row keeping another quote for one of its messages is
-/// refused (FIX 2028). A window row still naming the actor this vault's row
-/// names as erased (FIX 6543) is left as it is: the egress scrub rewrites it
-/// in the erased form once the window is pinned history-free
-/// ([`scrub_deleted_room_turns`]), and no mirror files that id again first.
-/// Returns whether it wrote; the caller commits.
-pub(crate) fn mirror_room_turn(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> Result<bool> {
+/// Writes into `doc`, window `key`'s, the turn row this vault holds for TURN
+/// `id`, unless the window's row already carries every message, message
+/// quote and bound task of it and its conversion. A row the window holds is
+/// extended, never replaced, so another machine's binding is not lost and two
+/// machines settle on one row; a window row keeping another quote for one of
+/// its messages is refused (FIX 2028). A window row still naming the actor
+/// this vault's row names as erased (FIX 6543) takes the erased form as it is
+/// extended (FIX 6639): `key` is pinned history-free first, as the egress
+/// scrub pins it ([`scrub_deleted_room_turns`]), since the doc keeps the old
+/// actor in its history, and that actor is never filed again. Returns whether
+/// it wrote; the caller commits.
+pub(crate) fn mirror_room_turn(
+    vault: &Vault,
+    doc: &LoroDoc,
+    key: &WindowKey,
+    id: &EntityId,
+) -> Result<bool> {
     let held = {
         let rtxn = vault.store.env.read_txn()?;
         replicated_turn_in(vault, &rtxn, *id)?
@@ -124,10 +130,13 @@ pub(crate) fn mirror_room_turn(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> R
     let hex = id.to_hex();
     let row = match map_get_bytes(&map, &hex).and_then(|carried| decode(&carried).ok()) {
         Some(mut carried) => {
-            if turn.actor == ERASED_CALL_IDENTITY && carried.actor != turn.actor {
-                return Ok(false);
-            }
             let mut grew = false;
+            if turn.actor == ERASED_CALL_IDENTITY && carried.actor != turn.actor {
+                // Pin before the actor changes, as the egress scrub does.
+                super::window::require_history_free_window(vault, key)?;
+                carried.actor = ERASED_CALL_IDENTITY.to_owned();
+                grew = true;
+            }
             for message in turn.message_ids {
                 if !carried.message_ids.contains(&message) {
                     carried.message_ids.push(message);
@@ -330,7 +339,7 @@ impl Vault {
             {
                 continue;
             }
-            match mirror_room_turn(self, &window.doc, turn) {
+            match mirror_room_turn(self, &window.doc, &window.key, turn) {
                 Ok(true) => {
                     window.doc.commit_with(
                         loro::CommitOptions::new().origin(super::bridge::BRIDGE_ORIGIN),

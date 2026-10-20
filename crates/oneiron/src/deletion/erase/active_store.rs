@@ -115,7 +115,10 @@ impl Vault {
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         // An erased actor's receipts and rows keep their times, not who acted (FIX 812).
-        crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id)?;
+        // A soft delete's headerless purge keeps them: delete restores, erase is one-way (FIX 6640).
+        if erase {
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id)?;
+        }
         let had_refinement =
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
         let had_merge_receipt =

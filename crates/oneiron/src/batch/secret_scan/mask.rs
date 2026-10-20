@@ -662,44 +662,43 @@ impl Masker {
                 let mut changed = false;
                 for (key, member) in fields.iter_mut() {
                     changed |= self.mask_value(key)?;
-                    let whole = key.as_str().is_some_and(shapes::sensitive_key)
-                        && !member.is_nil()
-                        && !member
-                            .as_str()
-                            .is_some_and(|text| shapes::field_placeholder(text, Door::Write));
-                    if !whole {
-                        changed |= self.mask_value(member)?;
-                        continue;
-                    }
-                    let secret = Zeroizing::new(match &*member {
-                        Value::String(text) => text.as_bytes().to_vec(),
-                        Value::Binary(bytes) => bytes.clone(),
-                        other => {
-                            let mut bytes = Zeroizing::new(Vec::new());
-                            rmpv::encode::write_value(&mut *bytes, other).map_err(|_| {
-                                Error::InvariantViolation("a credential field did not encode")
-                            })?;
-                            std::mem::take(&mut *bytes)
-                        }
-                    });
-                    if self.is_kept(&secret) {
-                        continue;
-                    }
-                    let handle = match self.known_whole(&secret) {
-                        Some(handle) => {
-                            self.placed_known = true;
-                            handle
-                        }
-                        None => self.handle(&secret, REASON_SENSITIVE_ENV)?,
-                    };
-                    wipe::wipe_value(member);
-                    *member = Value::from(handle);
-                    changed = true;
+                    changed |= self.mask_member(key, member)?;
                 }
                 Ok(changed)
             }
             _ => Ok(false),
         }
+    }
+
+    /// One map member under its `key`, as the field rule reads it: a value
+    /// under a credential name whole, any other member by member.
+    fn mask_member(&mut self, key: &Value, member: &mut Value) -> Result<bool> {
+        if !credential_member(key, member) {
+            return self.mask_value(member);
+        }
+        let secret = Zeroizing::new(match &*member {
+            Value::String(text) => text.as_bytes().to_vec(),
+            Value::Binary(bytes) => bytes.clone(),
+            other => {
+                let mut bytes = Zeroizing::new(Vec::new());
+                rmpv::encode::write_value(&mut *bytes, other)
+                    .map_err(|_| Error::InvariantViolation("a credential field did not encode"))?;
+                std::mem::take(&mut *bytes)
+            }
+        });
+        if self.is_kept(&secret) {
+            return Ok(false);
+        }
+        let handle = match self.known_whole(&secret) {
+            Some(handle) => {
+                self.placed_known = true;
+                handle
+            }
+            None => self.handle(&secret, REASON_SENSITIVE_ENV)?,
+        };
+        wipe::wipe_value(member);
+        *member = Value::from(handle);
+        Ok(true)
     }
 
     /// Whether the owner ruled `value` no secret in the record the pass
@@ -808,6 +807,16 @@ impl Masker {
         note_found_keys_in_txn(write.store, wtxn, &notes, at)?;
         Ok(handles)
     }
+}
+
+/// Whether the field rule reads `member`, under `key`, whole: a value under a
+/// credential name, neither nil nor a placeholder.
+fn credential_member(key: &Value, member: &Value) -> bool {
+    key.as_str().is_some_and(shapes::sensitive_key)
+        && !member.is_nil()
+        && !member
+            .as_str()
+            .is_some_and(|text| shapes::field_placeholder(text, Door::Write))
 }
 
 /// The spans of `text` the write door's text rules place, merged where they

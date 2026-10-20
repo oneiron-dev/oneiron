@@ -270,6 +270,19 @@ impl AgentDispatcher<'_> {
             .record;
         // The wrapper is not an agent: its settlement calibrates nothing.
         launch.reserve_in_txn(self, txn, root.id, None, input.now)?;
+        // FIX 6637: each frozen step as the side-row wall keeps it, before the
+        // record is saved and before its first leaf is enqueued, so the first
+        // leaf runs the input the record froze. A step the wall leaves keeps
+        // its bytes, and its leaf the input prepared for it.
+        let mut first = first.ok_or_else(|| invalid("workflow has no first step"))?;
+        for (ordinal, step) in steps.iter_mut().enumerate() {
+            if let Some((masked, frozen)) = self.admitted_workflow_step_in(txn, &root.id, step)? {
+                *step = masked;
+                if ordinal == 0 {
+                    first = frozen;
+                }
+            }
+        }
         let mut record = WorkflowRecord {
             version: 1,
             root: root.id,
@@ -280,13 +293,7 @@ impl AgentDispatcher<'_> {
             launch: Some(launch.statement),
             task_settled: None,
         };
-        record.active = self.enqueue_prepared_workflow_step(
-            txn,
-            &record,
-            first.ok_or_else(|| invalid("workflow has no first step"))?,
-            0,
-            input.now,
-        )?;
+        record.active = self.enqueue_prepared_workflow_step(txn, &record, first, 0, input.now)?;
         RECORD.admit(self.vault, txn, &root.id, &mut record)?;
         RECORD.put(self.vault, txn, &root.id, &record)?;
         if let Some(key) = input.dedupe_key.as_deref() {

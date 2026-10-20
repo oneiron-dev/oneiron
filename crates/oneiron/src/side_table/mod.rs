@@ -198,6 +198,24 @@ pub(crate) enum SidePayload {
     Custody,
 }
 
+/// One step of a [`RefPath`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RefStep {
+    /// The member under this name, in a map.
+    Field(&'static str),
+    /// The JSON a string member spells, read as its own tree: a descriptor a MessagePack body
+    /// keeps as text.
+    Json,
+}
+
+/// Where, from the top of a body the side-row wall admits for a table, one field keeps a
+/// structural reference: an id or label the engine resolves by its exact bytes (a run id, a
+/// context domain, a type node, a team or launch id). The wall reads the value there with no
+/// known-value sweep (FIX 6634), so a reference that equals or holds a value custody holds still
+/// resolves; a shape the door's rules place in it is placed, or refused, as anywhere else. A path
+/// that meets anything but the member it names names nothing there.
+pub(crate) type RefPath = &'static [RefStep];
+
 /// How a table that records an actor forgets one: run over its rows in the erase's own
 /// transaction (FIX 3520).
 pub(crate) type ActorScrub =
@@ -212,6 +230,9 @@ pub(crate) struct SideTableDecl {
     pub(crate) prefix: &'static [u8],
     pub(crate) codec: CodecName,
     pub(crate) payload: SidePayload,
+    /// The fields an `Authored` table's rows keep structural references in (FIX 6634); none for
+    /// most tables.
+    pub(crate) references: &'static [RefPath],
     /// The scrub an actor's erase runs over this table's rows.
     pub(crate) actor: Option<ActorScrub>,
 }
