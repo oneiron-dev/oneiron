@@ -20352,7 +20352,7 @@
      "path": "src/dreamer_consolidation/evidence.rs",
      "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -20474,9 +20474,9 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 4,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -20680,7 +20680,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "re-export": 1
      }
     },
@@ -20738,6 +20738,21 @@
      "purpose": "The candidates an escalated consolidation round dropped, retained on its `conflict.open` marker (OF-023, FIX…",
      "surface": {
       "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConflictSettleOutcome",
+      "StagedKeep"
+     ],
+     "path": "src/dreamer_consolidation/retained_keep.rs",
+     "purpose": "Keeping a conflict's retained alternative (OF-023, FIX 496): where the Keep lands it, and what a Keep of…",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
       "struct": 1
      }
     },
@@ -20866,7 +20881,7 @@
      "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 3,
       "struct": 8
@@ -21076,7 +21091,7 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -21085,6 +21100,16 @@
      "notable": [],
      "path": "src/dreamer_consolidation/turn_text/compaction_span.rs",
      "purpose": "`conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/turn_text/projection.rs",
+     "purpose": "The exact projection a consolidation branch read of one witnessed TURN (FIX 5755)",
      "surface": {
       "crate-vis": 2
      }
@@ -21343,6 +21368,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_promotion/imported_keep.rs",
+     "purpose": "A kept alternative from imported words (FIX 5754): the selected landing's review route",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -21359,7 +21394,7 @@
      "path": "src/dreamer_promotion/settlement.rs",
      "purpose": "The selected landing (OF-023, FIX 496): a consolidation round's retained alternative that a conflict…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -46120,7 +46155,7 @@
      "path": "src/scope_summary/request.rs",
      "purpose": "Scope-only declarations, exact-source fences and atomic Dreamer landings",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -63921,7 +63956,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 74,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63942,7 +63977,7 @@
      "purpose": "ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth…"
     },
     "dreamer_promotion": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -64966,7 +65001,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4030,
+   "source_files": 4033,
    "test_files": 902
   },
   "oneiron-android": {
@@ -83465,17 +83500,27 @@
      "path": "src/device_sync.rs",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/device_sync/dial.rs",
+     "purpose": "What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/device_sync/enrolment.rs",
      "purpose": "A device's enrolment with its home (ARCH-0023b: \"a device connects the moment it is enrolled\")",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -83483,9 +83528,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/device_sync/renewal.rs",
-     "purpose": "FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`…",
+     "purpose": "FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`), with the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -86891,7 +86936,7 @@
      "path": "src/server/wave_door.rs",
      "purpose": "The wave door (OF-427, ARCH-0068 RC5): `tasks.wave` cuts an epic TASK into a wave of TASKs through a planner…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -87866,7 +87911,7 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -88148,7 +88193,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 873,
+   "source_files": 874,
    "test_files": 182
   },
   "oneiron-spawn": {
