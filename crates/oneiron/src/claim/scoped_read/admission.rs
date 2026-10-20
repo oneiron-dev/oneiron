@@ -145,16 +145,48 @@ impl<'a> ScopedRead<'a> {
             && self.audience.is_none()
             && self.peer_reads.is_empty()
         {
-            // An unnarrowed read still meets each private thread's audience.
+            // An unnarrowed read still meets each private thread's audience,
+            // and an unbound agent's its own entry (FIX 5861).
             let Some(record) = self.entity_record_in(txn, id)? else {
                 return Ok(true);
             };
-            return self.private_threads_readable_in(txn, id, &record.encode());
+            let raw = record.encode();
+            return Ok(self.private_threads_readable_in(txn, id, &raw)?
+                && self.own_entry_readable_in(txn, id, &raw)?);
         }
         let Some(record) = self.entity_record_in(txn, id)? else {
             return Ok(false);
         };
         self.audience_readable_raw_in(txn, id, &record.encode())
+    }
+
+    /// An unbound agent's or the system's read of the revision `raw` of
+    /// `id` meets its own entry into each room it is on the roster of, as a
+    /// person's own read does: added from now on, it reads nothing from
+    /// before its join (FIX 5861). The class is the key's verified one, the
+    /// reader the key's own actor, never another member. A read bound to a
+    /// room turn, or of any other class, adds nothing here.
+    fn own_entry_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        let class = self.actor_key.actor_class();
+        let unbound_agent = self.actor_key.room_turn.is_none()
+            && [crate::EdgeActorClass::Agent, crate::EdgeActorClass::System]
+                .into_iter()
+                .any(|agent| class == Some(agent.gate_actor_class()));
+        let Some(reader) = unbound_agent
+            .then(|| EntityId::from_hex(self.actor_key.actor_ref()).ok())
+            .flatten()
+        else {
+            return Ok(true);
+        };
+        self.audience_cache
+            .lock()
+            .map_err(|_| Error::InvariantViolation("audience cache lock"))?
+            .own_entry_readable_raw(self.vault, txn, *id, raw, reader)
     }
 
     /// The audience conjunct over the exact revision `raw` being served. A
@@ -174,7 +206,9 @@ impl<'a> ScopedRead<'a> {
         if self.device_withholds_in(txn, id, Some(raw))? {
             return Ok(false);
         }
-        if !self.private_threads_readable_in(txn, id, raw)? {
+        if !self.private_threads_readable_in(txn, id, raw)?
+            || !self.own_entry_readable_in(txn, id, raw)?
+        {
             return Ok(false);
         }
         if self.actor_key.room_turn.is_none() && self.actor_key.worlds.is_none() {
