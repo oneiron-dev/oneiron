@@ -1032,7 +1032,7 @@
      "path": "src/agent_dispatch/planner_live.rs",
      "purpose": "The live spawn planner (ARCH-0079 #planner, OF-541): the one vault-backed service a spawn door and the CEO's…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 5,
       "struct": 3
      }
@@ -1335,7 +1335,7 @@
      "path": "src/agent_dispatch/widen.rs",
      "purpose": "Fail-closed propose-widen and owner-authenticated, TASK-bound board approval or decline",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -1399,7 +1399,7 @@
      "path": "src/agent_dispatch/workflow/workflow_task.rs",
      "purpose": "A saved workflow that realizes a TASK (FIX 4391), on the dispatch side: the bound admission, the wrapper…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 4
      }
     },
@@ -19630,7 +19630,7 @@
      "path": "src/critic/review/persistence.rs",
      "purpose": "Transactional review bundles",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -56596,7 +56596,7 @@
      "path": "src/task_verb/highway_runner/workflow_try.rs",
      "purpose": "A saved workflow's wrapper as the try that realizes a TASK (FIX 4391)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
