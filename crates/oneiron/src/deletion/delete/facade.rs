@@ -736,7 +736,8 @@ impl Vault {
         // receiver-side `apply_replayed_tombstone` nothing-local branch:
         // ONLY the durable `dt:` marker is written (hard-once-seen — the
         // CRDT tombstone above is already published, so the id IS
-        // hard-deleted), guarded so an existing marker is never overwritten.
+        // hard-deleted), guarded so an existing marker is never overwritten,
+        // and the actor sweep runs, as there.
         if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
             crate::claim::invalidate_weave_digest_source_in_txn(&self.store, &mut wtxn, id)?;
             if !HARD_DELETE_MARKER.contains(&self.store, &wtxn, &marker_key)? {
@@ -747,6 +748,10 @@ impl Vault {
                     &tombstone.encode().to_vec(),
                 )?;
             }
+            // An actor with no id-local state may still be named in the rows
+            // that record it (its turn programs among them), so the purge's
+            // actor sweep runs here too, marker or not (FIX 5737).
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, &mut wtxn, id)?;
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
                 && !self.store.discard_pending_deletion_gate_decision_in_txn(
@@ -758,9 +763,10 @@ impl Vault {
             {
                 return Err(Error::CorruptedIndex("pending deletion gate decision"));
             }
-            // No local work remains and there is no cfg-off pt: marker.
-            // A published tombstone is durable; an unpublished empty commit
-            // carries no deletion intent to hold an interlock for.
+            // No id-local purge scope remains (the actor sweep above may still
+            // have scrubbed rows naming this id), and there is no cfg-off pt:
+            // marker. A published tombstone is durable; an unpublished commit
+            // with no purge carries no deletion intent to hold an interlock for.
             clear_own_topology_delete_in_txn(
                 &self.store,
                 &mut wtxn,
