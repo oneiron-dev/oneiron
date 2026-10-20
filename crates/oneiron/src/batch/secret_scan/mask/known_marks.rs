@@ -84,11 +84,7 @@ pub(super) fn unmarked_known(
 
 /// `prior` (the file's mark, if it has one) with each of `found` marked
 /// beside what it holds; `None` when none was added.
-fn united(
-    prior: Option<MaskedFile>,
-    found: Vec<KnownMark>,
-    at: u64,
-) -> Result<Option<MaskedFile>> {
+fn united(prior: Option<MaskedFile>, found: Vec<KnownMark>, at: u64) -> Result<Option<MaskedFile>> {
     let mut mark = prior.unwrap_or(MaskedFile {
         band: MASKED_FILE_BAND,
         keys: Vec::new(),

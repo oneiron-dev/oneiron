@@ -338,7 +338,8 @@ impl KnownValues {
 
     /// The known value `data` is, whole.
     fn whole(&self, data: &[u8]) -> Option<&Known> {
-        self.longest_at(data).filter(|known| known.len == data.len())
+        self.longest_at(data)
+            .filter(|known| known.len == data.len())
     }
 
     /// Where an open stream's `text` may still be writing a known value

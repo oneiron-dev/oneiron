@@ -392,7 +392,10 @@ pub(crate) fn secret32(raw: &[u8], what: &str) -> anyhow::Result<Zeroizing<[u8; 
         64 => secret_hex_into(raw, &mut out),
         _ => secret_b64_into(raw, &mut out),
     };
-    anyhow::ensure!(decoded, "{what} is 32 bytes: raw, 64 hex digits or base64url");
+    anyhow::ensure!(
+        decoded,
+        "{what} is 32 bytes: raw, 64 hex digits or base64url"
+    );
     Ok(out)
 }
 
@@ -417,7 +420,10 @@ fn secret_hex_into(raw: &[u8], out: &mut [u8; 32]) -> bool {
 /// `false` for anything else.
 fn secret_b64_into(raw: &[u8], out: &mut [u8; 32]) -> bool {
     let mut room = Zeroizing::new([0u8; 48]);
-    let end = raw.iter().rposition(|byte| *byte != b'=').map_or(0, |at| at + 1);
+    let end = raw
+        .iter()
+        .rposition(|byte| *byte != b'=')
+        .map_or(0, |at| at + 1);
     let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
     match engine.decode_slice(&raw[..end], &mut room[..]) {
         Ok(len) if len == out.len() => {
