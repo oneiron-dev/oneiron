@@ -89,6 +89,29 @@ pub(crate) fn restore_parts(
     check: impl Fn(&RowLocator, &[u8]) -> Result<()>,
     join: impl Fn(&RoTxn<'_>, &RowLocator, &[u8], &[&ActorPart]) -> Result<Option<Vec<u8>>>,
 ) -> Result<Restored> {
+    restore_parts_keyed(dbs, txn, opened, check, |view, at, value, parts| {
+        Ok(join(view, at, value, parts)?.map(|value| (at.clone(), value)))
+    })
+}
+
+/// [`restore_parts`] for a getter whose join spells back a no-one-form
+/// part's key as well as its value, where the key names an actor and the
+/// part's locator does not (a NOTE title reservation, FIX 6075): `join`
+/// answers the row's own locator and value. The row stays in its part's
+/// table, its key leading with the part's, as an actor-keyed row does, and
+/// goes through the same check and sink.
+pub(crate) fn restore_parts_keyed(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    opened: &OpenedOwnerRows,
+    check: impl Fn(&RowLocator, &[u8]) -> Result<()>,
+    join: impl Fn(
+        &RoTxn<'_>,
+        &RowLocator,
+        &[u8],
+        &[&ActorPart],
+    ) -> Result<Option<(RowLocator, Vec<u8>)>>,
+) -> Result<Restored> {
     ensure_enabled()?;
     let held = opened.held_up();
     let mut restored = Restored::default();
@@ -107,7 +130,8 @@ pub(crate) fn restore_parts(
                 RowPart::NoActor { value, .. } => {
                     let view: &RoTxn<'_> = txn;
                     join(view, at, value.as_slice(), actors.as_slice())?
-                        .map(|value| (at.clone(), value))
+                        .map(|row| in_part_table(at, row))
+                        .transpose()?
                 }
                 RowPart::ActorKeyed { .. } => actor_keyed_row(at, &actors)?,
             }
@@ -121,6 +145,18 @@ pub(crate) fn restore_parts(
         restored.written += 1;
     }
     Ok(restored)
+}
+
+/// A joined row, refused unless it stays in the table of the part it was
+/// joined from: the part's database, and a key leading with the part's key.
+fn in_part_table(
+    at: &RowLocator,
+    (row_at, value): (RowLocator, Vec<u8>),
+) -> Result<(RowLocator, Vec<u8>)> {
+    if row_at.db != at.db || !row_at.key.starts_with(&at.key) {
+        return Err(corrupt());
+    }
+    Ok((row_at, value))
 }
 
 /// An actor-keyed row's own key and value, out of the actor part naming its

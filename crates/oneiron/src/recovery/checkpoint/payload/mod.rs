@@ -323,6 +323,12 @@ impl ImageFilter {
                 .filter(|dependency| held.contains(&dependency.at))
                 .cloned()
                 .collect();
+            owner.image_keys = rows
+                .image_keys
+                .iter()
+                .filter(|(at, _)| held.contains(at))
+                .map(|(at, key)| (at.clone(), key.clone()))
+                .collect();
         }
         let takes = |at: &RowLocator, value: &[u8]| self.takes(db_name(at.db), &at.key, value);
         kept.structure = captured

@@ -55,13 +55,17 @@ fn framed(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
 /// Where one of `rows`' content parts rests in the image: its database,
 /// its row's key and what the part holds of its value. An actor-keyed
 /// part's row is the one its actor part holds; `None` when there is none.
+/// A no-one-form part whose locator does not name its row rests at the key
+/// its getter recorded (`OwnerRows::image_keys`, FIX 6075).
 pub(super) fn image_row<'a>(
     rows: &'a OwnerRows,
     part: &'a RowPart,
 ) -> Option<(RowDb, &'a [u8], &'a [u8])> {
     match part {
-        RowPart::Exact { at, value } | RowPart::NoActor { at, value } => {
-            Some((at.db, at.key.as_slice(), value.as_slice()))
+        RowPart::Exact { at, value } => Some((at.db, at.key.as_slice(), value.as_slice())),
+        RowPart::NoActor { at, value } => {
+            let key = rows.image_keys.get(at).unwrap_or(&at.key);
+            Some((at.db, key.as_slice(), value.as_slice()))
         }
         RowPart::ActorKeyed { at } => rows
             .actor_parts
