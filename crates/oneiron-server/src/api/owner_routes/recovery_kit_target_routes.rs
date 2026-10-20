@@ -248,9 +248,7 @@ fn kit_target(server: &SyncServer, named: &str) -> Result<EntityId, ApiError> {
     if !matches!(peer, PeerMachine::Proven { .. }) {
         return Err(unproved());
     }
-    if !OWNER_DEVICE_ONLY_KIT_TARGETS
-        && vault.privacy_posture() == HostingPrivacyPosture::Hosted
-    {
+    if !OWNER_DEVICE_ONLY_KIT_TARGETS && vault.privacy_posture() == HostingPrivacyPosture::Hosted {
         return Ok(named);
     }
     let destination = ReadDestination::toward(peer);

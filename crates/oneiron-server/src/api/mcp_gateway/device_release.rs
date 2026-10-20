@@ -25,14 +25,9 @@ pub(super) fn mcp_snapshot_releases(
     };
     let retained = serde_json::to_vec(&(&snapshot.output, &snapshot.keyframe))
         .map_err(|_| mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch))?;
-    crate::device_local::withholds_retained(
-        &server.vault,
-        actor.destination(),
-        rows,
-        &retained,
-    )
-    .map(|withheld| !withheld)
-    .map_err(|error| mcp_engine_error("mcp page snapshot release check failed", error))
+    crate::device_local::withholds_retained(&server.vault, actor.destination(), rows, &retained)
+        .map(|withheld| !withheld)
+        .map_err(|error| mcp_engine_error("mcp page snapshot release check failed", error))
 }
 
 /// Whether a carrier frame may leave for `actor`: none of the rows it was
