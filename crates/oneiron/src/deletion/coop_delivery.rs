@@ -55,14 +55,15 @@ const NOTICES: SideTable<([u8; 16], [u8; 32]), CooperativeDeletionNotice, Named>
 const INCOMING: SideTable<([u8; 32], [u8; 16]), IncomingCooperativeDeletion, Named> =
     SideTable::new(&side_table::COOPERATIVE_DELETION_INCOMING);
 
-/// The pacts under which the owner kept what an ask covers: each filed ask
-/// whose current answer is any choice but delete (BIZ-LEGAL-0004 B2).
-/// Retrieval keeps those copies out of shared reads (Docs Q09).
+/// The pacts under which the owner kept what an ask covers, each with those
+/// asks: each filed ask whose current answer is any choice but delete
+/// (BIZ-LEGAL-0004 B2). Retrieval keeps the copies each covers, by its
+/// worlds and epoch cutoff, out of shared reads (Docs Q09, FIX 1322).
 pub(crate) fn courtesy_retained_pacts_in(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
-) -> Result<std::collections::BTreeSet<[u8; 32]>> {
-    let mut pacts = std::collections::BTreeSet::new();
+) -> Result<std::collections::BTreeMap<[u8; 32], Vec<IncomingCooperativeDeletion>>> {
+    let mut pacts = std::collections::BTreeMap::<_, Vec<_>>::new();
     for row in INCOMING.iter_from(store, txn, &[])? {
         let ((pact, _), filed) = row?;
         if filed
@@ -70,7 +71,7 @@ pub(crate) fn courtesy_retained_pacts_in(
             .as_ref()
             .is_some_and(|answer| answer.kind != CooperativeDeletionDispositionKind::Delete)
         {
-            pacts.insert(pact);
+            pacts.entry(pact).or_default().push(filed);
         }
     }
     Ok(pacts)
