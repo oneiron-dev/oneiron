@@ -13168,7 +13168,7 @@
      "path": "src/code_run/consent_wait/binding.rs",
      "purpose": "The binding: minted beside the held effect's pending row, in its writer; sealed with the parked checkpoint…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -14060,7 +14060,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "re-export": 4
      }
     },
@@ -14134,7 +14134,7 @@
      "path": "src/code_run/storage/replay_bodies.rs",
      "purpose": "A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -14239,9 +14239,19 @@
      "path": "src/code_run/storage/wait_delivery.rs",
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 16,
       "fn": 10,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/wait_holders.rs",
+     "purpose": "Who held each code-run wait's reply (FIX 5718, KEY STORE = A; Engine ruling 2): one durable row per run a…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -49107,6 +49117,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/side_table/erased.rs",
+     "purpose": "The one side-table put that skips the side-row wall (FIX 5718): an erase's own write of a row's erased form",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/side_table/key.rs",
      "purpose": "Key types: what a table's key contributes after its declared prefix",
      "surface": {
@@ -49120,7 +49140,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 44
+      "crate-vis": 45
      }
     },
     {
@@ -65076,7 +65096,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 118,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66063,7 +66083,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
     "side_table": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66359,7 +66379,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4147,
+   "source_files": 4149,
    "test_files": 902
   },
   "oneiron-android": {
