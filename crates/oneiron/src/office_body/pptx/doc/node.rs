@@ -1,10 +1,11 @@
 //! One tree node's meta map: its model identity, kind, name, binding,
-//! placeholder, preset, payload (a table's in root `tables`) and one key per
-//! geometry field, each written only where it changed.
+//! placeholder, preset, payload (a table's in root `tables`, a chart's in
+//! root `charts`) and one key per geometry field, each written only where
+//! it changed.
 
 use super::{
     BINDING, EXTENT, FLIP_H, FLIP_V, ID, KIND, NAME, OFFSET, PAYLOAD, PLACEHOLDER, PRESET,
-    ROTATION, identity, json, put, put_json, string, table,
+    ROTATION, chart, identity, invalid, json, put, put_json, string, table,
 };
 use crate::error::Result;
 use loro::LoroMap;
@@ -19,6 +20,7 @@ pub(super) fn sync_meta(meta: &LoroMap, id: NodeId, node: &DeckNode) -> Result<(
     put_json(meta, PRESET, &node.preset)?;
     match &node.payload {
         Some(NodePayload::Table(_)) => put(meta, PAYLOAD, table::MARK.to_owned())?,
+        Some(NodePayload::Chart { .. }) => put(meta, PAYLOAD, chart::MARK.to_owned())?,
         payload => put_json(meta, PAYLOAD, payload)?,
     }
     put_json(meta, OFFSET, &node.geometry.offset)?;
@@ -43,16 +45,21 @@ pub(super) fn root() -> DeckNode {
 }
 
 /// A tree node's model identity and node; a table frame's table is its
-/// `tables` entry.
+/// `tables` entry, a chart frame's chart its `charts` entry.
 pub(super) fn node_of(
     meta: &LoroMap,
     parent: NodeId,
-    tables: &LoroMap,
+    (tables, charts): (&LoroMap, &LoroMap),
 ) -> Result<(NodeId, DeckNode)> {
     let id = identity(meta)?;
     let payload = match string(meta, PAYLOAD).as_deref() {
         Some(table::MARK) => Some(NodePayload::Table(table::read(tables, id)?)),
-        _ => json(meta, PAYLOAD)?,
+        Some(chart::MARK) => Some(chart::read(charts, id)?),
+        // A chart is read from its `charts` entry only.
+        _ => match json(meta, PAYLOAD)? {
+            Some(NodePayload::Chart { .. }) => return Err(invalid("deck chart body")),
+            payload => payload,
+        },
     };
     Ok((
         id,

@@ -1,14 +1,18 @@
-//! How a rewritten chart's live series take its held ones (OF-510): the
-//! plots Change Chart Type lays out ([`plot_plan`]), the live data each
-//! series writes ([`wanted`]), and each series' seat among the held series
-//! ([`layout`]): the XML series it keeps, the one it is formatted after,
-//! and the one whose workbook cells it writes.
+//! How a rewritten chart's live series take its held ones (OF-510, FIX
+//! 3492): the plots Change Chart Type lays out ([`plot_plan`]), the live
+//! data each series writes ([`wanted`]), and each series' seat among the
+//! held series by its identity ([`layout`]): its own XML series, which it
+//! keeps, the one it is formatted after, and the one whose workbook cells
+//! it writes. One resolution ([`resolve`]) drives both the workbook edit
+//! and the chart rewrite.
 
 use crate::design_plan::Cell;
 use crate::edit::xml;
+use crate::live::LiveError;
 use crate::live::held::{self, C, children};
-use crate::live::pptx::{ChartKind, ChartSeries};
+use crate::live::pptx::{ChartKind, ChartSeries, NodeId, NodePayload, WRITTEN_FRAME, positions};
 use crate::ooxml::XmlTree;
+use crate::retained_opc::Package;
 use std::collections::BTreeSet;
 
 pub(super) fn number_cells(values: &[Option<serde_json::Number>], count: usize) -> Vec<Cell> {
@@ -37,12 +41,15 @@ pub(in crate::live) struct PlotTarget {
 /// family, and a held plot no series is drawn in goes. A family no held
 /// plot draws gets a new plot after them. When no held plot stays, the
 /// first is converted to the first family. A chart with no series takes
-/// `family`. Each series goes to the first plot of its family with room
-/// for as many series as it held, else to that family's last plot.
+/// `family`. Each series stays in `own`, the held plot it was drawn in,
+/// while that plot draws its family; any other goes to the first plot of
+/// its family with room for as many series as it held, else to that
+/// family's last plot.
 pub(in crate::live) fn plot_plan(
     held: &[(ChartKind, usize)],
     family: ChartKind,
     resolved: &[ChartKind],
+    own: &[Option<usize>],
 ) -> (Vec<PlotTarget>, Vec<usize>) {
     let mut families: Vec<ChartKind> = Vec::new();
     for kind in resolved
@@ -84,14 +91,22 @@ pub(in crate::live) fn plot_plan(
     let mut taken = vec![0_usize; targets.len()];
     let assign = resolved
         .iter()
-        .map(|kind| {
+        .enumerate()
+        .map(|(index, kind)| {
             let mine: Vec<usize> = (0..targets.len())
                 .filter(|&at| targets[at].kind == *kind)
                 .collect();
-            let at = mine
-                .iter()
-                .copied()
-                .find(|&at| taken[at] < room(&targets[at]))
+            let stays = own.get(index).copied().flatten().and_then(|plot| {
+                mine.iter()
+                    .copied()
+                    .find(|&at| targets[at].held == Some(plot))
+            });
+            let at = stays
+                .or_else(|| {
+                    mine.iter()
+                        .copied()
+                        .find(|&at| taken[at] < room(&targets[at]))
+                })
                 .or_else(|| mine.last().copied())
                 .unwrap_or(0);
             taken[at] += 1;
@@ -200,13 +215,15 @@ pub(super) fn wanted(
     }
 }
 
-/// Where one live series sits among the held ones. `held` is the held
-/// series in its plot slot, whose idx and order it keeps (and, in a kept
-/// plot, its bytes). `template` is the held series it is formatted after:
-/// its own, else the last of its plot's, else the chart's series at its
-/// position, else the chart's last. `cells` is the held series whose
-/// workbook cells it writes: its own, else its template when no other
-/// live series holds that one.
+/// Where one live series sits among the held ones, by its identity. `held`
+/// is its own retained series, as the chart's binding names it: it keeps
+/// that series' idx and, drawn in that series' family, its bytes; a series
+/// new to the chart holds none. `template` is the held series it is
+/// formatted after: its own, else the last of its plot's, else the chart's
+/// series at its position, else the chart's last. `cells` is the held
+/// series whose workbook cells it writes: its own, else its template when
+/// no surviving series holds that one, so a new series never takes a
+/// survivor's cells.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct Seat {
     pub(super) held: Option<usize>,
@@ -225,7 +242,20 @@ pub(super) struct Layout {
     pub(super) seats: Vec<Seat>,
 }
 
-pub(super) fn layout(tree: &XmlTree, family: ChartKind, resolved: &[ChartKind]) -> Option<Layout> {
+/// How `series` (each of family `resolved`) take the held series of the
+/// chart `tree` holds, each by its identity through `bound`, the identity
+/// each held series holds in the part's own order ([`SeriesBinding`]):
+/// every survivor is seated on its own series, in its own plot while that
+/// plot draws its family, before any new series takes a template's cells.
+///
+/// [`SeriesBinding`]: crate::live::pptx::SeriesBinding
+pub(super) fn layout(
+    tree: &XmlTree,
+    family: ChartKind,
+    resolved: &[ChartKind],
+    series: &[ChartSeries],
+    bound: &[NodeId],
+) -> Option<Layout> {
     let (area, plots) = held::plots(tree)?;
     let held_sers: Vec<Vec<usize>> = plots
         .iter()
@@ -236,19 +266,36 @@ pub(super) fn layout(tree: &XmlTree, family: ChartKind, resolved: &[ChartKind]) 
         .zip(&held_sers)
         .map(|(&(kind, _), sers)| (kind, sers.len()))
         .collect();
-    let (targets, assign) = plot_plan(&held_plots, family, resolved);
+    let every = held_sers.concat();
+    // Each held series' plot, by its place among them all; each live
+    // series' own held series, by its place, through the binding.
+    let plot_of: Vec<usize> = held_sers
+        .iter()
+        .enumerate()
+        .flat_map(|(plot, sers)| std::iter::repeat_n(plot, sers.len()))
+        .collect();
+    let places = positions(bound);
+    let own: Vec<Option<usize>> = series
+        .iter()
+        .map(|line| {
+            line.id
+                .and_then(|id| places.get(&id).copied())
+                .filter(|&at| at < every.len())
+        })
+        .collect();
+    let own_plots: Vec<Option<usize>> = own.iter().map(|at| at.map(|at| plot_of[at])).collect();
+    let (targets, assign) = plot_plan(&held_plots, family, resolved, &own_plots);
     let mut assigned: Vec<Vec<usize>> = vec![Vec::new(); targets.len()];
     for (index, &target) in assign.iter().enumerate() {
         assigned[target].push(index);
     }
-    let every = held_sers.concat();
     let mut seats = vec![Seat::default(); resolved.len()];
     for (at, target) in targets.iter().enumerate() {
         let sers = target
             .held
             .map_or(&[][..], |plot| held_sers[plot].as_slice());
-        for (slot, &index) in assigned[at].iter().enumerate() {
-            let held = sers.get(slot).copied();
+        for &index in &assigned[at] {
+            let held = own.get(index).copied().flatten().map(|at| every[at]);
             seats[index] = Seat {
                 held,
                 template: held
@@ -274,5 +321,50 @@ pub(super) fn layout(tree: &XmlTree, family: ChartKind, resolved: &[ChartKind]) 
         targets,
         assigned,
         seats,
+    })
+}
+
+/// One chart part as a rewrite reads it, and how the live series take its
+/// held ones: the one snapshot both the workbook edit and the chart
+/// rewrite read, so the cells a series writes and the XML series it keeps
+/// are that same series'.
+pub(super) struct Resolved {
+    pub(super) bytes: Vec<u8>,
+    pub(super) tree: XmlTree,
+    pub(super) wanted: Wanted,
+    pub(super) layout: Layout,
+}
+
+/// Read `chart` and resolve `payload`'s series over it by identity, through
+/// `bound`: what each writes ([`wanted`], unless `read` gives it, as read
+/// before an embed rewrote the part) and where each sits ([`layout`]).
+pub(super) fn resolve(
+    package: &Package,
+    chart: &str,
+    payload: &NodePayload,
+    bound: &[NodeId],
+    read: Option<Wanted>,
+) -> Result<Resolved, LiveError> {
+    let NodePayload::Chart {
+        family,
+        categories,
+        series,
+        ..
+    } = payload
+    else {
+        return Err(LiveError::Invalid(WRITTEN_FRAME));
+    };
+    let (bytes, tree) = xml::read(package, chart)?;
+    let wanted = match read {
+        Some(read) => read,
+        None => wanted(&tree, *family, categories, series),
+    };
+    let layout = layout(&tree, *family, &wanted.resolved, series, bound)
+        .ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
+    Ok(Resolved {
+        bytes,
+        tree,
+        wanted,
+        layout,
     })
 }

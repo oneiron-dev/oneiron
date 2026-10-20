@@ -21,17 +21,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod chart;
+mod chart_ops;
 mod merge;
 mod table;
 mod table_ops;
 
-pub use chart::{ChartKind, ChartSeries, ChartSource};
+pub use chart::{ChartEdit, ChartKind, ChartSeries, ChartSource, SeriesBinding, SeriesField};
 pub use merge::{diff, preflight, preflight_merged};
 pub use table::{MergeFault, TableBinding, TableBody, TableEdit, TableMerge};
 pub(crate) use table::{UNBOUND_GRID, positions};
 
-/// Model identity for slides, shapes, paragraphs, and a table's rows and
-/// columns. The root is `NodeId(0)`.
+/// Model identity for slides, shapes, paragraphs, a table's rows and
+/// columns, and a chart's series. The root is `NodeId(0)`.
 #[derive(
     Debug,
     Clone,
@@ -87,6 +88,9 @@ pub struct NodeBinding {
     /// A table frame's rows and columns as its retained XML holds them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<TableBinding>,
+    /// A chart frame's series as its retained chart part holds them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub series: Option<SeriesBinding>,
 }
 
 /// Own (never inherited) geometry, in EMU and 60,000ths of a degree.
@@ -494,6 +498,7 @@ impl LiveDeck {
                         creation_id: slide.creation_id.map(|id| id.to_string()),
                         fingerprint: slide.content_fingerprint,
                         table: None,
+                        series: None,
                     }),
                     geometry: GeometryProps::default(),
                     placeholder: None,
@@ -533,6 +538,7 @@ impl LiveDeck {
                             creation_id: shape.creation_id.clone(),
                             fingerprint: shape.content_fingerprint,
                             table: None,
+                            series: None,
                         }),
                         geometry,
                         placeholder: shape
@@ -571,10 +577,11 @@ impl LiveDeck {
                 .zip(&ids)
                 .filter_map(|(shape, id)| Some((shape.id?, *id)))
                 .collect();
-            // A table's rows and columns are minted once, here, in retained
-            // order, and bound to the coordinates its XML holds them at.
+            // A table's rows and columns, and a chart's series, are minted
+            // once, here, in retained order, and bound to the coordinates
+            // its XML holds them at.
             for (shape, id) in slide.shapes.iter().zip(&ids) {
-                let (payload, table) = match held::table::import(&tree, shape, || deck.mint()) {
+                let (mut payload, table) = match held::table::import(&tree, shape, || deck.mint()) {
                     Some((body, binding)) => (Some(NodePayload::Table(body)), Some(binding)),
                     None => (
                         held::payload(package, &slide.part, &tree, shape, |at| {
@@ -583,11 +590,13 @@ impl LiveDeck {
                         None,
                     ),
                 };
+                let series = held::bind(&mut payload, || deck.mint());
                 let node = deck.nodes.get_mut(id).expect("shape inserted above");
                 node.preset = held::shape_preset(&tree, shape);
                 node.payload = payload;
                 if let Some(binding) = &mut node.binding {
                     binding.table = table;
+                    binding.series = series;
                 }
             }
         }
@@ -811,8 +820,9 @@ pub enum DeckOp {
     /// series, as PowerPoint does; the export rewrites it. A reshaped
     /// written table's frame takes its grid's size: its own extent clears.
     /// A whole table written over a table is logged as the table edits that
-    /// make it ([`LiveDeck::lower`]). The edit's effects name what it did
-    /// PowerPoint's way.
+    /// make it, and a whole chart written over a chart as the chart edits
+    /// that make it ([`LiveDeck::lower`]); a chart series written with no
+    /// identity is new. The edit's effects name what it did PowerPoint's way.
     SetPayload {
         node: NodeId,
         payload: NodePayload,
@@ -823,6 +833,12 @@ pub enum DeckOp {
     EditTable {
         node: NodeId,
         edits: Vec<TableEdit>,
+    },
+    /// Edits to the chart a graphic frame holds, by series identity, in
+    /// order; the chart then settles as a whole chart written over it does.
+    EditChart {
+        node: NodeId,
+        edits: Vec<ChartEdit>,
     },
     /// Whole-part replacement of an opaque part, guarded by its source hash.
     ReplaceOpaque {
@@ -844,7 +860,8 @@ impl DeckOp {
             | DeckOp::SetGeometry { node, .. }
             | DeckOp::SetPreset { node, .. }
             | DeckOp::SetPayload { node, .. }
-            | DeckOp::EditTable { node, .. } => Some(*node),
+            | DeckOp::EditTable { node, .. }
+            | DeckOp::EditChart { node, .. } => Some(*node),
             DeckOp::AddSlide { .. } | DeckOp::ReplaceOpaque { .. } => None,
         }
     }
@@ -881,6 +898,7 @@ impl DeckOp {
             | DeckOp::SetPreset { .. }
             | DeckOp::SetPayload { .. }
             | DeckOp::EditTable { .. }
+            | DeckOp::EditChart { .. }
             | DeckOp::ReplaceOpaque { .. } => ChangeKind::Property,
         }
     }
@@ -986,6 +1004,11 @@ impl LiveDeck {
                     *preset
                 };
                 let id = self.take(*id)?;
+                // A chart's unnamed series take identities after its node's.
+                let mut payload = payload;
+                if let Some(payload) = &mut payload {
+                    payload.name_series(&mut || self.mint());
+                }
                 effects.extend(done.into_iter().map(|conversion| Effect::Converted {
                     node: id,
                     conversion,
@@ -1102,6 +1125,8 @@ impl LiveDeck {
                 vec![*node]
             }
             DeckOp::SetPayload { node, payload } => {
+                let mut payload = payload.clone();
+                payload.name_series(&mut || self.mint());
                 let found = self.nodes.get_mut(node).ok_or(LiveError::UnknownNode)?;
                 if payload.kind() != found.kind {
                     return Err(LiveError::Invalid(
@@ -1138,6 +1163,14 @@ impl LiveDeck {
             }
             DeckOp::EditTable { node, edits } => {
                 let done = table_ops::edit_table(self, *node, edits)?;
+                effects.extend(done.into_iter().map(|conversion| Effect::Converted {
+                    node: *node,
+                    conversion,
+                }));
+                vec![*node]
+            }
+            DeckOp::EditChart { node, edits } => {
+                let done = chart_ops::edit_chart(self, *node, edits)?;
                 effects.extend(done.into_iter().map(|conversion| Effect::Converted {
                     node: *node,
                     conversion,
@@ -1193,8 +1226,9 @@ impl AttributionIndex {
         let mut index = Self::default();
         // Minting is sequential, so the identities creation operations
         // produced are recoverable: the log's mints (its unnamed creations,
-        // and the rows and columns its table edits inserted unnamed) are the
-        // last mints below the deck's high-water mark, in log order.
+        // then the series their charts carried unnamed, and the rows,
+        // columns and series its table and chart edits inserted unnamed) are
+        // the last mints below the deck's high-water mark, in log order.
         let creates: u64 = log.iter().map(|stamped| stamped.op.unnamed()).sum();
         let mut next_mint = deck.next_node.saturating_sub(creates);
         for stamped in log {
@@ -1204,15 +1238,11 @@ impl AttributionIndex {
                     Some(id)
                 }
                 DeckOp::AddSlide { id: None } | DeckOp::AddNode { id: None, .. } => {
-                    let id = NodeId(next_mint);
-                    next_mint += 1;
-                    Some(id)
+                    Some(NodeId(next_mint))
                 }
-                _ => {
-                    next_mint += stamped.op.unnamed();
-                    None
-                }
+                _ => None,
             };
+            next_mint += stamped.op.unnamed();
             let effective = created.or_else(|| stamped.op.target());
             if let Some(target) = effective {
                 if kind == ChangeKind::Creation {
@@ -1357,6 +1387,13 @@ pub enum Conflict {
         node: NodeId,
         row: NodeId,
         column: NodeId,
+    },
+    /// Both sides wrote one chart series' field differently, moved it to
+    /// different places, or one deleted it and the other wrote it.
+    SeriesVsSeries {
+        node: NodeId,
+        series: NodeId,
+        field: SeriesField,
     },
 }
 

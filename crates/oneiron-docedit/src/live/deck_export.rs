@@ -71,7 +71,7 @@ mod chart;
 mod table;
 
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/12";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/13";
 
 /// A live-born shape (or a free connector) with no own extent: one inch
 /// square.
@@ -208,6 +208,9 @@ struct Work {
     changed: BTreeSet<String>,
     /// The value edits' declared effects, in the order they ran.
     effects: Vec<Effect>,
+    /// Each chart frame whose part this projection wrote: its series
+    /// identities in the order the part now holds them.
+    series: BTreeMap<NodeId, Vec<NodeId>>,
 }
 
 /// One revision of the working package as read: its deck view and slide
@@ -387,6 +390,7 @@ pub fn project(
         at: BTreeMap::new(),
         changed: BTreeSet::new(),
         effects: Vec::new(),
+        series: BTreeMap::new(),
     };
     // Every binding must name its retained element exactly as bound.
     for (id, node) in &deck.nodes {
@@ -766,6 +770,7 @@ pub fn project(
                 creation_id: slide.creation_id.map(|id| id.to_string()),
                 fingerprint: slide.content_fingerprint,
                 table: None,
+                series: None,
             }
         } else {
             let shape = shape_at(&output, part, *native).ok_or(LiveError::UnknownNode)?;
@@ -775,6 +780,7 @@ pub fn project(
                 creation_id: shape.creation_id.clone(),
                 fingerprint: shape.content_fingerprint,
                 table: table::binding(&deck.nodes[id]),
+                series: chart::binding(&deck.nodes[id], work.series.get(id).map(Vec::as_slice)),
             }
         };
         bindings.insert(*id, binding);
@@ -1130,7 +1136,7 @@ fn project_payload(
             table::project(work, id, node, (part, native), at, &tree, body)?;
         }
         Some(payload @ NodePayload::Chart { .. }) => {
-            chart::project(work, id, part, (at, &tree), payload)?;
+            chart::project(work, id, node, part, (at, &tree), payload)?;
         }
         Some(NodePayload::HeldPicture { media }) => {
             // A picture already showing exactly this part and hash is kept as
@@ -1208,7 +1214,7 @@ fn native_frame(
             table::born(work, live, node, (part, id), (x, y), body)?;
         }
         NodePayload::Chart { .. } => {
-            chart::born(work, node, (part, id), (x, y), payload)?;
+            chart::born(work, live, node, (part, id), (x, y), payload)?;
             return Ok(id);
         }
         NodePayload::SmartArt { nodes } => {

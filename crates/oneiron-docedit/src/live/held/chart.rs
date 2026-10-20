@@ -1,11 +1,13 @@
 //! A chart frame's data as the live model holds it: its chart part, its
 //! plots in document order, and each series' name, categories or x values
-//! and values read from its caches and literals.
+//! and values read from its caches and literals. A read names no series
+//! identity: the import names each series once ([`bind`]), and an export
+//! finds them again through the binding, never through a read.
 
 use super::{C, FRAME_DATA, children};
 use crate::design_plan::Cell;
 use crate::edit::xml::{self, R};
-use crate::live::pptx::{ChartKind, ChartSeries, ChartSource, NodePayload};
+use crate::live::pptx::{ChartKind, ChartSeries, ChartSource, NodeId, NodePayload, SeriesBinding};
 use crate::native_patch::chart_data;
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
@@ -189,6 +191,7 @@ pub(crate) fn chart(package: &Package, chart: &str) -> Option<NodePayload> {
                 _ => None,
             };
             series.push(ChartSeries {
+                id: None,
                 name: name
                     .and_then(|points| points.cells.first().map(label))
                     .unwrap_or_default(),
@@ -231,4 +234,25 @@ pub(crate) fn label(cell: &Cell) -> String {
         Cell::Number(value) => value.to_string(),
         Cell::Missing => String::new(),
     }
+}
+
+/// Name each series of an imported chart from `mint`, in its part's own
+/// order, and the binding that order takes; `None` for any other payload.
+/// Called once, at import.
+pub(crate) fn bind(
+    payload: &mut Option<NodePayload>,
+    mut mint: impl FnMut() -> NodeId,
+) -> Option<SeriesBinding> {
+    let Some(NodePayload::Chart { series, .. }) = payload else {
+        return None;
+    };
+    let ids = series
+        .iter_mut()
+        .map(|line| {
+            let id = mint();
+            line.id = Some(id);
+            id
+        })
+        .collect();
+    Some(SeriesBinding { series: ids })
 }

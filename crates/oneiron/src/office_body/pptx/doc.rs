@@ -12,8 +12,8 @@
 //! root is implicit. Each tree node's meta map holds its model identity (`id`,
 //! decimal, kept apart from the Loro handle), its kind, name, binding,
 //! placeholder, its preset and payload (a table's in root `tables`, see
-//! [`table`]), and one key per geometry field, so concurrent writes of
-//! different fields merge. Root `texts` maps a text shape's identity to its
+//! [`table`]; a chart's in root `charts`, see [`chart`]), and one key per
+//! geometry field, so concurrent writes of different fields merge. Root `texts` maps a text shape's identity to its
 //! body: `order`, a movable list of paragraph identities, and `paras`, each
 //! paragraph's level and one rich text whose run formatting rides as marks,
 //! one mark key per run property, each written only where it changed.
@@ -26,6 +26,7 @@
 //! deck with the fewest container writes, so an edit read against an older
 //! frontier merges with the head unit by unit.
 
+mod chart;
 mod node;
 mod order;
 mod table;
@@ -51,6 +52,7 @@ const ALLOC: &str = "alloc";
 const TREE: &str = "tree";
 const TEXTS: &str = "texts";
 const TABLES: &str = "tables";
+const CHARTS: &str = "charts";
 const OPAQUE: &str = "opaque";
 const LOG: &str = "log";
 const LANDED: &str = "landed";
@@ -148,10 +150,15 @@ pub(super) fn read(doc: &LoroDoc) -> Result<Body> {
     let mut nodes = BTreeMap::from([(NodeId(0), root())]);
     let tree = doc.get_tree(TREE);
     let tables = doc.get_map(TABLES);
+    let charts = doc.get_map(CHARTS);
     let mut stack = vec![(TreeParentId::Root, NodeId(0), NodeKind::Root)];
     while let Some((parent, parent_id, parent_kind)) = stack.pop() {
         for handle in tree.children(parent).unwrap_or_default() {
-            let (id, node) = node_of(&tree.get_meta(handle).map_err(loro)?, parent_id, &tables)?;
+            let (id, node) = node_of(
+                &tree.get_meta(handle).map_err(loro)?,
+                parent_id,
+                (&tables, &charts),
+            )?;
             // A table concurrent deletes left no row or column is gone, as
             // PowerPoint deletes a table whose last row or column goes.
             if matches!(&node.payload, Some(NodePayload::Table(table))
@@ -227,6 +234,7 @@ pub(super) fn sync_to(doc: &LoroDoc, target: &LiveDeck) -> Result<()> {
     sync_tree(&doc.get_tree(TREE), target)?;
     sync_texts(&doc.get_map(TEXTS), target)?;
     table::sync(&doc.get_map(TABLES), target)?;
+    chart::sync(&doc.get_map(CHARTS), target)?;
     let opaque = doc.get_map(OPAQUE);
     for part in keys(&opaque) {
         if !target.opaque_parts.contains_key(&part) {

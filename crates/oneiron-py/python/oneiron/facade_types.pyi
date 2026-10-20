@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1082 facade rows, 3699 declarations.
+Census: 1082 facade rows, 3701 declarations.
 Inputs: 1017 of 1082 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 971 of 1082 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
@@ -15717,6 +15717,7 @@ class TableBody(TypedDict):
     merges: NotRequired[list[TableMerge]]
 ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar"]
 class ChartSeries(TypedDict):
+    id: NotRequired[NodeId | None]
     name: str
     values: list[float | None]
     family: NotRequired[ChartKind | None]
@@ -16011,6 +16012,57 @@ class TableEditMerge(TypedDict):
 class TableEditUnmerge(TypedDict):
     unmerge: TableMerge
 TableEdit = TableEditInsertRow | TableEditInsertColumn | TableEditDeleteRow | TableEditDeleteColumn | TableEditMoveRow | TableEditMoveColumn | TableEditSetCell | TableEditMerge | TableEditUnmerge
+class ChartEditInsertSeriesBody(TypedDict):
+    id: NotRequired[NodeId | None]
+    after: NotRequired[NodeId | None]
+    name: NotRequired[str]
+    values: NotRequired[list[float | None]]
+    family: NotRequired[ChartKind | None]
+    x: NotRequired[list[float | None] | None]
+class ChartEditInsertSeries(TypedDict):
+    insert_series: ChartEditInsertSeriesBody
+class ChartEditDeleteSeriesBody(TypedDict):
+    series: NodeId
+class ChartEditDeleteSeries(TypedDict):
+    delete_series: ChartEditDeleteSeriesBody
+class ChartEditMoveSeriesBody(TypedDict):
+    series: NodeId
+    after: NotRequired[NodeId | None]
+class ChartEditMoveSeries(TypedDict):
+    move_series: ChartEditMoveSeriesBody
+class ChartEditSetSeriesNameBody(TypedDict):
+    series: NodeId
+    name: str
+class ChartEditSetSeriesName(TypedDict):
+    set_series_name: ChartEditSetSeriesNameBody
+class ChartEditSetSeriesValuesBody(TypedDict):
+    series: NodeId
+    values: list[float | None]
+class ChartEditSetSeriesValues(TypedDict):
+    set_series_values: ChartEditSetSeriesValuesBody
+class ChartEditSetSeriesFamilyBody(TypedDict):
+    series: NodeId
+    family: NotRequired[ChartKind | None]
+class ChartEditSetSeriesFamily(TypedDict):
+    set_series_family: ChartEditSetSeriesFamilyBody
+class ChartEditSetSeriesXBody(TypedDict):
+    series: NodeId
+    x: NotRequired[list[float | None] | None]
+class ChartEditSetSeriesX(TypedDict):
+    set_series_x: ChartEditSetSeriesXBody
+class ChartEditSetFamilyBody(TypedDict):
+    family: ChartKind
+class ChartEditSetFamily(TypedDict):
+    set_family: ChartEditSetFamilyBody
+class ChartEditSetCategoriesBody(TypedDict):
+    categories: list[str]
+class ChartEditSetCategories(TypedDict):
+    set_categories: ChartEditSetCategoriesBody
+class ChartEditSetSourceBody(TypedDict):
+    source: ChartSource
+class ChartEditSetSource(TypedDict):
+    set_source: ChartEditSetSourceBody
+ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSource
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):
@@ -16066,13 +16118,18 @@ class DeckOpEditTableBody(TypedDict):
     edits: list[TableEdit]
 class DeckOpEditTable(TypedDict):
     edit_table: DeckOpEditTableBody
+class DeckOpEditChartBody(TypedDict):
+    node: NodeId
+    edits: list[ChartEdit]
+class DeckOpEditChart(TypedDict):
+    edit_chart: DeckOpEditChartBody
 class DeckOpReplaceOpaqueBody(TypedDict):
     part: str
     expected: list[int]
     replacement: list[int]
 class DeckOpReplaceOpaque(TypedDict):
     replace_opaque: DeckOpReplaceOpaqueBody
-DeckOp = DeckOpAddSlide | DeckOpAddNode | DeckOpRemoveNode | DeckOpMoveNode | DeckOpSetText | DeckOpSetRunMarks | DeckOpSetGeometry | DeckOpSetPreset | DeckOpSetPayload | DeckOpEditTable | DeckOpReplaceOpaque
+DeckOp = DeckOpAddSlide | DeckOpAddNode | DeckOpRemoveNode | DeckOpMoveNode | DeckOpSetText | DeckOpSetRunMarks | DeckOpSetGeometry | DeckOpSetPreset | DeckOpSetPayload | DeckOpEditTable | DeckOpEditChart | DeckOpReplaceOpaque
 class OfficeBodyOpsDocx(TypedDict):
     format: Literal["docx"]
     ops: list[DocxBodyOp]
@@ -16281,6 +16338,7 @@ class OpaqueChange(TypedDict):
     part: str
     base: NotRequired[list[int] | None]
     proposal: NotRequired[list[int] | None]
+SeriesField = Literal["name", "values", "family", "x", "order", "existence"]
 class ConflictBothMovedBody(TypedDict):
     node: NodeId
 class ConflictBothMoved(TypedDict):
@@ -16312,7 +16370,13 @@ class ConflictCellVsCellBody(TypedDict):
     column: NodeId
 class ConflictCellVsCell(TypedDict):
     cell_vs_cell: ConflictCellVsCellBody
-Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload | ConflictCellVsCell
+class ConflictSeriesVsSeriesBody(TypedDict):
+    node: NodeId
+    series: NodeId
+    field: SeriesField
+class ConflictSeriesVsSeries(TypedDict):
+    series_vs_series: ConflictSeriesVsSeriesBody
+Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload | ConflictCellVsCell | ConflictSeriesVsSeries
 class RelationshipChange(TypedDict):
     source: str
     id: str
