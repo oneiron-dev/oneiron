@@ -22,6 +22,12 @@ mod tests;
 /// The contents ladder: the DER bytes each revision's hole holds.
 pub const SEAL_CONTENTS_LADDER: [usize; 3] = [64 * 1024, 128 * 1024, 256 * 1024];
 const BYTERANGE_DIGITS: usize = 20;
+/// The most one stream of the prepared PDF decodes to while it is read: the
+/// per-stream codec bound the seal organ holds itself to (its
+/// `STREAM_DECODE_BYTES`), so the engine refuses no stream the seal would
+/// read. Below it a stream's decoded size is measured against the
+/// `seal_prepared_stream_bytes` row and read whole (Rule 5).
+const STREAM_CODEC_BYTES: usize = 256 * 1024 * 1024;
 
 type Result<T> = std::result::Result<T, PdfPreparationError>;
 
@@ -55,9 +61,8 @@ impl EsignSealInput {
 
 /// The bytes the largest stream lopdf decoded while it read `doc` came to:
 /// an object stream's, which it leaves decoded in place, or a
-/// cross-reference stream's, decoded again here to be measured. Every
-/// stream decodes whole, however large (Rule 5): the size is measured
-/// against the `seal_prepared_stream_bytes` row, never refused.
+/// cross-reference stream's, decoded again here to be measured. Each
+/// decoded within the codec bound, or the read failed.
 fn largest_decoded_stream(doc: &Document) -> u64 {
     doc.objects
         .values()
@@ -71,7 +76,7 @@ fn largest_decoded_stream(doc: &Document) -> u64 {
             match kind {
                 Some(b"ObjStm") if !stream.is_compressed() => Some(stream.content.len()),
                 Some(b"ObjStm" | b"XRef") => stream
-                    .decompressed_content()
+                    .decompressed_content_with_limit(STREAM_CODEC_BYTES)
                     .ok()
                     .map(|content| content.len()),
                 _ => None,
@@ -117,6 +122,7 @@ impl Base {
             pdf,
             LoadOptions {
                 strict: true,
+                max_decompressed_size: Some(STREAM_CODEC_BYTES),
                 ..LoadOptions::default()
             },
         )?;
