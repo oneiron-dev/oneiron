@@ -237,7 +237,9 @@ pub fn select_backend_for_tier(tier: SandboxGuestTier) -> Result<Option<Box<dyn 
 }
 
 /// Browser/native sessions use the host's OCI runtime and image configuration,
-/// but the same KVM-first selection law as finite code runs.
+/// and the same KVM-first selection law as finite code runs, except that a
+/// KVM host with no Firecracker installed runs them in the OCI fenced
+/// container (`session_firecracker`).
 pub fn select_backend_for_session(
     tier: SandboxGuestTier,
     runtime: std::path::PathBuf,
@@ -246,8 +248,8 @@ pub fn select_backend_for_session(
     if tier == SandboxGuestTier::FirstPartyDreamer {
         return Err(backend_unavailable(tier));
     }
-    if kvm_available() {
-        return firecracker_backend().ok_or_else(|| backend_unavailable(tier));
+    if let Some(backend) = session_firecracker() {
+        return Ok(backend);
     }
     #[cfg(target_os = "linux")]
     {
@@ -259,6 +261,15 @@ pub fn select_backend_for_session(
         let _ = (runtime, image);
         Err(backend_unavailable(tier))
     }
+}
+
+/// The Firecracker backend a session takes: on a KVM host where Firecracker
+/// is installed. A KVM host without it gives none, so the session falls back
+/// to the OCI fenced container, the posture it already has on a host with no
+/// /dev/kvm; Firecracker still wins wherever it is installed (Engine 10-21
+/// 02:4x, CALLS row).
+fn session_firecracker() -> Option<Box<dyn MicroVmBackend>> {
+    kvm_available().then(firecracker_backend).flatten()
 }
 
 fn kvm_available() -> bool {
