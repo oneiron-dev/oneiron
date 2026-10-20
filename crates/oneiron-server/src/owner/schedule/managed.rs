@@ -30,7 +30,7 @@ use std::time::Duration;
 use oneiron::recovery::checkpoint::BackupWatermark;
 use oneiron_vault_contract::IdleBackupFailure;
 
-use super::OwnerHost;
+use super::{OwnerHost, PassStage};
 use crate::owner::backup::finalize::{self, Unproduced};
 use crate::owner::backup::{self, BackupOutcome, BackupPlan, write_budget};
 use crate::owner::stamp::now_unix_ms;
@@ -103,9 +103,11 @@ impl OwnerHost {
             self.say(Decision::NoDuty);
             return Ok(None);
         };
+        self.enter(PassStage::Deciding);
         let decision = hourly(vault, plan, every);
         self.say(decision);
         if !decision.due() {
+            self.enter(PassStage::Pruning);
             let pruned = backup::prune(vault, plan, None)?;
             if !pruned.is_empty() {
                 tracing::info!(
@@ -115,6 +117,7 @@ impl OwnerHost {
             }
             return Ok(None);
         }
+        self.enter(PassStage::Producing);
         let produced = finalize::produce(vault, plan, None).map_err(|unproduced| {
             let (error, landing) = match unproduced {
                 Unproduced::Snapshot(error) => (error, false),
@@ -127,6 +130,7 @@ impl OwnerHost {
             );
             error
         })?;
+        self.enter(PassStage::Recording);
         if let Err(error) = produced.accept(plan) {
             tracing::warn!(
                 reason = "backup_watermark_marker_failed",
