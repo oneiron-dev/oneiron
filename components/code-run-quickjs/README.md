@@ -133,6 +133,10 @@ Bootstrap builds them from the hidden `self.verbs` imports and then deletes
 with no component rebuild. The memory reads and writes the run answers itself
 (`vault.search`, `vault.claims.put`, `vault.claims.supersede`,
 `vault.edges.put`) are rows of the same table, so they arrive the same way. A
+row the WIT world already imports at the same path (`self.report_blocked`) is
+skipped and that import serves it, taking the row's input object or its
+positional strings; any other row that lands on a host import refuses the
+component. A
 verb input is encoded once and the call sends that text. One holding a
 non-finite number, boxed or not, is refused before the call
 (`non_finite_verb_input`), since JSON would carry it as null; one JSON
