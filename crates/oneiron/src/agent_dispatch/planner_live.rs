@@ -97,6 +97,17 @@ pub struct PlannerSeat {
     pub agent_def: EntityId,
 }
 
+/// The seats one plan's evidence costs and ranks.
+#[derive(Clone, Copy)]
+enum PlanSeats<'a> {
+    /// A plan a launch reads: each seat whose model its child's list admits
+    /// (FIX 4542).
+    Listed(&'a [PlannerSeat]),
+    /// Advice before anything commits: every seat the host serves, its
+    /// child's list unread (FIX 5073). A launch still checks the list.
+    Unfiltered(&'a [PlannerSeat]),
+}
+
 /// One live planning request: the parent's spawn need (its type already
 /// placed once), the seats the host serves, the planner's skills, the
 /// executor the parent runs on (`model@revision`, stamped on its pack loads)
@@ -170,6 +181,8 @@ impl AgentDispatcher<'_> {
 
     /// The CEO's top shapes for one spawn of the leased parent: the best `n`
     /// candidates with expected payoff and cost, before anything commits.
+    /// Advice ranks every seat the host serves, whatever its child's model
+    /// list admits; the plan a launch reads keeps that check.
     ///
     /// # Errors
     ///
@@ -190,7 +203,7 @@ impl AgentDispatcher<'_> {
             Some(live.id),
             None,
             &request.need,
-            request.seats,
+            PlanSeats::Unfiltered(request.seats),
             at,
         )?;
         let mut quotes = ranked_quotes(&request.need, &evidence)?;
@@ -216,7 +229,7 @@ impl AgentDispatcher<'_> {
             Some(live.id),
             None,
             &request.need,
-            request.seats,
+            PlanSeats::Listed(request.seats),
             at,
         )?;
         // The answering rung's workflow skill loads through the same door,
@@ -334,9 +347,13 @@ impl AgentDispatcher<'_> {
         parent: Option<AttemptId>,
         spend: Option<&SpawnSpend>,
         need: &SpawnNeed,
-        seats: &[PlannerSeat],
+        seats: PlanSeats<'_>,
         at: u64,
     ) -> Result<PlannerEvidence> {
+        let (seats, unfiltered) = match seats {
+            PlanSeats::Listed(seats) => (seats, false),
+            PlanSeats::Unfiltered(seats) => (seats, true),
+        };
         if seats.is_empty() {
             return Err(invalid("planner has no seats"));
         }
@@ -352,6 +369,7 @@ impl AgentDispatcher<'_> {
             // is dropped before it is costed or ranked. When that drops
             // every seat, or the one the need pins, the plan keeps them all,
             // as it planned before lists; seat birth still holds the child.
+            // Advice keeps every seat (FIX 5073).
             let mut listed = Vec::with_capacity(seats.len());
             for (index, seat) in seats.iter().enumerate() {
                 if seats[..index].iter().any(|prior| prior.model == seat.model) {
@@ -359,7 +377,7 @@ impl AgentDispatcher<'_> {
                 }
                 let target = AgentDispatchTarget::Custom(seat.agent_def);
                 let child = self.dispatchable_definition_in_txn(&txn, &target)?;
-                if list_admits(&child.models, &seat.model) {
+                if unfiltered || list_admits(&child.models, &seat.model) {
                     listed.push(seat);
                 }
             }

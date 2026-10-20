@@ -10895,6 +10895,7 @@ class WorkflowRunView(TypedDict):
     active_attempt_ref: EntityId
     steps: list[WorkflowStepCapture]
     results: list[WorkflowStepRun]
+    task_ref: NotRequired[EntityId | None]
 class WorkflowPersonDispatchRequest(TypedDict):
     workflow_ref: EntityId
     intent_key: str

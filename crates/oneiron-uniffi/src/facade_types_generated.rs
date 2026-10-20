@@ -33953,6 +33953,8 @@ pub struct WorkflowRunView {
     pub steps: Vec<WorkflowStepCapture>,
     #[serde(rename = "results")]
     pub results: Vec<WorkflowStepRun>,
+    #[serde(rename = "task_ref", default, skip_serializing_if = "Option::is_none")]
+    pub task_ref: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_workflows::WorkflowPersonDispatchRequest`.

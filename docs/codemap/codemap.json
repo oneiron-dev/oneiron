@@ -848,7 +848,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ExceptionalWidthCheck",
@@ -863,7 +863,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 4
      }
     },
@@ -5705,7 +5705,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "mod": 1,
       "re-export": 3
      }
@@ -6323,7 +6323,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -56309,7 +56309,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -86181,7 +86181,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 12,
       "struct": 1
      }
