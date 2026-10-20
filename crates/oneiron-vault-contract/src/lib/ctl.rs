@@ -2,6 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::relay_delete::{
+    RelayDeleteExecuteWire, RelayDeleteRechecksRequest, RelayDeleteRechecksWire,
+    RelayDeleteRequest, RelayLockerBindRequest, RelayLockerBindWire,
+};
 use super::restore::{
     HostHoldsCursor, HostHoldsSource, HostOrderHoldsExport, ManagedRestoreIdentity, RestoreStatus,
 };
@@ -11,6 +15,11 @@ use super::{
     IdleReapWire, ManagedBackupFacts, ManagedTrainingSetting, WakeEntry,
     valid_owner_signing_challenge,
 };
+
+/// How a managed vault came up, as every `Ping` reports it.
+mod readiness;
+
+pub use self::readiness::{FacilityNotice, FacilityReason, ManagedFacility, ManagedReadiness};
 
 /// Wire spelling is pinned to the engine's `slim::ShedCause`; the contract
 /// crate must not depend on `oneiron`, so the duplication is deliberate.
@@ -143,6 +152,35 @@ pub enum CtlRequest {
         #[serde(default)]
         cursor: Option<HostHoldsCursor>,
     },
+    /// Appended last (FIX 6826): the engine deletes one relay locker object
+    /// of this vault inside its backup-hold writer exclusion
+    /// ([`CtlResponse::RelayDeleteExecute`],
+    /// [`relay_delete`](crate::relay_delete)). Its fields ride flat beside
+    /// `op`. A vault frozen for reap, or stopping, answers it `unknown`
+    /// (`not_ready`), never with the typed reap pause. Build floor: proven by
+    /// `relay_delete_revision` on `Ping`; a v3 vault built before it answers
+    /// it as an unknown request (`Ok { ok: false }`), which deletes nothing.
+    RelayDeleteExecute {
+        #[serde(flatten)]
+        request: RelayDeleteRequest,
+    },
+    /// Appended last (FIX 6826): a long poll on this vault's relay delete
+    /// recheck counter ([`CtlResponse::RelayDeleteRechecks`]). A read: it
+    /// writes nothing, and a vault frozen for reap answers it too. Build
+    /// floor: as `relay_delete_execute`'s.
+    RelayDeleteRechecks {
+        #[serde(flatten)]
+        request: RelayDeleteRechecksRequest,
+    },
+    /// Appended last (FIX 6826): the supervisor names this vault's relay
+    /// locker objects directory, which the engine opens itself; a rebind
+    /// replaces it ([`CtlResponse::RelayLockerBind`]). The supervisor's
+    /// alone: its broker never forwards it from a relay. Build floor: as
+    /// `relay_delete_execute`'s.
+    RelayLockerBind {
+        #[serde(flatten)]
+        request: RelayLockerBindRequest,
+    },
 }
 
 impl CtlRequest {
@@ -169,6 +207,9 @@ impl CtlRequest {
                     "host_order_holds names an attempt and source that leave no room in a line"
                 );
             }
+            CtlRequest::RelayDeleteExecute { request } => request.validate()?,
+            CtlRequest::RelayDeleteRechecks { request } => request.validate()?,
+            CtlRequest::RelayLockerBind { request } => request.validate()?,
             CtlRequest::PrepareReap
             | CtlRequest::ReapAbort
             | CtlRequest::Ping
@@ -378,96 +419,6 @@ pub enum LegalHoldsNotProven {
     ReadFailed,
 }
 
-/// How a managed vault came up (contract v3), on every `Ping`: a boot
-/// snapshot, taken before the vault signalled ready, that does not change
-/// while the process runs. Either way the vault serves: reads and sync go
-/// on, and only a missing facility's own acts refuse, as they would anyway.
-/// A supervisor shows it; a degraded vault is no failed start and no call to
-/// restart it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum ManagedReadiness {
-    /// Every facility the vault was given came up.
-    Ready,
-    /// The vault serves without each facility `missing` names.
-    Degraded { missing: Vec<FacilityNotice> },
-}
-
-impl ManagedReadiness {
-    /// `Ready` when nothing is missing, else `Degraded` naming each.
-    #[must_use]
-    pub fn from_missing(missing: Vec<FacilityNotice>) -> Self {
-        if missing.is_empty() {
-            Self::Ready
-        } else {
-            Self::Degraded { missing }
-        }
-    }
-}
-
-/// One facility a managed vault serves without, and why, in closed names:
-/// never a path or an error's text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FacilityNotice {
-    pub facility: ManagedFacility,
-    pub reason: FacilityReason,
-}
-
-/// A facility a managed vault's readiness names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ManagedFacility {
-    /// The key directory the supervisor binds (`--keystore-dir`).
-    KeystoreDirectory,
-    /// This install's this-device-only keystore, in that directory.
-    DeviceKeystore,
-    /// This install's signing keys, loaded from that keystore.
-    InstallSigningKeys,
-    /// The host's own node in the vault's roster, written with those keys.
-    HostNodeProfile,
-}
-
-impl ManagedFacility {
-    /// The wire spelling, for a log field.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::KeystoreDirectory => "keystore_directory",
-            Self::DeviceKeystore => "device_keystore",
-            Self::InstallSigningKeys => "install_signing_keys",
-            Self::HostNodeProfile => "host_node_profile",
-        }
-    }
-}
-
-/// Why a managed vault serves without a facility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FacilityReason {
-    /// The supervisor passed no binding for it, and the owner did not turn
-    /// it off.
-    MissingBinding,
-    /// It would not open.
-    OpenFailed,
-    /// It opened, and what it holds did not load.
-    PrepareFailed,
-    /// Writing the profile failed.
-    ProfileFailed,
-}
-
-impl FacilityReason {
-    /// The wire spelling, for a log field.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::MissingBinding => "missing_binding",
-            Self::OpenFailed => "open_failed",
-            Self::PrepareFailed => "prepare_failed",
-            Self::ProfileFailed => "profile_failed",
-        }
-    }
-}
-
 /// Untagged: variant selection is structural, tried in declaration order.
 /// INVARIANT: each variant's required-field set must stay disjoint from every
 /// variant above it, and new variants are appended last — otherwise a
@@ -510,9 +461,14 @@ pub enum CtlResponse {
     /// ([`VM_OUTBOX_WIRE_REVISION`](crate::vm_outbox::VM_OUTBOX_WIRE_REVISION),
     /// FIX 5235), sent only when its storage, its companion and its
     /// attachment to the carrier port are all in place; a node's process
-    /// vault sends none. Each rides v3 with a build floor: a vault built
-    /// before it sends none, which reads as unknown, never as revision 1, and
-    /// so does a value that is not a u32.
+    /// vault sends none. `relay_delete_revision` is that of the relay locker
+    /// delete the engine executes
+    /// ([`RELAY_DELETE_REVISION`](crate::relay_delete::RELAY_DELETE_REVISION),
+    /// FIX 6826), and `engine_instance` this process's boot: 16 random bytes
+    /// as 32 lowercase hex, fresh each start, which `relay_delete_execute`
+    /// names; one that is not 32 lowercase hex reads as `None`. Each rides v3
+    /// with a build floor: a vault built before it sends none, which reads as
+    /// unknown, never as revision 1, and so does a value that is not a u32.
     Ping {
         ok: bool,
         vault: String,
@@ -549,6 +505,18 @@ pub enum CtlResponse {
             deserialize_with = "super::version::observed_revision"
         )]
         vm_outbox_revision: Option<u32>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::version::observed_revision"
+        )]
+        relay_delete_revision: Option<u32>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::relay_delete::observed_instance"
+        )]
+        engine_instance: Option<String>,
     },
     Ok {
         ok: bool,
@@ -659,14 +627,38 @@ pub enum CtlResponse {
     HostOrderHolds {
         host_order_holds: HostOrderHoldsExport,
     },
+    /// Appended last (FIX 6826): the answer to
+    /// [`CtlRequest::RelayDeleteExecute`]. Its one required field
+    /// {relay_delete_execute} is disjoint from every variant above, and it
+    /// carries no `ok` for the reason `Slim` carries none. A relay or its
+    /// broker reads this shape alone for the request it sent
+    /// ([`decode_execute_answer`](crate::relay_delete::decode_execute_answer)):
+    /// any other answer settles nothing.
+    RelayDeleteExecute {
+        relay_delete_execute: RelayDeleteExecuteWire,
+    },
+    /// Appended last (FIX 6826): the answer to
+    /// [`CtlRequest::RelayDeleteRechecks`]. Its one required field
+    /// {relay_delete_rechecks} is disjoint from every variant above, and it
+    /// carries no `ok`.
+    RelayDeleteRechecks {
+        relay_delete_rechecks: RelayDeleteRechecksWire,
+    },
+    /// Appended last (FIX 6826): the answer to
+    /// [`CtlRequest::RelayLockerBind`]. Its one required field
+    /// {relay_locker_bind} is disjoint from every variant above, and it
+    /// carries no `ok`.
+    RelayLockerBind {
+        relay_locker_bind: RelayLockerBindWire,
+    },
 }
 
 impl CtlResponse {
     /// Validate SLIM status, residency, numerics, and blocker combinations,
     /// the shape of `PrepareReap.training`, the residency an `Unslim` left,
     /// the shape of a `RestoreStatus` page, of a `PrepareIdleReap` answer
-    /// ([`IdleReapWire::validate`]) and of a `HostOrderHolds` page, after
-    /// parsing. Existing
+    /// ([`IdleReapWire::validate`]), of a `HostOrderHolds` page and of the
+    /// relay delete answers, after parsing. Existing
     /// responses keep their prior validation requirements;
     /// `PrepareReap.next_wake` still uses
     /// [`validate_wake_entries`](crate::validate_wake_entries).
@@ -682,6 +674,21 @@ impl CtlResponse {
         }
         if let CtlResponse::HostOrderHolds { host_order_holds } = self {
             host_order_holds.validate()?;
+        }
+        if let CtlResponse::RelayDeleteExecute {
+            relay_delete_execute,
+        } = self
+        {
+            relay_delete_execute.request.validate()?;
+        }
+        if let CtlResponse::RelayDeleteRechecks {
+            relay_delete_rechecks,
+        } = self
+        {
+            relay_delete_rechecks.validate()?;
+        }
+        if let CtlResponse::RelayLockerBind { relay_locker_bind } = self {
+            relay_locker_bind.validate()?;
         }
         if let CtlResponse::Unslim { unslim } = self {
             anyhow::ensure!(
