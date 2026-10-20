@@ -274,7 +274,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
         verify_booking_effect(vault, &txn, record.attempt_id, record.payload())?;
     }
     super::dedupe::touch_inflight(vault, &record.id)?;
-    let outcome = transport.send(&call);
+    // Only measured as a live wait for a supervisor's SLIM status; the send
+    // itself is unchanged.
+    let outcome = vault.during_admitted_effect_send(&record, || transport.send(&call));
     vault.resume_from_slim_on_inbound()?;
     match outcome {
         OutboundSendOutcome::Acked => {
