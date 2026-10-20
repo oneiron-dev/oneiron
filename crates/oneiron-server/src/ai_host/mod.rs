@@ -649,10 +649,14 @@ impl AiHost {
         }
         runtime.take_up_kept_media_jobs();
         let runtime = Arc::new(runtime);
-        // Launch statements price in dollars at the generative seat's model.
+        // Launch statements price in dollars at the generative seat's model;
+        // a unit other than tokens reads the runtime's offers, held weakly.
         if let Some(seat) = runtime.seat(CHAT_ROLE) {
             vault.install_launch_usd_prices(Arc::new(
-                crate::models::launch_price::LaunchUsdQuote::new(seat.model.clone()),
+                crate::models::launch_price::LaunchUsdQuote::new(
+                    seat.model.clone(),
+                    Arc::downgrade(&runtime),
+                ),
             ));
         }
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);

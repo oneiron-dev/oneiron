@@ -665,7 +665,7 @@ export type WidthCheckClass = { kind: "auto_clear"; policy_ref?: string | null }
 /** `oneiron::agent_dispatch::fanout_statement::ExceptionalWidthCheck` */
 export type ExceptionalWidthCheck = { count: number; threshold: number; classification: WidthCheckClass }
 /** `oneiron::agent_dispatch::fanout_statement::FanoutStatement` */
-export type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number }
+export type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; priced_subtotal_usd_micros?: number | null; unpriced_parts: string[]; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number }
 /** `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchHold` */
 export type FanoutLaunchHold = { surface_ref: string; denied: boolean }
 /** `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchView` */

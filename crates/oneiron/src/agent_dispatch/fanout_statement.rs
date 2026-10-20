@@ -22,8 +22,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::run_admission::LeaseUnit;
 
-use super::launch::{SpawnSpend, SpendCapView};
-use super::spend_calibration::ExpectedSpend;
+use super::launch::{LaunchRole, SpawnSpend, SpendCapView};
+use super::spend_calibration::{DollarBasis, ExpectedSpend};
 use super::{AgentDispatcher, DispatchAgent};
 
 /// Whose cap a fan-out runs under. The host binds it from authenticated
@@ -99,6 +99,14 @@ pub struct FanoutStatement {
     pub per_peer: Vec<PeerCount>,
     /// The sum over every item; a prior if any item's is.
     pub expected: ExpectedSpend,
+    /// The checked sum of the priced parts' dollar figures, in millionths of
+    /// a US dollar: a known subtotal, never the expected total while any part
+    /// is unpriced. `None` when no part is priced or the sum overflows.
+    pub priced_subtotal_usd_micros: Option<u64>,
+    /// Each part with no dollar figure, by its work index and what realizes
+    /// it (an agent or a workflow leaf, a peer, a TASK's assignee), with why:
+    /// an unknown price (in the unit, when it is not tokens) or an overflow.
+    pub unpriced_parts: Vec<String>,
     pub unit: LeaseUnit,
     /// `None`: no cap. The caller is a root unmetered by any lease tree; the
     /// statement never invents a zero.
@@ -127,6 +135,29 @@ impl FanoutStatement {
             classification,
         });
     }
+
+    /// The expected spend as the statement states it, in dollars, never
+    /// native units: the total's [`ExpectedSpend::dollar_line`] when the
+    /// total is known, an empty fan-out's $0 included; else that unknown
+    /// total, the labelled subtotal of the priced parts when there is one,
+    /// and each unpriced part.
+    #[must_use]
+    pub fn dollar_line(&self) -> String {
+        let total = self.expected.dollar_line();
+        if self.expected.expected_usd_micros.is_some() {
+            return total;
+        }
+        let subtotal = self
+            .priced_subtotal_usd_micros
+            .map(|micros| format!(" priced_subtotal={}", usd(micros)))
+            .unwrap_or_default();
+        let unpriced = if self.unpriced_parts.is_empty() {
+            String::new()
+        } else {
+            format!(" unpriced=[{}]", self.unpriced_parts.join("; "))
+        };
+        format!("{total}{subtotal}{unpriced}")
+    }
 }
 
 impl AgentDispatcher<'_> {
@@ -134,8 +165,9 @@ impl AgentDispatcher<'_> {
     /// cap once for the whole fan-out, prices each agent item as its launch
     /// would (`expected_agent_spend`, workflow leaves expanded), each peer
     /// consult under its own consult key, and any other TASK at the labelled
-    /// prior. Never refuses an expected spend above what is available: it
-    /// says so. The width check is the caller's to classify.
+    /// prior, and names each part with no dollar figure. Never refuses an
+    /// expected spend above what is available: it says so. The width check
+    /// is the caller's to classify.
     pub fn plan_fanout(
         &self,
         caller: &FanoutCaller,
@@ -161,32 +193,44 @@ impl AgentDispatcher<'_> {
         let mut agent_count: u64 = 0;
         let mut consult_count: u64 = 0;
         let mut per_peer: BTreeMap<EntityId, u64> = BTreeMap::new();
-        let mut items = Vec::with_capacity(work.len());
-        for item in work {
+        let mut parts = Vec::with_capacity(work.len());
+        for (index, item) in work.iter().enumerate() {
             match item {
                 FanoutWork::Agent(agent) => {
                     let nodes = self.launch_nodes_in_txn(txn, &agent.target, &unit, None)?;
                     agent_count =
                         agent_count.saturating_add(u64::try_from(nodes.len()).unwrap_or(u64::MAX));
-                    items.extend(nodes.into_iter().map(|node| node.expected));
+                    // Each node keeps its name past the collapse to its spend.
+                    parts.extend(nodes.into_iter().map(|node| {
+                        let of = PartOf::Agent {
+                            definition_ref: node.definition_ref,
+                            role: node.role,
+                        };
+                        (index, of, node.expected)
+                    }));
                 }
                 FanoutWork::PeerConsult { peer } => {
                     consult_count = consult_count.saturating_add(1);
                     let count = per_peer.entry(*peer).or_default();
                     *count = count.saturating_add(1);
-                    items.push(self.expected_consult_spend_in_txn(txn, *peer, &unit)?);
+                    let expected = self.expected_consult_spend_in_txn(txn, *peer, &unit)?;
+                    parts.push((index, PartOf::Consult { peer: *peer }, expected));
                 }
                 FanoutWork::Task { assignee } => {
                     if let Some(assignee) = assignee {
                         let count = per_peer.entry(*assignee).or_default();
                         *count = count.saturating_add(1);
                     }
-                    items.push(ExpectedSpend::prior());
+                    let of = PartOf::Task {
+                        assignee: *assignee,
+                    };
+                    parts.push((index, of, ExpectedSpend::prior()));
                 }
             }
         }
         let task_count = u64::try_from(work.len()).unwrap_or(u64::MAX);
-        let expected = ExpectedSpend::sum(items);
+        let expected = ExpectedSpend::sum(parts.iter().map(|&(_, _, part)| part));
+        let (priced_subtotal_usd_micros, unpriced_parts) = dollar_parts(&parts, &unit);
         let terms = self.spend_terms_in_txn(txn, tree, caller.budget, expected.units, &unit)?;
         let (over_available, more_would_buy) =
             terms.shortfall(expected, &unit, "fan-out", &format!("{task_count} task(s)"));
@@ -199,6 +243,8 @@ impl AgentDispatcher<'_> {
                 .map(|(peer, count)| PeerCount { peer, count })
                 .collect(),
             expected,
+            priced_subtotal_usd_micros,
+            unpriced_parts,
             unit,
             cap: terms.cap,
             over_available,
@@ -207,4 +253,88 @@ impl AgentDispatcher<'_> {
             stated_at: now,
         })
     }
+}
+
+/// What realizes one part of a fan-out, to name a part with no dollar
+/// figure.
+#[derive(Clone, Copy)]
+enum PartOf {
+    /// An agent launch, or one leaf of a saved workflow.
+    Agent {
+        definition_ref: EntityId,
+        role: LaunchRole,
+    },
+    Consult {
+        peer: EntityId,
+    },
+    /// `None`: the default realization.
+    Task {
+        assignee: Option<EntityId>,
+    },
+}
+
+impl PartOf {
+    /// This part of work item `index`, as an unpriced part names it.
+    fn name(self, index: usize) -> String {
+        match self {
+            Self::Agent {
+                definition_ref,
+                role: LaunchRole::Agent,
+            } => format!("work[{index}] agent={}", definition_ref.to_hex()),
+            Self::Agent {
+                definition_ref,
+                role: LaunchRole::WorkflowLeaf { ordinal },
+            } => format!(
+                "work[{index}] agent={} leaf={ordinal}",
+                definition_ref.to_hex()
+            ),
+            Self::Consult { peer } => format!("work[{index}] consult peer={}", peer.to_hex()),
+            Self::Task {
+                assignee: Some(assignee),
+            } => format!("work[{index}] task assignee={}", assignee.to_hex()),
+            Self::Task { assignee: None } => format!("work[{index}] task assignee=default"),
+        }
+    }
+}
+
+/// The checked subtotal of the priced parts' dollar figures, `None` when no
+/// part is priced or once the sum overflows, and each part with no figure,
+/// named with why: an unknown price (in `unit`, when it is not tokens) or an
+/// overflow of its own figure. A zero figure is priced.
+fn dollar_parts(
+    parts: &[(usize, PartOf, ExpectedSpend)],
+    unit: &LeaseUnit,
+) -> (Option<u64>, Vec<String>) {
+    let unknown = if *unit == LeaseUnit::tokens() {
+        "unknown_price".to_owned()
+    } else {
+        format!("unknown_price unit={}", unit.as_str())
+    };
+    let mut sum: u64 = 0;
+    let mut priced = false;
+    let mut overflowed = false;
+    let mut unpriced = Vec::new();
+    for &(index, of, part) in parts {
+        if let Some(micros) = part.expected_usd_micros {
+            priced = true;
+            match sum.checked_add(micros) {
+                Some(next) => sum = next,
+                None => overflowed = true,
+            }
+        } else {
+            let reason = if part.dollar_basis == DollarBasis::IncompleteOrOverflow {
+                "overflow"
+            } else {
+                unknown.as_str()
+            };
+            unpriced.push(format!("{} reason={reason}", of.name(index)));
+        }
+    }
+    ((priced && !overflowed).then_some(sum), unpriced)
+}
+
+/// `micros` millionths of a dollar as [`ExpectedSpend::dollar_line`] states
+/// them.
+fn usd(micros: u64) -> String {
+    format!("${}.{:06}", micros / 1_000_000, micros % 1_000_000)
 }
