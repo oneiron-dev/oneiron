@@ -5,7 +5,9 @@ use super::codec::{
     decode_attempt_id_value, decode_entity_id_value, decode_hash_hex, expect_key, expect_map,
     expect_string, expect_u64, invalid_step, pinned_key_index,
 };
-use super::step_state::{StepStateOwners, StepStateRow, step_state_put_in_txn, step_state_read};
+use super::step_state::{
+    StepStateDisposition, StepStateOwners, StepStateRow, step_state_put_in_txn, step_state_read,
+};
 use super::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_VALUE_KEYS,
     DREAMER_STEP_VALUE_SCHEMA_VERSION, DurableStepContext, DurableStepError, DurableStepResult,
@@ -89,7 +91,9 @@ pub(super) const STEP_INDEX_CLAIM: SideTable<StepIndexClaimKey, Vec<u8>, Raw> =
 /// the recovery path passes the row bytes the response was deserialized from,
 /// so the durable record carries those bytes verbatim. `terminal` names the
 /// wake-observed call the claim closes (DOOR-144), in a savepoint of the same
-/// write that never refuses it.
+/// write that never refuses it. `None` when an owner's erase took the
+/// response first (FIX 6226): the write checked its owners before anything
+/// was filed, keeps the row's erased skeleton, and files nothing.
 pub(super) fn log_terminal_step(
     ctx: &DurableStepContext<'_>,
     step_hash: &[u8; 32],
@@ -97,7 +101,7 @@ pub(super) fn log_terminal_step(
     response: &LlmResponse,
     payload: &[u8],
     terminal: StepTerminal,
-) -> DurableStepResult<EntityId> {
+) -> DurableStepResult<Option<EntityId>> {
     let params_hash = request_params_hash(request)?;
     let claim_id = ctx.vault.store.clock.entity_id()?;
     let occurred = TimeRange {
@@ -118,6 +122,31 @@ pub(super) fn log_terminal_step(
 
     ctx.vault
         .with_write_txn_grouped(|wtxn| {
+            // The Logged private row lands first, its owners checked in this
+            // same write (FIX 6226): an erase that took an owner after the
+            // answer came keeps the row's skeleton, and no response, artifact
+            // or claim is filed. The batch put hook below indexes the claim
+            // in the SAME wtxn, so a death here recovers from either side.
+            let logged = step_state_put_in_txn(
+                ctx.vault,
+                wtxn,
+                ctx.attempt_id,
+                step_hash,
+                &StepStateRow {
+                    progression: StepProgression::Logged,
+                    started_at: existing_started_at,
+                    updated_at: ctx.now_ms,
+                    response_payload: Some(payload.to_vec()),
+                    owners: StepStateOwners {
+                        claim: Some(claim_id),
+                        ..StepStateOwners::of(ctx)
+                    },
+                    erased: false,
+                },
+            )?;
+            if logged == StepStateDisposition::Erased {
+                return Ok(None);
+            }
             let response_ref = if inline {
                 None
             } else {
@@ -184,26 +213,6 @@ pub(super) fn log_terminal_step(
                 .batch_in()
                 .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
                 .apply(wtxn)?;
-
-            // The batch put hook indexes the claim; the Logged private row lands
-            // in the SAME wtxn so a death here recovers from either side.
-            step_state_put_in_txn(
-                ctx.vault,
-                wtxn,
-                ctx.attempt_id,
-                step_hash,
-                &StepStateRow {
-                    progression: StepProgression::Logged,
-                    started_at: existing_started_at,
-                    updated_at: ctx.now_ms,
-                    response_payload: Some(payload.to_vec()),
-                    owners: StepStateOwners {
-                        claim: Some(claim_id),
-                        ..StepStateOwners::of(ctx)
-                    },
-                    erased: false,
-                },
-            )?;
             let claimed = StepClaimed {
                 attempt_id: ctx.attempt_id,
                 step_hash: *step_hash,
@@ -216,7 +225,7 @@ pub(super) fn log_terminal_step(
                 terminal,
             };
             record_call_terminal_in_txn(ctx.vault, wtxn, &claimed);
-            Ok(claim_id)
+            Ok(Some(claim_id))
         })
         .map_err(DurableStepError::from)
 }

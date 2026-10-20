@@ -445,6 +445,10 @@ impl EntityDocument {
             }
         })?;
         *resident = staged;
+        drop(resident);
+        // The document now held can prove a `regenerates` link owed on its
+        // entity (FIX 6204).
+        super::bridge::wake_regenerates_after_document(&self.vault, &[self.id]);
         Ok(())
     }
 

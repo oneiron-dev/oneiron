@@ -363,6 +363,19 @@ pub(crate) async fn build_server(
                     .map(zeroize::Zeroizing::new),
             }
         }));
+    // `[models] extraction_egress = true` is the owner's opt-in for
+    // extraction to leave the device (FIX 6621): the raw `/v1/llm` routes
+    // and every door that reads the host's predicate admit it, still within
+    // the vault's extraction bound. Off, nonlocal extraction stays refused.
+    let sync_server = if config
+        .models
+        .as_ref()
+        .is_some_and(|models| models.extraction_egress)
+    {
+        sync_server.with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true))
+    } else {
+        sync_server
+    };
     Ok((sync_server, gpu_poller))
 }
 
