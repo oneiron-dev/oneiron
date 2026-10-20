@@ -12,10 +12,10 @@
 //! The check reads the same meter on the offer's check date. A promise is
 //! checked only after a yes, on the approved model's calls over a whole
 //! metered window after it; until then the check waits, and the next night
-//! queues it again. The seat's calls on other models are counted out. A
-//! window with no such call to read, or with calls the check cannot price or
-//! sum, closes as unverifiable, neither a pass nor a fail (FIX 6265, 6317,
-//! 6406).
+//! queues it again. A window with no such call to read, with calls the check
+//! cannot price or sum, or with the seat's calls on other models counted out,
+//! closes as unverifiable, neither a pass nor a fail (FIX 6265, 6317, 6406,
+//! 6475, 6477).
 //! The check is fixed code: no model call.
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::coach::coach_offer_check_target;
@@ -47,7 +47,7 @@ mod sources;
 mod unverifiable;
 use cost::{candidate_monthly, monthly, payback};
 use sources::Sources;
-use unverifiable::{Alone, Unverifiable, counted_out};
+use unverifiable::{Alone, Unverifiable};
 
 const DAY_SECS: u64 = 24 * 60 * 60;
 /// The workload an offer is priced from, and the window its check reads.
@@ -689,7 +689,7 @@ pub(super) fn check(
     else {
         return Ok(());
     };
-    let (Some(intent), Some(role)) = (answer.intent.as_ref(), seat_model_role(&offer.seat)) else {
+    let Some(intent) = answer.intent.as_ref() else {
         return Ok(());
     };
     // A whole window after the yes; until then the check waits.
@@ -697,6 +697,9 @@ pub(super) fn check(
     if from < answer.at {
         return Ok(());
     }
+    let Some(role) = seat_model_role(&offer.seat) else {
+        return Unverifiable::unread(Alone::NoModelRole, vault, admitted, &offer, now);
+    };
     // The model the yes asked for: the stock model, or the custom one bound
     // from the exact run the yes handed off.
     let approved = match intent {
@@ -720,9 +723,9 @@ pub(super) fn check(
         .usage_ledger
         .seat_usage(owner, vault_id, &role_key(role), Some(&approved), from, now)
         .map_err(|_| Error::InvalidConfig("the seat's usage could not be read".into()))?;
-    // Metered throughout, or a later night reads it. The seat's calls on
-    // another model are counted out; with none of the approved model's left,
-    // or some the check cannot price or sum, it closes unverifiable.
+    // Metered throughout, or a later night reads it. With the seat's calls on
+    // another model counted out, none of the approved model's left, or some
+    // the check cannot price or sum, it closes unverifiable.
     if usage.metered_since.is_some_and(|since| since > from) {
         return Ok(());
     }
@@ -744,7 +747,7 @@ pub(super) fn check(
     };
     let note = format!(
         "{} calls on {approved} over the {} days to the check, all priced{}; promised {} {} a \
-         month, within {}%.{}",
+         month, within {}%.",
         usage.calls,
         WINDOW_SECS / DAY_SECS,
         if comparable {
@@ -762,7 +765,6 @@ pub(super) fn check(
             .map_or_else(|| "an unknown".to_owned(), |after| format!("{after:.2}")),
         offer.cost.currency,
         COST_TOLERANCE * 100.0,
-        counted_out(usage.counted_out),
     );
     // The check reads the offer, with its own set, and the seat's metered
     // calls, named by receipt key only (FIX 5482).
