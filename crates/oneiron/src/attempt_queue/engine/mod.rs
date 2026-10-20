@@ -8,11 +8,13 @@
 //! ONE-1896 graceful-cancel/landing doors in [`super::cancel`].
 mod defer;
 mod enqueue_claim;
+mod enqueue_record;
 mod mutate;
 mod place;
 mod prune;
 mod reads;
 mod redirect;
+mod requeue;
 mod successor;
 mod task_lease;
 mod workflow;
@@ -38,6 +40,8 @@ pub(crate) use self::reads::dreamer_run_root_id_in_txn;
 pub(super) use self::reads::{
     ERR_RETRY_CHAIN_CYCLE, ERR_RETRY_CHAIN_MISMATCH, ERR_RETRY_CHAIN_MISSING_ROW,
 };
+pub(super) use self::requeue::validate_requeued_history;
+pub use self::requeue::{RequeueAttempt, RequeuedFailure};
 
 impl<'a> AttemptQueue<'a> {
     pub(crate) fn from_store(store: &'a Store) -> Self {
