@@ -19,7 +19,8 @@ use crate::server::SyncServer;
 
 /// Dispatches a parsed SyncMessage to the appropriate handler. `Break` when
 /// `session_gone` found the socket's caller gone once a window frame's
-/// window loaded (FIX 5438): that frame applies nothing, no later batch
+/// window loaded or a chunk request was served (FIX 5438, FIX 6313), or
+/// before a batch member: that frame applies nothing more, no later batch
 /// member runs, and the connection ends as the gate before dispatch ends it.
 pub(super) async fn handle_sync_message(
     server: &SyncServer,
@@ -31,9 +32,7 @@ pub(super) async fn handle_sync_message(
 ) -> Result<ControlFlow<()>, ProtocolError> {
     match msg {
         SyncMessage::LfsChunks(payload) => {
-            super::lfs_chunks::handle(server, payload, direct_tx, conn_state)
-                .await
-                .map(ControlFlow::Continue)
+            super::lfs_chunks::handle(server, payload, direct_tx, conn_state, session_gone).await
         }
         SyncMessage::Doc {
             entity,
@@ -45,6 +44,15 @@ pub(super) async fn handle_sync_message(
         .map(ControlFlow::Continue),
         SyncMessage::Batch(members) => {
             for member in members {
+                // FIX 6313: an earlier member's window load may have waited,
+                // so each member runs only while the session still stands.
+                if session_gone() {
+                    tracing::warn!(
+                        conn_id,
+                        "credential revoked — refusing sync message and closing"
+                    );
+                    return Ok(ControlFlow::Break(()));
+                }
                 match member {
                     SyncMessage::Doc {
                         entity,
