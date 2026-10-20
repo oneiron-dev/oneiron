@@ -73,6 +73,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/fleet/tests.rs` | test | s | — | — | Small falsification fixtures; smoke is never accepted as a fleet baseline |
 | `src/fleet/wire.rs` | src | s | 7 crate-vis | — | Real app-tier WebSocket client using the shipped server protocol version |
 | `src/fleet/workload.rs` | src | m | 2 crate-vis | — | Closed-loop authenticated fleet traffic against one real loopback server and vault |
+| `src/infer/args.rs` | src | s | 9 crate-vis | — | `infer run` and `infer summarize` flags, parsed by hand like the other subcommands: every flag takes one… |
+| `src/infer/arms.rs` | src | s | 5 crate-vis | — | The two production paths a call takes, each an `LlmBackend` the measurement loop drives the same way |
+| `src/infer/cases.rs` | src | s | 5 crate-vis | — | Case packets, read at run time from a JSONL file outside the source tree |
+| `src/infer/config.rs` | src | s | 3 crate-vis | — | The `--models-toml` file as the server reads its `[models]` section |
+| `src/infer/engine.rs` | src | s | 8 crate-vis | — | An engine the bench starts itself (`--engine-cmd`), in its own process group, with stdout and stderr… |
+| `src/infer/measure.rs` | src | s | 4 crate-vis | — | One call driven through `LlmBackend::stream`, timed with `Instant` |
+| `src/infer/mod.rs` | src | m | 1 crate-vis | — | `infer` subcommand — the built-in inference bench (FIX 6559): the proof harness for each inference trick an… |
+| `src/infer/request.rs` | src | s | 4 crate-vis | — | The request one case sends, and what of it the row records |
+| `src/infer/rows.rs` | src | s | 10 crate-vis | — | Result rows: one JSON line per finished (arm, case, rep), appended to `--out` and flushed and fsynced one by… |
+| `src/infer/scoring.rs` | src | s | 3 crate-vis | — | The quality check: does the reply keep the Dreamer's reply contract, and how much of the case's gold does it… |
+| `src/infer/summary.rs` | src | s | 4 crate-vis | — | One summary line per arm: the `ok` rows grouped by (arm_id, config_digest), as a markdown table and as… |
+| `src/infer/vram.rs` | src | s | 8 crate-vis | — | GPU memory, sampled: one `nvidia-smi -lms` child streams `memory.used, memory.total, name, uuid` for one… |
 | `src/interface_bench/cli_and_pinned_config.rs` | src | m | 14 crate-vis | — | Subcommand dispatch and pinned-model config parsing |
 | `src/interface_bench/config_types.rs` | src | m | 71 crate-vis | — | Campaign, task, and report DTOs plus RunSettings |
 | `src/interface_bench/eval_run.rs` | src | m | 13 crate-vis | — | Smoke, probe, and full execution plus resume validation |
@@ -85,10 +97,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/load/client.rs` | src | s | 7 crate-vis | — | One agent on the facade doors: its signed slip, a fresh holder proof per request, and the three verbs the… |
 | `src/load/corpus.rs` | src | m | 16 crate-vis | — | The synthetic corpus: invented words drawn with Zipf frequencies from a fixed seed, so two runs of one plan… |
 | `src/load/embedder.rs` | src | s | 9 crate-vis | — | A stand-in embedder on loopback: the plain OpenAI `/v1/embeddings` wire, answering bag-of-words vectors |
-| `src/load/mod.rs` | src | m | 1 crate-vis | — | `load` subcommand — the engine's load bench on the shipped server binary |
+| `src/load/mod.rs` | src | m | 2 crate-vis | — | `load` subcommand — the engine's load bench on the shipped server binary |
 | `src/load/phases.rs` | src | m | 13 crate-vis | — | The measured cells: ingest by one and by many callers, recall at each grade and agent count, the mixed and… |
 | `src/load/report.rs` | src | m | 10 crate-vis | — | The result file, and `load compare`, which reads two of them |
-| `src/load/server.rs` | src | m | 17 crate-vis | — | The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped… |
+| `src/load/server.rs` | src | m | 20 crate-vis | — | The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped… |
 | `src/load/startup.rs` | src | s | 1 crate-vis | — | `load startup`: the server's memory while the shipped local embedding model loads, which is where its… |
 | `src/load/stats.rs` | src | s | 3 crate-vis | — | Latency summaries: nearest-rank percentiles over completed requests, with failures counted beside them and… |
 | `src/main.rs` | src | m | — | — | oneiron-bench — benchmark harness skeleton |
