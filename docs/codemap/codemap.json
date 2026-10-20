@@ -44658,7 +44658,7 @@
      "purpose": "Legal holds across a restore and against backup expiry (OF-470; ARCH-0038 #legal-hold: every path that…",
      "surface": {
       "crate-vis": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -85752,6 +85752,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/backup_facts.rs",
+     "purpose": "What a managed vault reports of its backups on every `Ping` (Engine 10-20 row (b)): this install's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/managed/ctl_shed_tests.rs",
@@ -85981,7 +85991,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 17,
-      "fn": 20,
+      "fn": 21,
       "struct": 3,
       "type": 1
      }
@@ -89277,7 +89287,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -89433,7 +89443,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 898,
+   "source_files": 899,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -93510,6 +93520,8 @@
       "CtlResumeOn",
       "FacilityNotice",
       "FacilityReason",
+      "LegalHoldsNotProven",
+      "LegalHoldsWire",
       "ManagedFacility",
       "ManagedReadiness",
       "ShedBlockerWire",
@@ -93522,7 +93534,7 @@
      "purpose": "Supervisor ctl request/response wire types and shed/slim validation",
      "surface": {
       "const": 4,
-      "enum": 13,
+      "enum": 15,
       "fn": 9,
       "struct": 5
      }
@@ -93682,6 +93694,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckpointSignerObservation",
+      "CheckpointSignerUnavailable",
+      "ManagedBackupFacts"
+     ],
+     "path": "src/lib/managed_backup.rs",
+     "purpose": "What a managed vault reports of its backups on every `Ping` (Engine 10-20 row (b)): the vault id its…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -93708,7 +93738,7 @@
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
       "mod": 13,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -93854,7 +93884,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93863,7 +93893,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 26,
+   "source_files": 27,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
