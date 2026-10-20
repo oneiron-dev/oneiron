@@ -87760,7 +87760,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/managed/state_serve/reap/host_holds.rs",
-     "purpose": "The source half of the host-order legal holds a cold restore carries (FIX 1485): `host_order_holds`…",
+     "purpose": "The source half of the host-order legal holds a cold restore carries (FIX 1485): `host_order_holds`, its…",
      "surface": {
       "crate-vis": 1
      }
@@ -95920,7 +95920,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HostHoldsBytes",
