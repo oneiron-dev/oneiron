@@ -444,6 +444,11 @@ side_tables! {
     ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named;
     /// Signature image byte budget. Key: id16.
     ESIGN_IMAGE_BYTES_BUDGET: VaultMeta b"esign.image_bytes.v1/" Raw;
+    /// The send act a signing document's staged notices go out under with no caller (FIX 6219):
+    /// the principal the send crossed the gate as, its gate class and the send's intent ref.
+    /// Engine-private, never in a notice; no credential. Key: id16 (document).
+    ESIGN_NOTICE_SEND_ACT: VaultMeta b"esign.notice_send_act.v1/" Named Engine
+        => crate::blob_artifact::esign::erase_notice_send_act_actor_in_txn;
     /// Signing principal set owner stamp. Key: ().
     ESIGN_PRINCIPAL_OWNER_STAMP: VaultMeta b"esign.principal.owner_stamp.v1" Raw;
     /// Signing principal. Key: hex32.
