@@ -3,8 +3,7 @@
 use std::collections::HashSet;
 
 use crate::attempt_queue::encoding::{
-    DedupeIndexKeys, decode_record, legacy_dedupe_index_key, ready_at, ready_key,
-    validate_dedupe_record,
+    DedupeIndexKeys, decode_record, ready_at, ready_key, validate_dedupe_record,
 };
 use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState, attempt_record_order};
 use crate::attempt_queue::validate::validate_optional_run_id;
@@ -332,18 +331,7 @@ impl AttemptQueue<'_> {
         key: &str,
     ) -> Result<Option<AttemptRecord>> {
         let keys = DedupeIndexKeys::new(kind, None, key);
-        if let Some(row) =
-            self.read_existing_dedupe_in_read_txn(txn, &keys.primary, kind, None, key)?
-        {
-            return Ok(Some(row));
-        }
-        self.read_existing_dedupe_in_read_txn(
-            txn,
-            &legacy_dedupe_index_key(kind, key),
-            kind,
-            None,
-            key,
-        )
+        self.read_existing_dedupe_in_read_txn(txn, &keys.primary, kind, None, key)
     }
 
     pub(super) fn read_existing_dedupe_in_read_txn(
@@ -378,14 +366,12 @@ impl AttemptQueue<'_> {
     /// per path.
     ///
     /// An ACTOR-SCOPED request reads its own v2 entry, then the actorless v1
-    /// entry, then the pre-v1 raw key. A pending legacy row has no trustworthy
-    /// actor axis, so it stays the conservative winner until its chain
-    /// terminalizes — returned as a hit without rewriting the row, promoting
-    /// either index, or running the actorless self-heal.
+    /// entry. A pending v1 row has no trustworthy actor axis, so it stays the
+    /// conservative winner until its chain terminalizes — returned as a hit
+    /// without rewriting the row or promoting its index.
     ///
-    /// An ACTORLESS request keeps exactly today's behavior: the v1 entry, then
-    /// the pre-v1 raw key with its landed raw→v1 self-heal. It never
-    /// manufactures an actor scope.
+    /// An ACTORLESS request reads its v1 entry alone. It never manufactures an
+    /// actor scope.
     pub(super) fn read_existing_dedupe_in_write_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -404,49 +390,13 @@ impl AttemptQueue<'_> {
             return Ok(Some(record));
         }
 
-        let legacy_key = legacy_dedupe_index_key(kind, dedupe_key);
-        match keys.fallback_v1 {
-            // Actor-scoped: both legacy families are READ-ONLY here. A pending
-            // actorless row keeps the key until its chain terminalizes, and
-            // nothing about it is rewritten or promoted on the way out.
-            Some(fallback_v1) => {
-                if let Some(record) = self.read_existing_dedupe_entry_in_write_txn(
-                    txn,
-                    &fallback_v1[..],
-                    kind,
-                    None,
-                    dedupe_key,
-                )? {
-                    return Ok(Some(record));
-                }
-                self.read_existing_dedupe_entry_in_write_txn(
-                    txn,
-                    &legacy_key,
-                    kind,
-                    None,
-                    dedupe_key,
-                )
-            }
-            // Actorless: today's pre-v1 raw fallback, including its landed
-            // raw -> v1 index self-heal.
-            None => {
-                let Some(record) = self.read_existing_dedupe_entry_in_write_txn(
-                    txn,
-                    &legacy_key,
-                    kind,
-                    None,
-                    dedupe_key,
-                )?
-                else {
-                    return Ok(None);
-                };
-                self.store
-                    .attempt_dedupe
-                    .put(txn, &keys.primary[..], record.id.as_bytes())?;
-                self.store.attempt_dedupe.delete(txn, &legacy_key)?;
-                Ok(Some(record))
-            }
-        }
+        // Actor-scoped: the actorless v1 family is READ-ONLY here. A pending
+        // actorless row keeps the key until its chain terminalizes, and
+        // nothing about it is rewritten or promoted on the way out.
+        let Some(fallback_v1) = keys.fallback_v1 else {
+            return Ok(None);
+        };
+        self.read_existing_dedupe_entry_in_write_txn(txn, &fallback_v1[..], kind, None, dedupe_key)
     }
 
     /// Reads one index entry, reaping it when it is verifiably stale.
@@ -488,9 +438,9 @@ impl AttemptQueue<'_> {
     /// Retires the index entries a settled row OWNS.
     ///
     /// Ownership follows the row's persisted scope: an actor-scoped row owns
-    /// exactly its own v2 entry, because the v1 and pre-v1 raw entries may
-    /// still belong to another actor's live legacy chain. An actorless row owns
-    /// both of those, exactly as before.
+    /// exactly its own v2 entry, because the v1 entry may still belong to
+    /// another actor's live legacy chain. An actorless row owns that v1 entry,
+    /// its own primary.
     pub(in crate::attempt_queue) fn delete_dedupe_entry_for_record(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -500,10 +450,6 @@ impl AttemptQueue<'_> {
             let keys =
                 DedupeIndexKeys::new(&record.kind, record.dedupe_actor_ref.as_deref(), dedupe_key);
             self.store.attempt_dedupe.delete(txn, &keys.primary[..])?;
-            if record.dedupe_actor_ref.is_none() {
-                let legacy_key = legacy_dedupe_index_key(&record.kind, dedupe_key);
-                self.store.attempt_dedupe.delete(txn, &legacy_key)?;
-            }
         }
         Ok(())
     }

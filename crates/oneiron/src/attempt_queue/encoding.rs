@@ -49,9 +49,9 @@ const ERR_READY_KEY_LEN: &str = "ready index key must be 24 bytes";
 /// Checks the two axes every dedupe hit shares, on every key family.
 ///
 /// The actor axis is deliberately NOT checked here: it is per-path in the
-/// caller, because a v2 hit must carry the requested actor while a legal v1 or
-/// pre-v1 raw fallback hit must carry none. A blanket equality check would
-/// misread the compatibility fallback as corruption.
+/// caller, because a v2 hit must carry the requested actor while a legal v1
+/// fallback hit must carry none. A blanket equality check would misread the
+/// compatibility fallback as corruption.
 pub(super) fn validate_dedupe_record(
     record: &AttemptRecord,
     kind: &str,
@@ -127,14 +127,6 @@ pub(super) fn dedupe_index_key_v2(
         hasher.update(segment.as_bytes());
     }
     *hasher.finalize().as_bytes()
-}
-
-pub(super) fn legacy_dedupe_index_key(kind: &str, dedupe_key: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(2 + kind.len() + dedupe_key.len());
-    key.extend_from_slice(&(kind.len() as u16).to_be_bytes());
-    key.extend_from_slice(kind.as_bytes());
-    key.extend_from_slice(dedupe_key.as_bytes());
-    key
 }
 
 /// Readiness instant for a ready-indexed row. New rows carry `scheduled_at`;

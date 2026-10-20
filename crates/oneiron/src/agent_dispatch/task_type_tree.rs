@@ -17,7 +17,8 @@ use crate::Vault;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::skill::{SkillLifecycle, skill_loadable};
+use crate::registry::ENTITY_TYPE_SKILL;
+use crate::skill::{SkillLifecycle, SkillRecord, resident_of, skill_loadable};
 use crate::skill_hub::{HubFile, HubPackage};
 use crate::task_type::{
     PlacementDecisions, PlacementRequest, TaskTypeRef, TaskTypeTree, ensure_type_ref,
@@ -128,7 +129,8 @@ fn kept_revisions_in_txn(
     Ok(revisions)
 }
 
-/// Every revision on the vault skill's supersession chain, newest first.
+/// Every revision on the vault skill's supersession chain, each step a
+/// [`skill_succession_in_txn`], newest first.
 fn supersession_chain_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -148,7 +150,7 @@ fn supersession_chain_in_txn(
             EdgeKind::Supersedes,
         )? {
             let peer = peer?;
-            if !seen.contains(&peer) {
+            if !seen.contains(&peer) && skill_succession_in_txn(vault, txn, peer, cursor)? {
                 next = Some(peer);
                 break;
             }
@@ -351,11 +353,11 @@ fn project_fork_in_txn(
 }
 
 /// Whether `skill`'s ancestry reaches `root`: each skill's fork parent and
-/// each admitted revision it superseded (its outgoing `Supersedes` edges),
-/// walked with one visited set and no depth bound. A fork of an optimizer
-/// revision, which names no fork parent, reaches the root through the
-/// revisions that revision superseded. A revisited skill ends only its own
-/// branch.
+/// each admitted revision it superseded (its outgoing `Supersedes` edges
+/// that are a [`skill_succession_in_txn`]), walked with one visited set and
+/// no depth bound. A fork of an optimizer revision, which names no fork
+/// parent, reaches the root through the revisions that revision superseded.
+/// A revisited skill ends only its own branch.
 fn in_lineage_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -384,14 +386,59 @@ fn in_lineage_in_txn(
             crate::ports::EdgeDirection::Out,
             EdgeKind::Supersedes,
         )? {
-            pending.push(peer?);
+            let peer = peer?;
+            if skill_succession_in_txn(vault, txn, id, peer)? {
+                pending.push(peer);
+            }
         }
     }
     Ok(false)
 }
 
+/// Whether the `Supersedes` edge `successor → predecessor` is a succession
+/// the supersession door admitted: two distinct live SKILL entities of one
+/// skill id and resident at different versions, the successor admitted (any
+/// state past candidate, so one later superseded or staled still counts)
+/// and the predecessor frozen superseded. Any other edge of the kind, to an
+/// entity of another type included, is not ancestry: a walk skips it.
+fn skill_succession_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    successor: EntityId,
+    predecessor: EntityId,
+) -> Result<bool> {
+    if successor == predecessor {
+        return Ok(false);
+    }
+    let (Some(new), Some(old)) = (
+        live_skill_in_txn(vault, txn, &successor)?,
+        live_skill_in_txn(vault, txn, &predecessor)?,
+    ) else {
+        return Ok(false);
+    };
+    Ok(new.skill_id == old.skill_id
+        && new.version != old.version
+        && new.lifecycle_status != SkillLifecycle::Candidate
+        && old.lifecycle_status == SkillLifecycle::Superseded
+        && matches!((resident_of(&new), resident_of(&old)), (Ok(a), Ok(b)) if a == b))
+}
+
+/// `id`'s SKILL record when it is a live SKILL; `None` for an entity of
+/// another type, a deleted one or none.
+fn live_skill_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<SkillRecord>> {
+    if vault.get_entity_type_in_txn(txn, id)? != Some(ENTITY_TYPE_SKILL) {
+        return Ok(None);
+    }
+    vault.get_skill_record_in_txn(txn, id)
+}
+
 /// The vault skill's newest admitted revision, following its supersession
-/// chain forward. `None` when no revision on the chain is loadable.
+/// chain forward, each step a [`skill_succession_in_txn`]. `None` when no
+/// revision on the chain is loadable.
 fn vault_head_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -416,7 +463,7 @@ fn vault_head_in_txn(
             EdgeKind::Supersedes,
         )? {
             let peer = peer?;
-            if !seen.contains(&peer) {
+            if !seen.contains(&peer) && skill_succession_in_txn(vault, txn, peer, cursor)? {
                 next = Some(peer);
                 break;
             }

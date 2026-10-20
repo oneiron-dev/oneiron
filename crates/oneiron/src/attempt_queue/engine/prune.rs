@@ -4,9 +4,7 @@
 
 use std::collections::HashSet;
 
-use crate::attempt_queue::encoding::{
-    DedupeIndexKeys, decode_record, legacy_dedupe_index_key, ready_at, ready_key,
-};
+use crate::attempt_queue::encoding::{DedupeIndexKeys, decode_record, ready_at, ready_key};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{AttemptId, AttemptRecord};
 use crate::error::{ArtifactError, Error, Result};
@@ -198,7 +196,6 @@ impl AttemptQueue<'_> {
             DedupeIndexKeys::new(&record.kind, record.dedupe_actor_ref.as_deref(), dedupe_key);
         let mut entries = vec![keys.primary.to_vec()];
         entries.extend(keys.fallback_v1.map(|key| key.to_vec()));
-        entries.push(legacy_dedupe_index_key(&record.kind, dedupe_key));
         for key in entries {
             let names_row = self
                 .store
