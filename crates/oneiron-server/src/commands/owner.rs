@@ -22,7 +22,7 @@ use crate::cli::{
 use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
 };
-use crate::owner::backup::{self, BackupPlan};
+use crate::owner::backup::{self, BackupPlan, CustodyAnchorCredentials};
 use crate::owner::embedder::EmbedderReport;
 use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{
@@ -251,7 +251,10 @@ pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
         anyhow::ensure!(keep > 0, "--keep must be at least 1");
         config.backup.keep = keep;
     }
-    let plan = backup_plan(&config).anchored_at(&config.backup);
+    // The custody anchor door's owner credential, on the pipe the owner
+    // named, read before the vault opens (FIX 5788).
+    let anchor = CustodyAnchorCredentials::handed(args.serve.custody_anchor_credentials_fd)?;
+    let plan = backup_plan(&config).anchored_at(&config.backup, anchor);
     if args.list {
         return emit(&backup::list(&plan)?);
     }
@@ -315,8 +318,11 @@ fn restore_unlocked(
         .map(vault_key::read_pins)
         .transpose()?;
     if !args.rehearse && !config.vault_path.join("data.mdb").exists() {
+        // Its custody anchor door's owner credential, on the pipe the owner
+        // named, read before the new vault is made (FIX 5788).
+        let anchor = CustodyAnchorCredentials::handed(args.serve.custody_anchor_credentials_fd)?;
         return emit(&vault_key::restore_fresh(
-            backup, config, keystore, unlock, pins,
+            backup, config, keystore, unlock, pins, anchor,
         )?);
     }
     let key = vault_key::backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)?;
