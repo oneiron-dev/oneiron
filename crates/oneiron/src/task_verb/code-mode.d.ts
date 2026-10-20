@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1128 code-mode rows (1095 host rows, 33 run rows), 3810 declarations.
-// Replies: 1008 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1133 code-mode rows (1095 host rows, 38 run rows), 3822 declarations.
+// Replies: 1013 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2497,7 +2497,7 @@ declare namespace Sdk {
   type TaskAskLaunchHold = { launch_ref: EntityId; plan_digest: string; surface_ref: string; denied: boolean };
   type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[]; launch?: TaskAskLaunchHold | null };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
-  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch" | "RepoSnapshotsGet" | "RepoSnapshotsRead" | "RepoSymbolsDefinitions" | "RepoViewsGet" | "RepoViewsRead" | "RepoMergeQueueObserve" | "RepoSnapshotsIngest" | "RepoWorkOpen";
+  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch" | "RepoSnapshotsGet" | "RepoSnapshotsRead" | "RepoSymbolsDefinitions" | "RepoViewsGet" | "RepoViewsRead" | "RepoMergeQueueObserve" | "RepoSnapshotsIngest" | "RepoWorkOpen" | "RepoSymbolsDeclare" | "RepoSymbolsRenew" | "RepoSymbolsRelease" | "RepoProposalSubmit" | "RepoMergeQueueEnqueue";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait } | { WorldPrivacyReady: WorldPrivacyWaitResult };
@@ -3794,11 +3794,23 @@ declare namespace Sdk {
   type RepoViewsReadInput = { work: EntityId; path: string };
   type RepoViewsReadOutput = { work: EntityId; path: string; bytes: number[]; sha256: string };
   type RepoMergeQueueObserveInput = { work: EntityId };
-  type RepoMergeQueueObserveOutput = { work: EntityId; repo: EntityId; ref: string; base_green: string; head_commit: string; green_commit: string; green_moved: boolean };
+  type RepoQueueEntryView = { batch: string; work: EntityId; proposals: EntityId[]; declaration?: EntityId | null; state: BatchState; base_green: string; expected_head: string; landed_head?: string | null; blockers: EntityId[] };
+  type RepoMergeQueueObserveOutput = { work: EntityId; repo: EntityId; ref: string; base_green: string; head_commit: string; green_commit: string; green_moved: boolean; entries: RepoQueueEntryView[] };
   type RepoSnapshotsIngestInput = { repo: EntityId; ref: string };
   type RepoSnapshotsIngestOutput = RepoSnapshotView;
   type RepoWorkOpenInput = { repo: EntityId; ref: string };
   type RepoWorkOpenOutput = RepoWorkView;
+  type RepoSymbolsDeclareInput = { work: EntityId; symbols: EntityId[]; ttl_seconds: number };
+  type RepoSymbolDeclarationView = { work: EntityId; declaration: EntityId; task: EntityId; symbols: EntityId[]; expires_at: number; held: boolean; blockers: EntityId[] };
+  type RepoSymbolsDeclareOutput = RepoSymbolDeclarationView;
+  type RepoSymbolsRenewInput = { work: EntityId; declaration: EntityId };
+  type RepoSymbolsRenewOutput = RepoSymbolDeclarationView;
+  type RepoSymbolsReleaseInput = { work: EntityId; declaration: EntityId };
+  type RepoSymbolsReleaseOutput = { work: EntityId; declaration: EntityId; task: EntityId };
+  type RepoProposalSubmitInput = { work: EntityId; path: string; content: number[]; message: string; declaration?: EntityId | null };
+  type RepoProposalSubmitOutput = { proposal: EntityId; work: EntityId; path: string; base_green: string; base_snapshot: string; session: EntityId; provenance_claim: EntityId; declaration?: EntityId | null; status: RepoProposalStatus };
+  type RepoMergeQueueEnqueueInput = { work: EntityId; proposals: EntityId[]; declaration?: EntityId | null };
+  type RepoMergeQueueEnqueueOutput = RepoQueueEntryView;
   type LeaderAdviceInput = { top?: number | null };
   type LeaderPatternInput = { skill: string };
   type LeaderPatternFile = { path: string; text: string };
@@ -4079,15 +4091,20 @@ declare namespace self {
   };
   const code: {
     merge_queue: {
+      enqueue(input: Sdk.RepoMergeQueueEnqueueInput): Promise<Sdk.RepoMergeQueueEnqueueOutput | StoredResult>;
       observe(input: Sdk.RepoMergeQueueObserveInput): Promise<Sdk.RepoMergeQueueObserveOutput | StoredResult>;
     };
+    proposal_submit(input: Sdk.RepoProposalSubmitInput): Promise<Sdk.RepoProposalSubmitOutput | StoredResult>;
     snapshots: {
       get(input: Sdk.RepoSnapshotsGetInput): Promise<Sdk.RepoSnapshotsGetOutput | StoredResult>;
       ingest(input: Sdk.RepoSnapshotsIngestInput): Promise<Sdk.RepoSnapshotsIngestOutput | StoredResult>;
       read(input: Sdk.RepoSnapshotsReadInput): Promise<Sdk.RepoSnapshotsReadOutput | StoredResult>;
     };
     symbols: {
+      declare(input: Sdk.RepoSymbolsDeclareInput): Promise<Sdk.RepoSymbolsDeclareOutput | StoredResult>;
       definitions(input: Sdk.RepoSymbolsDefinitionsInput): Promise<Sdk.RepoSymbolsDefinitionsOutput | StoredResult>;
+      release(input: Sdk.RepoSymbolsReleaseInput): Promise<Sdk.RepoSymbolsReleaseOutput | StoredResult>;
+      renew(input: Sdk.RepoSymbolsRenewInput): Promise<Sdk.RepoSymbolsRenewOutput | StoredResult>;
     };
     views: {
       get(input: Sdk.RepoViewsGetInput): Promise<Sdk.RepoViewsGetOutput | StoredResult>;
