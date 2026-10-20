@@ -79,6 +79,13 @@ pub struct ChannelIdentityLifecycleReceiptRecord {
     pub outbound_closed: bool,
     pub identity_retiring: bool,
     pub quarantine_until: Option<u64>,
+    /// FIX 6424 part 3: the approve-once digest a held request's decision
+    /// named (64 lower-hex), copied from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_digest: Option<String>,
+    /// FIX 6424 part 3: the request's ref (32 hex), when it named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_ref: Option<String>,
 }
 
 impl Store {

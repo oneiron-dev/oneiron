@@ -996,9 +996,11 @@ first purges every scope it ever used at the intake, one purge per month, and th
 with no time limit, until the intake confirms each one removed; only then does the vault destroy
 its key, and then the vault. A restore that brings no custody head brings no key either: the
 restore report says so, and the vault makes a fresh key at its next training pass and goes on.
-What was shared before that restore can then no longer be withdrawn one by one, since its codes
-cannot be made again, and the upkeep counts each such withdrawal as unavailable; an erase still
-purges all of it.
+Training donations whose records that restore brought back can still be withdrawn one by one
+from this vault: a self-hosted vault's donations keep their own code in those records. Older
+donations shared through Oneiron Cloud hosting may no longer be withdrawn one by one, since their
+codes cannot be made again, and the upkeep counts each such withdrawal as unavailable; an erase
+still purges every donation this vault recorded.
 
 A person reads their own training receipts at `GET /v1/owner/conversation-learning/receipts`,
 with the same proof as their opt-out: each submission carrying their words with its
