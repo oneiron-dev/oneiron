@@ -17774,9 +17774,10 @@ class NoteReadRequest(TypedDict):
 class NoteAccessRequest(TypedDict):
     note_ref: str
     reason: NotRequired[str | None]
+NoteActor = str
 class NoteAuthorship(TypedDict):
     operation: str
-    actor: str
+    actor: NoteActor
     actor_class: str
     grant: NotRequired[str | None]
     command_hash: list[int]
@@ -17905,7 +17906,6 @@ class NoteEditOutcomeReviewRequired(TypedDict):
 NoteEditOutcome = NoteEditOutcomeEdited | NoteEditOutcomeRewriteFork | NoteEditOutcomeProposedFork | NoteEditOutcomeReviewRequired
 class NoteRefRequest(TypedDict):
     note_ref: str
-NoteActor = str
 class NoteSeal(TypedDict):
     note: str
     document: str

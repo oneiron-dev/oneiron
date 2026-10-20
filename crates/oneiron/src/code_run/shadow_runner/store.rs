@@ -4,20 +4,50 @@
 //! lines, preview and secret scan). It is plain: no custody, no seal and no
 //! instance rows, since nothing in it is the vault's. The host that owns the
 //! arm owns the directory and removes it when the arm is released.
+//!
+//! What the store holds is kept content of its source run, whose lifetime
+//! is the arm's lease (FIX 5718): an erase or actor scrub of the source
+//! run's actor releases the arm, and until it does, each read and
+//! publication of the arm asks the store's [`ShadowSourceHold`] and meets
+//! the erase as typed unavailable.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use super::types::ShadowBodyRef;
+use super::types::{ShadowBodyRef, ShadowUnavailable, ShadowUnavailableReason};
 use crate::code_run::CodeRunRawOutput;
 use crate::compaction::output::OutputRef;
 use crate::store::{BodyDir, BodySink, SunkBody, read_body_range};
 use crate::{Error, Result};
 
+/// Whether an arm's source still holds its content (FIX 5718): `true`
+/// while the source run's actor is here. Asked in a short read of the
+/// source's vault at each read and publication of the arm, never held
+/// across a model call.
+#[derive(Clone)]
+pub struct ShadowSourceHold(Arc<dyn Fn() -> bool + Send + Sync>);
+
+impl ShadowSourceHold {
+    /// The hold `kept` answers.
+    #[must_use]
+    pub fn new(kept: impl Fn() -> bool + Send + Sync + 'static) -> Self {
+        Self(Arc::new(kept))
+    }
+}
+
+impl std::fmt::Debug for ShadowSourceHold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ShadowSourceHold")
+    }
+}
+
 /// One arm's bodies, in the directory at its root.
 #[derive(Debug, Clone)]
 pub struct ShadowBodyStore {
     root: PathBuf,
+    /// What its source still holds; `None` for a store no source binds.
+    hold: Option<ShadowSourceHold>,
 }
 
 impl ShadowBodyStore {
@@ -30,7 +60,30 @@ impl ShadowBodyStore {
     pub fn open(root: PathBuf) -> Result<Self> {
         BodyDir::at_path(&root, true)?
             .ok_or_else(|| Error::InvalidConfig("shadow arm store was not made".to_owned()))?;
-        Ok(Self { root })
+        Ok(Self { root, hold: None })
+    }
+
+    /// This store, its reads and publications asking `hold` whether its
+    /// source still holds its content (FIX 5718).
+    #[must_use]
+    pub fn held_by(mut self, hold: ShadowSourceHold) -> Self {
+        self.hold = Some(hold);
+        self
+    }
+
+    /// Why the store's content is unavailable now, once an erase or actor
+    /// scrub of its source run's actor took it (FIX 5718): `SourceWithheld`
+    /// for `response_erased`. `None` while the source holds it.
+    #[must_use]
+    pub fn source_withheld(&self) -> Option<ShadowUnavailable> {
+        let hold = self.hold.as_ref()?;
+        if (hold.0)() {
+            return None;
+        }
+        Some(ShadowUnavailable::new(
+            ShadowUnavailableReason::SourceWithheld,
+            crate::code_run::RESPONSE_ERASED,
+        ))
     }
 
     /// Where the store's bodies are.

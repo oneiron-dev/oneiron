@@ -3562,7 +3562,8 @@ declare namespace Sdk {
   type CreateNoteFromEntityRequest = { source_ref: string; kind: string };
   type NoteReadRequest = { note_ref: string; reason?: string | null; version?: NoteVersion | null; spans?: NoteReadSpan[] };
   type NoteAccessRequest = { note_ref: string; reason?: string | null };
-  type NoteAuthorship = { operation: string; actor: string; actor_class: string; grant?: string | null; command_hash: number[] };
+  type NoteActor = string;
+  type NoteAuthorship = { operation: string; actor: NoteActor; actor_class: string; grant?: string | null; command_hash: number[] };
   type NoteHistoryView = { version: NoteVersion; operations: NoteAuthorship[]; shallow_since: number[]; complete: boolean };
   type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
   type NoteForkRequest = { note_ref: string; base: NoteVersion; edit: NoteEdit; reason?: string | null };
@@ -3586,7 +3587,6 @@ declare namespace Sdk {
   type EditNoteRequest = { note_ref: string; edit: NoteEdit };
   type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt };
   type NoteRefRequest = { note_ref: string };
-  type NoteActor = string;
   type NoteSeal = { note: string; document: string; frontier: number[]; sealed_by: NoteActor; sealed_at: number };
   type NoteLifecycleStatus = "active" | "sealed" | "archived" | "tombstoned";
   type NoteLifecycleView = { status: NoteLifecycleStatus; seal?: NoteSeal | null };

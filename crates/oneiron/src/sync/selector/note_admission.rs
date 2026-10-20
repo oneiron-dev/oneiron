@@ -26,8 +26,10 @@ pub(crate) fn admit_note_in_txn(
     }
     let birth = crate::note::decode_note_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
     let fold = &admission.fold;
+    // An erased birth author is no one: it never authenticates a writer, who
+    // then needs the independent owner check below.
     if let Some(actor) = writer
-        && actor != birth.author_ref
+        && !birth.author_ref.is(actor)
         && (admission.grant.role != FederationGrantRole::Owner
             || fold.vault_id.is_none()
             || fold.vault_root_is_conflicted()

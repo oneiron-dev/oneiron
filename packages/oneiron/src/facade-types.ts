@@ -6990,8 +6990,10 @@ export type CreateNoteFromEntityRequest = { source_ref: string; kind: string }
 export type NoteReadRequest = { note_ref: string; reason?: string | null; version?: NoteVersion | null; spans?: NoteReadSpan[] }
 /** `oneiron::note::reads::NoteAccessRequest` */
 export type NoteAccessRequest = { note_ref: string; reason?: string | null }
+/** `oneiron::note::proposals::NoteActor` */
+export type NoteActor = string
 /** `oneiron::note::operations::NoteAuthorship` */
-export type NoteAuthorship = { operation: string; actor: string; actor_class: string; grant?: string | null; command_hash: number[] }
+export type NoteAuthorship = { operation: string; actor: NoteActor; actor_class: string; grant?: string | null; command_hash: number[] }
 /** `oneiron::note::reads::NoteHistoryView` */
 export type NoteHistoryView = { version: NoteVersion; operations: NoteAuthorship[]; shallow_since: number[]; complete: boolean }
 /** `oneiron::note::documents::NoteEdit` */
@@ -7038,8 +7040,6 @@ export type EditNoteRequest = { note_ref: string; edit: NoteEdit }
 export type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt }
 /** `oneiron::note::lifecycle::NoteRefRequest` */
 export type NoteRefRequest = { note_ref: string }
-/** `oneiron::note::proposals::NoteActor` */
-export type NoteActor = string
 /** `oneiron::note::lifecycle::NoteSeal` */
 export type NoteSeal = { note: string; document: string; frontier: number[]; sealed_by: NoteActor; sealed_at: number }
 /** `oneiron::note::lifecycle::NoteLifecycleStatus` */
