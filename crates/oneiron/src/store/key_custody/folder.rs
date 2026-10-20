@@ -128,6 +128,15 @@ impl CustodyTarget for FolderTarget {
         for (seq, frame) in frames {
             ship_frame(&dir, seq, &frame)?;
         }
+        // A compare-and-swap on the head checked above, re-read right before
+        // the rename. Under the lock only a writer outside this install can
+        // have moved it (a disaster recovery's old and new installs sharing
+        // the folder): a moved head is covered or moved, never renamed over
+        // (FIX 6394).
+        let now = held_position(&dir);
+        if now != held {
+            return Ok(now.map_or_else(moved, |now| newer_head(&now, batch)));
+        }
         let evidence = switch_head(
             &dir,
             batch.head(),
@@ -163,6 +172,11 @@ pub(super) fn newer_head(held: &CustodyPosition, batch: &CustodyBatch) -> Target
     if batch.covered_by(held) {
         return TargetPublication::Covered;
     }
+    moved()
+}
+
+/// Another writer moved the target's head.
+fn moved() -> TargetPublication {
     TargetPublication::Pending(TargetPending {
         code: PendingCode::Moved,
         detail: "the target holds a newer custody head: another writer moved it".into(),
