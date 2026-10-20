@@ -2045,7 +2045,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/engine/enqueue_claim.rs",
@@ -2058,13 +2058,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/engine/enqueue_record.rs",
+     "purpose": "The one storage write every enqueue door ends in: a fresh row, its readiness, run and dedupe entries, in the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AttemptQueue"
      ],
      "path": "src/attempt_queue/engine/mod.rs",
      "purpose": "The [`AttemptQueue`] handle and its lease state machine",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -2118,6 +2129,21 @@
      "purpose": "Atomic operator placement changes with lease fencing and cycle refusal",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RequeueAttempt",
+      "RequeuedFailure"
+     ],
+     "path": "src/attempt_queue/engine/requeue.rs",
+     "purpose": "Same-intent requeue (FIX 5240): a leased try its worker answered failed goes back to the queue as the SAME…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -6527,7 +6553,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignCapability"
@@ -6535,7 +6561,7 @@
      "path": "src/blob_artifact/esign/capability.rs",
      "purpose": "Session-less, high-entropy capabilities",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 5,
       "struct": 1
      }
@@ -6556,6 +6582,21 @@
       "crate-vis": 2,
       "enum": 3,
       "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignDeliveryLink",
+      "EsignDeliveryMint"
+     ],
+     "path": "src/blob_artifact/esign/delivery_capability.rs",
+     "purpose": "Fresh signing links at delivery export (FIX 5238 option 3, the owner's KEY STORE = A ruling: no recoverable…",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -6682,7 +6723,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 2,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -6757,9 +6798,9 @@
      "path": "src/blob_artifact/esign/outbound.rs",
      "purpose": "SGN-02 uses the ordinary OF-327 gate and durable intent ledger",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -6820,7 +6861,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 3,
+      "fn": 6,
       "re-export": 1,
       "struct": 4
      }
@@ -7032,7 +7073,7 @@
      "purpose": "Regenerable repo HTML content plus an independent data-only field geography",
      "surface": {
       "enum": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 4
      }
     },
@@ -28010,13 +28051,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/effect/effect_grants.rs",
      "purpose": "Standing-grant resolution plus scoped-MCP channel check and grant touch",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -28026,7 +28067,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -28121,7 +28162,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 65,
+      "crate-vis": 66,
       "mod": 1,
       "re-export": 8
      }
@@ -39801,6 +39842,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound/dispatch_pipeline/esign_delivery.rs",
+     "purpose": "E-sign delivery authority (FIX 5238 option 3; an L02 seam that changes no existing body)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound/dispatch_pipeline/frozen_payload.rs",
      "purpose": "Frozen retry-contract payload: the intent bytes a connector reads and the ledger hashes",
      "surface": {
@@ -39824,7 +39875,7 @@
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 1
      }
     },
@@ -39989,7 +40040,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1,
       "re-export": 10
      }
@@ -64137,9 +64188,9 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 45,
+     "files": 47,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Generic LMDB-backed background attempt queue"
     },
@@ -64165,7 +64216,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64970,7 +65021,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65600,9 +65651,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 190,
+   "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4083,
+   "source_files": 4087,
    "test_files": 902
   },
   "oneiron-android": {
@@ -79094,6 +79145,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/esign/delivery_outbox/files.rs",
+     "purpose": "The outbox directory's file custody: its lock, whole-file writes, guarded removals and syncs, its privacy…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/esign/delivery_outbox/signing_links.rs",
+     "purpose": "The signing link an invitation or reminder envelope carries (FIX 5238 option 3): its base, its export-only…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/esign/delivery_outbox/wire.rs",
      "purpose": "The outbox's file codec: the envelope the vault writes, the sender's ack, the lease an envelope names, and…",
      "surface": {
@@ -88872,7 +88943,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 473,
+     "files": 475,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -89322,7 +89393,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 896,
+   "source_files": 898,
    "test_files": 182
   },
   "oneiron-spawn": {
