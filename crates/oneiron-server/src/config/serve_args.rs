@@ -320,6 +320,19 @@ pub struct ServeArgs {
     #[arg(long = "shared-model-root", requires = "managed_by_hypnos")]
     pub shared_model_root: Option<PathBuf>,
 
+    /// Managed mode: the `HOME` the guests' container CLI runs with, an
+    /// absolute directory on the vault's own host that the supervisor
+    /// provisions for the vault's UID (FIX 6876). Only the CLI's environment
+    /// gets it; the engine reads no HOME. One that fails its check is
+    /// ignored with a warning, never a refused start.
+    #[arg(long = "container-home", requires = "managed_by_hypnos")]
+    pub container_home: Option<PathBuf>,
+
+    /// Managed mode: the guests' container CLI's `XDG_RUNTIME_DIR`, as
+    /// `--container-home` is its `HOME`.
+    #[arg(long = "container-runtime-dir", requires = "managed_by_hypnos")]
+    pub container_runtime_dir: Option<PathBuf>,
+
     /// Host address to bind to.
     #[arg(long)]
     pub host: Option<String>,
@@ -614,6 +627,8 @@ impl fmt::Debug for ServeArgs {
             .field("mesh_bind", &self.mesh_bind)
             .field("mesh_relays", &self.mesh_relays)
             .field("shared_model_root", &self.shared_model_root)
+            .field("container_home", &self.container_home)
+            .field("container_runtime_dir", &self.container_runtime_dir)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)

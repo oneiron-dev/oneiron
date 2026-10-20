@@ -252,9 +252,10 @@ names the field and never its value:
   the like). An import queue with no `claude_code_root` and `codex_root` of
   its own would read the defaults under HOME, so it stops the vault too.
 
-The supervisor binds six more settings on argv alone; a settings file that
+The supervisor binds eight more settings on argv alone; a settings file that
 names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
-`mesh_relays` or `shared_model_root` is refused `SupervisorOwned`:
+`mesh_relays`, `shared_model_root`, `container_home` or
+`container_runtime_dir` is refused `SupervisorOwned`:
 
 - `--browser-runtime <path>` and `--desktop-runtime <path>`: the browser and
   desktop guests' container CLI, an absolute path on the vault's own host or
@@ -278,6 +279,23 @@ names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
   `shared_model_root_ignored` with its cause (and named in a settings refusal
   that ends the start before logging begins), never a refused start; a model
   directory only it would admit is then refused `OutsideVault`.
+- `--container-home <path>` and `--container-runtime-dir <path>` (managed
+  only, never a vault VM): the `HOME` and `XDG_RUNTIME_DIR` the guests'
+  container CLI runs with, so a rootless CLI under the vault's UID finds its
+  per-UID storage and runtime directory. Each must be an absolute path with
+  no `..` part and an existing directory owned by the vault's UID; the
+  supervisor makes both, the vault makes neither. One that fails its check
+  is ignored, logged `container_dir_ignored` with its `flag` and `cause`
+  (`not_absolute`, `parent_component`, `missing`, `not_directory`,
+  `not_owned`, `unreadable` or `unsupported`), never a refused start. An
+  engine from before these flags refuses them, so a supervisor passes them
+  only to engines at or after the merge that added them.
+
+The container CLI gets `HOME` and `XDG_RUNTIME_DIR` from these two flags
+alone. Every call the engine makes to it for a guest (run, inspect and
+removal) otherwise runs with `PATH=/usr/bin:/bin` and nothing else, as on a
+self-hosted server, and a flag that is absent or ignored leaves its variable
+out. The engine itself still reads no HOME or XDG directory.
 
 A vault VM reads the guest runtimes and the mesh settings from the one-line
 files `/config/browser-runtime`, `/config/desktop-runtime`, `/config/mesh-bind`
@@ -332,6 +350,44 @@ keys, unwritable by the vault. Before an erase the supervisor sends `training_pu
 on the ctl socket: the vault records one purge per scope and answers
 `not_needed`, `pending` (with `purge_unsent`, `receipt_pending` or
 `purge_rejected`) or `done`, and the erase waits for `done`.
+
+A self-hosted vault (plain `oneiron-server serve`) shares through the anonymous
+training window instead, and only with two argv flags together:
+`--publisher-training-outbox-dir <absolute path>` and
+`--publisher-training-self-host-shipper` (off by default; managed serve reads it
+but never runs it, and the shipper flag alone warns once and does nothing). The
+vault then fetches the intake's public keys from
+`https://oneiron.dev/feedback/training/v1/keys`
+(`--publisher-training-intake-origin` names another HTTPS origin) at start and
+hourly, and writes `intake-recipient.v1` and `intake-receipt-key.v1` from them.
+Every 30 s it sends the uploads and withdrawals that are due over HTTPS, and at
+most every 15 minutes it asks for receipts; a pass with nothing due sends
+nothing. Uploads carry each released offer's sealed text, its chunk files as
+written (only the intake's key opens them), in byte ranges, with its code-only
+facts: the month's scope, the month's codes for the conversation, the people and
+the worlds, the filter, the sizes and the digests. Each offer goes under its own
+code, a 64-hex handle the vault made once and keeps, which is the only way to
+withdraw it. Withdrawals carry those codes alone: every offer a deleted
+conversation or message, a world turned private, a person's erasure, a newer
+offer of the same conversation or the vault's erase withdraws, sent until the
+intake signs it `removal_pending`. Receipt asks carry the codes whose next state
+is owed, those pending removal among them, until they read `removed`. No request
+carries an account, a bearer, a cookie, a user agent, an install key, a vault id
+or an IP address of the vault's; the intake sees the connection, as any HTTPS
+server does. Every receipt is checked against the intake's receipt keys (the
+current one or the one before it) and kept in the vault: `uploading`, `accepted`
+(held whole in quarantine, not yet trainable), `eligible` or `refused` after the
+intake's own filter, `rejected`, `conflict` or `invalid_submission` (sent again
+later), `removal_pending`, then `removed`. The offer's files go once it reads
+`eligible`, `refused` or `removed`, or once the vault withholds or withdraws it;
+its code stays in the vault after them, and the vault's training key is
+destroyed only after every offer of an erase reads `removed`. Requests start at
+19 MiB; a `413` or a request that runs out of time (30 s, plus a second for each
+64 KiB) makes them smaller for the rest of the process, a `429` or `503` waits
+what the intake names, and no reply waits 30 s doubling to 15 minutes, without
+end. Nothing is dropped or cut short, and a restart starts the waits afresh.
+Turning "Learn from my conversations" off pauses uploads; withdrawals and
+receipts go on.
 
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
@@ -2509,9 +2565,10 @@ Content-Type: application/json
 
 - The binding is the tagger the server has loaded, never one the caller
   names: its model, `oneironer/local@<checkpoint_sha16>`, in the `oneironer`
-  slot, at the section's named `tier`, else at the tier the row already
-  holds. That is the binding the tagger checks the vault against, so the
-  loaded tagger is the one selected.
+  slot, at the section's named `tier`, else at the loaded bundle's
+  `stack_sha16`, never the tier the row already holds. That is the binding
+  the tagger checks the vault against, so the loaded tagger is the one
+  selected.
 - Both input fields are optional and only compare. `expected_checkpoint_sha16`
   and `expected_stack_sha16` must match the loaded checkpoint and stack, or
   the call is refused. `{}` binds whatever is loaded.
@@ -2531,9 +2588,29 @@ Content-Type: application/json
   match, and when the caller is not the vault's owner.
 
 A vault with no manifest tags with the host's `[oneironer]` section as its
-selection, and `vault.models.roles.invoke` serves `extraction_encoder` from
-that section for it. Its receipt names the loaded tagger: role
-`extraction_encoder`, slot `oneironer`, revision the configured
-`checkpoint_sha16`, route `on_device`, the section's provider, and the named
-tier, else `extraction_encoder`. Every other role, and every role of a vault
-with a manifest, is served from the manifest as before.
+selection, and `vault.models.roles.read` and `vault.models.roles.invoke`
+both report `extraction_encoder` from that section for it, with one receipt
+that names the loaded tagger: role `extraction_encoder`, slot `oneironer`,
+revision the configured `checkpoint_sha16`, route `on_device`, the section's
+provider, and its tier. Every other role, and every role of a vault with a
+manifest, is read and served from the manifest as before.
+
+Bind and that receipt name the tier in one order: the section's named
+`tier`; else the `stack_sha16` of the model card the probe accepted, the
+loaded bundle; else the configured `stack_sha16`; else the configured
+`checkpoint_sha16`. The last two only name a slot whose probe has not
+accepted a card yet, such as an endpoint that has not answered: they are
+configured identity, not a bundle a card attested. Neither ever takes the
+manifest row's old tier or `extraction_encoder`.
+
+The startup probe logs the bundle that serves, so the log alone says which
+one answers:
+
+```text
+tagger probe succeeded provider=local label_count=53 links=false checkpoint_sha16=0123456789abcdef stack_sha16=<16 hex> decode_revision=oneironer-decode-v1 stack_pinned=true
+```
+
+`checkpoint_sha16` and `stack_sha16` come from the accepted card;
+`decode_revision` is the native decoder this build runs, `-` for an
+endpoint, whose card names none. `stack_pinned` says whether the section
+pins `stack_sha16` too.
