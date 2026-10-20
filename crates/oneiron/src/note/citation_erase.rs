@@ -1,5 +1,4 @@
-//! Citation scrubs of deleted sources: a delete's default mode and the
-//! hard-erase dependency fences. No source text or substring matching is stored here.
+//! Hard-erase dependency fences. No source text or substring matching is stored here.
 
 use crate::error::RecordError;
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -81,26 +80,6 @@ pub(crate) fn erase_citations_in_txn(
         super::citation_scrub::scrub_pending(vault, txn, *citing)?;
     }
     Ok(dependents)
-}
-
-/// A delete's default mode (C050), in both feature graphs: each dependent
-/// document loses its active pins of `id` in this writer. It writes no fence,
-/// source marker or authority floor, so the citing documents stay readable
-/// and the delete stays restorable; their history and saved receipts keep the
-/// old pins. Returns the documents that changed, which the caller notifies
-/// only after its transaction commits.
-pub(crate) fn scrub_deleted_citations_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-) -> Result<Vec<EntityId>> {
-    let mut changed = Vec::new();
-    for citing in super::pin_index::dependents(&vault.store, txn, *id)? {
-        if citing != *id && super::citation_scrub::scrub_deleted(vault, txn, citing, *id)? {
-            changed.push(citing);
-        }
-    }
-    Ok(changed)
 }
 
 pub(super) fn pin_is_erased(
