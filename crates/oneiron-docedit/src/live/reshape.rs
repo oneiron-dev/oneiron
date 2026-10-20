@@ -1,8 +1,8 @@
 //! Shape changes to a written table or chart at export (OF-510). A table's
-//! rows and columns are rewritten over its grid, and its frame takes the
-//! grid's size; a chart's plots, series and categories are rewritten over
-//! its part and its caches, and its own embedded workbook is edited in
-//! place, only the cells its series read written (ARCH-0077: caches and
+//! rows and columns are rewritten over its grid by identity, and its frame
+//! takes the grid's size; a chart's plots, series and categories are
+//! rewritten over its part and its caches, and its own embedded workbook is
+//! edited in place, only the cells its series read written (ARCH-0077: caches and
 //! workbooks are projections of one dataset); a workbook that cannot be
 //! edited so is rebuilt from the live data, the reason named. A chart
 //! changes type as PowerPoint's Change Chart Type does, for the chart or
@@ -13,27 +13,27 @@
 //! workbook's other cells; a new series is formatted after a held one.
 
 mod series;
+mod table;
 mod workbook;
+
+pub(super) use table::table;
 
 use super::LiveError;
 use super::conversion::{Conversion, RebuildReason};
 use super::convert;
 use super::held::{self, C, children};
-use super::pptx::{ChartKind, ChartSeries, ChartSource, NodePayload, WRITTEN_FRAME, WRITTEN_TABLE};
+use super::pptx::{ChartKind, ChartSeries, ChartSource, NodePayload, WRITTEN_FRAME};
 use crate::design_plan::{Cell, Column, ColumnKind, Dataset};
-use crate::edit::xml::{self, A, P, R};
+use crate::edit::xml::{self, P, R};
 use crate::native_patch::{Target, chart_data, chart_workbook, number};
 use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::retained_opc::Package;
 use std::collections::{BTreeMap, BTreeSet};
-use std::ops::Range;
 
 /// The one sheet of a rewritten chart's embedded workbook.
 const SHEET: &str = "Sheet1";
 /// A rewrite that does not read back as the live data refuses.
 const READ_BACK: &str = "a rewritten chart does not read back as the live data";
-/// The merge attributes a new cell never carries.
-const MERGE: &[&str] = &["gridSpan", "rowSpan", "hMerge", "vMerge"];
 
 fn piece<'b>(bytes: &'b [u8], tree: &XmlTree, at: usize) -> &'b [u8] {
     &bytes[tree.nodes[at].span.clone()]
@@ -41,34 +41,6 @@ fn piece<'b>(bytes: &'b [u8], tree: &XmlTree, at: usize) -> &'b [u8] {
 
 fn close(node: &Node) -> Vec<u8> {
     format!("</{}>", node.qualified).into_bytes()
-}
-
-/// `node`'s open tag without the named attributes.
-fn open_without(bytes: &[u8], node: &Node, names: &[&str]) -> Vec<u8> {
-    let open = xml::open_tag(bytes, node);
-    let base = node.span.start;
-    let mut cuts: Vec<Range<usize>> = names
-        .iter()
-        .filter_map(|name| node.attr_spans.get(*name))
-        .map(|span| {
-            let mut start = span.start - base;
-            while start > 0 && open[start - 1].is_ascii_whitespace() {
-                start -= 1;
-            }
-            start..span.end - base
-        })
-        .collect();
-    cuts.sort_by_key(|cut| cut.start);
-    let mut out = Vec::with_capacity(open.len());
-    let mut at = 0;
-    for cut in cuts {
-        if cut.start >= at && cut.end <= open.len() {
-            out.extend_from_slice(&open[at..cut.start]);
-            at = cut.end;
-        }
-    }
-    out.extend_from_slice(&open[at..]);
-    out
 }
 
 /// The graphic frame with this native id in a slide part.
@@ -79,214 +51,6 @@ pub(super) fn frame_of(tree: &XmlTree, native: u32) -> Option<usize> {
             && xml::path(tree, at, &[(P, "nvGraphicFramePr"), (P, "cNvPr")])
                 .is_some_and(|c_nv_pr| tree.nodes[c_nv_pr].attr("id") == Some(id.as_str()))
     })
-}
-
-/// Rewrite the table in `slide`'s frame `native` to the grid of `wanted`
-/// (header row first, one cell per column). Kept rows and cells keep their
-/// bytes, with merge spans clamped to the new grid; a new column takes the
-/// last column's width, a new row the last row's height, and a new cell its
-/// template cell's properties, no merge, and its text. The caller writes
-/// the kept cells' text after. With `fit`, the frame's extent becomes the
-/// grid's, its columns' widths by its rows' heights, as PowerPoint lays a
-/// table out; the extent written, when it changed.
-pub(super) fn table(
-    package: &mut Package,
-    slide: &str,
-    native: u32,
-    wanted: &[Vec<String>],
-    fit: bool,
-) -> Result<Option<(i64, i64)>, LiveError> {
-    let refuse = LiveError::Invalid(WRITTEN_TABLE);
-    let (bytes, tree) = xml::read(package, slide)?;
-    let frame = frame_of(&tree, native).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
-    let tbl = held::table_of(&tree, frame).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
-    let cols = wanted.first().map_or(0, Vec::len);
-    if cols == 0 || wanted.iter().any(|row| row.len() != cols) {
-        return Err(refuse);
-    }
-    let grid = xml::child(&tree, tbl, A, "tblGrid").ok_or(refuse.clone())?;
-    let widths: Vec<usize> = children(&tree, grid, A, "gridCol").collect();
-    let rows: Vec<usize> = children(&tree, tbl, A, "tr").collect();
-    let (Some(&last_col), Some(&last_row)) = (widths.last(), rows.last()) else {
-        return Err(refuse);
-    };
-    let col_name = tree.nodes[last_col].qualified.clone();
-    let mut grid_xml = xml::open_tag(&bytes, &tree.nodes[grid]);
-    for col in 0..cols {
-        match widths.get(col) {
-            Some(&kept) => grid_xml.extend_from_slice(piece(&bytes, &tree, kept)),
-            None => grid_xml.extend(
-                format!(
-                    r#"<{col_name} w="{}"/>"#,
-                    xml::escape_attribute(tree.nodes[last_col].attr("w").unwrap_or("0"))
-                )
-                .into_bytes(),
-            ),
-        }
-    }
-    grid_xml.extend(close(&tree.nodes[grid]));
-    let mut rows_xml = Vec::new();
-    for (row, line) in wanted.iter().enumerate() {
-        let Some(&tr) = rows.get(row) else {
-            let template: Vec<usize> = children(&tree, last_row, A, "tc").collect();
-            rows_xml.extend(open_without(&bytes, &tree.nodes[last_row], &[]));
-            for (col, text) in line.iter().enumerate() {
-                let tc = *template
-                    .get(col)
-                    .or(template.last())
-                    .ok_or(refuse.clone())?;
-                rows_xml.extend(new_cell(&bytes, &tree, tc, text));
-            }
-            rows_xml.extend(close(&tree.nodes[last_row]));
-            continue;
-        };
-        let cells: Vec<usize> = children(&tree, tr, A, "tc").collect();
-        rows_xml.extend(xml::open_tag(&bytes, &tree.nodes[tr]));
-        for (col, text) in line.iter().enumerate() {
-            match cells.get(col) {
-                Some(&tc) => rows_xml.extend(kept_cell(
-                    &bytes,
-                    &tree,
-                    tc,
-                    wanted.len() - row,
-                    cols - col,
-                )?),
-                None => {
-                    let tc = *cells.last().ok_or(refuse.clone())?;
-                    rows_xml.extend(new_cell(&bytes, &tree, tc, text));
-                }
-            }
-        }
-        for &child in &tree.nodes[tr].children {
-            if !tree.nodes[child].is(A, "tc") {
-                rows_xml.extend_from_slice(piece(&bytes, &tree, child));
-            }
-        }
-        rows_xml.extend(close(&tree.nodes[tr]));
-    }
-    let mut out = xml::open_tag(&bytes, &tree.nodes[tbl]);
-    let mut placed = false;
-    for &child in &tree.nodes[tbl].children {
-        let node = &tree.nodes[child];
-        if node.is(A, "tblGrid") {
-            out.extend_from_slice(&grid_xml);
-        } else if node.is(A, "tr") {
-            if !placed {
-                out.extend_from_slice(&rows_xml);
-                placed = true;
-            }
-        } else {
-            out.extend_from_slice(piece(&bytes, &tree, child));
-        }
-    }
-    out.extend(close(&tree.nodes[tbl]));
-    let mut edits = vec![(tree.nodes[tbl].span.clone(), out)];
-    // The frame's extent: each column's width (a new one's from the last)
-    // summed, by each row's height (a new one's from the last) summed.
-    let size = |at: usize, name: &str| -> Option<i64> {
-        tree.nodes[at].attr(name)?.trim().parse::<i64>().ok()
-    };
-    let wide = (0..cols).try_fold(0_i64, |sum, col| {
-        sum.checked_add(size(*widths.get(col).unwrap_or(&last_col), "w")?)
-    });
-    let high = (0..wanted.len()).try_fold(0_i64, |sum, row| {
-        sum.checked_add(size(*rows.get(row).unwrap_or(&last_row), "h")?)
-    });
-    let ext = xml::path(&tree, frame, &[(P, "xfrm"), (A, "ext")]);
-    let fitted = match (fit, wide, high, ext) {
-        (true, Some(cx), Some(cy), Some(ext))
-            if size(ext, "cx") != Some(cx) || size(ext, "cy") != Some(cy) =>
-        {
-            let node = &tree.nodes[ext];
-            edits.push(xml::set_attribute(&bytes, node, "cx", &cx.to_string()));
-            edits.push(xml::set_attribute(&bytes, node, "cy", &cy.to_string()));
-            Some((cx, cy))
-        }
-        _ => None,
-    };
-    let next = xml::splice(&bytes, edits)?;
-    package.replace_xml_part(slide, next)?;
-    let read = xml::read(package, slide)?.1;
-    let shape = frame_of(&read, native)
-        .and_then(|frame| held::table_cells(&read, frame))
-        .map(|grid| (grid.len(), grid.iter().all(|row| row.len() == cols)));
-    if shape != Some((wanted.len(), true)) {
-        return Err(refuse);
-    }
-    Ok(fitted)
-}
-
-/// A kept cell, its merge spans clamped to the rows and columns left.
-fn kept_cell(
-    bytes: &[u8],
-    tree: &XmlTree,
-    tc: usize,
-    rows_left: usize,
-    cols_left: usize,
-) -> Result<Vec<u8>, LiveError> {
-    let node = &tree.nodes[tc];
-    let base = node.span.start;
-    let mut edits = Vec::new();
-    for (name, left) in [("gridSpan", cols_left), ("rowSpan", rows_left)] {
-        if node
-            .attr(name)
-            .and_then(|span| span.trim().parse::<usize>().ok())
-            .is_some_and(|span| span > left)
-        {
-            let (range, value) = xml::set_attribute(bytes, node, name, &left.max(1).to_string());
-            edits.push((range.start - base..range.end - base, value));
-        }
-    }
-    Ok(xml::splice(&bytes[node.span.clone()], edits)?)
-}
-
-/// A new cell from a template cell: its open tag without merge attributes,
-/// its body and first paragraph's properties, its first run's properties
-/// on each line of `text`, and its cell properties.
-fn new_cell(bytes: &[u8], tree: &XmlTree, tc: usize, text: &str) -> Vec<u8> {
-    let node = &tree.nodes[tc];
-    let a = xml::prefix(node);
-    let q = |name: &str| xml::qualify(a, name);
-    let part = |at: Option<usize>| at.map_or(&[][..], |at| piece(bytes, tree, at));
-    let body = xml::child(tree, tc, A, "txBody");
-    let first = body.and_then(|body| xml::child(tree, body, A, "p"));
-    let body_pr = body.and_then(|body| xml::child(tree, body, A, "bodyPr"));
-    let list = body.and_then(|body| xml::child(tree, body, A, "lstStyle"));
-    let p_pr = first.and_then(|p| xml::child(tree, p, A, "pPr"));
-    let end = first.and_then(|p| xml::child(tree, p, A, "endParaRPr"));
-    let r_pr = body
-        .and_then(|body| held::within(tree, body).find(|&at| tree.nodes[at].is(A, "r")))
-        .and_then(|run| xml::child(tree, run, A, "rPr"));
-    let mut out = open_without(bytes, node, MERGE);
-    out.extend(format!("<{}>", q("txBody")).into_bytes());
-    match body_pr {
-        Some(at) => out.extend_from_slice(piece(bytes, tree, at)),
-        None => out.extend(format!("<{}/>", q("bodyPr")).into_bytes()),
-    }
-    out.extend_from_slice(part(list));
-    for line in text.split('\n') {
-        out.extend(format!("<{}>", q("p")).into_bytes());
-        out.extend_from_slice(part(p_pr));
-        if !line.is_empty() {
-            out.extend(format!("<{}>", q("r")).into_bytes());
-            out.extend_from_slice(part(r_pr));
-            out.extend(
-                format!(
-                    "<{t}>{}</{t}></{r}>",
-                    escape_text(line),
-                    t = q("t"),
-                    r = q("r")
-                )
-                .into_bytes(),
-            );
-        }
-        out.extend_from_slice(part(end));
-        out.extend(format!("</{}>", q("p")).into_bytes());
-    }
-    out.extend(format!("</{}>", q("txBody")).into_bytes());
-    out.extend_from_slice(part(xml::child(tree, tc, A, "tcPr")));
-    out.extend(close(node));
-    out
 }
 
 /// One live series' data as the rewrite writes it.

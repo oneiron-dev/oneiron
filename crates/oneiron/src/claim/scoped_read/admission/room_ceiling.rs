@@ -53,7 +53,9 @@ impl ScopedRead<'_> {
     /// narrows the turn, for this read and every later one, and never widens
     /// it. A thread's ceiling (`turn.branch`) re-proves standing on that
     /// thread instead, which its Ready receipt gives an agent off the room
-    /// (OF-529), and takes no live entry. A refresh keeps the ceiling
+    /// (OF-529), and takes no live entry; an Owner or Admin reading a private
+    /// thread off the room meets its own clearance beside its members'
+    /// (FIX 6497), as the rebuild does. A refresh keeps the ceiling
     /// personal or held as `turn` is ([`RoomTurnCeiling::narrowed_by`]).
     pub(super) fn room_ceiling_in(
         &self,
@@ -124,6 +126,19 @@ impl ScopedRead<'_> {
                 // The members' clearance alone: an entry ref is no member.
                 let clearance = crate::context_board::room_clearance_in(self.vault, txn, &roster)?;
                 current.terms.meet_clearance(clearance.as_ref());
+                // The vault's Owner or an Admin reading a private thread off
+                // the room beside its members meets its own too (FIX 6497).
+                if let Some(thread) = turn.branch {
+                    let own = crate::context_board::off_room_reader_clearance_in(
+                        self.vault,
+                        txn,
+                        turn.room,
+                        thread,
+                        &roster,
+                        turn.caller,
+                    )?;
+                    current.terms.meet_clearance(own.as_ref());
+                }
                 if let Some(live) = &live {
                     let unknown = self.vault.live_speaker_clearance_in(txn, live)?;
                     current.terms.meet_clearance(unknown.as_ref());
