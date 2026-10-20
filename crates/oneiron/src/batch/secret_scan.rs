@@ -15,7 +15,9 @@ pub use self::lift_history::{
     SecretLiftClose, SecretLiftHistoryProposal, SecretLiftProgress, SecretLiftReceipt,
     SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner,
 };
-pub(crate) use self::lift_history::{enqueue_lift_in_txn, run_lift_pass};
+pub(crate) use self::lift_history::{
+    enqueue_known_remark_in_txn, enqueue_lift_in_txn, run_lift_pass,
+};
 pub(crate) use self::mask::admit::{
     Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
     scan_document_in_txn,

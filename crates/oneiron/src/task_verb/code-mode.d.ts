@@ -1873,7 +1873,7 @@ declare namespace Sdk {
   type SecretLiftClose = { proposal: string; reason: LiftCloseReason };
   type SecretLiftRequest = { start?: boolean; close?: SecretLiftClose | null };
   type SecretScanMode = "on" | "off";
-  type LiftTrigger = "switch" | "owner";
+  type LiftTrigger = "switch" | "owner" | "known_value";
   type LiftFamily = "records" | "attempts" | "side_rows" | "carriers";
   type LiftCounts = { family: LiftFamily; read: number; masked: number; proposals: number; failed: number };
   type SecretLiftProgress = { run_id: string; trigger: LiftTrigger; requested_at: number; family: LiftFamily; retrying: number; counts: LiftCounts[] };

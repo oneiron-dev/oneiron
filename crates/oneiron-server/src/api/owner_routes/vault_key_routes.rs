@@ -81,6 +81,16 @@ async fn prf_input(
     Ok(Json(input))
 }
 
+/// Secret text a request carries, read straight into a guard that wipes it
+/// when it drops (FIX 6334). It neither prints nor serializes.
+struct SecretText(Zeroizing<String>);
+
+impl<'de> Deserialize<'de> for SecretText {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|text| Self(Zeroizing::new(text)))
+    }
+}
+
 /// A secret the vault key unlocks or seals with.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case", tag = "method")]
@@ -88,7 +98,7 @@ enum KeySecret {
     /// The vault password.
     Password { password: String },
     /// A passkey's PRF output at its input: 32 bytes, hex or base64url.
-    Passkey { credential: String, prf: String },
+    Passkey { credential: String, prf: SecretText },
 }
 
 /// `POST /v1/owner/vault-key/unlock`: holds the vault key on this server, from
@@ -108,8 +118,8 @@ async fn unlock(
                 vault.unlock_vault_key_with_password(password.as_bytes())?;
             }
             KeySecret::Passkey { credential, prf } => {
-                let prf = prf_bytes(prf)?;
-                vault.unlock_vault_key_with_passkey(&credential, *prf)?;
+                let prf = prf_bytes(&prf)?;
+                vault.unlock_vault_key_with_passkey(&credential, &prf)?;
             }
         }
         Ok(view::report(vault)?)
@@ -154,7 +164,7 @@ struct PasskeyRequest {
     credential: String,
     /// The PRF output at `GET /vault-key/prf-input`: 32 bytes, hex or
     /// base64url.
-    prf: String,
+    prf: SecretText,
 }
 
 /// `POST /v1/owner/vault-key/passkeys`: wraps the vault key to a passkey by
@@ -167,13 +177,13 @@ async fn add_passkey(
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let info = blocking(move || -> OwnerResult<VaultKeyWrapInfo> {
-        let prf = prf_bytes(request.prf)?;
+        let prf = prf_bytes(&request.prf)?;
         let vault = held(server.vault())?;
         Ok(vault.add_vault_key_wrap_as(
             &owner,
             NewVaultKeyWrap::Passkey {
                 credential: &request.credential,
-                prf: *prf,
+                prf: &prf,
             },
         )?)
     })
@@ -266,7 +276,7 @@ fn held(vault: &oneiron::Vault) -> OwnerResult<&oneiron::Vault> {
     Ok(vault)
 }
 
-fn prf_bytes(prf: String) -> OwnerResult<Zeroizing<[u8; 32]>> {
-    let prf = Zeroizing::new(prf);
-    secret32(prf.as_bytes(), "a PRF output").map_err(|error| OwnerError::Invalid(error.to_string()))
+fn prf_bytes(prf: &SecretText) -> OwnerResult<Zeroizing<[u8; 32]>> {
+    secret32(prf.0.as_bytes(), "a PRF output")
+        .map_err(|error| OwnerError::Invalid(error.to_string()))
 }

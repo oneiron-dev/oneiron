@@ -27922,6 +27922,8 @@ pub enum LiftTrigger {
     Switch,
     #[serde(rename = "owner")]
     Owner,
+    #[serde(rename = "known_value")]
+    KnownValue,
 }
 
 /// `oneiron::batch::secret_scan::lift_history::LiftFamily`.
