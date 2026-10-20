@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1128 code-mode rows (1095 host rows, 33 run rows), 3810 declarations.
-// Replies: 1008 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1130 code-mode rows (1097 host rows, 33 run rows), 3819 declarations.
+// Replies: 1010 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1643,6 +1643,15 @@ declare namespace Sdk {
   type CleanupKind = "claimless_extraction_person" | "empty_summary" | "completed_task" | "completed_attempt" | "retained_note";
   type CleanupCandidate = { entity: EntityId; kind: CleanupKind };
   type CleanupRunView = { attempt: string; posture: CleanupPosture; candidates: CleanupCandidate[]; proposal?: EntityId | null; archived: EntityId[]; digest?: EntityId | null };
+  type UsageRepairListRequest = Record<string, never>;
+  type UndecodableUsageReason = "stored_event_decode_failed";
+  type UndecodableUsageRow = { rowRef: string; byteLength: number; hash: string; decodeReason: UndecodableUsageReason };
+  type UndecodableUsageList = { events: UndecodableUsageRow[] };
+  type UsageRepairRemoveRequest = { rowRef: string; expectedHash: string };
+  type UsageRepairReason = "undecodable_event_removed";
+  type UsageRepairAuthority = { kind: "owner"; ref: string } | { kind: "grant"; ref: string };
+  type UsageRepairSurface = { kind: "this_install" } | { kind: "linked_device"; machine: string } | { kind: "hosted_console" };
+  type UsageRepairReceipt = { receiptId: string; owner: string; vaultId: string; rowRef: string; hash: string; byteLength: number; reason: UsageRepairReason; actorRef: string; actorClass: string; authority: UsageRepairAuthority; surface: UsageRepairSurface; recordedAt: number };
   type EntityMentionRequest = { candidates: EntityResolutionCandidate[]; high_collision_mention?: boolean };
   type LegalHoldTarget = { record: EntityId } | { gate_partition: EntityId | null };
   type LegalHoldPlaceRequest = { targets: LegalHoldTarget[]; matter_ref?: string | null };
@@ -6526,6 +6535,14 @@ declare const vault: Sdk.VaultHost & {
     arm(input: Sdk.ArmTurnProgram): Promise<Sdk.TurnProgramRegistration | StoredResult>;
     /** Disarms one of the caller's own armed turn programs; true when it was armed. */
     disarm(input: Sdk.DisarmTurnProgram): Promise<boolean | StoredResult>;
+  };
+  usage: {
+    events: {
+      /** Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb. */
+      remove_undecodable(input: Sdk.UsageRepairRemoveRequest): Promise<Sdk.UsageRepairReceipt | StoredResult>;
+      /** Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb. */
+      undecodable(input: Sdk.UsageRepairListRequest): Promise<Sdk.UndecodableUsageList | StoredResult>;
+    };
   };
   vectors: {
     /** Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically. */
