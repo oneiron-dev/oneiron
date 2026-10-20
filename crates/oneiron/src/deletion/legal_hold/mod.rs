@@ -345,6 +345,9 @@ impl Vault {
                     now,
                 )?;
             }
+            // A birth these holds kept from an erased actor's scrub goes with
+            // them (FIX 6280); a row another hold still names keeps its own.
+            super::actor_fields::rerun_birth_actor_scrubs_in_txn(self, txn)?;
             Ok((actor, kept, lifting.into_keys().collect::<Vec<_>>()))
         })?;
         let memory = self.memory(actor, EdgeActorClass::Human);
@@ -582,10 +585,12 @@ impl Vault {
     /// Runs each owner-confirmed erase whose record nothing holds now.
     /// A failed one stays for the next pass.
     fn run_due_legal_hold_erases(&self) -> Result<u64> {
-        let due = {
-            let txn = self.store.env.read_txn()?;
-            hold_store::due_erases_in_txn(&self.store, &txn)?
-        };
+        // A birth a released hold kept from an erased actor's scrub goes
+        // first, whether or not an erase waits (FIX 6280).
+        let due = self.with_write_txn_grouped(|txn| {
+            super::actor_fields::rerun_birth_actor_scrubs_in_txn(self, txn)?;
+            hold_store::due_erases_in_txn(&self.store, txn)
+        })?;
         let mut erased = 0_u64;
         for record in due {
             match self.due_confirmed_erase(&record) {

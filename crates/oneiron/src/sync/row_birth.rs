@@ -23,6 +23,7 @@ use crate::error::{Error, Result};
 use crate::provenance::birth::{RowBirth, WithheldKey, stamp_replicated_row_birth_in_txn};
 use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+pub(crate) mod actor_erase;
 
 /// The window map that carries row births.
 pub(crate) const ROW_BIRTHS_MAP: &str = "row_births";
@@ -50,7 +51,9 @@ fn owner(key: &str) -> Option<EntityId> {
 /// Mirrors `id`'s stored birth into `doc`. An equal carrier stays; a
 /// different one is replaced, because the local row is the authority for its
 /// own birth. A document birth is not: it stood in until the origin's birth
-/// landed, so it never goes over a carried birth that decodes (FIX 1180).
+/// landed, so it never goes over a carried birth that decodes (FIX 1180). A
+/// row with no birth here keeps its carrier, unless this vault erased the
+/// carrier's maker and no legal hold keeps the row (FIX 6279, 6280).
 /// Returns whether the map changed.
 pub(in crate::sync) fn mirror_local_birth(
     vault: &Vault,
@@ -58,7 +61,7 @@ pub(in crate::sync) fn mirror_local_birth(
     id: &EntityId,
 ) -> Result<bool> {
     let Some(birth) = vault.row_birth(id)? else {
-        return Ok(false);
+        return actor_erase::drop_erased_carrier(vault, doc, id);
     };
     let bytes = encode(&birth)?;
     let map = births(doc);

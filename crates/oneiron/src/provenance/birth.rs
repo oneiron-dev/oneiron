@@ -12,6 +12,8 @@
 //! skill lists the rows it produced (ARCH-0078: "Read that ref backwards and a
 //! task has its artifacts").
 
+use std::collections::BTreeSet;
+
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -21,8 +23,9 @@ use super::made_by::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::side_table::{self, Named, Raw, SideTable};
-use crate::store::ManifestDbs;
+use crate::store::{ManifestDbs, Store};
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 pub(crate) mod checkpoint;
@@ -452,13 +455,18 @@ pub(crate) fn stamp_birth_if_absent_in_txn(
 /// index is written from the envelope alone, so the born-from read still
 /// lists the row once the trigger lands. A document birth stamped before the
 /// carried one landed was a stand-in: the carried birth replaces it (Engine
-/// 10-18, FIX 1180: the origin's carried birth wins).
+/// 10-18, FIX 1180: the origin's carried birth wins). A birth whose process
+/// actor this vault hard-erased never lands (FIX 6279): this vault's own
+/// `dt:` marker for the actor, read in this transaction, decides, as
+/// `deletion::ACTOR_ERASE_CARRIER_SOURCE` says; never an absent row or a
+/// peer's word.
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConfig`] for a malformed envelope or an absent row;
-/// [`Error::InvariantViolation`] when the row already has a different birth
-/// that is not a document birth; storage errors as they occur.
+/// [`Error::InvalidConfig`] for a malformed envelope, an absent row or an
+/// actor erased here; [`Error::InvariantViolation`] when the row already has
+/// a different birth that is not a document birth; storage errors as they
+/// occur.
 pub(crate) fn stamp_replicated_row_birth_in_txn(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
@@ -469,6 +477,12 @@ pub(crate) fn stamp_replicated_row_birth_in_txn(
     if !live_entity_row_in_txn(store, txn, row)?.is_live() {
         return Err(Error::InvalidConfig(
             "a replicated row birth names a row this transaction does not hold".into(),
+        ));
+    }
+    let maker = &birth.made_by.process.actor;
+    if store.port_deletion_marked(txn, DeletionMarker::HardDelete, maker)? {
+        return Err(Error::InvalidConfig(
+            "a replicated row birth names an actor this vault erased".into(),
         ));
     }
     match ROW_BIRTH.get(store, txn, row)? {
@@ -533,10 +547,14 @@ pub(crate) fn erase_row_birth_in_txn(
 }
 
 /// Erasing `actor` (FIX 6074): every birth that names it as its process
-/// actor goes, with its born-from index row, in the erase's own transaction.
-/// A birth has no erased form (its process names one actor), so the born
-/// rows and their content stay and their births read unknown, as a KS-7
-/// restore leaves out a birth whose actor does not open.
+/// actor goes, with its born-from index row, in the erase's own transaction,
+/// and so does every window carrier of one this vault keeps (FIX 6279). A
+/// birth has no erased form (its process names one actor), so the born rows
+/// and their content stay and their births read unknown, as a KS-7 restore
+/// leaves out a birth whose actor does not open. A born row a legal hold
+/// keeps keeps its birth and its carrier (FIX 6280, ARCH-0038: every
+/// destructive path checks) until the hold lifts:
+/// [`release_held_births_in_txn`] drops them then.
 ///
 /// # Errors
 ///
@@ -546,12 +564,69 @@ pub(crate) fn erase_birth_actor_in_txn(
     wtxn: &mut RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    for (row, birth) in ROW_BIRTH.scan(&vault.store, wtxn)? {
-        if birth.made_by.process.actor == *actor {
-            erase_row_birth_in_txn(&vault.store, wtxn, &row)?;
-        }
+    let actors = BTreeSet::from([*actor]);
+    drop_actor_births_in_txn(vault, wtxn, &actors)?;
+    #[cfg(feature = "sync")]
+    crate::sync::row_birth::actor_erase::erase_birth_carriers_in_txn(vault, wtxn, &actors)?;
+    Ok(())
+}
+
+/// The births a legal hold kept from the scrubs of the hard-erased ids
+/// `erased`, once nothing holds their rows (FIX 6280): each goes, with its
+/// born-from index row, and when one did, every window carrier of a birth
+/// one of them made whose row no hold keeps. A row still held keeps both.
+///
+/// # Errors
+///
+/// Storage errors, or a stored birth that does not decode.
+pub(crate) fn release_held_births_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    erased: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if drop_actor_births_in_txn(vault, wtxn, erased)? {
+        #[cfg(feature = "sync")]
+        crate::sync::row_birth::actor_erase::erase_birth_carriers_in_txn(vault, wtxn, erased)?;
     }
     Ok(())
+}
+
+/// Drops each birth whose process actor is in `actors`, but for a born row a
+/// legal hold keeps. Whether any went.
+fn drop_actor_births_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    actors: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    let mut dropped = false;
+    for (row, birth) in ROW_BIRTH.scan(&vault.store, wtxn)? {
+        if actors.contains(&birth.made_by.process.actor)
+            && !birth_held_in_txn(&vault.store, wtxn, &row)?
+        {
+            erase_row_birth_in_txn(&vault.store, wtxn, &row)?;
+            dropped = true;
+        }
+    }
+    Ok(dropped)
+}
+
+/// Whether a legal hold keeps `row`'s birth: a hold on the row itself or,
+/// for a key pad, on its world or a claim its key seals. These are the holds
+/// the row's own erase refuses on (`erase_row_provenance_in_txn`), read here
+/// as a bool, so an actor's scrub leaves the birth rather than refusing the
+/// whole erase (OF-470).
+///
+/// # Errors
+///
+/// Storage errors, or a pad body that does not decode.
+pub(crate) fn birth_held_in_txn(store: &Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
+    if crate::store::legal_hold::held_in_txn(store, txn, row.as_bytes())? {
+        return Ok(true);
+    }
+    match store.port_entity_raw(txn, row)? {
+        Some(raw) => crate::world_keys::held_pad_world_in_txn(store, txn, &raw),
+        None => Ok(false),
+    }
 }
 
 impl crate::Vault {
