@@ -21,7 +21,7 @@ use oneiron_vault_contract::restore::plan::{
 };
 use oneiron_vault_contract::restore::{
     ManagedRestoreDestination, ManagedRestoreIdentity, ManagedRestorePhase, ManagedRestoreReceipt,
-    RESTORE_RECEIPT_SCHEMA_VERSION, RestoreFailureReason, RestoreStatus,
+    RESTORE_RECEIPT_SCHEMA_VERSION, RestoreFailureReason, RestoreHostHoldsStatus, RestoreStatus,
 };
 
 use crate::managed::ManagedError;
@@ -75,6 +75,8 @@ pub(super) struct ReceiptContext<'a> {
     /// The report ids the escrow spool holds; `None` without an outbox.
     pub(super) spooled: Option<&'a BTreeSet<String>>,
     pub(super) completed_at: u64,
+    /// Where the restored vault's host-order legal holds came from.
+    pub(super) host_holds: RestoreHostHoldsStatus,
 }
 
 /// The receipt of a verified restore.
@@ -120,6 +122,7 @@ pub(super) fn receipt(
         admission: admission_wire(admission),
         evidence: context.plan.evidence.clone(),
         escrow_spool,
+        host_holds: context.host_holds,
     }
 }
 

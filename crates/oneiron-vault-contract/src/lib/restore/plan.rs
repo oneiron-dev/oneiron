@@ -1,8 +1,10 @@
 //! What the supervisor hands a restoring engine on `--restore-input-fd`: one
 //! [`ManagedRestoreInput`] JSON object, then EOF. It names the plan, the
 //! artifact, what the artifact must be and the custody anchor to admit it
-//! against; it carries no secret. The data key rides the credential frame
-//! and the anchor's owner credential its own pipe, as on every start.
+//! against, and may carry the source's host-order legal holds
+//! (`host_holds`); it carries no key or credential. The data key rides the
+//! credential frame and the anchor's owner credential its own pipe, as on
+//! every start.
 //!
 //! The recipient plan (`RestorePlan` and its parts) is the engine's own
 //! (`oneiron::recovery::checkpoint`, which re-exports these): one definition
@@ -11,6 +13,8 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+
+use super::host_holds::ManagedRestoreHostHolds;
 
 /// The one [`ManagedRestoreInput`] schema this crate reads.
 pub const RESTORE_INPUT_SCHEMA_VERSION: u32 = 1;
@@ -82,6 +86,12 @@ pub struct ManagedRestoreInput {
     /// [`RESTORE_INPUT_SCHEMA_VERSION`]; any other is refused.
     pub schema_version: u32,
     pub plan: ManagedRestorePlan,
+    /// The source's host-order legal holds, read under its freeze (FIX
+    /// 1485). Absent or `null` when the supervisor has none, which is never
+    /// a refusal: the restore goes on, and its receipt says
+    /// `host_holds_unknown`.
+    #[serde(default)]
+    pub host_holds: Option<ManagedRestoreHostHolds>,
 }
 
 /// One cold managed restore, as the supervisor authorized it. The engine

@@ -9,7 +9,9 @@
 //!   frame (its DEK is the vault's data key, delivered as on every start),
 //!   then the custody anchor credential pipe when one is handed. Any write
 //!   order works so long as the supervisor closes R before it waits on W or
-//!   the ready byte.
+//!   the ready byte. Beside the plan the object may carry the source's
+//!   host-order legal holds, which the restore installs before it keeps the
+//!   vault (`host_holds`).
 //! - W, the write end of a pipe, carries the result frames (`framing`): the
 //!   supervisor drains it as the engine writes, and closing it is EOF.
 //! - Nothing listens before the restore is verified and kept: no HTTP, ctl or
@@ -23,7 +25,10 @@
 //! Build floor: all of it rides contract v3 with no version move. An engine
 //! built before it refuses `--restore` as a flag it does not parse, before
 //! it touches anything, and answers `restore_status` as an unknown request
-//! (`Ok { ok: false }`): neither is ever success.
+//! (`Ok { ok: false }`): neither is ever success. The host-order holds
+//! (`host_holds`: the input's field, the receipt's and the source's
+//! `host_order_holds` ctl request) carry a build floor of their own, at the
+//! engine revision they merged in.
 
 /// Lowercase-hex byte fields.
 mod hex;
@@ -32,6 +37,8 @@ mod hex;
 pub mod facts;
 /// The result pipe's frames and the `restore_status` answer.
 pub mod framing;
+/// The host-order legal holds a restore carries from its source (FIX 1485).
+pub mod host_holds;
 /// The input pipe's plan.
 pub mod plan;
 
@@ -45,6 +52,10 @@ pub use self::facts::{
 pub use self::framing::{
     ManagedRestoreDestination, ManagedRestorePhase, ManagedRestoreResultFrame,
     RestoreFailureReason, RestoreStatus,
+};
+pub use self::host_holds::{
+    HostHoldsBytes, HostHoldsCursor, HostHoldsSource, HostOrderHoldsExport,
+    HostOrderHoldsNotProven, ManagedRestoreHostHolds, RestoreHostHoldsStatus,
 };
 pub use self::plan::{
     EscrowRole, FreshRecipient, ManagedRestoreInput, ManagedRestorePlan,
