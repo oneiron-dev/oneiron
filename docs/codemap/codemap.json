@@ -7183,20 +7183,34 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BlobArtifactVersion",
-      "BlobBytes",
       "CalcEngineStamp"
      ],
      "path": "src/blob_artifact/versions.rs",
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 27,
-      "fn": 16,
-      "struct": 3
+      "crate-vis": 24,
+      "fn": 8,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BlobBytes"
+     ],
+     "path": "src/blob_artifact/versions/reads.rs",
+     "purpose": "The version chain's reads: the head, the version tree, one version's metadata and its bytes",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -15790,7 +15804,7 @@
      "purpose": "The agent as its own compaction writer (FIX 4465, owner 10-19: \"the toggle sets WHO writes, not which model\")",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 3,
       "fn": 4,
       "struct": 6
@@ -21126,7 +21140,7 @@
      "path": "src/dreamer_consolidation/turn_text/compaction_span.rs",
      "purpose": "`conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -38067,7 +38081,7 @@
      "path": "src/off_record/lifecycle/overlay_writes.rs",
      "purpose": "Session-bound NOTE and claim writes (DOOR-127; Engine ruling 10-18 on ARCH-0052 D1/D2): a row written…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -63589,7 +63603,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65024,9 +65038,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 192,
+   "over_bar": 191,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4035,
+   "source_files": 4036,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68046,6 +68060,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/socket_lifetime.rs",
+     "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -68057,6 +68081,16 @@
       "crate-vis": 6,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/lifetime.rs",
+     "purpose": "A guest socket's host entry lives as long as the guest holds the socket (FIX 5978)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -68081,7 +68115,7 @@
      "path": "src/wire.rs",
      "purpose": "Private, bounded launcher/supervisor protocol",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     }
    ],
@@ -68114,11 +68148,18 @@
      "layout": "file",
      "purpose": "Bounded host/guest network transport over the no-NIC VM's private vsock"
     },
-    "supervisor": {
+    "socket_lifetime": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
+     "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)"
+    },
+    "supervisor": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "Host custody of the seccomp listener and all network transports"
     },
     "transport": {
@@ -68138,7 +68179,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 9,
+   "source_files": 11,
    "test_files": 0
   },
   "oneiron-contracts": {
