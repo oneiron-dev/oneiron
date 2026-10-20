@@ -20,6 +20,7 @@ use oneiron::failure_signals::{ExactReplayRequest, InventedMessage, InventedRole
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::HeldLadder;
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::mark_solo;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
@@ -275,6 +276,9 @@ impl<'a> HostModels<'a> {
             request.model = rung.model.clone();
             request.envelope.locality = rung.locality;
         }
+        // Its answer is compared with the kept call's: it runs alone on an
+        // own server that batches (INF 1). The kept request stays as it was.
+        mark_solo(&mut request);
         let call = self
             .runtime
             .admit_seat_bound(self.vault, CHAT_ROLE, request)

@@ -7,7 +7,7 @@ the `[models]` data that binds it.
 
 | Server | GPU | Port | What it is | Seats |
 |---|---|---|---|---|
-| `serve-exl3.sh` | 0 | 18091 | `exl3_server.py`: EXL3 4 bpw target with the DFlash2 5 bpw draft at depth 7, Q8 caches, one request in flight (see "The EXL3 scheduler") | first rung of `generative_reasoner`, `checker`, `dreamer_current` |
+| `serve-exl3.sh` | 0 | 18091 | `exl3_server.py`: EXL3 4 bpw target with the DFlash2 5 bpw draft at depth 7, Q8 caches, up to four requests in flight (see "The EXL3 scheduler") | first rung of `generative_reasoner`, `checker`, `dreamer_current` |
 | `serve-llama.sh` | 1 | 18134 | llama.cpp `llama-server`: Q4_K_M target with the 0.8B Q8_0 draft, 2 slots | the fallback rung of those seats; the one rung of `local_reasoner`, which decide()'s decision read reaches on `/tokenize` and `/completion` |
 
 The rulings this setup carries:
@@ -67,8 +67,9 @@ splits it: the thought in `reasoning_content`, the answer in `content`.
 `reasoning_budget_tokens` caps the thought: at the cap the server closes it
 and the answer gets the rest of `max_tokens`. A `response_format` schema
 constrains the answer only. A prompt that fills the context is refused with
-`400` and `code = "context_length_exceeded"`. By default requests take
-turns: one runs at a time, as the measured recipe ran.
+`400` and `code = "context_length_exceeded"`. By default up to four
+requests run at once; one that sets `"oneiron_solo": true` runs alone (see
+"Solo admission").
 
 ## The EXL3 scheduler
 
@@ -81,11 +82,12 @@ belongs to. The same code runs one request at a time and up to four.
 - **Queue.** Up to 4 submitted requests wait for admission in arrival order
   (`INGRESS_CAPACITY`). When those places are full, a further request waits
   in its own handler for one to free. No request is refused for load.
-- **Admission.** A request is admitted when all three hold:
+- **Admission.** A request is admitted when all four hold:
   - fewer than `--max-in-flight` requests are in flight;
   - no admitted answer pass is waiting for pages;
   - its pages fit in the shared pool beside the pages the admitted requests
-    hold.
+    hold;
+  - no solo request is in flight, and for a solo request, nothing is.
 
   Its pages are the generator's own count: prompt plus output cap plus 1 plus
   the draft depth, rounded up to 256-token pages. A thinking request also
@@ -111,7 +113,8 @@ belongs to. The same code runs one request at a time and up to four.
   - `enqueue_wait_ms`: each job's enqueue to start, plus an answer's wait for
     pages;
   - `draft_depth` and `max_in_flight`: what the server ran with;
-  - `peak_in_flight`: the most requests in flight while this one was.
+  - `peak_in_flight`: the most requests in flight while this one was (1
+    for a solo request).
 
   Prefill and decode times are per-job intervals, which contain other jobs'
   work when several are in flight. They are not exclusive GPU time.
@@ -120,18 +123,36 @@ Two knobs, set in `/etc/oneiron-house.env`:
 
 | Variable | Flag | Default | What it sets |
 |---|---|---|---|
-| `ONEIRON_HOUSE_EXL3_IN_FLIGHT` | `--max-in-flight` | 1 | requests in flight at once, 1 to 4 (`MAX_IN_FLIGHT`); the cache's recurrent slots and the generator's batch follow it |
-| `ONEIRON_HOUSE_EXL3_CACHE_TOKENS` | `--cache-tokens` | one full request: the context + 1 + the draft depth + 16, rounded up to 256 (33024 at the defaults) | the KV pool all requests in flight share, target and draft alike; a multiple of 256 and at least that floor |
+| `ONEIRON_HOUSE_EXL3_IN_FLIGHT` | `--max-in-flight` | 4 | requests in flight at once, 1 to 4 (`MAX_IN_FLIGHT`); the cache's recurrent slots and the generator's batch follow it |
+| `ONEIRON_HOUSE_EXL3_CACHE_TOKENS` | `--cache-tokens` | `DEFAULT_CACHE_TOKENS` (32768), or one full request when that is larger: the context + 1 + the draft depth + 16, rounded up to 256 (33024 at the defaults) | the KV pool all requests in flight share, target and draft alike; a multiple of 256 and at least that floor |
 
-The defaults are today's server: one request at a time, over a pool that
-holds one full-context request with its draft and close room (Engine ruling
-10-20, FIX 6723; the context alone left a full request one page short). Four
-in flight is gated. It ships only after both runs pass
-on INFER-BENCH (FIX 6559): E5, batch invariance (the same request gives the
-same output alone and batched, at the same draft depth), and E1 (short calls
-beside one long Dreamer-like call, one in flight against four, over the same
-pool). Until then no deploy raises either knob. Four in flight over the
-default pool admits beside a long call only what fits in the pages it leaves.
+The defaults are four in flight (Engine ruling 10-21, INF 1) over the pool
+`DEFAULT_CACHE_TOKENS` names, the one place `exl3_server.py` sets it: 32768,
+where E5 measured a 22196 MiB peak at batch 4, more than 2 GiB under the
+card's 24564 MiB. The pool never drops below one full-context request with
+its draft and close room (Engine ruling 10-20, FIX 6723; the context alone
+left a full request one page short), so at the default context and depth the
+server takes that floor, 33024. Four in flight over that pool admits beside a
+long call only what fits in the pages it leaves.
+
+### Solo admission
+
+A request body that sets top-level `"oneiron_solo": true` runs alone. When it
+reaches the head of the queue, the scheduler stops admitting, lets every
+request in flight finish, runs the solo request by itself (both passes of a
+thinking one), then admits again. Arrival order holds: a solo request waits
+behind the ones before it, and the ones behind it wait for it. A value other
+than `true` or `false` is a `400`. The server logs one `SOLO_ADMIT` line per
+solo admission, with the request id and its wait in ms, never the prompt.
+
+The engine sets it, not an operator. `oneiron::llm::mark_solo` marks a call
+whose answer is compared with another's: the Coach's exact replay, the
+shadow runner's arms, the Coach's matched contribution forks, and
+`oneiron-bench infer --solo on`. The OpenAI-compatible wire sends the field to
+a `local-openai-compat` provider only; no other provider sees it. Batch
+invariance does not hold at four in flight for a long or multi-turn request:
+the same request can answer differently batched than alone. So identity
+checks run solo, and every other call shares the batch.
 
 ## Compressed requests
 

@@ -8,7 +8,7 @@ pub(super) const USAGE: &str = "usage: oneiron-bench infer run --arm-id ID --tra
   --models-toml FILE --model PROVIDER:MODEL --cases /ABS/cases.jsonl --out /ABS/rows.jsonl\n\
   [--reps 1] [--only CASE_ID]... [--warmup 1] [--sampling shipped|greedy|card]\n\
   [--schema on|off] [--cache-bust on|off] [--keep-outputs /ABS/DIR]\n\
-  [--concurrency 1] [--stagger-ms 0] [--draft-depth N]\n\
+  [--concurrency 1] [--stagger-ms 0] [--draft-depth N] [--solo on|off]\n\
   [--engine-cmd PATH [--engine-env KEY=VALUE]... --engine-health URL [--engine-ready-timeout 900]]\n\
   [--gpu-index 0] [--vram-poll-ms 100] [--server oneiron-server]   (--server: own-server only)\n\
        oneiron-bench infer summarize --out ROWS.jsonl [--out ROWS.jsonl]...";
@@ -90,6 +90,9 @@ pub(super) struct RunArgs {
     /// The engine's draft depth as the operator declares it, a label only:
     /// identity is compared within one depth.
     pub(super) draft_depth: Option<u32>,
+    /// Whether each measured call asks an own server to run it alone (INF 1
+    /// solo admission). Warmups never do.
+    pub(super) solo: bool,
 }
 
 fn number<T: FromStr>(flag: &str, value: &str) -> Result<T, String> {
@@ -147,6 +150,7 @@ pub(super) fn parse_run(args: &[String]) -> Result<RunArgs, String> {
     let mut concurrency = 1;
     let mut stagger_ms = 0;
     let mut draft_depth = None;
+    let mut solo = false;
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         let value = it
@@ -203,6 +207,7 @@ pub(super) fn parse_run(args: &[String]) -> Result<RunArgs, String> {
             "--concurrency" => concurrency = positive(flag, value)?,
             "--stagger-ms" => stagger_ms = number(flag, value)?,
             "--draft-depth" => draft_depth = Some(number(flag, value)?),
+            "--solo" => solo = on_off(flag, value)?,
             other => return Err(format!("unknown `infer run` flag `{other}`\n{USAGE}")),
         }
     }
@@ -255,6 +260,7 @@ pub(super) fn parse_run(args: &[String]) -> Result<RunArgs, String> {
         concurrency,
         stagger_ms,
         draft_depth,
+        solo,
     })
 }
 

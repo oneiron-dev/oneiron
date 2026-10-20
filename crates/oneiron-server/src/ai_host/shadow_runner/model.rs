@@ -25,7 +25,7 @@ use oneiron::code_run::shadow_runner::{
 };
 use oneiron::engine_executor::StepCancellation;
 use oneiron::llm::run_admission::{MemoryReceipts, RunEvent, RunReceipt, RunReceiptSink};
-use oneiron::llm::{BudgetDenied, BudgetGuard, DEFAULT_BUDGET_RESERVE_UNITS};
+use oneiron::llm::{BudgetDenied, BudgetGuard, DEFAULT_BUDGET_RESERVE_UNITS, mark_solo};
 use oneiron::{BudgetExhaustionPolicy, EntityId, Error, LlmError, LlmResponse, Vault};
 
 use super::super::CHAT_ROLE;
@@ -96,6 +96,10 @@ impl Gateway<'_> {
         let mut request = prepared.request().clone();
         request.model = binding.model.clone();
         request.envelope.locality = binding.locality;
+        // The arm's answer is compared with the captured step's: it runs
+        // alone on an own server that batches (INF 1). The sent body records
+        // the marker; the source digest stays the capture's.
+        mark_solo(&mut request);
         // The model a raw call naming it meets, never swapped for the role's
         // route, which still clamps it: a model not served here now is no
         // replay, and no other model stands in.

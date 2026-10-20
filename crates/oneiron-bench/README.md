@@ -334,7 +334,7 @@ oneiron-bench infer run --arm-id ID --transport direct|own-server \
   --models-toml FILE --model PROVIDER:MODEL --cases /ABS/cases.jsonl --out /ABS/rows.jsonl \
   [--reps 1] [--only CASE_ID]... [--warmup 1] [--sampling shipped|greedy|card] \
   [--schema on|off] [--cache-bust on|off] [--keep-outputs /ABS/DIR] \
-  [--concurrency 1] [--stagger-ms 0] [--draft-depth N] \
+  [--concurrency 1] [--stagger-ms 0] [--draft-depth N] [--solo on|off] \
   [--engine-cmd PATH [--engine-env KEY=VALUE]... --engine-health URL [--engine-ready-timeout 900]] \
   [--gpu-index 0] [--vram-poll-ms 100] [--server oneiron-server]
 ```
@@ -381,9 +381,16 @@ oneiron-bench infer run --arm-id ID --transport direct|own-server \
 - `--draft-depth N` declares the engine's draft depth. It is a label for
   rows and `config_digest`; the house EXL3 server also reports its own
   `draft_depth` in `native`, and that wins.
-- `--concurrency`, `--stagger-ms` and `--draft-depth` enter `config_digest`
-  only when they differ from their defaults. A sequential run keeps the
-  digest it always had, and its old rows still resume.
+- `--solo on` marks every measured call for solo admission (INF 1) with
+  `oneiron::llm::mark_solo`, as the engine marks its identity-sensitive calls.
+  The wire sends it to a `local-openai-compat` provider as top-level
+  `"oneiron_solo": true`, and the house EXL3 server runs each such call
+  alone. Warmups are never marked. The default is `off`; the E1 and E5 runs
+  below keep it off, since they measure the batch itself.
+- `--concurrency`, `--stagger-ms`, `--draft-depth` and `--solo` enter
+  `config_digest` only when they differ from their defaults. A sequential run
+  keeps the digest it always had, and its old rows still resume; a resume
+  never mixes solo and batched rows.
 - Each warmup round (`--warmup`) sends N warmup calls at once, so the batched
   path is warm too. The warmup runs per arm and per concurrency setting,
   before every measured call, so a cold start skews no TTFT.
@@ -403,7 +410,7 @@ and revision, `role_added`, `cases_digest`, `config_digest`, build git SHA,
 host, engine command and env names, GPU and loaded/idle VRAM), the case's
 `case_digest`, `rep`, `started_at`, `status` (`ok` or `error`) and error, what
 was sent (`params_sent`, `seat_effort`, `thinking_knob`, `schema_sent`,
-`max_tokens`), the timings (`ttft_any_ms`, `ttft_text_ms`, `t_last_ms`,
+`max_tokens`, `solo`), the timings (`ttft_any_ms`, `ttft_text_ms`, `t_last_ms`,
 `wall_ms`, token counts, `finish_reason`), `native`, `prefill_tps_e2e`,
 `decode_tps_e2e`, `output_digest`, `output_chars`, `vram_case_peak_mib` and the
 `quality` block. Each row also carries its schedule:
@@ -467,6 +474,9 @@ from `native`, else the declared `--draft-depth`, else `unknown`.
   server bound 1, and the same at bound 4. Then compare with `oneiron-bench
   infer summarize --out A --out B ...`. E5 compares placements at **one fixed
   depth**, never across depths.
+
+Both run with `--solo off`, the default: a solo call never shares the
+batch, so it measures nothing of it.
 
 Honesty notes for both:
 - VRAM under concurrency is the whole card's sampled peak during each call,

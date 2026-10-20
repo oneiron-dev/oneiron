@@ -15,6 +15,10 @@ use std::collections::BTreeMap;
 pub struct OpenAiCompatConfig {
     pub endpoint_path: String,
     models: BTreeMap<ModelId, LlmCatalogEntry>,
+    /// Whether the server behind the endpoint reads the host's solo marker
+    /// (INF 1): an own server that runs a call alone when its body says
+    /// `"oneiron_solo": true`. Off, the marker never reaches the wire.
+    solo_admission: bool,
 }
 
 impl OpenAiCompatConfig {
@@ -32,6 +36,7 @@ impl OpenAiCompatConfig {
         Self {
             endpoint_path: "/v1/chat/completions".to_owned(),
             models,
+            solo_admission: false,
         }
     }
 
@@ -45,6 +50,7 @@ impl OpenAiCompatConfig {
                 .into_iter()
                 .map(|entry| (entry.model.clone(), entry))
                 .collect(),
+            solo_admission: false,
         }
     }
 
@@ -52,6 +58,19 @@ impl OpenAiCompatConfig {
     pub fn with_endpoint_path(mut self, endpoint_path: impl Into<String>) -> Self {
         self.endpoint_path = endpoint_path.into();
         self
+    }
+
+    /// Sends a request the host marked solo with a top-level
+    /// `"oneiron_solo": true`, when `solo_admission` holds: only for an own
+    /// server that admits a call alone on it (the house EXL3 server).
+    #[must_use]
+    pub fn with_solo_admission(mut self, solo_admission: bool) -> Self {
+        self.solo_admission = solo_admission;
+        self
+    }
+
+    pub(crate) const fn solo_admission(&self) -> bool {
+        self.solo_admission
     }
 
     pub(crate) fn catalog_entry(&self, model: &ModelId) -> LlmResult<&LlmCatalogEntry> {

@@ -9,10 +9,12 @@ new evidence moves it (`--draft-tokens`). Caches are Q8 for target and draft.
 One scheduler thread owns the generator (INF 1, FIX 6566). HTTP handlers
 render and tokenize their request, hand it to the scheduler and stream from
 their own queue; they never call the generator. The scheduler admits up to
-`--max-in-flight` requests at once (1 by default, so requests take turns as
-the measured recipe ran; never more than 4), each only when its pages fit in
-the shared cache beside the pages the admitted ones hold. A request that does
-not fit waits; none is refused for its size, cut short or evicted.
+`--max-in-flight` requests at once (4 by default, never more), each only when
+its pages fit in the shared cache beside the pages the admitted ones hold. A
+request that does not fit waits; none is refused for its size, cut short or
+evicted. A request whose body sets `"oneiron_solo": true` runs alone: it
+waits its turn in arrival order, the scheduler lets what is in flight finish,
+runs it by itself, then admits again.
 
 A thinking reply is split as llama.cpp's `--reasoning-format deepseek` splits
 it: the text before `</think>` comes back as `reasoning_content`, the answer as
@@ -49,9 +51,17 @@ PAGE = 256
 
 # The most requests in flight at once, whatever `--max-in-flight` asks for.
 MAX_IN_FLIGHT = 4
-# Requests in flight by default: one at a time, as the measured recipe ran,
-# until batch invariance (E5) and the mixed-load run (E1) pass on INFER-BENCH.
-DEFAULT_IN_FLIGHT = 1
+# Requests in flight by default (Engine ruling 10-21, INF 1). Batch invariance
+# does not hold at 4 for a long or multi-turn request, so a call whose answer
+# is compared with another's asks to run alone (`SOLO_FIELD`).
+DEFAULT_IN_FLIGHT = 4
+# The request body's field that asks for solo admission: true runs the request
+# with nothing else in flight.
+SOLO_FIELD = "oneiron_solo"
+# The shared KV pool, in tokens, when the launcher names none; never less than
+# one full request (`full_request_pool`).
+# E5: a 22196 MiB peak at batch 4 over this pool, over 2 GiB below the card's 24564 MiB.
+DEFAULT_CACHE_TOKENS = 32768
 # Submitted requests that wait for admission. Past it a request waits in its
 # own handler for a place; it is never refused.
 INGRESS_CAPACITY = 4
@@ -106,11 +116,11 @@ def load(args):
         raise ValueError("--draft-tokens must be at least 1")
     if not 1 <= args.max_in_flight <= MAX_IN_FLIGHT:
         raise ValueError(f"--max-in-flight must be 1 to {MAX_IN_FLIGHT}")
-    # The shared pool every request in flight draws on: one full request (the
-    # context plus its draft and close room, page-rounded) unless the launcher
-    # names a larger one.
+    # The shared pool every request in flight draws on: DEFAULT_CACHE_TOKENS
+    # unless the launcher names one, and never less than one full request (the
+    # context plus its draft and close room, page-rounded).
     floor = full_request_pool(args.context, args.draft_tokens if args.draft_dir else 0)
-    cache_tokens = floor if args.cache_tokens is None else args.cache_tokens
+    cache_tokens = max(DEFAULT_CACHE_TOKENS, floor) if args.cache_tokens is None else args.cache_tokens
     if cache_tokens % PAGE:
         raise ValueError(f"--cache-tokens must be a multiple of the cache page, {PAGE}")
     if cache_tokens < floor:
@@ -261,9 +271,12 @@ class Request:
     `cancelled` (handler to scheduler). `ended` is the handler's own: it saw
     the terminal event."""
 
-    def __init__(self, request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers):
+    def __init__(self, request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo):
         # Inputs.
         self.request_id = request_id
+        # Runs alone: admitted once nothing else is in flight, with nothing
+        # admitted beside it until it ends.
+        self.solo = solo
         self.prompt = prompt
         self.ids = ids
         self.prompt_tokens = int(ids.numel())
@@ -316,7 +329,9 @@ class Scheduler:
     its request. It sleeps only when it has nothing to iterate, admit or
     start. A thinking request keeps its one place and its pages through both
     passes: the answer job is enqueued when the reasoning job ends, never
-    beside it, and no new request is admitted while an answer waits."""
+    beside it, and no new request is admitted while an answer waits. A solo
+    request at the head of the queue stops admission until what is in flight
+    has ended, then goes in alone; the requests behind it wait for it."""
 
     def __init__(self, generator, tokenizer, encode, stop_ids, max_in_flight):
         self.generator = generator
@@ -400,14 +415,32 @@ class Scheduler:
 
     # The owner thread's side.
 
+    def _admissible_locked(self, admitted):
+        """True when the head of ingress may be admitted now, beside the
+        requests in flight and `admitted`, the ones this pass has taken so
+        far: a place is free, no answer pass waits to grow, its pages fit,
+        and no solo request stands in the way. A solo request is admitted only
+        once nothing else is in flight, and nothing is admitted beside it.
+        Called under `cond`, from the owner thread."""
+        if not self.ingress or any(req.grow for req in self.active):
+            return False
+        in_flight = self.active + admitted
+        if len(in_flight) >= self.max_in_flight:
+            return False
+        head = self.ingress[0]
+        if any(req.solo for req in in_flight) or (head.solo and in_flight):
+            return False
+        return self.reserved + head.need <= self.pool_pages
+
     def _idle_locked(self):
         """True when a pass would do nothing: no job to iterate, no answer
         pass waiting for pages, and no request the head of ingress could
-        admit. Called under `cond`, from the owner thread."""
+        admit. While the scheduler drains for a solo request it is busy with
+        the jobs it waits on, and the pass after the last one ends admits it.
+        Called under `cond`, from the owner thread."""
         if self.generator.num_remaining_jobs() or any(req.grow for req in self.active):
             return False
-        return not (self.ingress and len(self.active) < self.max_in_flight
-                    and self.reserved + self.ingress[0].need <= self.pool_pages)
+        return not self._admissible_locked([])
 
     def _loop(self):
         seen = -1
@@ -472,15 +505,11 @@ class Scheduler:
     def _admit(self):
         """Admits requests from the head of the ingress queue, in order, while
         places and pages allow. A waiting answer pass goes first: no request
-        is admitted while one waits to grow."""
+        is admitted while one waits to grow. A solo request goes in alone."""
         admitted = []
         with self.cond:
-            while (self.ingress and len(self.active) + len(admitted) < self.max_in_flight
-                   and not any(req.grow for req in self.active)):
-                head = self.ingress[0]
-                if self.reserved + head.need > self.pool_pages:
-                    break
-                self.ingress.popleft()
+            while self._admissible_locked(admitted):
+                head = self.ingress.popleft()
                 self.reserved += head.need
                 head.pages = head.need
                 admitted.append(head)
@@ -490,6 +519,9 @@ class Scheduler:
         for req in admitted:
             req.admission_wait = now - req.submitted
             self.active.append(req)
+            if req.solo:
+                # The id and the wait only: never the prompt.
+                print(f"SOLO_ADMIT {req.request_id} waited_ms={req.admission_wait * 1000.0:.0f}", flush=True)
         in_flight = len(self.active)
         for req in self.active:
             req.peak = max(req.peak, in_flight)
@@ -728,8 +760,11 @@ class Server:
         schema = answer_schema(body)
         stops = stop_strings(body)
         seed = optional_int(body, "seed")
+        solo = body.get(SOLO_FIELD, False)
+        if not isinstance(solo, bool):
+            raise RequestError(f"{SOLO_FIELD} must be true or false")
         samplers = {"reason": make_sampler(body), "answer": make_sampler(body)}
-        req = Request(request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers)
+        req = Request(request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo)
         if not req.thinking:
             req.answer_prompt = prompt
             req.answer_ids = ids
@@ -874,11 +909,11 @@ def main():
                    help="each request's context, in tokens; a multiple of 256")
     p.add_argument("--cache-tokens", type=int, default=None,
                    help="the KV pool every request in flight shares, in tokens; a multiple of 256, at least "
-                        "one full request (default: that floor, --context + 1 + the draft depth + 16, "
-                        "rounded up to 256)")
+                        f"one full request (default: {DEFAULT_CACHE_TOKENS}, or that floor when it is larger: "
+                        "--context + 1 + the draft depth + 16, rounded up to 256)")
     p.add_argument("--max-in-flight", type=int, default=DEFAULT_IN_FLIGHT,
-                   help=f"requests the scheduler runs at once, 1 to {MAX_IN_FLIGHT} (default {DEFAULT_IN_FLIGHT}: "
-                        "one at a time)")
+                   help=f"requests the scheduler runs at once, 1 to {MAX_IN_FLIGHT} (default {DEFAULT_IN_FLIGHT}); "
+                        f"a request that sets {SOLO_FIELD} runs alone")
     p.add_argument("--recurrent-cache-gib", type=int, default=4)
     p.add_argument("--default-max-tokens", type=int, default=4096,
                    help="the reply cap when a request names none")
