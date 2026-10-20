@@ -6581,7 +6581,7 @@
      "path": "src/blob_artifact/esign/capability.rs",
      "purpose": "Session-less, high-entropy capabilities",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 5,
       "struct": 1
      }
@@ -6640,13 +6640,27 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignDocumentTrail",
+      "EsignDocumentView"
+     ],
+     "path": "src/blob_artifact/esign/document_view.rs",
+     "purpose": "The owner's view of one signing document on `vault.esign.get` (FIX 6481): its delivery receipts always…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignCreateRequest",
       "EsignDispatchRequest",
       "EsignDispatchView",
-      "EsignDocumentView",
       "EsignDraftView",
       "EsignGetRequest",
       "EsignIssuedLink",
@@ -6670,7 +6684,7 @@
      "purpose": "The e-sign doors outside Rust (ARCH-0064 D3, D5, SGN-02)",
      "surface": {
       "fn": 11,
-      "struct": 22
+      "struct": 21
      }
     },
     {
@@ -6734,7 +6748,7 @@
      "purpose": "Claims are the document state machine",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3
      }
     },
@@ -6762,7 +6776,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 2,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -48999,6 +49013,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/side_table/classified.rs",
+     "purpose": "One row's read that tells its own value's damage from the store's failure (FIX 6482)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/side_table/codec.rs",
      "purpose": "The value codecs a side table may declare",
      "surface": {
@@ -49088,7 +49112,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 43
+      "crate-vis": 44
      }
     },
     {
@@ -64834,7 +64858,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65975,7 +65999,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
     "side_table": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66271,7 +66295,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4139,
+   "source_files": 4141,
    "test_files": 902
   },
   "oneiron-android": {
@@ -91530,6 +91554,7 @@
       "EsignDispatchRequest",
       "EsignDispatchView",
       "EsignDocument",
+      "EsignDocumentTrail",
       "EsignDocumentView",
       "EsignDraftView",
       "EsignEvent",
@@ -92239,10 +92264,15 @@
       "MemberRelationshipContext",
       "MemberVerdict",
       "MembershipConsent",
+      "MemoryError",
       "MemoryExport",
+      "MemoryGateDenial",
+      "MemoryPolicyDenial",
+      "MemoryPolicyExceptionProposal",
       "MemoryProjection",
       "MemorySupersedeInput",
       "MemoryWriteOutput",
+      "MemoryWrongRoot",
       "MentionLinkView",
       "MentionReferenceView",
       "MergeCrossover",
@@ -93898,6 +93928,7 @@
       "VectorSearchLane",
       "VectorSearchRequest",
       "VectorSearchResult",
+      "VerbHookStop",
       "VerdictBinding",
       "VerdictMode",
       "VersionReconciliation",
@@ -94060,8 +94091,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 883,
-      "struct": 2791
+      "enum": 885,
+      "struct": 2796
      }
     },
     {
