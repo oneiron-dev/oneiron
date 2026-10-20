@@ -46,6 +46,7 @@ separate, and changes nothing else.
 | Upstream VCS commit (`.cargo_vcs_info.json`) | `947c3aa814b9a5eab764a95f84242fe1756cf61a`, `path_in_vcs = "heed"` |
 | Pinned LMDB C source behind it (ONE-218) | `lmdb-master-sys-0.2.6/lmdb/libraries/liblmdb/mdb.c`, SHA-256 `56bf21f1d42fe36f42e52cf4dad7c3d910214182cceb46751ee7042fe299ad3a` |
 | LMDB C source behind it since OF-570 | `lmdb-master3-sys-0.2.6/lmdb/libraries/liblmdb/mdb.c`, SHA-256 `0e7c948b4aa3492b4581ed14fcf187952c90317569c0f6962e8e6e885743f893` |
+| Vendored copy of that crate since FIX 1910 | `crates/heed/vendor/lmdb-master3-sys-0.2.6`: upstream plus the key-wipe hunks (see "FIX 1910" below) |
 
 ## Inventory
 
@@ -140,6 +141,87 @@ declared, assigned, null-checked, freed and returned by `mdb_env_get_path`
 (mdb.master3 `mdb.c:1659, 6248, 6252, 6362, 11646`), and every file open goes
 through `mdb_fname_init` (`mdb.c:5228`). The line numbers in the audit below
 are the earlier library's.
+
+## FIX 1910: vendored `lmdb-master3-sys` 0.2.6 and the page-key wipe
+
+mdb.master3 copies the page key into its own heap (`MDB_env.me_enckey`, set
+by `mdb_env_set_encrypt`). Upstream frees that copy unwiped, both when a key
+is replaced and on the final `mdb_env_close`. heed also leaked a created env
+on some early exits of `open_locked`, so that copy was never freed at all.
+
+To fix the C side, `crates/heed/vendor/lmdb-master3-sys-0.2.6` vendors the
+same crate: same version, features and FFI. Two edges select it.
+`heed-0.20.5/Cargo.toml` names it as a path dependency, the edge maturin
+follows into the sdist, as the workspace heed dependency does. The root
+`[patch.crates-io]` sends any registry requirement to the same tree. The root
+manifest excludes it from the workspace. In `Cargo.lock` the package lost its
+registry `source` and `checksum` lines and nothing else changed.
+
+| Fact | Value |
+| --- | --- |
+| Upstream package | `lmdb-master3-sys` 0.2.6, the crates.io archive `lmdb-master3-sys-0.2.6.crate` |
+| crates.io checksum (the earlier lock entry, verified on the archive) | `78b1f49b7494125af9b87ddb83cb4828d4ddbaf83c3ed132d5ebd0d43d02f525` |
+| Upstream VCS commit (`.cargo_vcs_info.json`) | `57025ff083b6fc68c9313edccb28c75d7ccf751f`, `path_in_vcs = "lmdb-master3-sys"` |
+| Upstream `mdb.c` SHA-256 | `0e7c948b4aa3492b4581ed14fcf187952c90317569c0f6962e8e6e885743f893` |
+| Licences | crate `Apache-2.0`; liblmdb under the OpenLDAP Public License (`lmdb/libraries/liblmdb/LICENSE`, `COPYRIGHT`) |
+
+**Byte-for-byte from the archive** (verifiable with `sha256sum` against the
+extracted `.crate`):
+
+```
+Cargo.toml.orig               .cargo_vcs_info.json          README.md
+build.rs                      bindgen.rs                    src/lib.rs
+src/bindings.rs
+lmdb/libraries/liblmdb/midl.c lmdb/libraries/liblmdb/lmdb.h lmdb/libraries/liblmdb/midl.h
+lmdb/libraries/liblmdb/LICENSE                              lmdb/libraries/liblmdb/COPYRIGHT
+```
+
+**Deliberately not copied:** the archive's packaging `Cargo.lock` and
+`.rustfmt.toml`, the extraction marker `.cargo-ok`, and liblmdb's tools, tests,
+sample crypto module and docs (`mdb_{copy,drop,dump,load,stat}.{c,1}`,
+`mtest*.c`, `mplay.c`, `module.c`, `crypto.c`, `chacha8.{c,h}`, `Makefile`,
+`Doxyfile`, `intro.doc`, `sample-*.txt`, `tooltag`, `.gitignore`). `build.rs`
+compiles only `mdb.c` and `midl.c`, and `mdb.c` includes only `lmdb.h` and
+`midl.h`. Every feature and the optional `bindgen` regeneration path keep
+their inputs.
+
+**Changed from upstream:**
+
+- `lmdb/libraries/liblmdb/mdb.c` (12,347 lines; upstream 12,327):
+  - `:6488-6506` adds `mdb_enckey_clear`, inside `#if MDB_RPAGE_CACHE`. It
+    wipes the saved `me_enckey.mv_size` bytes through a volatile pointer, then
+    frees them and sets the pointer to NULL and the length to zero.
+  - `:6526`: `mdb_env_close` calls it in place of upstream's `free`
+    (upstream `:6506`).
+  - `:11637`: `mdb_env_set_encrypt` calls it in place of upstream's `free`
+    (upstream `:11617`), once the new copy is allocated and filled. The
+    `EINVAL` (bad argument, active env) and `ENOMEM` returns come first and
+    keep the old key.
+  - `mdb_env_close_active` is unchanged. A failed `mdb_env_open` leaves the
+    env reusable with its key, and the final `mdb_env_close` wipes it.
+- `Cargo.toml:30-33`: the ONE-1441 packaging exclusion of
+  `/.cargo_vcs_info.json` and `/Cargo.toml.orig`, as for heed. Package
+  identity, dependencies, features and targets are unchanged.
+
+**heed side:**
+
+- `src/env.rs`: `open_locked` arms `EnvCloseGuard` (`:419-422`, type
+  `:596-618`) right after `mdb_env_create`. Its drop calls `mdb_env_close`
+  once. `disarm` (`:498`) hands the env to `EnvInner`, whose drop remains the
+  only close of a published env.
+  - The guard replaces the two explicit closes: a failed `mdb_env_set_encrypt`,
+    and a failed open or wrong page key.
+  - It also covers the exits that leaked a created env: a map size that is
+    not a page multiple, and the `?` of `mdb_env_set_mapsize`,
+    `mdb_env_set_maxreaders` and `mdb_env_set_maxdbs`.
+- `Cargo.toml:112-113` adds the path dependency; the header comment
+  (`:20-22`) names it.
+
+Line numbers elsewhere in this file cite the upstream `mdb.c` (SHA-256
+above). Add 20 to an upstream line after 6487 to find it in the vendored copy.
+
+**Re-vendoring:** re-extract the crates.io archive with the checksum above.
+Re-copy the files listed, then re-apply the `mdb.c` and `Cargo.toml` hunks.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 

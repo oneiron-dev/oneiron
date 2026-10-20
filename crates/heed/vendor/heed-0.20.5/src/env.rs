@@ -416,6 +416,10 @@ impl EnvOpenOptions {
                 unsafe {
                     let mut env: *mut ffi::MDB_env = ptr::null_mut();
                     mdb_result(ffi::mdb_env_create(&mut env))?;
+                    // ONEIRON FORK (FIX 1910): from here every exit closes the
+                    // unpublished env exactly once, so mdb.master3 wipes its
+                    // copy of the page key. `EnvInner` takes it over below.
+                    let guard = EnvCloseGuard(env);
 
                     // ONEIRON FORK (OF-570): the page cipher goes in before any
                     // other option; mdb.master3 copies the key.
@@ -424,16 +428,12 @@ impl EnvOpenOptions {
                             mv_size: page_seal::KEY,
                             mv_data: key.as_ptr() as *mut c_void,
                         };
-                        let set = mdb_result(ffi::mdb_env_set_encrypt(
+                        mdb_result(ffi::mdb_env_set_encrypt(
                             env,
                             Some(page_seal::seal_page),
                             &key,
                             page_seal::AUTH,
-                        ));
-                        if let Err(e) = set {
-                            ffi::mdb_env_close(env);
-                            return Err(e.into());
-                        }
+                        ))?;
                     }
 
                     if let Some(size) = self.map_size {
@@ -495,7 +495,7 @@ impl EnvOpenOptions {
                             // the key the map, `Env::path`, and the close path
                             // all use.
                             let inner = EnvInner {
-                                env,
+                                env: guard.disarm(),
                                 path: entry.key().clone(),
                                 sealed: self.page_key.is_some(),
                             };
@@ -508,10 +508,8 @@ impl EnvOpenOptions {
                             entry.insert(cache_entry);
                             Ok(env)
                         }
-                        Err(e) => {
-                            ffi::mdb_env_close(env);
-                            Err(e.into())
-                        }
+                        // The guard closes the env.
+                        Err(e) => Err(e.into()),
                     }
                 }
             }
@@ -593,6 +591,30 @@ struct EnvInner {
     path: PathBuf,
     /// ONEIRON FORK (OF-570): opened with a page key.
     sealed: bool,
+}
+
+/// ONEIRON FORK (FIX 1910): owns a created env until `EnvInner` does. Every
+/// early exit of `open_locked` (a refused option, a failed setter or open, a
+/// wrong page key) closes it once on drop, so mdb.master3 wipes its copy of
+/// the page key. `disarm` hands the env to `EnvInner`, whose drop is then its
+/// only close.
+struct EnvCloseGuard(*mut ffi::MDB_env);
+
+impl EnvCloseGuard {
+    fn disarm(self) -> *mut ffi::MDB_env {
+        let env = self.0;
+        mem::forget(self);
+        env
+    }
+}
+
+impl Drop for EnvCloseGuard {
+    fn drop(&mut self) {
+        // SAFETY: the pointer came from a successful `mdb_env_create` and was
+        // never published; `disarm` forgets the guard before `EnvInner` owns
+        // the env, so this is its one close.
+        unsafe { ffi::mdb_env_close(self.0) };
+    }
 }
 
 unsafe impl Send for EnvInner {}
