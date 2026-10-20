@@ -147,6 +147,16 @@ pub(super) fn log_terminal_step(
             if logged == StepStateDisposition::Erased {
                 return Ok(None);
             }
+            // The step's kept requests stamp the claim in this same write
+            // (FIX 6659): the executor deletes the row that names it once
+            // the step is done, and an erase of the claim still takes them.
+            crate::self_heal::blocked_reports::bind_step_claim_in_txn(
+                ctx.vault,
+                wtxn,
+                ctx.attempt_id,
+                step_hash,
+                claim_id,
+            )?;
             let response_ref = if inline {
                 None
             } else {
