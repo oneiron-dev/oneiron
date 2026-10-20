@@ -157,7 +157,9 @@ impl<'v> ScopedRead<'v> {
         authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         if self.actor_key.vault_owner_ref().is_some() {
-            return Ok(true);
+            // The owner reads every source but a private thread's turn,
+            // which meets his own cut there (FIX 6410).
+            return self.private_threads_readable_in(rtxn, id, raw);
         }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;

@@ -238,7 +238,7 @@ impl<'a> ScopedRead<'a> {
     /// authenticates no one reads no private thread. Each turn is read under
     /// the CONTENT rule, save by a personal ceiling's peer read
     /// (`room_peer`), which stands in the thread under CURRENT (FIX 5545).
-    fn private_threads_readable_in(
+    pub(super) fn private_threads_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
