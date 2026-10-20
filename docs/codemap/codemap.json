@@ -25831,8 +25831,18 @@
       "const": 4,
       "crate-vis": 39,
       "enum": 1,
-      "fn": 18,
+      "fn": 16,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space/bindings.rs",
+     "purpose": "The kind slot binding doors (OF-370; ARCH-0019 `#kind-slots`, `#default-bindings`)",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -65969,7 +65979,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -66937,7 +66947,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4195,
+   "source_files": 4196,
    "test_files": 902
   },
   "oneiron-android": {
