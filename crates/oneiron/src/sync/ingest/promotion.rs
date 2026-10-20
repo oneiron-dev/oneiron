@@ -2,7 +2,9 @@
 //! removed TURN's tag set and sieve reading, which never sync, and the sieve's
 //! cursor has passed it, so the promotion that brings the row back owes it a
 //! tag pass and a sieve read, in the transaction that lands the row. A TURN
-//! the demotion kept is stored here already and is owed neither.
+//! the demotion kept is owed both once every missing MESSAGE returns with its
+//! PartOf edge; its local missing-MESSAGE marker holds that work back until
+//! then.
 //!
 //! Every entity door runs on the importing thread (`birth_watch`), so a
 //! promotion rides a thread-local for its import's span: the promotion
