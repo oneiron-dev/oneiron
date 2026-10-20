@@ -212,8 +212,9 @@ fn serves_media(rung: &LadderRung, request: &MediaRequest) -> bool {
 pub struct OfferLadder {
     name: ModelId,
     rungs: Vec<LadderRung>,
-    /// An answer carries the ladder's served receipt (a seat, or a rung of
-    /// one), or the provider's usage as it came (a model called by its id).
+    /// An answer carries the ladder's served receipt around the provider's
+    /// usage as it came: a seat's, a rung of one's, or a configured model's
+    /// called by its own id (FIX 2619), so every run names its provider.
     receipt: bool,
     /// The one model a caller or a manifest named: its one rung is that
     /// pick, never a fallback.
@@ -258,7 +259,7 @@ impl OfferLadder {
         Self {
             name: rung.model.clone(),
             rungs: vec![rung],
-            receipt: false,
+            receipt: true,
             picked: true,
             rests,
             scope: SeatScope::default(),

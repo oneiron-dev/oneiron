@@ -88,7 +88,7 @@ fn bound_label(role: EscrowRole, fingerprint: &[u8; 32]) -> String {
 
 /// The fingerprint prefix a managed or break-glass label names, if it is
 /// one.
-fn label_prefix_of(label: &str) -> Option<&str> {
+pub(super) fn label_prefix_of(label: &str) -> Option<&str> {
     let (role, prefix) = label.split_once('.')?;
     matches!(role, "managed" | "break-glass").then_some(prefix)
 }

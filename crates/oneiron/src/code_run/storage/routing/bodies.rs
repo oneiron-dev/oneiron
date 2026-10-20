@@ -2,7 +2,50 @@
 //! routed rows that publish one and the reads that open one (moved out of
 //! the routing module whole).
 
+use super::super::records::ReplyBody;
 use super::*;
+use crate::code_run::result_read::unplaced_answer;
+
+impl ExecutorStorage<'_> {
+    /// A spool for one reply body of the run (FIX 5718 part 3): on the
+    /// vault, a raw spool the wall admits whole when it is published
+    /// ([`Self::publish_code_run_reply`]); in a session, its own sink, as
+    /// before.
+    pub(crate) fn code_run_reply_spool(&self) -> Result<BodySink> {
+        match self {
+            Self::Canonical(vault) => vault.code_run_reply_spool(),
+            Self::Session(binding) => binding.output_sink(),
+        }
+    }
+
+    /// Publishes the reply body `spool` took as run `owner`'s complete output
+    /// at `path` (FIX 5718 part 3, Engine rulings 3 and 4). On the vault it
+    /// is admitted in the writer that publishes it; `Err` holds the typed
+    /// unavailable content that stands in for an answer with a secret the
+    /// side-row wall cannot place, of which nothing is stored. A session's
+    /// body is published as before.
+    pub(crate) fn publish_code_run_reply(
+        &self,
+        path: String,
+        spool: BodySink,
+        owner: EntityId,
+    ) -> Result<std::result::Result<CodeRunRawOutput, serde_json::Value>> {
+        match self {
+            Self::Canonical(vault) => {
+                let published = vault.publish_admitted_code_run_output(path, spool, true, owner)?;
+                Ok(match published {
+                    ReplyBody::Published(output) => Ok(output),
+                    ReplyBody::Unplaceable {
+                        bytes,
+                        text,
+                        reason,
+                    } => Err(unplaced_answer(bytes, text, reason)),
+                })
+            }
+            Self::Session(binding) => binding.publish_output(path, spool, true, owner).map(Ok),
+        }
+    }
+}
 
 impl SessionBinding<'_> {
     /// A writer for one result body: into the session's own body directory

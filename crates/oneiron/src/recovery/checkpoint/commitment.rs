@@ -32,7 +32,6 @@ use oneiron_crypto::{
 };
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
 
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{Callback, Rows};
@@ -81,7 +80,7 @@ pub(super) struct SigningKeys {
 
 impl SigningKeys {
     fn expand(install: [u8; 16], seed: &[u8; 32]) -> Self {
-        let part = |context: &str| Zeroizing::new(blake3::derive_key(context, seed));
+        let part = |context: &str| crate::world_keys::derive_guarded(context, &[&seed[..]]);
         let ed25519 = part("oneiron/checkpoint-signing/ed25519/v1");
         let sk_seed = part("oneiron/checkpoint-signing/slh-sk-seed/v1");
         let sk_prf = part("oneiron/checkpoint-signing/slh-sk-prf/v1");

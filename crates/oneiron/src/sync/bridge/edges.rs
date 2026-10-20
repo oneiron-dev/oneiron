@@ -324,7 +324,15 @@ pub(super) fn materialize_edges_from_delta(
                                 )?;
                             }
                             if unproven_regenerates {
-                                defer_regenerates(vault, wtxn, window_key, &tombstones, src, tgt)?;
+                                defer_regenerates(
+                                    vault,
+                                    wtxn,
+                                    window_key,
+                                    &tombstones,
+                                    src,
+                                    tgt,
+                                    buf,
+                                )?;
                             }
                             tracing::debug!(
                                 edge = %key,
@@ -511,6 +519,11 @@ pub(super) fn materialize_edges_from_delta(
                     };
                     if kind == EdgeKind::ChildOf {
                         super::childof::settle_child_of(vault, wtxn, window_key, &src, &tgt)?;
+                    }
+                    if kind == EdgeKind::Regenerates {
+                        super::regenerates::settle_regenerates(
+                            vault, wtxn, window_key, &src, &tgt,
+                        )?;
                     }
                     // A bare peer removal is not proof that the DAG door
                     // retired an immutable structural edge. A soft-deleted
@@ -711,6 +724,7 @@ pub(super) fn materialize_edges_from_delta(
             })
             .collect();
         super::parent_retry::wake_in_txn(vault, wtxn, &facts)?;
+        super::regenerates::wake_regenerates_axes(vault, wtxn, delta)?;
         let mut affected = replayed_entities;
         for (child, old_parents) in before {
             let new_parents = projected_child_of_parents(vault, &*wtxn, &child)?;
@@ -785,9 +799,9 @@ pub(super) fn materialize_edges_from_delta(
     result.ok()
 }
 
-/// Endpoint arrival re-presents only ChildOf and SpawnedBy edges, so a
-/// `regenerates` link waiting on a live endpoint keeps a replay marker for a
-/// later forward remat (FIX 5972). A tombstoned or purged end owes nothing.
+/// A `regenerates` link waiting on a live endpoint is owed in its exact
+/// ledger, never under its source's replay marker (FIX 6204). A tombstoned
+/// or purged end owes nothing, and settles what was owed.
 fn defer_regenerates(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -795,20 +809,21 @@ fn defer_regenerates(
     tombstones: &TombstoneIndex,
     src: EntityId,
     tgt: EntityId,
+    value: &[u8],
 ) -> Result<()> {
     for id in [&src, &tgt] {
         if tombstones.contains(id) || vault.local_hard_delete_marker_exists_in_txn(wtxn, id)? {
-            return Ok(());
+            return super::regenerates::settle_regenerates(vault, wtxn, window_key, &src, &tgt);
         }
     }
-    quarantine::set_replay_remat_marker_in_txn(vault, wtxn, window_key, &src)
+    super::regenerates::owe_regenerates(vault, wtxn, window_key, &src, &tgt, value)
 }
 
 /// FIX 5972: each carried `regenerates` link is proven on the topology its
 /// batch has just applied, its MESSAGEs' axes included, as the stream proved
 /// it. A refuted pair is the peer's rejection; one still missing a row or an
-/// axis waits under a replay marker; one onto an erased shell has no body
-/// left to prove it by, and is passed over.
+/// axis waits in its exact ledger (FIX 6204); one onto an erased shell has no
+/// body left to prove it by, and is passed over. All but a waiting one settle.
 fn admit_regenerates(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -824,7 +839,8 @@ fn admit_regenerates(
                 metas.push(EdgeOpMeta::for_key(&key, &buf));
             }
             crate::edge::Regeneration::Pending => {
-                quarantine::set_replay_remat_marker_in_txn(vault, wtxn, window_key, &src)?;
+                super::regenerates::owe_regenerates(vault, wtxn, window_key, &src, &tgt, &buf)?;
+                continue;
             }
             crate::edge::Regeneration::Erased => {}
             crate::edge::Regeneration::Refuses => {
@@ -839,6 +855,7 @@ fn admit_regenerates(
                 )?;
             }
         }
+        super::regenerates::settle_regenerates(vault, wtxn, window_key, &src, &tgt)?;
     }
     apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key, tombstones)
 }

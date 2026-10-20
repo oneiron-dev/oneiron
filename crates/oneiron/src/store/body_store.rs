@@ -34,6 +34,8 @@ use super::Store;
 use crate::secret_custody::{KnownSource, KnownSweep, KnownValues};
 use crate::{Error, Result};
 
+mod spool;
+
 const BODIES_DIR: &str = "bodies";
 const SPILL_ROOT: &str = "off-record-bodies";
 const TEMP_PREFIX: &str = ".tmp-";
@@ -630,8 +632,7 @@ impl BodySink {
             self.inline.extend_from_slice(frame);
             return Ok(());
         }
-        let instance = self.mint.as_ref().map(super::BodyMint::mint).transpose()?;
-        let mut spill = super::BodySpill::create(&self.dir, instance)?;
+        let mut spill = self.open_spill()?;
         let written = spill.write(&self.inline).and_then(|()| spill.write(frame));
         if let Err(error) = written {
             self.dir.discard(spill.temp());

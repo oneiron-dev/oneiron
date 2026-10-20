@@ -644,7 +644,9 @@ pub(in crate::sync) fn wake_in_txn(
     for fact in changed {
         ready.extend(indexed(vault, txn, fact)?);
     }
-    process(vault, txn, ready)
+    process(vault, txn, ready)?;
+    // An admitted MESSAGE can prove a `regenerates` link owed on it (FIX 6204).
+    super::regenerates::wake_regenerates(vault, txn, facts)
 }
 
 /// Recovery/drain entrypoint: reconstruct work from durable anchor and
@@ -667,5 +669,8 @@ pub(in crate::sync) fn retry_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) ->
         iter.map(|entry| entry.map(|(key, _)| key.to_string()))
             .collect::<Result<_>>()?
     };
-    process(vault, txn, rows)
+    process(vault, txn, rows)?;
+    // Then every owed `regenerates` link, after the structural edges it
+    // may have just landed with (FIX 6204).
+    super::regenerates::retry_all_regenerates(vault, txn)
 }

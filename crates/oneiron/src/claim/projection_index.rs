@@ -1,6 +1,6 @@
 //! Rebuildable claim projections maintained at the shared put chokepoint.
 use super::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource};
-use crate::side_table::{self, LegacyCompact, Raw, SideTable};
+use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Error, Result};
 
@@ -90,6 +90,65 @@ pub(crate) fn remove_claim_projection_index(
         }
     }
     PROJECTION_REVERSE.delete(store, txn, &id)?;
+    Ok(())
+}
+/// [`remove_claim_projection_index`] over raw `vault_meta` image rows in key
+/// order (FIX 6231): every predicate and pending-producer posting the
+/// claim's reverse row names goes, a predicate's name marker goes once no
+/// posting for that predicate remains, and the reverse row goes last. A
+/// posting the rows do not hold is already gone. Rows stay in order.
+///
+/// # Errors
+///
+/// [`Error::CorruptedIndex`] for a reverse key naming another claim's row or
+/// no projection's, and a row that does not decode.
+pub(crate) fn remove_claim_projection_index_in_rows(
+    rows: &mut Vec<(Vec<u8>, Vec<u8>)>,
+    id: EntityId,
+) -> Result<()> {
+    fn row_at(rows: &[(Vec<u8>, Vec<u8>)], key: &[u8]) -> Option<usize> {
+        rows.binary_search_by(|(row, _)| row.as_slice().cmp(key))
+            .ok()
+    }
+    let reverse = PROJECTION_REVERSE.key_bytes(&id);
+    let Some(at) = row_at(rows, &reverse) else {
+        return Ok(());
+    };
+    let keys = PROJECTION_REVERSE.decode_value(&rows[at].1)?;
+    for key in keys {
+        let owned_hash = if let Some(tail) = key.strip_prefix(PREDICATE_INDEX.decl().prefix) {
+            <([u8; 32], EntityId)>::decode_key(tail)
+                .filter(|(_, tail_id)| *tail_id == id)
+                .map(|(hash, _)| Some(hash))
+        } else if let Some(tail) = key.strip_prefix(PENDING_PRODUCER.decl().prefix) {
+            <(EntityId, EntityId)>::decode_key(tail)
+                .filter(|(_, tail_id)| *tail_id == id)
+                .map(|_| None)
+        } else {
+            None
+        }
+        .ok_or(Error::CorruptedIndex("claim projection reverse key"))?;
+        let Some(posting) = row_at(rows, &key) else {
+            continue;
+        };
+        let (_, value) = rows.remove(posting);
+        if let Some(hash) = owned_hash {
+            let predicate = PREDICATE_INDEX.decode_value(&value)?;
+            let mut postings = PREDICATE_INDEX.decl().prefix.to_vec();
+            postings.extend_from_slice(&hash);
+            let next = rows.partition_point(|(row, _)| row.as_slice() < postings.as_slice());
+            if !rows
+                .get(next)
+                .is_some_and(|(row, _)| row.starts_with(&postings))
+                && let Some(marker) = row_at(rows, &PREDICATE_NAME.key_bytes(&predicate))
+            {
+                rows.remove(marker);
+            }
+        }
+    }
+    if let Some(at) = row_at(rows, &reverse) {
+        rows.remove(at);
+    }
     Ok(())
 }
 pub(crate) fn maintain_claim_projection_index(

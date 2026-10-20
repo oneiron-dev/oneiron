@@ -1134,6 +1134,15 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 bearer: None,
             }
         }));
+    // The owner's `[models] extraction_egress` opt-in, as plain serve
+    // installs it (FIX 6621): off, nonlocal extraction stays refused.
+    if config
+        .models
+        .as_ref()
+        .is_some_and(|models| models.extraction_egress)
+    {
+        sync_server = sync_server.with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true));
+    }
     sync_server.managed_issuer = Some(issuer);
     if managed.artifact_socket.is_some() {
         sync_server = sync_server.with_artifact_socket();

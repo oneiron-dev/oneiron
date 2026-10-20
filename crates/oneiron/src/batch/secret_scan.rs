@@ -15,7 +15,9 @@ pub use self::lift_history::{
     SecretLiftClose, SecretLiftHistoryProposal, SecretLiftProgress, SecretLiftReceipt,
     SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner,
 };
-pub(crate) use self::lift_history::{enqueue_lift_in_txn, run_lift_pass};
+pub(crate) use self::lift_history::{
+    enqueue_known_remark_in_txn, enqueue_lift_in_txn, run_lift_pass,
+};
 pub(crate) use self::mask::admit::{
     Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
     scan_document_in_txn,
@@ -29,6 +31,9 @@ pub(crate) use self::mask::mask_origin_in_txn;
 pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
     admit_typed, admitted_from, from_named_tree, named_tree,
+};
+pub(crate) use self::mask::spool::{
+    BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 use self::shapes::Door;
