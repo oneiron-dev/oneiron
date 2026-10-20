@@ -9309,7 +9309,7 @@
     },
     {
       "name": "vault.code.origin.mirror.push",
-      "description": "Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client.",
+      "description": "Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them.",
       "input": "crate::memory::origin_doors::OriginRepoRequest",
       "output": "crate::origin::mirror::OriginMirrorRun",
       "call": "memory.origin_mirror_push_as(&memory.embedded_owner(\"vault.code.origin.mirror.push\")?, input)?",
