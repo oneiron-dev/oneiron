@@ -126,6 +126,7 @@ mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
 mod commitment_due;
+mod deadline_jobs;
 mod diagnostics;
 mod gate_decision;
 mod group_commit;
@@ -188,6 +189,8 @@ pub(crate) use body_store::{
 pub use channel_identity_receipts::*;
 #[cfg(test)]
 pub(crate) use commitment_due::*;
+pub use deadline_jobs::DeadlineJob;
+pub(crate) use deadline_jobs::DeadlineJobs;
 pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;

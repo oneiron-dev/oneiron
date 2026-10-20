@@ -136,11 +136,23 @@ pub(super) async fn read_by_deadline(
     + Send
     + 'static,
 ) -> Result<ScopedSearchResponse, ApiError> {
+    let job = admit_deadline_job(&server, &auth)?;
     let (publish, ready) = std::sync::mpsc::sync_channel(1);
     let task = tokio::task::spawn_blocking(move || {
+        let _job = job;
         let deadline = RetrievalDeadline::hard(arrived, budget);
+        // SCAN C030: the door answers at the deadline, so a read the pool
+        // starts past it reads nothing, and one whose cut page was ready only
+        // past it reads no further.
+        if Instant::now() >= deadline.answer_at() {
+            return Ok(unread_page(count_mode));
+        }
+        let cut = cut_page(&server, &auth, count_mode)?;
+        if Instant::now() >= deadline.answer_at() {
+            return Ok(cut);
+        }
         // The door reads at most one; a closed slot is moot.
-        let _ = publish.try_send(cut_page(&server, &auth, count_mode)?);
+        let _ = publish.try_send(cut);
         read(&server, &deadline)
     });
     let due = tokio::time::Instant::from_std(arrived + budget);
@@ -150,4 +162,34 @@ pub(super) async fn read_by_deadline(
         }
         Err(_) => Ok(ready.try_recv().unwrap_or_else(|_| unread_page(count_mode))),
     }
+}
+
+/// The domain a search caller's deadline-job key is derived under.
+const DEADLINE_CALLER: &[u8] = b"oneiron-server.search.deadline-caller.v1";
+
+/// `auth`'s place among its caller's running deadline jobs (SCAN C030), the
+/// caller keyed as its read-shape questions are: held by the read until it
+/// ends, its door's answer past. Past `limits.deadline_jobs_per_caller` the
+/// search is refused, typed `INVALID_STATE` with the row named.
+fn admit_deadline_job(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Result<oneiron::store::DeadlineJob, ApiError> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(DEADLINE_CALLER);
+    hasher.update(query_caller(auth).as_bytes());
+    let mut key = [0; 16];
+    key.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    let caller = oneiron::EntityId::from_bytes(key)
+        .map_err(|_| ApiError::internal_server_error("search caller key"))?;
+    let row = oneiron::limit_ask::EngineLimit::DeadlineJobsPerCaller.key();
+    server.vault.admit_deadline_job(caller).map_err(|refusal| {
+        ApiError::new(
+            refusal.message,
+            crate::error::ApiErrorDetails::InvalidState {
+                state: Some(row.to_owned()),
+            },
+            refusal.suggestions,
+        )
+    })
 }

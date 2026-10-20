@@ -36,6 +36,40 @@ pub(crate) fn archived_receipt_sources_in_txn(
     }
     Ok(sources)
 }
+
+/// [`archived_receipt_sources_in_txn`] for an export (SCAN C022): a source
+/// whose carrier row `withholds` keeps out is not folded, and the carriers
+/// folded come back beside the sources, for the export to name among the
+/// rows it read.
+pub(crate) fn archived_receipt_carriers_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    holder: &EntityId,
+    mut withholds: impl FnMut(&EntityId) -> Result<bool>,
+) -> Result<(BTreeMap<String, ExportReceiptSource>, Vec<EntityId>)> {
+    let mut sources = BTreeMap::new();
+    let mut carriers = Vec::new();
+    for id in receipt_archives_for_holder(store, txn, holder)? {
+        let Some(source) = read_source(store, txn, &id)? else {
+            continue;
+        };
+        if source.holder()? != *holder {
+            return Err(invalid());
+        }
+        if withholds(&id)? {
+            continue;
+        }
+        let reference = source.source.receipt_id().to_owned();
+        if let Some(previous) = sources.insert(reference, source.source.clone())
+            && previous != source.source
+        {
+            return Err(invalid());
+        }
+        carriers.push(id);
+    }
+    Ok((sources, carriers))
+}
+
 impl Vault {
     pub(crate) fn restore_claim_receipt_sources_in_txn(
         &self,

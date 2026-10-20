@@ -194,6 +194,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::SealRevisions),
         Self::Engine(EngineLimit::SealPrefixBytes),
         Self::Engine(EngineLimit::SealDssDecodeBytes),
+        Self::Engine(EngineLimit::DeadlineJobsPerCaller),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.

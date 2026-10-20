@@ -292,11 +292,17 @@ pub enum EngineLimit {
     /// across its Certs, CRLs and OCSPs. Past it the row asks and the
     /// material is read whole; one stream still decodes to at most 256 MiB.
     SealDssDecodeBytes,
+    /// Deadline jobs one caller has running at once: the recalls and searches
+    /// a door answers at their deadline, each counted until its work ends,
+    /// after its answer too (SCAN C030). The one row whose crossing refuses:
+    /// past it the row asks and the new job is refused, typed and naming the
+    /// row, never queued or dropped.
+    DeadlineJobsPerCaller,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 75] = [
+    pub const ALL: [Self; 76] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -372,6 +378,7 @@ impl EngineLimit {
         Self::SealRevisions,
         Self::SealPrefixBytes,
         Self::SealDssDecodeBytes,
+        Self::DeadlineJobsPerCaller,
     ];
 
     /// The config key that sets the row.
@@ -452,6 +459,7 @@ impl EngineLimit {
             Self::SealRevisions => "limits.seal_revisions",
             Self::SealPrefixBytes => "limits.seal_prefix_bytes",
             Self::SealDssDecodeBytes => "limits.seal_dss_decode_bytes",
+            Self::DeadlineJobsPerCaller => "limits.deadline_jobs_per_caller",
         }
     }
 
@@ -570,6 +578,8 @@ impl EngineLimit {
             Self::SealRevisions => 32,
             Self::SealPrefixBytes => 2 << 30,
             Self::SealDssDecodeBytes => 256 << 20,
+            // Ten times the fleet's 200 agents, as `limits.task_work` sits.
+            Self::DeadlineJobsPerCaller => 2_048,
         }
     }
 }

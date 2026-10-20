@@ -357,7 +357,14 @@ impl Vault {
                 if record.content_hash != Some(package.content_hash()?) {
                     return Err(Error::CorruptedIndex("stored skill package identity drift").into());
                 }
-                skill_package = Some(package);
+                // SCAN C022: a package read from its replicated carrier goes
+                // with the skill only when the carrier passes the filter every
+                // listed row passes, and the carrier is then a source.
+                let carrier = self.export_hub_package_carrier_in_txn(&rtxn, &id, &record)?;
+                if !carrier_withheld(&self.store, &rtxn, &device_only, carrier.as_ref())? {
+                    sources.extend(carrier);
+                    skill_package = Some(package);
+                }
             }
             // A pack source is the ASSET body itself, read as the pack
             // catalog reads it.
@@ -391,11 +398,17 @@ impl Vault {
                 && let Ok(claim) =
                     crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
             {
-                archived_receipts = Some(crate::receipt::archived_receipt_sources_in_txn(
+                // SCAN C022: each receipt source is folded from its carrier
+                // only when the carrier passes the same filter, and the
+                // carriers folded are sources.
+                let (receipts, carriers) = crate::receipt::archived_receipt_carriers_in_txn(
                     &self.store,
                     &rtxn,
                     &id,
-                )?);
+                    |carrier| carrier_withheld(&self.store, &rtxn, &device_only, Some(carrier)),
+                )?;
+                sources.extend(carriers);
+                archived_receipts = Some(receipts);
                 for receipt_id in super::receipt_sources::task_receipt_refs(&claim) {
                     if !task_receipts.contains_key(&receipt_id)
                         && let Some(receipt) = crate::receipt::attempt_pack_receipt_in_txn(
@@ -647,6 +660,26 @@ fn archive_custody_secret(
         metadata: record.metadata(),
         body: value.then(|| base64::engine::general_purpose::STANDARD.encode(body)),
     }))
+}
+
+/// Whether the export's locality filter withholds `carrier`, a row another
+/// row's section is folded from (SCAN C022): the filter every listed row
+/// passes, judged on the carrier's own row, and an unreadable one withheld as
+/// an unreadable row is. No carrier is withheld when none was read.
+fn carrier_withheld(
+    store: &crate::store::Store,
+    rtxn: &heed::RoTxn<'_>,
+    device_only: &BTreeSet<EntityId>,
+    carrier: Option<&EntityId>,
+) -> Result<bool> {
+    let Some(carrier) = carrier else {
+        return Ok(false);
+    };
+    crate::settings::device_only_withholds(store, rtxn, device_only, carrier)
+        .or_else(|error| match error {
+            Error::CorruptedIndex(_) => Ok(true),
+            error => Err(error),
+        })
 }
 
 /// The vault owner as a diary reader: the embedded and OKF exports' reader.

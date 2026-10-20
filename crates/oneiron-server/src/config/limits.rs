@@ -312,6 +312,7 @@ impl LimitsConfig {
             seal_revisions,
             seal_prefix_bytes,
             seal_dss_decode_bytes,
+            deadline_jobs_per_caller,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -455,6 +456,7 @@ impl LimitsConfig {
             (EngineLimit::SealRevisions, seal_revisions),
             (EngineLimit::SealPrefixBytes, seal_prefix_bytes),
             (EngineLimit::SealDssDecodeBytes, seal_dss_decode_bytes),
+            (EngineLimit::DeadlineJobsPerCaller, deadline_jobs_per_caller),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -638,4 +640,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) seal_revisions: Option<u64>,
     pub(super) seal_prefix_bytes: Option<u64>,
     pub(super) seal_dss_decode_bytes: Option<u64>,
+    pub(super) deadline_jobs_per_caller: Option<u64>,
 }
