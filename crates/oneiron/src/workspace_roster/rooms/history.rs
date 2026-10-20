@@ -954,7 +954,9 @@ impl Memory<'_> {
     /// bound to that thread alone, and so does a reader in a private
     /// thread's audience (FIX 2951); every other reader reads the room. The
     /// room's snapshot withholds a private thread from anyone off its
-    /// audience, so it answers them as it answers a missing one.
+    /// audience, so it answers them as it answers a missing one. A reader
+    /// in a private thread's audience also gets that audience and its
+    /// walk-ins and opened histories (FIX 6381).
     pub fn rooms_get_thread(
         &self,
         room: EntityId,
@@ -1003,7 +1005,10 @@ impl Memory<'_> {
             &members,
             now,
         )?;
-        Ok(super::liveness::project_target(turns, &tasks, handle, now)?)
+        // A private thread's audience and walk-ins, for a reader in it
+        // (FIX 6381).
+        let thread = super::liveness::project_target(turns, &tasks, handle, now)?;
+        self.with_thread_audience(room, handle, thread)
     }
 }
 

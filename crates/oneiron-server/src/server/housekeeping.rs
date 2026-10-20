@@ -193,6 +193,21 @@ impl SyncServer {
                     );
                 }
             }
+            // FIX 6219: staged e-sign notices go out as their recorded
+            // principal while it stands (`api::esign::notice_worker`).
+            let notices = Arc::clone(&server);
+            if let Err(error) = tokio::task::spawn_blocking(move || {
+                crate::api::dispatch_esign_due_notices(notices.vault(), &|| {
+                    notices.housekeeping_passes.stopping()
+                });
+            })
+            .await
+            {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "e-sign notice worker task failed"
+                );
+            }
             server
                 .end_lifecycle_job(LifecycleJobKind::Housekeeping)
                 .await;

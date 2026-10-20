@@ -7,6 +7,8 @@ mod audience_edit_guard;
 mod audience_erase;
 mod audience_events;
 mod audience_find;
+mod audience_history;
+mod audience_notices;
 mod audience_overlay;
 mod carrier_erase;
 mod fact_subject;
@@ -62,6 +64,9 @@ pub(crate) use audience_events::{
     ROOM_THREAD_AUDIENCE_KEY, audience_edit_erased_from, audience_edit_is_erased,
     audience_event_put_refusal,
 };
+pub use audience_history::ThreadAudienceOpenFullHistoryRequest;
+pub use audience_notices::ThreadNotice;
+pub(crate) use audience_notices::notify_thread_members_in_txn;
 pub(crate) use audience_overlay::overlay_thread_binding_in;
 #[cfg(feature = "sync")]
 pub(crate) use carrier_erase::erased_side_row_here;
@@ -81,7 +86,8 @@ pub use hosting::{
 };
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
-    RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
+    RoomThread, RoomThreadAudienceEvent, RoomThreadAudienceOp, RoomThreadList, RoomThreadPolicy,
+    RoomThreadWait, RoomThreads, RoomWaitKind,
 };
 pub(in crate::workspace_roster) use liveness::{
     is_thread_root, thread_root_map, thread_task_bindings,
