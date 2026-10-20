@@ -130,12 +130,19 @@ pub fn free_time_floor(
 /// Returns whether it was recorded. An agent an erase removed records
 /// nothing (FIX 5664): its erase took its free-time rows, and a writer that
 /// lands after it keeps no copy, so neither the receipt nor the note and
-/// cycle close each caller writes only after a recorded receipt land.
+/// cycle close each caller writes only after a recorded receipt land. A
+/// home that froze its free-time rows for a move records none either: they
+/// are history there, and the move carried them on (FIX 5661). A home move
+/// lands carried receipts as they are, never through here.
 pub(super) fn record_receipt_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     receipt: &FreeTimeItemReceipt,
 ) -> Result<bool> {
+    #[cfg(feature = "sync")]
+    if !super::items::settles_here_in_txn(vault, txn)? {
+        return Ok(false);
+    }
     let key = (receipt.agent, receipt.cycle, receipt.item);
     if RECEIPT.contains(&vault.store, txn, &key)?
         || crate::ports::removed_in_txn(&vault.store, txn, &receipt.agent)?

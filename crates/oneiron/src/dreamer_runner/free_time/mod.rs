@@ -19,11 +19,15 @@
 //!
 //! Every row here is this node's own, under the vault's elected home: the
 //! cycle opens where its items run. An actor's erase takes its rows in all
-//! five families (`erase`, FIX 5664).
+//! five families (`erase`, FIX 5664). A home move carries all five, with
+//! each cycle's spend tree, from the old home to the new one (`handoff`,
+//! FIX 5661); with no carried state the new home opens its cycles as before.
 
 mod cycle;
 mod doors;
 mod erase;
+#[cfg(feature = "sync")]
+mod handoff;
 mod items;
 mod policy;
 mod receipt;
@@ -46,11 +50,19 @@ pub use self::doors::{
     free_time_cycles_as_owner, free_time_policy_as_owner, free_time_policy_set_as_owner,
 };
 pub(crate) use self::erase::erase_free_time_actor_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use self::handoff::{
+    FreeTimeClockRows, FreeTimeCycleRows, FreeTimeItemRows, FreeTimePolicyRows,
+    FreeTimeReceiptRows, free_time_root_scopes_in_txn,
+};
 pub use self::items::FreeTimeItemBinding;
+#[cfg(feature = "sync")]
+pub(crate) use self::items::free_time_items_fenced_in_txn;
 pub(crate) use self::items::{
     FreeTimeForHumanContext, FreeTimeForHumanReply, FreeTimeItemRun, charge_free_time_item_in_txn,
-    end_free_time_item_in_txn, free_time_item_input, free_time_item_to_run, free_time_line,
-    land_free_time_for_human, record_own_time_landed_in_txn,
+    end_free_time_item_in_txn, free_time_item_input, free_time_item_to_run,
+    free_time_item_waits_unstarted, free_time_line, land_free_time_for_human,
+    record_own_time_landed_in_txn,
 };
 pub(crate) use self::policy::free_time_owns_reflection_in_txn;
 pub use self::policy::{
@@ -61,8 +73,9 @@ pub use self::receipt::{
     FreeTimeCycleSheet, FreeTimeFloor, FreeTimeItemOutcome, FreeTimeItemReceipt, free_time_floor,
 };
 
-/// The owner's policy per agent definition.
-const POLICY: SideTable<EntityId, policy::FreeTimePolicy, Named> =
+/// The owner's policy per agent definition, with the witness of its sets and
+/// clears.
+const POLICY: SideTable<EntityId, policy::FreeTimePolicyRecord, Named> =
     SideTable::new(&side_table::DREAMER_FREE_TIME_POLICY);
 /// The last boundary this node opened a cycle at, per agent.
 const CLOCK: SideTable<EntityId, FreeTimeClock, Named> =
