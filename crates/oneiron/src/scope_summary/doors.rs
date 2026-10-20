@@ -7,8 +7,7 @@ use super::codec::{
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::claim::{
-    ClaimApprovalStatus, ClaimReadStatus, ClaimSource, ClaimSubject, ScopedRead,
-    ScopedReadActorKey,
+    ClaimApprovalStatus, ClaimReadStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey,
 };
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
@@ -160,7 +159,9 @@ fn validate_note_covers_in_txn(
         sources,
     } = declared.target
     else {
-        return Err(invalid("summary in no conversation was not declared over NOTEs"));
+        return Err(invalid(
+            "summary in no conversation was not declared over NOTEs",
+        ));
     };
     for covered in covers {
         if !sources.contains(covered)
@@ -605,13 +606,13 @@ pub(super) fn land_in_txn(
         .made_by(&claim, birth)
         .apply(txn)?;
     let reply = if let Some(lane) = reply {
-        let canonical = ScopeSelector {
+        let scope = ScopeSelector {
             conversation: scope.conversation,
             session: None,
             path: ScopePath::Canonical,
             include_forks: false,
         };
-        let head = resolve_in_txn(vault, txn, &canonical)?.records.last().copied();
+        let head = resolve_in_txn(vault, txn, &scope)?.records.last().copied();
         let mut record_body = Vec::new();
         rmpv::encode::write_value(
             &mut record_body,
