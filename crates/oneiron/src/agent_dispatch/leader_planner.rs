@@ -20,7 +20,7 @@ use crate::task_verb::Care;
 use super::AgentDispatcher;
 use super::leader_starter::{LeaderTaskContext, LeaderTeamPlanner};
 use super::planner::PlannerDecisions;
-use super::planner_live::{LivePlanRequest, PlannerSeat, PlannerSkills};
+use super::planner_live::{LivePlanRequest, PlanSeats, PlannerSeat, PlannerSkills};
 use super::team_shape::CoordinationPattern;
 use super::types::{CareLevel, SpawnNeed, SpawnOverride};
 use super::widen_record::invalid;
@@ -85,9 +85,16 @@ impl LeaderTeamPlanner for VaultLeaderTeamPlanner<'_, '_> {
             executor: &self.executor,
             decisions: self.decisions,
         };
-        let (receipt, mut shapes) =
-            self.dispatcher
-                .plan_with_team_shape(&self.leased, &request, team_shape, self.at)?;
+        // Advice ranks every seat the host serves, whatever its child's
+        // model list admits (FIX 5073); the plan a launch reads keeps that
+        // check.
+        let (receipt, mut shapes) = self.dispatcher.plan_with_team_shape(
+            &self.leased,
+            &request,
+            PlanSeats::Unfiltered(&self.seats),
+            team_shape,
+            self.at,
+        )?;
         shapes.truncate(self.top.max(1));
         let advice = serde_json::json!({
             "task_ref": task.task_ref.to_hex(),

@@ -8,10 +8,14 @@
 //! run is a root; an agent's has the try its lease holds as its real parent
 //! (FIX 5316). A member's run requires a payer, which its steps find through
 //! their wrapper, as they find the member whose own lane their context is
-//! read on (FIX 5416). A TASK-less run never reaches any of this. The
-//! TASK's own gate, take, fence and settlement are the task highway's
+//! read on (FIX 5416). An agent's run whose declared context widens its
+//! parent's slice files the board a widen proposal that keeps the binding,
+//! and takes its TASK only in the writer that approves it (FIX 5350). A
+//! TASK-less run never reaches any of this. The TASK's own gate, take, fence
+//! and settlement are the task highway's
 //! (`task_verb::highway_runner::workflow_try`).
 
+use crate::agent_dispatch::widen::PreparedParentContext;
 use crate::agent_dispatch::widen_record::invalid;
 use crate::agent_dispatch::workflow_record::{
     DEDUPE, RECORD, WORKFLOW_ATTEMPT_TYPE, WorkflowTaskBinding, dedupe_key_hash, is_wrapper,
@@ -20,10 +24,11 @@ use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
-use crate::context_projection::normalize_context_spec;
+use crate::context_projection::{normalize_context_spec, validate_spec_narrows};
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::memory::MemoryError;
 use crate::task_verb::highway_runner::workflow_try::{self, WorkflowRunEnd, WorkflowTaskBind};
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 
@@ -101,7 +106,11 @@ impl AgentDispatcher<'_> {
             .ok_or_else(|| invalid("workflow dedupe root is missing"))?;
         let record = self.read_workflow(txn, &row)?;
         let (_, mut expected) = self.workflow_intent(txn, input, spawn)?;
-        expected.task = Some(WorkflowTaskBinding::new(bind));
+        // The slip a member presented is settlement metadata, no part of the
+        // request (FIX 5419): a retry on another slip answers the first run.
+        let mut binding = WorkflowTaskBinding::new(bind);
+        binding.slip = record.intent.task.as_ref().and_then(|first| first.slip);
+        expected.task = Some(binding);
         if record.intent != expected {
             return Err(refusal(key, root));
         }
@@ -112,7 +121,11 @@ impl AgentDispatcher<'_> {
 
     /// Admits a TASK-bound run in the caller's writer, after its TASK's
     /// gate: the ordinary saved-workflow admission with the binding in its
-    /// intent and the backlink on its wrapper alone.
+    /// intent and the backlink on its wrapper alone. An agent's run whose
+    /// declared context widens its parent's slice, which that admission
+    /// refuses, files a widen proposal keeping the binding in this writer
+    /// instead (FIX 5350): no run is queued and no TASK is taken until the
+    /// board above approves it.
     pub(crate) fn dispatch_bound_workflow_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -121,7 +134,63 @@ impl AgentDispatcher<'_> {
         bind: &WorkflowTaskBind,
     ) -> Result<AgentDispatchOutcome> {
         let binding = WorkflowTaskBinding::new(bind);
+        if self.bound_context_widens(txn, &input, &spawn)
+            && let Some(proposed) =
+                self.propose_context_widen_in_txn(txn, &input, &spawn, Some(&binding))?
+        {
+            return Ok(proposed);
+        }
         self.dispatch_workflow_bound_in_txn(txn, input, spawn, None, Some(&binding))
+    }
+
+    /// Whether a bound run's declared context widens its leased parent's
+    /// slice: the one case its admission refuses (`validate_spec_narrows`).
+    /// A root run, or a parent whose slice does not read, is left to that
+    /// admission, which answers as it always did.
+    fn bound_context_widens(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        input: &DispatchAgent,
+        spawn: &AgentSpawnContext,
+    ) -> bool {
+        let (Some(parent), Some(spec)) = (input.parent_attempt, spawn.context_spec.as_ref()) else {
+            return false;
+        };
+        let parent_spec = self
+            .parent_dispatch_input_in_txn(txn, parent)
+            .and_then(|parent_input| {
+                parent_input
+                    .map(|parent_input| self.effective_context_spec(parent, &parent_input))
+                    .transpose()
+            });
+        let Ok(Some(parent_spec)) = parent_spec else {
+            return false;
+        };
+        validate_spec_narrows(&parent_spec, spec).is_err()
+    }
+
+    /// Lands an agent's bound run whose widen the board above approved
+    /// (FIX 5350), in the approving writer: the bind gate again, the run
+    /// under the approved slice with the binding on its wrapper, then the
+    /// wrapper's take of its TASK. A refusal of either lands nothing.
+    pub(in crate::agent_dispatch) fn approve_bound_workflow_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: DispatchAgent,
+        spawn: AgentSpawnContext,
+        approved: &PreparedParentContext,
+        binding: &WorkflowTaskBinding,
+    ) -> Result<AgentDispatchOutcome> {
+        let bind = binding.bind()?;
+        workflow_try::admit_in_txn(self.vault, txn, bind.bound_by, bind.task)
+            .map_err(bound_refusal)?;
+        let outcome =
+            self.dispatch_workflow_bound_in_txn(txn, input, spawn, Some(approved), Some(binding))?;
+        if let AgentDispatchOutcome::WorkflowDispatched(status) = &outcome {
+            workflow_try::take_in_txn(self.vault, txn, bind.bound_by, &status.attempt, bind.task)
+                .map_err(bound_refusal)?;
+        }
+        Ok(outcome)
     }
 
     /// The TASK a registered wrapper realizes and the actor who bound it,
@@ -311,4 +380,13 @@ impl AgentDispatcher<'_> {
             wrapper,
         }))
     }
+}
+
+/// A bound run's gate or take refusal, as the approving writer's error: the
+/// approval lands nothing.
+fn bound_refusal(error: MemoryError) -> Error {
+    Error::Refused(format!(
+        "this widen's TASK binding no longer holds: {}",
+        error.message
+    ))
 }

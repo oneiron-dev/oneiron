@@ -187,7 +187,7 @@ pub(crate) fn dispatch_bound(
 /// an idle standard TASK on a runner lane that no try realizes now. Every
 /// backlink is read, however many the TASK has; a refusal names the try or
 /// the state found.
-fn admit_in_txn(
+pub(crate) fn admit_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: WriteActor,
@@ -262,7 +262,7 @@ fn busy(state: &TaskExecutionState, standing: &TaskStanding) -> String {
 /// The wrapper's take of its TASK, in the writer that admitted it: the
 /// highway's Accept under the wrapper's binding, which leaves the TASK
 /// Working with the binder's Accepted fact.
-fn take_in_txn(
+pub(crate) fn take_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: WriteActor,

@@ -110,7 +110,10 @@ pub(super) struct WorkflowIntent {
 /// or a member's Human, an agent's Agent. A member's run also requires a
 /// payer (FIX 5316): every step's model calls must read one from the root
 /// the member funds, and none falls to the owner's account. Only the
-/// wrapper keeps the fact; its steps find it through their wrapper.
+/// wrapper keeps the fact; its steps find it through their wrapper. A
+/// member's binding keeps the slip their call presented too (FIX 5419), as
+/// settlement metadata: the settlement names it revoked or lapsed once it
+/// is, and gates nothing on it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct WorkflowTaskBinding {
@@ -119,6 +122,8 @@ pub(super) struct WorkflowTaskBinding {
     pub bound_class: u8,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub payer_required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slip: Option<[u8; 32]>,
 }
 
 impl WorkflowTaskBinding {
@@ -128,11 +133,12 @@ impl WorkflowTaskBinding {
             bound_by: bind.bound_by.entity_ref().to_hex(),
             bound_class: bind.bound_by.actor_class() as u8,
             payer_required: bind.payer_required,
+            slip: bind.slip,
         }
     }
 
-    /// The TASK, the actor who bound it under its class, and whether its
-    /// steps must read a payer.
+    /// The TASK, the actor who bound it under its class, whether its steps
+    /// must read a payer, and the slip a member presented.
     pub(super) fn bind(&self) -> Result<WorkflowTaskBind> {
         let class = EdgeActorClass::try_from_u8(self.bound_class)
             .ok_or_else(|| invalid("workflow TASK binding names no actor class"))?;
@@ -140,6 +146,7 @@ impl WorkflowTaskBinding {
             task: crate::EntityId::from_hex(&self.task_ref)?,
             bound_by: WriteActor::new(crate::EntityId::from_hex(&self.bound_by)?, class),
             payer_required: self.payer_required,
+            slip: self.slip,
         })
     }
 }

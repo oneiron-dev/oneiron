@@ -14,7 +14,7 @@ use crate::agent_dispatch::{
     decode_agent_dispatch_input, load_team_type_tree_in_txn, team_pattern,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestKind};
-use crate::critic::review::declared_critiques_in_txn;
+use crate::critic::review::{DeclaredCritique, declared_critiques_in_txn};
 use crate::critic::{CritiqueArtifact, CritiqueArtifactStore, CritiqueVerdict};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::error::{Error, Result};
@@ -534,11 +534,12 @@ fn seat_routes(
 /// The critiques found for each launched run: those keyed under its own
 /// attempt, those of a review whose run reference is the run's canonical id
 /// (`vault.critic.review` keys a review's branch by its run reference's
-/// hash), and those of a review its caller declared for the run. A review
-/// under a run reference the caller chose, declared for no run, is not found
-/// from an attempt, so the list is not exhaustive. A critique or stored
-/// review that does not read is an issue on the read, and every other one is
-/// still listed (FIX 4468, 4470).
+/// hash), and those of a review its caller declared for the run, each beside
+/// that review's verdict claim (FIX 5252). A review under a run reference
+/// the caller chose, declared for no run, is not found from an attempt, so
+/// the list is not exhaustive. A critique or stored review that does not
+/// read is an issue on the read, and every other one is still listed (FIX
+/// 4468, 4470).
 fn critiques(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -561,28 +562,35 @@ fn critiques(
         }
         let found = direct
             .into_iter()
-            .map(|artifact| (CriticAssociation::BranchAttempt, artifact))
+            .map(|artifact| (CriticAssociation::BranchAttempt, None, artifact))
             .chain(
                 named
                     .into_iter()
                     .filter(|artifact| artifact.run_id == run)
-                    .map(|artifact| (CriticAssociation::CanonicalRunRef, artifact)),
+                    .map(|artifact| (CriticAssociation::CanonicalRunRef, None, artifact)),
             )
             .chain(
                 declared
                     .remove(&member.attempt_ref)
                     .unwrap_or_default()
                     .into_iter()
-                    .map(|artifact| (CriticAssociation::DeclaredSpawnAttempt, artifact)),
+                    .map(|critique| {
+                        (
+                            CriticAssociation::DeclaredSpawnAttempt,
+                            critique.verdict_ref,
+                            critique.artifact,
+                        )
+                    }),
             );
-        for (association, artifact) in found {
+        for (association, verdict_ref, artifact) in found {
             if !seen.insert((
                 *artifact.branch_attempt.as_bytes(),
                 artifact.artifact_id.clone(),
             )) {
                 continue;
             }
-            if let Some(critic) = critic_view(&artifact, association, member, issues)? {
+            if let Some(critic) = critic_view(&artifact, association, verdict_ref, member, issues)?
+            {
                 critics.push(critic);
             }
         }
@@ -599,7 +607,7 @@ fn declared_critiques(
     txn: &heed::RoTxn<'_>,
     launched: &[LaunchedMember],
     issues: &mut Vec<ObservationIssue>,
-) -> BTreeMap<EntityId, Vec<CritiqueArtifact>> {
+) -> BTreeMap<EntityId, Vec<DeclaredCritique>> {
     let runs: BTreeSet<EntityId> = launched.iter().map(|member| member.attempt_ref).collect();
     match declared_critiques_in_txn(vault, txn, &runs) {
         Ok((declared, unread)) => {
@@ -617,12 +625,14 @@ fn declared_critiques(
 }
 
 /// One critique as stored, its calibration stamp held against the dispatch
-/// stamp of `member`, the run it was found for. The artifact store refuses a
+/// stamp of `member`, the run it was found for, beside the verdict claim of
+/// the review it was declared under, if any. The artifact store refuses a
 /// calibration missing its executor, stamp or axis, so one missing them is an
 /// issue, not a default.
 fn critic_view(
     artifact: &CritiqueArtifact,
     association: CriticAssociation,
+    verdict_ref: Option<EntityId>,
     member: &LaunchedMember,
     issues: &mut Vec<ObservationIssue>,
 ) -> Result<Option<CriticObservation>> {
@@ -648,6 +658,7 @@ fn critic_view(
         association,
         declared_attempt_ref: (association == CriticAssociation::DeclaredSpawnAttempt)
             .then_some(member.attempt_ref),
+        review_verdict_ref: verdict_ref,
         artifact_id: artifact.artifact_id.clone(),
         target_ref: artifact.candidate_ref.clone(),
         type_ref,

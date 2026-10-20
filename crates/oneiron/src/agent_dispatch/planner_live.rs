@@ -99,7 +99,7 @@ pub struct PlannerSeat {
 
 /// The seats one plan's evidence costs and ranks.
 #[derive(Clone, Copy)]
-enum PlanSeats<'a> {
+pub(super) enum PlanSeats<'a> {
     /// A plan a launch reads: each seat whose model its child's list admits
     /// (FIX 4542).
     Listed(&'a [PlannerSeat]),
@@ -175,7 +175,13 @@ impl AgentDispatcher<'_> {
             at,
         )?;
         Ok(self
-            .plan_with_team_shape(leased, request, &team_shape, at)?
+            .plan_with_team_shape(
+                leased,
+                request,
+                PlanSeats::Listed(request.seats),
+                &team_shape,
+                at,
+            )?
             .0)
     }
 
@@ -212,11 +218,14 @@ impl AgentDispatcher<'_> {
     }
 
     /// The live plan over an already loaded team-shape pack: the receipt,
-    /// and every ranked candidate best first.
+    /// and every ranked candidate best first. `seats` costs and ranks the
+    /// request's seats as a launch reads them, or, for the CEO's advice,
+    /// every one (FIX 5073).
     pub(super) fn plan_with_team_shape(
         &self,
         leased: &AttemptRecord,
         request: &LivePlanRequest<'_>,
+        seats: PlanSeats<'_>,
         team_shape: &LoadedSkillPack,
         at: u64,
     ) -> Result<(SpawnPlanReceipt, Vec<ShapeQuote>)> {
@@ -224,14 +233,8 @@ impl AgentDispatcher<'_> {
         let live = self.live_planner_lease(leased)?;
         let project = attempt_project(&live);
         let request = &request.with_owner_choices(self.vault, project)?;
-        let evidence = self.planner_evidence_for(
-            project,
-            Some(live.id),
-            None,
-            &request.need,
-            PlanSeats::Listed(request.seats),
-            at,
-        )?;
+        let evidence =
+            self.planner_evidence_for(project, Some(live.id), None, &request.need, seats, at)?;
         // The answering rung's workflow skill loads through the same door,
         // so its revision is on the manifest and its executors on the receipt.
         self.plan_over_evidence(request, team_shape, &evidence, |skill| {

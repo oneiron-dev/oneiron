@@ -17,7 +17,8 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{ArtifactError, Error};
 use crate::llm::run_admission::{DeclaredMaximum, LeaseUnit};
 use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError,
+    MemoryResult,
 };
 use crate::store::GateDecisionId;
 use crate::write_envelope::WriteActor;
@@ -318,11 +319,26 @@ pub fn dispatch_workflow_as(
     started_run(outcome)
 }
 
-/// The run a saved workflow's dispatch started or found.
+/// The run a saved workflow's dispatch started or found. An agent's bound
+/// run whose context widens its parent's slice started nothing: it waits on
+/// the widen proposal it filed, and takes its TASK only once the board above
+/// approves it (FIX 5350).
 fn started_run(outcome: AgentDispatchOutcome) -> MemoryResult<WorkflowRunView> {
     match outcome {
         AgentDispatchOutcome::WorkflowDispatched(status)
         | AgentDispatchOutcome::WorkflowExisting(status) => run_view(&status),
+        AgentDispatchOutcome::ProposedWiden(proposal) => Err(MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            format!(
+                "the run's context widens its parent's slice, so it waits on widen proposal {} \
+                 for the board above; it starts and takes its TASK once the board approves",
+                proposal.proposal_id
+            ),
+            &[
+                "Ask the board above to approve the proposal, then repeat this request under \
+                 the same intent key to read the run.",
+            ],
+        )),
         _ => Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
             "a saved workflow dispatch did not start a workflow run",
         ))
@@ -440,6 +456,9 @@ pub fn dispatch_workflow_bound_as_person(
         person,
         lane: &lane,
         funding: &funding,
+        slip: memory
+            .presented_credential()
+            .map(|slip| slip.claims().slip_id),
     };
     started_run(dispatch_bound(
         vault,

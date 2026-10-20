@@ -269,17 +269,26 @@ pub(super) fn declare_spawn(
     })
 }
 
+/// One in-scope critique of a stored review declared for a launched run,
+/// beside that review's verdict claim (FIX 5252): the row the critique's
+/// observation derives from, `None` when the stored ref does not read.
+pub(crate) struct DeclaredCritique {
+    pub(crate) verdict_ref: Option<EntityId>,
+    pub(crate) artifact: CritiqueArtifact,
+}
+
 /// The in-scope critiques of every stored review declared for one of `runs`,
 /// by run, read in the caller's snapshot for an observation (FIX 4470): one
 /// pass over every stored review, each critique validated on its own as the
-/// branch store validates it, and one line naming each review or critique
-/// that does not read. A storage fault fails the pass.
+/// branch store validates it and kept beside its review's verdict claim, and
+/// one line naming each review, verdict ref or critique that does not read.
+/// A storage fault fails the pass.
 pub(crate) fn declared_critiques_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     runs: &BTreeSet<EntityId>,
-) -> Result<(BTreeMap<EntityId, Vec<CritiqueArtifact>>, Vec<String>)> {
-    let mut found: BTreeMap<EntityId, Vec<CritiqueArtifact>> = BTreeMap::new();
+) -> Result<(BTreeMap<EntityId, Vec<DeclaredCritique>>, Vec<String>)> {
+    let mut found: BTreeMap<EntityId, Vec<DeclaredCritique>> = BTreeMap::new();
     let mut unread = Vec::new();
     for row in RESULT.iter_raw_from(&vault.store, txn, &[])? {
         let (key, value) = row?;
@@ -296,12 +305,23 @@ pub(crate) fn declared_critiques_in_txn(
         let Some(run) = stored.spawn_attempt.filter(|run| runs.contains(run)) else {
             continue;
         };
+        let verdict_ref = EntityId::from_hex(&stored.verdict).ok();
+        if verdict_ref.is_none() {
+            unread.push(format!(
+                "review {} declared for run {} keeps a verdict ref that does not read",
+                stored.verdict,
+                run.to_hex()
+            ));
+        }
         for artifact in stored.artifacts {
             if artifact.out_of_scope {
                 continue;
             }
             match validate_critique_artifact(&artifact) {
-                Ok(()) => found.entry(run).or_default().push(artifact),
+                Ok(()) => found.entry(run).or_default().push(DeclaredCritique {
+                    verdict_ref,
+                    artifact,
+                }),
                 Err(error) => unread.push(format!(
                     "critique {} of review {} declared for run {} does not read: {error}",
                     artifact.artifact_id,
