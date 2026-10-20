@@ -12,7 +12,9 @@
 //! The check reads the same meter on the offer's check date. A promise is
 //! checked only after a yes, and only once the approved model served the
 //! whole window and every call in it was priced; until then the check waits,
-//! and the next night queues it again. The check is fixed code: no model call.
+//! and the next night queues it again. A window whose only unpriced calls
+//! lack a quoted cache rate closes as neither a pass nor a fail (FIX 6265).
+//! The check is fixed code: no model call.
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::coach::coach_offer_check_target;
 use oneiron::learning::learning_estimate;
@@ -40,8 +42,10 @@ use crate::usage::SeatUsage;
 mod cost;
 mod pilot;
 mod sources;
+mod unverifiable;
 use cost::{candidate_monthly, monthly, payback};
 use sources::Sources;
+use unverifiable::UnverifiableUnpricedCache;
 
 const DAY_SECS: u64 = 24 * 60 * 60;
 /// The workload an offer is priced from, and the window its check reads.
@@ -520,6 +524,8 @@ impl Brief {
                 "days": WINDOW_SECS / DAY_SECS,
                 "calls": self.usage.calls,
                 "input_tokens": self.usage.input_tokens,
+                "cache_read_tokens": self.usage.cache_read_tokens,
+                "cache_write_tokens": self.usage.cache_write_tokens,
                 "output_tokens": self.usage.output_tokens,
                 "metered_throughout": self.workload.complete,
                 "metered_cost": self.usage.complete.then(|| serde_json::json!({
@@ -711,13 +717,19 @@ pub(super) fn check(
         .seat_usage(meter.owner(), meter.vault_id(), &role_key(role), from, now)
         .map_err(|_| Error::InvalidConfig("the seat's usage could not be read".into()))?;
     // Applied and metered throughout: every call in the window ran on the
-    // approved model and was priced. Anything less waits for a later night.
+    // approved model and was priced. Anything less waits for a later night,
+    // but calls unpriced only for an unquoted cache rate close the check.
     if usage.calls == 0
         || usage.models.get(&approved) != Some(&usage.calls)
         || usage.metered_since.is_none_or(|since| since > from)
-        || !usage.complete
     {
         return Ok(());
+    }
+    if !usage.complete {
+        let Some(outcome) = UnverifiableUnpricedCache::of(&usage) else {
+            return Ok(());
+        };
+        return outcome.record(vault, admitted, &offer, &approved, usage.refs, now);
     }
     let comparable = usage.currency.as_deref() == Some(offer.cost.currency.as_str());
     let observed = comparable

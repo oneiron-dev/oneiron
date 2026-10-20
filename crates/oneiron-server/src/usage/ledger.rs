@@ -324,6 +324,12 @@ pub struct SeatUsage {
     /// False when any call in the window has no price, or a price in another
     /// currency.
     pub complete: bool,
+    /// The unpriced calls whose record says their frozen rates quote no rate
+    /// for a cache dimension they measured.
+    pub unpriced_cache: UnpricedCache,
+    /// `complete` with the `unpriced_cache` calls set aside: false when any
+    /// other call has no price, or a price in another currency.
+    pub complete_but_unpriced_cache: bool,
     /// Calls per model id.
     pub models: std::collections::BTreeMap<String, u64>,
     /// The vault's first metered call of any seat: a window that starts
@@ -331,6 +337,29 @@ pub struct SeatUsage {
     pub metered_since: Option<u64>,
     /// Every call's idempotency key, newest first.
     pub refs: Vec<String>,
+}
+/// A window's calls left unpriced only because the rates frozen on each
+/// quote no rate for a cache dimension it measured.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UnpricedCache {
+    /// Such calls, each counted once.
+    pub calls: u64,
+    /// Those with cached reads and no quoted cache-read rate.
+    pub cache_read: u64,
+    /// Those with cached writes and no quoted cache-write rate.
+    pub cache_write: u64,
+}
+impl UnpricedCache {
+    fn add(&mut self, dimensions: &[CacheDimension]) {
+        self.calls = self.calls.saturating_add(1);
+        for dimension in dimensions {
+            let calls = match dimension {
+                CacheDimension::CacheRead => &mut self.cache_read,
+                CacheDimension::CacheWrite => &mut self.cache_write,
+            };
+            *calls = calls.saturating_add(1);
+        }
+    }
 }
 impl UsageLedger {
     /// One seat's calls with `from <= at < until`, where `at` is when the call
@@ -348,6 +377,7 @@ impl UsageLedger {
         validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
         let mut usage = SeatUsage {
             complete: true,
+            complete_but_unpriced_cache: true,
             ..SeatUsage::default()
         };
         let mut refs = Vec::new();
@@ -382,8 +412,8 @@ impl UsageLedger {
                         if let Some(model) = &stored.event.model {
                             *usage.models.entry(model.clone()).or_default() += 1;
                         }
-                        match &stored.cost {
-                            Some(cost)
+                        match (&stored.cost, &stored.event.unpriced) {
+                            (Some(cost), _)
                                 if usage
                                     .currency
                                     .as_ref()
@@ -392,10 +422,23 @@ impl UsageLedger {
                                 usage.currency = Some(cost.currency.clone());
                                 match usage.cost_amount.checked_add(cost.amount) {
                                     Some(sum) => usage.cost_amount = sum,
-                                    None => usage.complete = false,
+                                    None => {
+                                        usage.complete = false;
+                                        usage.complete_but_unpriced_cache = false;
+                                    }
                                 }
                             }
-                            _ => usage.complete = false,
+                            // Unpriced for want of a quoted cache rate, as its
+                            // settlement recorded; an older record names no
+                            // reason and counts as any other gap.
+                            (None, Some(UnpricedReason::UnquotedCache { dimensions })) => {
+                                usage.complete = false;
+                                usage.unpriced_cache.add(dimensions);
+                            }
+                            _ => {
+                                usage.complete = false;
+                                usage.complete_but_unpriced_cache = false;
+                            }
                         }
                         refs.push(std::cmp::Reverse((at, stored.event.idempotency_key)));
                         Ok(())
