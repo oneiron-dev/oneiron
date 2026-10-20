@@ -2483,6 +2483,10 @@ export class Oneiron {
       },
       /** Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope. */
       send_for_signature: (input: Facade.EsignDispatchRequest): Facade.EsignDispatchView => this.#call(() => this.#client.vaultEsignSendForSignature(input) as Facade.EsignDispatchView),
+      notices: {
+        /** Dispatches the due transition notices of one signing document recorded for the caller through the email send gate, as the caller. */
+        dispatch: (input: Facade.EsignNoticesDispatchRequest): Facade.EsignNoticesDispatchView => this.#call(() => this.#client.vaultEsignNoticesDispatch(input) as Facade.EsignNoticesDispatchView),
+      },
       /** Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller. */
       remind: (input: Facade.EsignDispatchRequest): Facade.EsignDispatchView => this.#call(() => this.#client.vaultEsignRemind(input) as Facade.EsignDispatchView),
       /** Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller. */

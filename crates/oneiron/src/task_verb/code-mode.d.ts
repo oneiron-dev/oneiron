@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1107 code-mode rows (1082 host rows, 25 run rows), 3723 declarations.
-// Replies: 989 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1108 code-mode rows (1083 host rows, 25 run rows), 3726 declarations.
+// Replies: 990 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -3124,6 +3124,9 @@ declare namespace Sdk {
   type EsignLinksView = { document_ref: string; issued: EsignIssuedLink[]; unchanged: string[] };
   type EsignDispatchRequest = { document_ref: string; recipient_count: number; on_behalf_of?: string | null; idempotency_key?: string | null };
   type EsignDispatchView = { document_ref: string; verb: string; intent_ref: string; outcome: string; gate_outcome: string; gate_decision_ref?: string | null; gate_reason_codes: string[] };
+  type EsignNoticesDispatchRequest = { document_ref: string };
+  type EsignNoticeOutcome = { attempt_ref: string; recipient: string; transition: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; error_code?: string | null; error?: string | null };
+  type EsignNoticesDispatchView = { document_ref: string; recovered: number; notices: EsignNoticeOutcome[] };
   type EsignVoidRequest = { document_ref: string; recipient_count: number; reason: string; on_behalf_of?: string | null; idempotency_key?: string | null };
   type SigningAction = { action: "load" } | { action: "save_field"; field: string; value: FieldValue } | { action: "complete"; consent: boolean; next?: string | null } | { action: "reject"; reason: string };
   type EsignSigningRequest = { token: string; action: SigningAction };
@@ -5055,6 +5058,10 @@ declare const vault: Sdk.VaultHost & {
     links: {
       /** The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient. */
       issue(input: Sdk.EsignLinksIssueRequest): Promise<Sdk.EsignLinksView | StoredResult>;
+    };
+    notices: {
+      /** Dispatches the due transition notices of one signing document recorded for the caller through the email send gate, as the caller. */
+      dispatch(input: Sdk.EsignNoticesDispatchRequest): Promise<Sdk.EsignNoticesDispatchView | StoredResult>;
     };
     /** Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller. */
     remind(input: Sdk.EsignDispatchRequest): Promise<Sdk.EsignDispatchView | StoredResult>;

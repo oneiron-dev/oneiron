@@ -3310,6 +3310,8 @@ class Oneiron:
         def links(self) -> "Oneiron._VaultEsignLinksVerbs": ...
         def send_for_signature(self, spec: Facade.EsignDispatchRequest) -> Facade.EsignDispatchView:
             """Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope."""
+        @property
+        def notices(self) -> "Oneiron._VaultEsignNoticesVerbs": ...
         def remind(self, spec: Facade.EsignDispatchRequest) -> Facade.EsignDispatchView:
             """Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller."""
         def void(self, spec: Facade.EsignVoidRequest) -> Facade.EsignDispatchView:
@@ -3321,6 +3323,9 @@ class Oneiron:
     class _VaultEsignLinksVerbs:
         def issue(self, spec: Facade.EsignLinksIssueRequest) -> Facade.EsignLinksView:
             """The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient."""
+    class _VaultEsignNoticesVerbs:
+        def dispatch(self, spec: Facade.EsignNoticesDispatchRequest) -> Facade.EsignNoticesDispatchView:
+            """Dispatches the due transition notices of one signing document recorded for the caller through the email send gate, as the caller."""
     class _VaultEsignSigningVerbs:
         def act(self, spec: Facade.EsignSigningRequest) -> Facade.SigningOutcome:
             """One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act."""

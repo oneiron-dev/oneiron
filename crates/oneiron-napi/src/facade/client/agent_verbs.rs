@@ -7745,6 +7745,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_esign_notices_dispatch(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.notices.dispatch", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_esign_remind(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.esign.remind", js_json(input))

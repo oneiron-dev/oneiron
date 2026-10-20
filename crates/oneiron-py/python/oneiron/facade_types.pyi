@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1072 facade rows, 3670 declarations.
-Inputs: 1007 of 1072 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 961 of 1072 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1073 facade rows, 3673 declarations.
+Inputs: 1008 of 1073 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 962 of 1073 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -15256,6 +15256,22 @@ class EsignDispatchView(TypedDict):
     gate_outcome: str
     gate_decision_ref: NotRequired[str | None]
     gate_reason_codes: list[str]
+class EsignNoticesDispatchRequest(TypedDict):
+    document_ref: str
+class EsignNoticeOutcome(TypedDict):
+    attempt_ref: str
+    recipient: str
+    transition: str
+    outcome: str
+    gate_outcome: NotRequired[str | None]
+    gate_decision_ref: NotRequired[str | None]
+    gate_reason_codes: list[str]
+    error_code: NotRequired[str | None]
+    error: NotRequired[str | None]
+class EsignNoticesDispatchView(TypedDict):
+    document_ref: str
+    recovered: int
+    notices: list[EsignNoticeOutcome]
 class EsignVoidRequest(TypedDict):
     document_ref: str
     recipient_count: int

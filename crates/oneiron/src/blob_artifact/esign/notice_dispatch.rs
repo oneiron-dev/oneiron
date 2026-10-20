@@ -5,8 +5,8 @@ use super::{
     model::invalid,
 };
 use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
-    EnqueueAttempt, FailAttempt, RetryAttempt,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
+    CompleteAttempt, EnqueueAttempt, FailAttempt, RetryAttempt,
 };
 use crate::outbound::{
     OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
@@ -288,5 +288,135 @@ impl Vault {
             Ok(result)
         })
         .map_err(Into::into)
+    }
+}
+
+/// How long a door claim of a notice stays leased before the same
+/// principal's next `vault.esign.notices.dispatch` on its document takes it
+/// back: the e-sign delivery outbox's no-ack lease, reused. A host restart
+/// requeues it sooner, with every lease a stopped process held.
+pub(super) const NOTICE_LEASE_SECS: u64 = 300;
+
+/// The lease-owner prefix of every door claim made for `principal`. A call
+/// leases as this prefix and its own nonce, so no call releases another's
+/// live lease.
+pub(super) fn notice_lease_prefix(principal: EntityId) -> String {
+    format!("esign-notice:{}:", principal.to_hex())
+}
+
+/// Where a scoped claim found one staged notice.
+pub(super) enum ScopedNotice {
+    /// Leased to this call: its try's lease is stamped.
+    Claimed(Box<AttemptRecord>, EsignNotice),
+    /// Staged but not due: a retry's backoff, or a queue hold.
+    NotDue(EsignNotice),
+    /// Leased by another call of the same principal's that still holds it.
+    InFlight(EsignNotice),
+    /// Settled, or no longer this principal's, since it was listed.
+    Gone,
+}
+
+/// The notice `row` stages when it is `document`'s and recorded for
+/// `principal`; any other row is `None`.
+fn scoped(row: &AttemptRecord, document: EntityId, principal: EntityId) -> Option<EsignNotice> {
+    let notice = decode(row).ok()?;
+    let principal_matches = notice
+        .principal
+        .as_deref()
+        .and_then(|recorded| EntityId::from_hex(recorded).ok())
+        == Some(principal);
+    let document_matches = EntityId::from_hex(&notice.document).is_ok_and(|d| d == document);
+    (principal_matches && document_matches).then_some(notice)
+}
+
+/// `document`'s unsettled staged notices recorded for `principal`, in queue
+/// order. A read only: each row is read again under the writer that claims
+/// or recovers it.
+pub(super) fn principal_notices(
+    vault: &Vault,
+    document: EntityId,
+    principal: EntityId,
+) -> Result<Vec<AttemptRecord>> {
+    Ok(AttemptQueue::new(vault)
+        .list_kind_bounded(ESIGN_NOTICE_ATTEMPT_KIND, usize::MAX)?
+        .into_iter()
+        .filter(|row| !row.state.is_terminal() && scoped(row, document, principal).is_some())
+        .collect())
+}
+
+/// Returns one of `principal`'s door claims on `document` that a failed call
+/// left leased to the queue as the same try, once its lease ran
+/// [`NOTICE_LEASE_SECS`] on the recorded clock: `true` when it did. A live
+/// claim, and a claim of any other principal, document or worker, stays.
+pub(super) fn recover_notice_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: AttemptId,
+    document: EntityId,
+    principal: EntityId,
+) -> Result<bool> {
+    let queue = AttemptQueue::new(vault);
+    let Some(row) = queue.get_in_write_txn(txn, id)? else {
+        return Ok(false);
+    };
+    let prefix = notice_lease_prefix(principal);
+    let Some(owner) = row
+        .lease_owner
+        .clone()
+        .filter(|owner| owner.starts_with(&prefix))
+    else {
+        return Ok(false);
+    };
+    if row.state != AttemptState::Leased || scoped(&row, document, principal).is_none() {
+        return Ok(false);
+    }
+    let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    if now.saturating_sub(row.updated_at) < NOTICE_LEASE_SECS {
+        return Ok(false);
+    }
+    queue.release_lease_in_txn(txn, id, &owner, now)
+}
+
+/// Leases one of `document`'s staged notices recorded for `principal` to
+/// `lease_owner` through the queue's own point-claim (readiness, placement,
+/// holds and lease admission), after reading the row and its binding again
+/// under this writer.
+pub(super) fn claim_notice_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: AttemptId,
+    document: EntityId,
+    principal: EntityId,
+    lease_owner: &str,
+) -> Result<ScopedNotice> {
+    let queue = AttemptQueue::new(vault);
+    let Some(row) = queue.get_in_write_txn(txn, id)? else {
+        return Ok(ScopedNotice::Gone);
+    };
+    let Some(notice) = scoped(&row, document, principal) else {
+        return Ok(ScopedNotice::Gone);
+    };
+    match row.state {
+        AttemptState::Queued | AttemptState::Scheduled => {}
+        AttemptState::Leased | AttemptState::Landing => {
+            return Ok(ScopedNotice::InFlight(notice));
+        }
+        AttemptState::Paused => return Ok(ScopedNotice::NotDue(notice)),
+        AttemptState::Completed
+        | AttemptState::Failed
+        | AttemptState::Cancelled
+        | AttemptState::Abandoned => return Ok(ScopedNotice::Gone),
+    }
+    let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    match queue.claim_id_in_txn(
+        txn,
+        id,
+        ClaimAttempt {
+            lease_owner: lease_owner.into(),
+            now,
+        },
+    )? {
+        ClaimOutcome::Claimed(attempt) => Ok(ScopedNotice::Claimed(Box::new(attempt), notice)),
+        ClaimOutcome::Empty => Ok(ScopedNotice::NotDue(notice)),
     }
 }
