@@ -165,6 +165,10 @@ pub struct Vault {
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
         std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
+    /// The floor a host lends its guests' network work
+    /// ([`Vault::lend_host_net_floor`]); none until it lends one.
+    pub(crate) host_net_floor:
+        std::sync::OnceLock<std::sync::Arc<dyn oneiron_container::HostNetFloor>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
     pub(crate) result_body_pins: crate::result_body::ResultBodyPins,

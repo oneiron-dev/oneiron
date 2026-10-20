@@ -174,6 +174,11 @@ pub(super) async fn serve_with_config(
     // address's unauthenticated share hold for the daemon, not per socket.
     let limits = config.limits.connections();
     let pool = crate::http_listener::ConnectionPool::new(&limits, questions);
+    // Guests' network work draws on the same floor, lent to the vault whose
+    // runs open their relays (FIX 5978, FIX 5979).
+    mesh_server
+        .vault()
+        .lend_host_net_floor(pool.host_net_floor());
     let api = crate::http_listener::serve_with_pool(listener, app, &pool, limits, api_stop);
     let artifacts = crate::http_listener::serve_with_pool(
         artifact_listener,
