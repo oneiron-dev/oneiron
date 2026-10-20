@@ -603,25 +603,30 @@ impl Vault {
     }
 
     /// Decides history-free versus ordinary snapshot bytes for this window
-    /// BEFORE the publish transaction opens.
+    /// BEFORE the publish transaction opens, and for history-free bytes
+    /// commits there the barrier their strict cut needs (FIX 6520).
     ///
     /// Hoisted out of the publish txn because the pin it reads
     /// (`require_history_free_window`) is written through its own write
     /// transaction, and LMDB has a single process-wide writer — a nested
     /// writer deadlocks. Resolving first leaves the in-txn export a pure
     /// document operation, which is what lets the owner re-fold span the
-    /// live-doc mutation.
+    /// live-doc mutation. The barrier is a bridge commit outside that txn:
+    /// the tombstone commit lands on the one head it leaves, so the in-txn
+    /// cut merges nothing, short of an import landing in between.
     #[cfg(feature = "sync")]
     fn resolve_window_snapshot_mode(
         &self,
         window_key: &crate::sync::WindowKey,
         doc: &loro::LoroDoc,
     ) -> Result<bool> {
-        Ok(
-            crate::sync::window::history_free_window_required(self, window_key)?
-                || doc.is_shallow()
-                || crate::sync::note::is_native(doc),
-        )
+        let history_free = crate::sync::window::history_free_window_required(self, window_key)?
+            || doc.is_shallow()
+            || crate::sync::note::is_native(doc);
+        if history_free {
+            crate::sync::window::merge_window_heads(doc)?;
+        }
+        Ok(history_free)
     }
 
     /// Exports the window snapshot under a mode already resolved by

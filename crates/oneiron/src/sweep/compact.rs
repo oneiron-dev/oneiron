@@ -10,8 +10,10 @@ use super::run::{HardEraseSweepRun, WindowSweepState, WithdrawnSweep};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+#[cfg(all(feature = "sync", test))]
+use crate::error::SyncEngineContext;
 #[cfg(feature = "sync")]
-use crate::error::{Error, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation};
+use crate::error::{Error, SyncProtocolPruneScope, SyncProtocolValidation};
 use crate::ports::{DocumentRowStore, DocumentUpdateKey, UpdateSeq, WindowDeletionRows};
 use crate::side_table::{self, Raw, SideTable};
 #[cfg(feature = "sync")]
@@ -39,6 +41,10 @@ pub(super) enum CompactOutcome {
     /// write txn is ABORTED and the window stays as it is, its obligation
     /// with it, until the hold lifts.
     HeldDefer,
+    /// The shallow cut's encoded root or end was not the window's tip (FIX
+    /// 6520): nothing is written, the obligation stays and a later pass cuts
+    /// again.
+    UnprovedDefer,
 }
 
 /// Unacknowledged local text-document edit frames (`qd:e:{id}:{seq:08x}`).
@@ -226,6 +232,14 @@ pub(super) fn compact_all_windows(
                     state = WindowSweepState::Deferred;
                 }
             }
+            // Counted with the raced: nothing was written and the next pass
+            // cuts again.
+            Ok(CompactOutcome::UnprovedDefer) => {
+                run.windows_deferred_raced += 1;
+                if matches!(state, WindowSweepState::AllCompacted) {
+                    state = WindowSweepState::Deferred;
+                }
+            }
             Err(err) => {
                 tracing::error!(
                     kind = ?err.kind(),
@@ -297,9 +311,8 @@ pub(super) fn compact_window_with(
     withdrawn: &mut WithdrawnSweep,
 ) -> Result<CompactOutcome> {
     use crate::ports::WindowAddress;
-    use crate::sync::loro_support::{doc_from_snapshot, doc_version_vector, import_doc};
+    use crate::sync::loro_support::{doc_from_snapshot, import_doc};
     use crate::sync::schema::create_window_doc;
-    use loro::ExportMode;
 
     let window = key.to_string();
     let address = WindowAddress::new(&window);
@@ -372,14 +385,15 @@ pub(super) fn compact_window_with(
     withdrawn.held.extend(found.held);
     let scrub_sends = !withdrawn.due.is_empty();
 
-    // Shallow snapshot at the latest frontiers: live state byte-exact, op
-    // history (the payload carrier) dropped, doc identity + VV preserved.
-    doc.commit();
-    let frontiers = doc.oplog_frontiers();
-    let shallow = doc
-        .export(ExportMode::shallow_snapshot(&frontiers))
-        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportShallowSnapshot, e))?;
-    let vv = doc_version_vector(&doc);
+    // Strict shallow cut at the latest frontiers (FIX 6520): live state
+    // byte-exact, op history (the payload carrier) dropped, identity kept, VV
+    // extended by exactly one barrier op when the window has several heads.
+    // Nothing is written, Compacted or settled until its root is the tip.
+    let Some(cut) = crate::sync::window::strict_window_cut(&doc)? else {
+        tracing::error!("sweep: shallow cut not rooted at the window's tip — deferred");
+        return Ok(CompactOutcome::UnprovedDefer);
+    };
+    let (shallow, vv) = (cut.bytes, cut.version.encode());
 
     let merged_keys: BTreeSet<Vec<u8>> = update_rows
         .iter()

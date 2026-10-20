@@ -20,12 +20,14 @@
 //!   ([`update_reaches_below_root`](super::update_reaches_below_root)): the
 //!   home answers it with its replacement, and a device asks for one.
 //!
-//! The version vector stays the lineage's own; a fresh one would need every
-//! peer to learn which writes the rebuild already held.
+//! The version vector stays the lineage's own, extended by at most the one
+//! barrier operation a cut of a window with several heads takes (FIX 6520); a
+//! fresh one would need every peer to learn which writes the rebuild already
+//! held.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use loro::{ExportMode, LoroDoc, LoroValue};
+use loro::{LoroDoc, LoroValue};
 
 use super::super::loro_support::{doc_from_snapshot, doc_version_vector, import_doc, map_delete};
 use super::super::types::WindowKey;
@@ -93,10 +95,9 @@ pub(crate) fn prepare_rebootstrap(
     }
     let carried = carried_ids(&doc);
     let rewritten = write_rebuilt_state(&doc, rebuilt)?;
-    doc.commit();
-    let state = doc
-        .export(ExportMode::shallow_snapshot(&doc.oplog_frontiers()))
-        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportShallowSnapshot, e))?;
+    // With no key rewritten the window can keep several heads: the strict cut
+    // merges them first, so the root is still its newest operation (FIX 6520).
+    let state = super::shallow::strict_window_snapshot(&doc)?;
     let doc = doc_from_snapshot(&state)?;
     Ok(PreparedRebootstrap {
         key: key.clone(),

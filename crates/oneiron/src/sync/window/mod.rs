@@ -31,6 +31,7 @@ mod project_history;
 mod rebootstrap;
 mod replacement;
 mod reverse;
+mod shallow;
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
 pub mod test_hooks;
@@ -72,6 +73,7 @@ pub use self::reverse::reverse_rematerialize;
 pub(crate) use self::reverse::reverse_rematerialize_for_sealing;
 pub(crate) use self::reverse::reverse_rematerialize_rows;
 pub(in crate::sync) use self::reverse::reverse_rematerialize_with;
+pub(crate) use self::shallow::{merge_window_heads, strict_window_cut};
 pub(in crate::sync) use self::tombstones::apply_tombstone_to_indexed_window_doc;
 pub(crate) use self::tombstones::{
     CarrierRemoval, DeleteBearingUpdate, entity_carriers, export_tombstone_commit_delta,
