@@ -750,6 +750,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/http_listener.rs` | src | m | 8 crate-vis | — | The TCP accept loop the server and the embedder endpoint serve through |
 | `src/http_listener/tests.rs` | test | m | 1 crate-vis | — | The listener's admission, end to end over real sockets (C4, and the rate law of ARCH-0044 C5): headers that… |
 | `src/idempotency.rs` | src | m | 9 crate-vis | — | — |
+| `src/idempotency/reclaim.rs` | src | s | 2 crate-vis | — | Reclaim of expired idempotency entries (FIX 5951) |
 | `src/idempotency/tests.rs` | test | m | — | — | — |
 | `src/import_audience.rs` | src | m | 1 crate-vis | — | The import audience sweep (OF-492) |
 | `src/ladder_poll.rs` | src | s | 1 crate-vis | — | Polling an engine future whose decisions run on the host's ladder |

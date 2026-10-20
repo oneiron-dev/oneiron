@@ -259,7 +259,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/import_order.rs` | src | m | 3 crate-vis | — | The order a store door is handed several AUTHORITY_LOG rows in (H72) |
 | `src/authority/ingest_observation.rs` | src | s | 1 struct · 2 fn · 1 const · 1 crate-vis | AuthorityIngestCheck | Non-refusing authority replay observation with one typed check per peer/window |
 | `src/authority/install_fold.rs` | src | m | 8 crate-vis | — | The strict fold as this install reads it, once its handoffs settle: its own sequence floors, the… |
-| `src/authority/invitee_slip.rs` | src | s | 2 crate-vis | — | FIX 1925: an invitee's own credential |
+| `src/authority/invitee_slip.rs` | src | s | 3 crate-vis | — | FIX 1925: an invitee's own credential |
 | `src/authority/invocation_slip.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | InvocationSlipBinding | The signed instrument a request was admitted on, kept with the work it queued, so that work's standing is… |
 | `src/authority/left_notices.rs` | src | m | 3 fn · 3 crate-vis | — | A removed person's own notices of losing a shared vault (OF-158 client leave) |
 | `src/authority/local_host_root.rs` | src | s | 2 struct · 1 enum · 3 fn | LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace | Re-keying this install's host root (FIX 5571, the re-key half of FIX 5346; owner ruling FIX 5341 = A) |
@@ -2027,7 +2027,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/booking_payer.rs` | src | s | 2 fn · 5 crate-vis | — | Who pays for a booking a person makes after their owner sign-in went stale (FIX 5327, Engine ruling (a)… |
 | `src/federation/connect_grant.rs` | src | m | 1 struct · 3 fn · 11 crate-vis | ConnectGrantMinted | The guest grant a vault-to-vault Connect pact governs (FIX 3016, ARCH-0043 #guest-grants… |
 | `src/federation/content_write.rs` | src | s | 15 crate-vis | — | Actor-bound content transaction interface |
-| `src/federation/coreference.rs` | src | m | 1 enum · 4 fn · 1 const · 3 crate-vis | CoreferenceStatus | Cross-vault same_as links and per-pact share consent (FED-07) |
+| `src/federation/coreference.rs` | src | m | 1 enum · 4 fn · 1 const · 5 crate-vis | CoreferenceStatus | Cross-vault same_as links and per-pact share consent (FED-07) |
 | `src/federation/derivation.rs` | src | s | 5 struct · 1 enum · 12 fn · 2 crate-vis | DerivationKey, DerivationKind, DerivationOwner, DerivationScope, HostedDerivationCache, SealedOutput | Account-sealed hosted derivations |
 | `src/federation/facet_read.rs` | src | m | 1 fn · 15 crate-vis | — | The one facet rule (owner ruling FACET-READ = A) |
 | `src/federation/foreign_world.rs` | src | s | 1 fn · 5 crate-vis | — | Where a guest's content lands here (FIX 3497) |
@@ -2039,7 +2039,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/guest.rs` | src | s | 2 struct · 4 fn · 3 const | GuestShareEnvelope, GuestShareEnvelopeBody | Guest-share envelope body and signed envelope codec |
 | `src/federation/membership_gate.rs` | src | m | 2 enum · 1 fn · 9 crate-vis | MembershipStanding, SharedVaultWrite | Transaction-bound shared-vault membership write authorization |
 | `src/federation/membership_gate_tests.rs` | test | s | — | — | — |
-| `src/federation/mod.rs` | src | s | 2 mod · 18 re-export · 27 crate-vis | — | Federation grant record substrate |
+| `src/federation/mod.rs` | src | s | 2 mod · 18 re-export · 28 crate-vis | — | Federation grant record substrate |
 | `src/federation/org_admin.rs` | src | s | 1 struct · 2 enum · 9 fn | OrgAdminError, OrgAdminPolicy, OrgAdminPower | Closed organization-administration powers |
 | `src/federation/own_device.rs` | src | s | 1 fn · 5 crate-vis | — | FIX 3134: an owner's own device holds a member FEDERATION_GRANT at its home, so the device's residence… |
 | `src/federation/peer_authority.rs` | src | s | 4 fn · 2 const · 2 crate-vis | — | Peer authority-log admission (FED-03) and roster refolding |
@@ -3098,7 +3098,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_intent_ledger/store/pending.rs` | src | s | 1 crate-vis | — | The sends one attempt has not settled (DOOR-141 PR3b): what a held turn program's resume waits on, read over… |
 | `src/outbound_intent_ledger/tests.rs` | test | L | — | — | — |
 | `src/outbound_intent_ledger/types.rs` | src | m | 13 struct · 8 enum · 20 fn · 2 type · 2 const · 19 crate-vis | BudgetChargeMarker, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentLedgerCorruptRow, IntentLedgerError +13 | Version consts, domain types, record impls, and listing/escalation/report types |
-| `src/overlay_db/accessors.rs` | src | m | 33 crate-vis | — | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
+| `src/overlay_db/accessors.rs` | src | m | 34 crate-vis | — | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
 | `src/overlay_db/iters.rs` | src | s | 8 crate-vis | — | Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str) |
 | `src/overlay_db/merge.rs` | src | m | 15 crate-vis | — | Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and… |
 | `src/overlay_db/mod.rs` | src | s | 1 crate-vis | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
@@ -4605,6 +4605,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/tests.rs` | test | L | — | — | — |
 | `src/vault/transactions.rs` | src | m | 26 fn · 3 crate-vis | — | Vault maintenance, learned-at range scans, transaction helpers and sync state |
 | `src/vault/transactions/sync_scan_tests.rs` | test | s | — | — | Host sync-state doors: scans refuse undeclared rows even under a broad prefix, and writes refuse the… |
+| `src/vault/transactions/sync_state_reclaim.rs` | src | s | 1 fn | — | One page of a host cache's expiry reclaim through the generic host door (FIX 5951): a host table with no… |
 | `src/vault/vector_evidence.rs` | src | s | 3 fn · 6 crate-vis | — | Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it |
 | `src/vault_cleanup/attempt_retention.rs` | src | s | 3 fn · 6 crate-vis | — | Reversible retention for private queue records; the serialized attempt is never changed |
 | `src/vault_cleanup/cleanup_types.rs` | src | m | 7 struct · 3 enum · 7 fn · 13 const · 17 crate-vis | ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest, CleanupImpactPreview, CleanupKind, CleanupPosture +2 | Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs |
