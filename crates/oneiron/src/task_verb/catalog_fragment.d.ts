@@ -3508,7 +3508,8 @@ declare namespace Sdk {
   type SummaryDerivation = { request: number[]; trigger: number[]; content_hash: number[]; params_hash: number[]; instruction: string; model: string; policy_frontier: number[]; sources: SummarySourceVersion[]; previous?: string | null; recorded_at: number; generated_text_hash: number[]; generated_keep_hash: number[] };
   type ScopeSummaryMetadata = { purpose: SummaryPurpose; keep: string; derivation: SummaryDerivation };
   type TextAnchor = { entity: string; frontier: number[]; start: number[]; end: number[]; quote: string; hash: number[] };
-  type Birth = { entity: string; actor: string; at: number };
+  type DocActor = string;
+  type Birth = { entity: string; actor: DocActor; at: number };
   type SummaryReadView = { summary_ref: string; document: string; frontier: number[]; text: string; metadata: ScopeSummaryMetadata; covers: string[]; read_refs: string[]; anchors: TextAnchor[]; birth: Birth };
   type SummaryStatusRequest = { attempt: string };
   type ScopeSummaryResult = { summary: string; claim?: string | null; record?: string | null };
@@ -3517,7 +3518,6 @@ declare namespace Sdk {
   type SummaryKeepResult = { summary_ref: string; frontier: number[]; keep: string };
   type SummaryEdit = { kind: "append_to_section"; section: TextAnchor; text: string } | { kind: "replace_quoted_span"; span: TextAnchor; text: string } | { kind: "insert_after_anchor"; anchor: TextAnchor; text: string };
   type SummaryEditRequest = { summary_ref: string; base: number[]; edits: SummaryEdit[] };
-  type DocActor = string;
   type ForkStatus = "Pending" | "Merged" | "Switched" | "Rejected";
   type ForkRecord = { fork: string; proposal: string; entity: string; parent_document: string; base: number[]; actor: DocActor; opened_at: number; rewrite: boolean; status: ForkStatus; read_refs: string[]; keep?: string | null };
   type ProposalBundle = { proposal: string; author: DocActor; forks: ForkRecord[]; settled: boolean };

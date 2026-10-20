@@ -78,7 +78,7 @@ pub(crate) fn capture(
         text: doc.text(),
         metadata: doc.metadata_bytes()?,
         record_fields: doc.record_fields()?,
-        birth_actor: raw(&doc.birth().actor)?,
+        birth_actor: raw_actor(doc.birth().actor),
         birth_at: doc.birth().at,
         history: history(&vault.store, txn, &entity, &doc)?,
     }))
@@ -477,7 +477,7 @@ pub(crate) fn restore(
     ENTITY_DOC_RECEIPT.delete_from(store, txn, &prefix(&entity))?;
     ENTITY_DOC_PIN.delete_from(store, txn, &prefix(&entity))?;
     ENTITY_DOC_PURGE_RECEIPT.delete_from(store, txn, &prefix(&entity))?;
-    let birth_actor = EntityId::from_bytes(row.birth_actor)?;
+    let birth_actor = doc_actor(row.birth_actor)?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
@@ -573,12 +573,7 @@ fn replay(
     history: &CanonicalEntityDocumentHistory,
 ) -> Result<(EntityDoc, Vec<Frontiers>)> {
     let texts = history.texts()?;
-    let doc = EntityDoc::rebuild_value(
-        entity,
-        "",
-        EntityId::from_bytes(row.birth_actor)?,
-        row.birth_at,
-    )?;
+    let doc = EntityDoc::rebuild_value(entity, "", doc_actor(row.birth_actor)?, row.birth_at)?;
     EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
     doc.doc.commit();
     let root = doc.doc.oplog_frontiers();

@@ -72,7 +72,8 @@ pub struct CanonicalEntityDocument {
     pub metadata: BTreeMap<String, Vec<u8>>,
     /// Native record fields projected by the immutable adapter at birth.
     pub record_fields: Vec<String>,
-    pub birth_actor: [u8; 16],
+    /// None once the birth's actor was erased (FIX 6072): it stays no one.
+    pub birth_actor: Option<[u8; 16]>,
     pub birth_at: u64,
     /// The document's causal state, by value. Absent for a document with no
     /// fork, pin, receipt or purge: that one is its current value alone.
@@ -89,6 +90,7 @@ impl CanonicalEntityDocument {
             + self.text.len()
             + metadata_size(&self.metadata)
             + self.record_fields.iter().map(String::len).sum::<usize>()
+            + self.birth_actor.map_or(0, |actor| actor.len())
             + self.history.as_ref().map_or(0, |history| {
                 let versions = history.versions.iter().map(|version| {
                     16 + 4 * version.parents.len()

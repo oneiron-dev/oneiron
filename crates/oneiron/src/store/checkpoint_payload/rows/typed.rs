@@ -123,6 +123,38 @@ pub(crate) fn split_actors<K: SideKey, V, C: SideCodec<V>>(
 /// byte for byte.
 pub(crate) const NOT_SPELLED_BACK: &str = "a row its codec does not spell back";
 
+/// How a family's own split and join must give a row back (FIX 6072,
+/// Engine R1): one value per family, beside its adapter. The helpers above
+/// stay byte for byte; only a family that names this policy uses it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RoundTripPolicy {
+    /// The joined row is the stored bytes.
+    ByteExact,
+    /// The joined row may be another Loro encoding of the stored history:
+    /// the same operations, ids, dependencies, timestamps, Lamport values
+    /// and messages, which the family's proof compares as typed history,
+    /// never as rendered text.
+    HistoryEquivalent,
+}
+
+/// Admits a family's split once its all-open join gave `joined` for the
+/// stored `original`: `ByteExact` wants the same bytes, and
+/// `HistoryEquivalent` always runs `prove_history`, even when the bytes
+/// match. A proof that fails refuses the split; nothing falls back to
+/// comparing text.
+pub(crate) fn admit_round_trip(
+    policy: RoundTripPolicy,
+    original: &[u8],
+    joined: &[u8],
+    prove_history: impl FnOnce(&[u8], &[u8]) -> Result<()>,
+) -> Result<()> {
+    match policy {
+        RoundTripPolicy::ByteExact if original == joined => Ok(()),
+        RoundTripPolicy::ByteExact => Err(corrupt()),
+        RoundTripPolicy::HistoryEquivalent => prove_history(original, joined),
+    }
+}
+
 /// A no-one-form row with its opened actor parts put back by `put` (the
 /// part's field and actor): the decoded value, for the getter's own rule on
 /// what stays.

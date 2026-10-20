@@ -17485,9 +17485,10 @@ class TextAnchor(TypedDict):
     end: list[int]
     quote: str
     hash: list[int]
+DocActor = str
 class Birth(TypedDict):
     entity: str
-    actor: str
+    actor: DocActor
     at: int
 class SummaryReadView(TypedDict):
     summary_ref: str
@@ -17539,7 +17540,6 @@ class SummaryEditRequest(TypedDict):
     summary_ref: str
     base: list[int]
     edits: list[SummaryEdit]
-DocActor = str
 ForkStatus = Literal["Pending", "Merged", "Switched", "Rejected"]
 class ForkRecord(TypedDict):
     fork: str

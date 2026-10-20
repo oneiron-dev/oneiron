@@ -507,7 +507,9 @@ pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<
         match (ref_id, row) {
             (None, None) => continue,
             (Some(ref_id), Some(row)) if ref_id == id(row.document_id)?.to_hex() => {
-                id(row.birth_actor)?;
+                if let Some(actor) = row.birth_actor {
+                    id(actor)?;
+                }
                 if row.birth_at != header.occurred_start {
                     return Err(invalid("entity document birth timestamp"));
                 }
