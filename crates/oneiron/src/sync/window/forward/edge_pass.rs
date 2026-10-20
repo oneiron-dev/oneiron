@@ -32,11 +32,13 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             Written,
             Unchanged,
             Deferred,
+            // Deferred under a replay marker its source still owes (FIX 5972).
+            Waiting,
             Quarantined,
         }
 
         let mut edge_error = None;
-        map_for_each_value_bytes(edges_map, |key, buf| {
+        let mut remat_edge = |key: &str, buf: Option<&[u8]>| {
             if edge_error.is_some() {
                 return;
             }
@@ -264,6 +266,19 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         )?;
                     } else if kind == crate::edge::EdgeKind::ChildOf {
                         bridge::defer_child_of(vault, wtxn, window_key.as_str(), &src, &tgt, buf)?;
+                    } else if kind == crate::edge::EdgeKind::Regenerates {
+                        // Endpoint arrival wakes no `regenerates` link: a
+                        // later pass replays it. A missing source keeps its
+                        // own entity outcome, which may settle the marker.
+                        quarantine::set_replay_remat_marker_in_txn(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            &src,
+                        )?;
+                        if src_exists {
+                            return Ok(EdgeRematOutcome::Waiting);
+                        }
                     }
                     return Ok(EdgeRematOutcome::Deferred);
                 }
@@ -396,6 +411,50 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     return Ok(EdgeRematOutcome::Unchanged);
                 }
 
+                // FIX 5972: a `regenerates` pair this vault does not store
+                // yet lands only once it proves what the stream proved. A
+                // stored pair was proven when it landed, whatever has since
+                // become of its MESSAGEs. Only canonical recovery's own row
+                // may link an erased shell; fresh replay has no body left.
+                if kind == crate::edge::EdgeKind::Regenerates
+                    && !crate::edge::regeneration_stored(&vault.store, &*wtxn, &src, &tgt)?
+                {
+                    match crate::edge::regeneration_pair(&vault.store, &*wtxn, &src, &tgt)? {
+                        crate::edge::Regeneration::Admits => {}
+                        crate::edge::Regeneration::Erased
+                            if ctx.trusted.is_some_and(|snapshot| {
+                                snapshot.base_edges.iter().any(|edge| {
+                                    edge.source == *src.as_bytes()
+                                        && edge.kind == kind as u8
+                                        && edge.target == *tgt.as_bytes()
+                                        && edge.value == buf
+                                })
+                            }) => {}
+                        crate::edge::Regeneration::Erased => return Ok(EdgeRematOutcome::Deferred),
+                        crate::edge::Regeneration::Pending => {
+                            quarantine::set_replay_remat_marker_in_txn(
+                                vault,
+                                wtxn,
+                                window_key.as_str(),
+                                &src,
+                            )?;
+                            return Ok(EdgeRematOutcome::Waiting);
+                        }
+                        crate::edge::Regeneration::Refuses => {
+                            quarantine::quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key.as_str(),
+                                QuarantineContainer::Edges,
+                                key,
+                                &crate::edge::reserved_regenerates(),
+                                buf,
+                            )?;
+                            return Ok(EdgeRematOutcome::Quarantined);
+                        }
+                    }
+                }
+
                 vault
                     .batch_in()
                     .edge_with_value_fields(
@@ -430,6 +489,11 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         "forward remat: edge deferred — endpoint absent"
                     );
                 }
+                // No other outcome at its source in this pass may discharge
+                // the marker it waits under.
+                Ok(EdgeRematOutcome::Waiting) => {
+                    ledger.pending_entity_dependencies.insert(src);
+                }
                 Ok(EdgeRematOutcome::Quarantined) => {
                     // The reserved-kind rejection and its durable evidence
                     // committed in the edge txn above. Keep iterating: one
@@ -455,7 +519,21 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     edge_error = Some(err);
                 }
             }
+        };
+        // FIX 5972: a `regenerates` link is proven on its MESSAGEs' axes, so
+        // it lands after every ordinary edge, whatever the map's key order.
+        let mut regenerates = Vec::new();
+        map_for_each_value_bytes(edges_map, |key, buf| {
+            match (buf, bridge::parse_edge_key(key)) {
+                (Some(buf), Some((_, crate::edge::EdgeKind::Regenerates, _))) => {
+                    regenerates.push((key.to_owned(), buf.to_vec()));
+                }
+                _ => remat_edge(key, buf),
+            }
         });
+        for (key, buf) in &regenerates {
+            remat_edge(key.as_str(), Some(buf.as_slice()));
+        }
         if let Some(err) = edge_error {
             return Err(err);
         }
