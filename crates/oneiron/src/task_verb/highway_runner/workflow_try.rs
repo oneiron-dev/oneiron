@@ -135,10 +135,12 @@ fn refused(message: String) -> MemoryError {
 
 /// Admits one TASK-bound run of a saved workflow as `caller`, whose run has
 /// the parent its proof gives. The same intent key with the same TASK
-/// answers its first run before the TASK is read; another TASK, or none,
-/// under it is refused. Otherwise one writer holds the caller's proof, its
-/// standing on the TASK, the bind gate, the run's admission with the
-/// backlink on its wrapper alone, and the wrapper's take.
+/// answers its first run before the TASK is read or any lane is checked
+/// (FIX 5415); another TASK, or none, under it is refused. Otherwise one
+/// writer holds the caller's proof, a member's reads of what the binding
+/// names on their own lane, its standing on the TASK, the bind gate, the
+/// run's admission with the backlink on its wrapper alone, and the
+/// wrapper's take.
 pub(crate) fn dispatch_bound(
     vault: &Vault,
     caller: &WorkflowBinder<'_>,
@@ -159,6 +161,7 @@ pub(crate) fn dispatch_bound(
             return Ok(existing);
         }
     }
+    let lane = caller.member_lane()?;
     let mut txn = vault.store.env.write_txn().map_err(Error::from)?;
     if let Some(existing) =
         dispatcher.bound_workflow_existing_in(&txn, &input, &spawn, &bind, &refusal)?
@@ -166,6 +169,7 @@ pub(crate) fn dispatch_bound(
         return Ok(existing);
     }
     caller.revalidate_in_txn(vault, &txn)?;
+    binder::member_reads_in(vault, &mut txn, lane.as_ref(), task, &input.target)?;
     admit_in_txn(vault, &txn, actor, task)?;
     caller.fund_in_txn(vault, &mut txn, actor)?;
     let outcome = dispatcher.dispatch_bound_workflow_in_txn(&mut txn, input, spawn, &bind)?;

@@ -7,8 +7,9 @@
 //! another TASK, or none, is another intent. An owner's or a member's bound
 //! run is a root; an agent's has the try its lease holds as its real parent
 //! (FIX 5316). A member's run requires a payer, which its steps find through
-//! their wrapper. A TASK-less run never reaches any of this. The TASK's own
-//! gate, take, fence and settlement are the task highway's
+//! their wrapper, as they find the member whose own lane their context is
+//! read on (FIX 5416). A TASK-less run never reaches any of this. The
+//! TASK's own gate, take, fence and settlement are the task highway's
 //! (`task_verb::highway_runner::workflow_try`).
 
 use crate::agent_dispatch::widen_record::invalid;
@@ -121,59 +122,6 @@ impl AgentDispatcher<'_> {
     ) -> Result<AgentDispatchOutcome> {
         let binding = WorkflowTaskBinding::new(bind);
         self.dispatch_workflow_bound_in_txn(txn, input, spawn, None, Some(&binding))
-    }
-
-    /// The rows a bound run's requested context projects, as its admission
-    /// resolves that context for each step's live scope: every memory and
-    /// chat section, by the row it names. A door reads them on its caller's
-    /// lane before the writer (FIX 5316). Every step is resolved, however
-    /// many.
-    pub(crate) fn bound_workflow_context_rows(
-        &self,
-        input: &DispatchAgent,
-        spawn: &AgentSpawnContext,
-    ) -> Result<Vec<EntityId>> {
-        let AgentDispatchTarget::Workflow(id) = input.target else {
-            return Err(invalid("workflow dispatch requires a workflow target"));
-        };
-        // Resolution opens its own snapshots, so the scopes are read first.
-        let scopes = {
-            let txn = self.vault.store.env.read_txn()?;
-            let steps = self.workflow_definition_in_txn(&txn, id)?.steps;
-            let mut scopes = Vec::with_capacity(steps.len());
-            for step in steps {
-                let live =
-                    self.dispatchable_definition_in_txn(&txn, &AgentDispatchTarget::Custom(step))?;
-                scopes.push(live.scope.to_world_scope());
-            }
-            scopes
-        };
-        let spec = spawn.context_spec.clone().map(normalize_context_spec);
-        let mut rows = Vec::new();
-        for world_scope in scopes {
-            let resolved = self.resolve_dispatch_context(
-                input.parent_attempt,
-                spec.as_ref(),
-                &spawn.context_from,
-                input.run_id.as_deref(),
-                world_scope,
-            )?;
-            for section in resolved
-                .memory_sections
-                .iter()
-                .chain(&resolved.chat_sections)
-            {
-                let hex = section
-                    .rsplit_once(":cl_")
-                    .map(|(_, hex)| hex)
-                    .or_else(|| section.strip_prefix("tn_"))
-                    .ok_or(Error::InvariantViolation("a context section names no row"))?;
-                rows.push(EntityId::from_hex(hex)?);
-            }
-        }
-        rows.sort_unstable();
-        rows.dedup();
-        Ok(rows)
     }
 
     /// The TASK a registered wrapper realizes and the actor who bound it,

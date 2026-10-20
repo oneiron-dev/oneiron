@@ -64,7 +64,9 @@ pub fn validate_spec_narrows(parent: &ContextSpec, child: &ContextSpec) -> Resul
 }
 
 /// RESOLVED-bound narrowing: the child's request against what the parent
-/// actually projected.
+/// actually resolved to. A row a member's own read lane left out of the
+/// parent is not a bound (FIX 5416): the law reads the parent as it
+/// resolved before that, so an omission never refuses a request.
 pub fn validate_context_narrows(
     parent: &ResolvedContextProjection,
     child: &ContextSpec,
@@ -77,12 +79,12 @@ pub fn validate_context_narrows(
         }
     }
     if let MemoryProjection::Scoped { domains, limit } = &child.memory {
-        if parent.memory_sections.is_empty() {
+        if parent.memory_bound().is_empty() {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "child memory projection cannot widen an empty parent projection",
             )));
         }
-        let parent_domains = parent.memory_domains();
+        let parent_domains = parent.bound_domains();
         for domain in domains {
             if !parent_domains.contains(&domain.as_str()) {
                 return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -90,19 +92,19 @@ pub fn validate_context_narrows(
                 )));
             }
         }
-        if *limit > parent.memory_sections.len() {
+        if *limit > parent.memory_bound().len() {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "child memory projection exceeds the parent's projected section count",
             )));
         }
     }
     if let ChatProjection::Recent { last_n } = &child.chat {
-        if parent.chat_sections.is_empty() {
+        if parent.chat_bound().is_empty() {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "child chat projection cannot widen an empty parent projection",
             )));
         }
-        if *last_n > parent.chat_sections.len() {
+        if *last_n > parent.chat_bound().len() {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "child chat projection exceeds the parent's projected section count",
             )));

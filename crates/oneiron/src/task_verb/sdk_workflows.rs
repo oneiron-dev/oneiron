@@ -10,7 +10,6 @@ use crate::agent_dispatch::{
     SpawnSpend, SpendScopeId, WorkflowDispatchStatus,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue};
-use crate::claim::{ClaimReadStatus, PointRead, ScopedReadActorKey};
 use crate::consent::AuthenticatedOwner;
 use crate::context_projection::ContextSpec;
 use crate::edge::EdgeActorClass;
@@ -168,9 +167,12 @@ pub struct WorkflowBoundDispatchRequest {
 /// whose spend scope opens under the cap they set and were shown, with them
 /// as its payer, and a step this host cannot bill them for holds on the
 /// owners' payer-needed ask, never on the owner's account. The TASK, the
-/// workflow, each step's definition and the context `context_spec` asks
-/// for are read on the member's own lane. A retry with the same intent key,
-/// request and terms returns the same run; another under it is refused.
+/// workflow and each step's definition are read on the member's own lane.
+/// Each step's context is what the member's own grants read of what
+/// `context_spec` asks for: a row they do not read is left out, never
+/// refused, and the step is told how many were. A retry with the same
+/// intent key, request and terms returns the same run; another under it is
+/// refused.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowPersonDispatchRequest {
@@ -370,28 +372,21 @@ pub(crate) fn dispatch_workflow_bound_as(
 
 /// Domain of a member-funded run's root spend scope id.
 const MEMBER_FUNDING_DOMAIN: &[u8] = b"oneiron.workflow.member_funding.v1";
-/// What a member reads when their lane does not read a ref the binding
-/// names.
-const MEMBER_UNREADABLE: &str = "vault.workflows.dispatch_bound reads its TASK, its workflow and \
-                                 each step's definition on your own credential's lane, and one \
-                                 is not readable there";
-/// What a member reads when the context they ask for projects a row their
-/// lane does not read.
-const MEMBER_CONTEXT_UNREADABLE: &str = "vault.workflows.dispatch_bound projects the context \
-                                         you asked for on your own credential's lane, and it \
-                                         reaches rows that lane does not read";
 
 /// `vault.workflows.dispatch_bound` (FIX 5316): `person`, a member by the
 /// proof their door bound to their own slip, binds one run of a saved
 /// workflow to a TASK as themselves. `memory` is the handle their credential
-/// reads through: the TASK, the workflow, each step's definition and every
-/// row the requested context projects are read on its lane first, never
-/// the owner's. The run is a root the member funds: its spend scope opens
-/// in the admitting writer under their terms, with them as payer. The
-/// intent key is qualified by the member, the TASK and the workflow, and
-/// the terms name the root, so another member's retry never names this run
-/// and other terms under the same key are another request. The binder
-/// rechecks the member's proof in that writer.
+/// reads through: once no run an earlier request started answers this one,
+/// the TASK, the workflow and each step's definition are read on its lane
+/// in the admitting writer, never the owner's (FIX 5415). The context the
+/// run asks for is never refused: each step reads what the member's own
+/// grants read of it, and the rest is left out (FIX 5416). The run is a
+/// root the member funds: its spend scope opens in the admitting writer
+/// under their terms, with them as payer. The intent key is qualified by
+/// the member, the TASK and the workflow, and the terms name the root, so
+/// another member's retry never names this run and other terms under the
+/// same key are another request. The binder rechecks the member's proof in
+/// that writer.
 pub fn dispatch_workflow_bound_as_person(
     memory: &Memory<'_>,
     person: &AuthenticatedOwner,
@@ -407,24 +402,6 @@ pub fn dispatch_workflow_bound_as_person(
         ));
     }
     let funding = member_funding(actor, &input)?;
-    let reader = memory.read_key()?;
-    let unreadable = || {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            MEMBER_UNREADABLE,
-            &["Bind only a TASK and a workflow your Grant reads, whose steps it reads too."],
-        )
-    };
-    if !lane_reads(vault, &reader, &[input.task_ref, input.workflow_ref])? {
-        return Err(unreadable());
-    }
-    let steps = vault
-        .get_workflow(&input.workflow_ref)?
-        .ok_or_else(unreadable)?
-        .steps;
-    if !lane_reads(vault, &reader, &steps)? {
-        return Err(unreadable());
-    }
     let request = DispatchAgent {
         target: AgentDispatchTarget::Workflow(input.workflow_ref),
         parent_attempt: None,
@@ -448,18 +425,10 @@ pub fn dispatch_workflow_bound_as_person(
         .with_spend(SpawnSpend {
             scope: funding.scope.clone(),
         });
-    let context = AgentDispatcher::new(vault).bound_workflow_context_rows(&request, &spawn)?;
-    if !lane_reads(vault, &reader, &context)? {
-        return Err(MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            MEMBER_CONTEXT_UNREADABLE,
-            &[
-                "Ask for context your Grant reads: set context_spec's memory and chat to exclude, or to a projection your lane reads.",
-            ],
-        ));
-    }
+    let lane = || memory.read_key();
     let binder = WorkflowBinder::Person {
         person,
+        lane: &lane,
         funding: &funding,
     };
     started_run(dispatch_bound(
@@ -541,23 +510,6 @@ fn member_funding(
         },
         shown_at_ms: input.shown_at_ms,
     })
-}
-
-/// Whether `reader`'s lane reads every one of `refs`, bodies included, in
-/// one snapshot. Every ref is read, however many.
-fn lane_reads(vault: &Vault, reader: &ScopedReadActorKey, refs: &[EntityId]) -> MemoryResult<bool> {
-    if refs.is_empty() {
-        return Ok(true);
-    }
-    let points: Vec<_> = refs.iter().copied().map(PointRead::id).collect();
-    let checked = vault
-        .scoped_read(reader.clone())
-        .with_claim_status(ClaimReadStatus::Recorded)
-        .read(&points, None)?;
-    Ok(checked
-        .value
-        .iter()
-        .all(|row| row.as_ref().is_some_and(|row| row.body.is_some())))
 }
 
 pub fn read_workflow_run_as(

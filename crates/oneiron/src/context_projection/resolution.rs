@@ -15,10 +15,14 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::store::GateSystemNoticeRecord;
 use crate::task_verb::TaskTerminalDisposition;
 
 /// Rows a memory resolution may walk before it stops looking.
 pub const CONTEXT_SPEC_MEMORY_SCAN_LIMIT: usize = 512;
+
+/// The notice a projection names what a member's lane left out of it under.
+const NARROWED_NOTICE_TYPE: &str = "workflow_context_narrowed";
 
 /// Ancestors the dispatcher folds when rebuilding a parent projection. A
 /// structural backstop, not a policy: `depth_remaining` is the real bound.
@@ -62,21 +66,116 @@ pub struct ResolvedContextProjection {
     /// Prior results of this saved workflow only. Assembled from settled
     /// attempts, never inherited through the parent memory projection.
     pub workflow_output_refs: Vec<WorkflowOutputContextRef>,
+    /// The sections this projection resolved to before a member's own read
+    /// lane left rows out of them (FIX 5416); `None` when it left none out.
+    /// They stay its bound, which the narrowing law and an inheriting child
+    /// read, so an omission never narrows what a descriptor may ask for.
+    pre_lane: Option<LaneBound>,
+}
+
+/// A member-narrowed projection's sections as they resolved before the
+/// member's lane left rows out.
+#[derive(Clone, PartialEq, Eq)]
+struct LaneBound {
+    memory: Vec<String>,
+    chat: Vec<String>,
+}
+
+impl std::fmt::Debug for LaneBound {
+    /// Counts only: the sections name the rows the lane left out.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LaneBound")
+            .field("memory", &self.memory.len())
+            .field("chat", &self.chat.len())
+            .finish()
+    }
 }
 
 impl ResolvedContextProjection {
     /// The distinct memory domains this projection actually reached.
     #[must_use]
     pub fn memory_domains(&self) -> Vec<&str> {
-        let mut domains: Vec<&str> = self
-            .memory_sections
-            .iter()
-            .filter_map(|section| section.split_once(':').map(|(domain, _)| domain))
-            .collect();
-        domains.sort_unstable();
-        domains.dedup();
-        domains
+        domains_of(&self.memory_sections)
     }
+
+    /// What a member's own read lane left out of this projection (FIX
+    /// 5416), as a gate system notice: how many memory and chat rows, never
+    /// which. `None` when it left nothing out, as for every projection not
+    /// read on a member's lane.
+    #[must_use]
+    pub fn narrowed_notice(&self) -> Option<GateSystemNoticeRecord> {
+        let bound = self.pre_lane.as_ref()?;
+        let memory = bound
+            .memory
+            .len()
+            .saturating_sub(self.memory_sections.len());
+        let chat = bound.chat.len().saturating_sub(self.chat_sections.len());
+        Some(GateSystemNoticeRecord {
+            notice_type: NARROWED_NOTICE_TYPE.to_owned(),
+            channel: "workflow.context".to_owned(),
+            voice: "system".to_owned(),
+            audience: "agent".to_owned(),
+            body: format!(
+                "{memory} memory rows and {chat} chat rows of this step's context are left out: \
+                 the member whose run this is does not read them."
+            ),
+            row_ref: None,
+            setting_change_offer: None,
+            policy_plane: None,
+            policy_version: None,
+            docs_url: None,
+        })
+    }
+
+    /// This projection keeping only `memory` and `chat` of its sections,
+    /// the ones a member's own read lane reads, each in this projection's
+    /// order (FIX 5416). What it resolved to stays its bound; when every
+    /// section is kept, nothing is left out.
+    pub(crate) fn lane_narrowed(mut self, memory: Vec<String>, chat: Vec<String>) -> Self {
+        if memory.len() == self.memory_sections.len() && chat.len() == self.chat_sections.len() {
+            return self;
+        }
+        let bound = LaneBound {
+            memory: std::mem::replace(&mut self.memory_sections, memory),
+            chat: std::mem::replace(&mut self.chat_sections, chat),
+        };
+        if self.pre_lane.is_none() {
+            self.pre_lane = Some(bound);
+        }
+        self
+    }
+
+    /// The memory sections this projection resolved to before a member's
+    /// lane left any out: its bound.
+    pub(super) fn memory_bound(&self) -> &[String] {
+        self.pre_lane
+            .as_ref()
+            .map_or(&self.memory_sections, |bound| &bound.memory)
+    }
+
+    /// The chat sections this projection resolved to before a member's lane
+    /// left any out: its bound.
+    pub(super) fn chat_bound(&self) -> &[String] {
+        self.pre_lane
+            .as_ref()
+            .map_or(&self.chat_sections, |bound| &bound.chat)
+    }
+
+    /// The distinct memory domains of [`Self::memory_bound`].
+    pub(super) fn bound_domains(&self) -> Vec<&str> {
+        domains_of(self.memory_bound())
+    }
+}
+
+/// The distinct memory domains `sections` name.
+fn domains_of(sections: &[String]) -> Vec<&str> {
+    let mut domains: Vec<&str> = sections
+        .iter()
+        .filter_map(|section| section.split_once(':').map(|(domain, _)| domain))
+        .collect();
+    domains.sort_unstable();
+    domains.dedup();
+    domains
 }
 
 /// Resolves one descriptor against LIVE vault state in the fixed order
@@ -115,14 +214,34 @@ pub fn resolve_context_spec(
     //    dev-only `_annotation` is dropped here and reaches no prompt.
     let briefing = spec.briefing;
 
-    Ok(ResolvedContextProjection {
+    let projection = ResolvedContextProjection {
         layers,
         memory_sections,
         chat_sections,
         briefing,
         sibling_result_refs: resolve_sibling_results(vault, &context_from)?,
         workflow_output_refs: Vec::new(),
+        pre_lane: None,
+    };
+    // A child resolves against its parent's bound, so a row a member's lane
+    // left out of the parent is left out of the child too (FIX 5416).
+    Ok(match parent.filter(|parent| parent.pre_lane.is_some()) {
+        Some(parent) => {
+            let memory = kept_in(&projection.memory_sections, &parent.memory_sections);
+            let chat = kept_in(&projection.chat_sections, &parent.chat_sections);
+            projection.lane_narrowed(memory, chat)
+        }
+        None => projection,
     })
+}
+
+/// Of `sections`, the ones `kept` holds, in order.
+fn kept_in(sections: &[String], kept: &[String]) -> Vec<String> {
+    sections
+        .iter()
+        .filter(|section| kept.contains(section))
+        .cloned()
+        .collect()
 }
 
 fn resolve_memory_sections(
@@ -137,12 +256,12 @@ fn resolve_memory_sections(
         // both the widest legal request and the no-context-rot answer.
         MemoryProjection::Default => match parent {
             Some(parent) if matches!(world_scope, None | Some(WorldScope::All)) => {
-                Ok(parent.memory_sections.clone())
+                Ok(parent.memory_bound().to_vec())
             }
             Some(parent) => Ok(intersect_with_parent(
-                scan_memory_sections(vault, None, parent.memory_sections.len(), world_scope)?,
-                Some(&parent.memory_sections),
-                parent.memory_sections.len(),
+                scan_memory_sections(vault, None, parent.memory_bound().len(), world_scope)?,
+                Some(parent.memory_bound()),
+                parent.memory_bound().len(),
             )),
             None => {
                 scan_memory_sections(vault, None, CONTEXT_SPEC_DEFAULT_MEMORY_LIMIT, world_scope)
@@ -152,7 +271,7 @@ fn resolve_memory_sections(
             let sections = scan_memory_sections(vault, Some(domains), *limit, world_scope)?;
             Ok(intersect_with_parent(
                 sections,
-                parent.map(|parent| parent.memory_sections.as_slice()),
+                parent.map(ResolvedContextProjection::memory_bound),
                 *limit,
             ))
         }
@@ -167,14 +286,14 @@ fn resolve_chat_sections(
     match projection {
         ChatProjection::Exclude => Ok(Vec::new()),
         ChatProjection::Default => match parent {
-            Some(parent) => Ok(parent.chat_sections.clone()),
+            Some(parent) => Ok(parent.chat_bound().to_vec()),
             None => scan_chat_sections(vault, CONTEXT_SPEC_DEFAULT_CHAT_LAST_N),
         },
         ChatProjection::Recent { last_n } => {
             let sections = scan_chat_sections(vault, *last_n)?;
             Ok(intersect_with_parent(
                 sections,
-                parent.map(|parent| parent.chat_sections.as_slice()),
+                parent.map(ResolvedContextProjection::chat_bound),
                 *last_n,
             ))
         }
