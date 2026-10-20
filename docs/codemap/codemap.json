@@ -45356,9 +45356,10 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "BackupMarker",
       "BackupSnapshotReceipt",
       "BackupWatermark"
      ],
@@ -45367,9 +45368,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 7,
-      "fn": 7,
+      "fn": 13,
       "re-export": 1,
-      "struct": 2,
+      "struct": 3,
       "type": 1
      }
     },
@@ -87046,7 +87047,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/managed/backup_facts.rs",
-     "purpose": "What a managed vault reports of its backups on every `Ping` (Engine 10-20 row (b)): this install's…",
+     "purpose": "What a managed vault reports of its backups on every `Ping` (Engine 10-20 rows (a) and (b)): its managed…",
      "surface": {
       "crate-vis": 1
      }
@@ -87332,7 +87333,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 18,
-      "fn": 21,
+      "fn": 17,
       "struct": 3,
       "type": 1
      }
@@ -87356,6 +87357,27 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/idle_backup.rs",
+     "purpose": "The backup before an idle reap (`prepare_idle_reap`, Engine 10-20 backup shipper row (a), co-signed with LC)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/reap.rs",
+     "purpose": "The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 4
      }
     },
     {
@@ -88572,7 +88594,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -88603,6 +88625,16 @@
      "purpose": "The owner credential a custody anchor door admits (FIX 5788), handed to the process that calls the door on a…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/finalize.rs",
+     "purpose": "A backup's making and its acceptance, apart (Engine 10-20 backup shipper row (a), agreed with L04)",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -88890,7 +88922,17 @@
      "path": "src/owner/schedule.rs",
      "purpose": "Scheduled backups for a running `serve`",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/schedule/managed.rs",
+     "purpose": "The managed backup duty (Engine 10-20 backup shipper row (a)): a managed vault's host backs it up hourly…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -90814,7 +90856,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 47,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -90849,7 +90891,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 36,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90970,7 +91012,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 931,
+   "source_files": 935,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95268,7 +95310,27 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 2,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BackupCoverageWire",
+      "IdleBackupFailure",
+      "IdleBackupState",
+      "IdleBackupWire",
+      "IdleReapWire"
+     ],
+     "path": "src/lib/managed_backup/idle_reap.rs",
+     "purpose": "The answer to an idle reap's preparation (`prepare_idle_reap`, Engine 10-20 backup shipper row (a)…",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 5,
+      "struct": 3
      }
     },
     {
@@ -95634,7 +95696,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95643,7 +95705,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 37,
+   "source_files": 38,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
