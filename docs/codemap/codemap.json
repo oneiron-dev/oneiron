@@ -18380,7 +18380,7 @@
      "path": "src/context_board/stream/mod.rs",
      "purpose": "Board streaming frames, routing and the pending-wake queue",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -18388,13 +18388,14 @@
      "kind": "src",
      "notable": [
       "ChildEvent",
+      "VerifiedDiaryReviewEvent",
       "VerifiedOwnTaskEvent"
      ],
      "path": "src/context_board/stream/provenance.rs",
      "purpose": "Verified own-task and child event minting for routed board events",
      "surface": {
-      "crate-vis": 13,
-      "struct": 2
+      "crate-vis": 16,
+      "struct": 3
      }
     },
     {
@@ -18424,6 +18425,20 @@
       "crate-vis": 1,
       "fn": 12,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PendingDiaryReview"
+     ],
+     "path": "src/context_board/stream/review.rs",
+     "purpose": "The diary-review producer: a pending diary-read review wakes the reviewed agent's STREAM connections (FIX…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -65750,7 +65765,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66907,7 +66922,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4193,
+   "source_files": 4194,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90979,7 +90994,7 @@
      "path": "src/wake_adapters/board_stream.rs",
      "purpose": "STREAM frames for the production host wake handoff",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
