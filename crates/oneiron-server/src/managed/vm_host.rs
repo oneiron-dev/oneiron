@@ -83,17 +83,11 @@ pub struct VaultVmConfig {
     #[serde(default)]
     pub allowed_origins: Vec<String>,
     /// Whether the guest serves an artifact origin, reached on
-    /// [`VM_ARTIFACT_PORT`] (OF-356).
+    /// [`VM_ARTIFACT_PORT`] (OF-356). It answers on the vault's internal
+    /// authority, `<vault_id>.artifact.invalid`, bound to the vault the boot
+    /// arguments name (FIX 6716).
     #[serde(default)]
     pub artifact_origin: bool,
-    /// The domains that origin answers under (`<slug>.<domain>`).
-    #[serde(default)]
-    pub artifact_domains: Vec<String>,
-    /// The vault's public slug, the label that origin answers to under those
-    /// domains (`--artifact-public-slug`, FIX 5389). Without one it answers
-    /// no vault host; the vault name never stands in for it.
-    #[serde(default)]
-    pub artifact_public_slug: Option<String>,
     /// This vault's managed settings files, as a read-only ext4 image the
     /// supervisor builds (FIX 2168, FIX 3487, FIX 777). The guest mounts it
     /// at `/config` and passes each file it holds to the engine:
@@ -316,32 +310,6 @@ impl VaultVm {
         }
         if config.artifact_origin {
             boot_args.push_str(" oneiron.artifact_origin=1");
-            let domains: Vec<String> = config
-                .artifact_domains
-                .iter()
-                .map(|domain| {
-                    oneiron_vault_contract::artifact_origin::normalize_artifact_domain(domain)
-                })
-                .filter(|domain| !domain.is_empty())
-                .collect();
-            anyhow::ensure!(
-                domains.iter().all(|domain| domain
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')),
-                "an artifact domain is letters, digits, '-' and '.'"
-            );
-            if !domains.is_empty() {
-                boot_args.push_str(" oneiron.artifact_domains=");
-                boot_args.push_str(&domains.join(","));
-            }
-            if let Some(slug) = &config.artifact_public_slug {
-                anyhow::ensure!(
-                    oneiron_vault_contract::artifact_origin::valid_app_label(slug),
-                    "the artifact public slug is a DNS label free of '--'"
-                );
-                boot_args.push_str(" oneiron.artifact_public_slug=");
-                boot_args.push_str(slug);
-            }
         }
         self.api(
             "PUT",

@@ -1,6 +1,6 @@
 //! The ctl dispatcher: every parsed ctl request a managed vault answers.
 
-use oneiron_vault_contract::artifact_origin::ARTIFACT_PUBLIC_SLUG_REVISION;
+use oneiron_vault_contract::artifact_origin::ARTIFACT_INTERNAL_HOST_REVISION;
 use oneiron_vault_contract::settings_paths::SETTINGS_PATHS_REVISION;
 use oneiron_vault_contract::slim_control::SLIM_RECOVERY_REVISION;
 use oneiron_vault_contract::{
@@ -46,7 +46,7 @@ impl ManagedState {
                 readiness: self.readiness.clone(),
                 managed_backup: self.backup_facts.clone(),
                 settings_paths_revision: Some(SETTINGS_PATHS_REVISION),
-                artifact_public_slug_revision: Some(ARTIFACT_PUBLIC_SLUG_REVISION),
+                artifact_internal_host_revision: Some(ARTIFACT_INTERNAL_HOST_REVISION),
                 slim_recovery_revision: Some(SLIM_RECOVERY_REVISION),
                 vm_outbox_revision: self.vm_outbox_revision,
             }),

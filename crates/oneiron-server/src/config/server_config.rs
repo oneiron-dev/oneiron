@@ -80,6 +80,11 @@ pub struct SyncServerConfig {
     /// The subdomain label this server's vault answers to under every
     /// artifact domain. `None`: every vault subdomain answers as unknown.
     pub artifact_vault_name: Option<String>,
+    /// A managed vault's id, which managed serve alone sets when the vault
+    /// serves an artifact origin: the listener then answers on that vault's
+    /// internal authority (`<vault_id>.artifact.invalid`, FIX 6716) and on no
+    /// artifact domain. No config file, environment or flag sets it.
+    pub artifact_internal_vault_id: Option<String>,
     /// Reverse proxies whose `X-Forwarded-For` the server believes when it
     /// keys a request by client address. Empty: every caller is keyed by its
     /// own connection, whatever headers it sends.
@@ -169,6 +174,7 @@ impl Default for SyncServerConfig {
             allowed_origins: Vec::new(),
             artifact_domains: Vec::new(),
             artifact_vault_name: None,
+            artifact_internal_vault_id: None,
             trusted_proxies: Vec::new(),
             lease_vault_id: 0,
             max_frame_size: 4 * 1024 * 1024,     // 4 MB
@@ -239,6 +245,10 @@ impl fmt::Debug for SyncServerConfig {
             .field("allowed_origins", &self.allowed_origins)
             .field("artifact_domains", &self.artifact_domains)
             .field("artifact_vault_name", &self.artifact_vault_name)
+            .field(
+                "artifact_internal_vault_id",
+                &self.artifact_internal_vault_id,
+            )
             .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("max_frame_size", &self.max_frame_size)
@@ -293,6 +303,8 @@ pub struct ServeConfig {
     pub allowed_origins: Vec<String>,
     pub artifact_domains: Vec<String>,
     pub artifact_vault_name: Option<String>,
+    /// Managed serve's alone, as on [`SyncServerConfig`].
+    pub artifact_internal_vault_id: Option<String>,
     pub trusted_proxies: Vec<TrustedProxy>,
     pub lease_vault_id: u64,
     pub dimensions: usize,
@@ -433,6 +445,7 @@ impl Default for ServeConfig {
             allowed_origins: server.allowed_origins,
             artifact_domains: server.artifact_domains,
             artifact_vault_name: server.artifact_vault_name,
+            artifact_internal_vault_id: server.artifact_internal_vault_id,
             trusted_proxies: server.trusted_proxies,
             lease_vault_id: server.lease_vault_id,
             dimensions: vault.dimensions,
@@ -504,6 +517,10 @@ impl fmt::Debug for ServeConfig {
             .field("allowed_origins", &self.allowed_origins)
             .field("artifact_domains", &self.artifact_domains)
             .field("artifact_vault_name", &self.artifact_vault_name)
+            .field(
+                "artifact_internal_vault_id",
+                &self.artifact_internal_vault_id,
+            )
             .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
@@ -601,6 +618,7 @@ impl ServeConfig {
             allowed_origins: self.allowed_origins.clone(),
             artifact_domains: self.artifact_domains.clone(),
             artifact_vault_name: self.artifact_vault_name.clone(),
+            artifact_internal_vault_id: self.artifact_internal_vault_id.clone(),
             trusted_proxies: self.trusted_proxies.clone(),
             lease_vault_id: self.lease_vault_id,
             max_frame_size: self.max_frame_size,

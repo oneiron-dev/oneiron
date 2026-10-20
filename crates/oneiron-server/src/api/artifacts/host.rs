@@ -1,14 +1,19 @@
 //! Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`,
 //! and one app on an origin of its own, `<app>--<vault>.<domain>/…`, read by
 //! the contract a cloud front forwards by (`oneiron_vault_contract::artifact_origin`).
+//! A managed vault reads its internal authority instead,
+//! `<vault_id>.artifact.invalid/<artifact>/…` and
+//! `<app>.<vault_id>.artifact.invalid/…`, which the edge forwards once it has
+//! checked the public name (FIX 6716); its configured domains are never read.
 //!
 //! DNS, certificates and the edge are static config; the edge sends each
 //! configured domain's subdomains here. The Host header picks the vault, and
 //! that vault's own artifact app answers with its own credentials and binding
 //! admission, so a credential reads only in the vault that issued it. A host
-//! under a configured domain that names no vault here answers exactly as a
-//! forbidden artifact does, and so does every refusal from a known vault: the
-//! one artifact 404. A host under no configured domain keeps local `/a/`.
+//! under a configured domain (or the internal authority) that names no vault
+//! here answers exactly as a forbidden artifact does, and so does every
+//! refusal from a known vault: the one artifact 404. Any other host keeps
+//! local `/a/`.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -20,8 +25,10 @@ use axum::http::header::HOST;
 use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use oneiron_vault_contract::artifact_origin::{
-    ArtifactHost, ArtifactHostRead, normalize_artifact_domain, valid_app_label,
+    ArtifactHost, ArtifactHostRead, ArtifactInternalHost, ArtifactInternalRead,
+    normalize_artifact_domain, valid_app_label,
 };
+use oneiron_vault_contract::valid_vault_name;
 use tower::ServiceExt;
 
 use crate::error::{ApiError, EnvelopedApiError};
@@ -31,53 +38,89 @@ use crate::error::{ApiError, EnvelopedApiError};
 /// Set by this router alone, never read from a request.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct VaultHostRoute {
-    /// Reached at `<app>--<vault>.<domain>`: the path names no artifact.
+    /// Reached at `<app>--<vault>.<domain>` (or
+    /// `<app>.<vault_id>.artifact.invalid`): the path names no artifact.
     pub(crate) app: bool,
 }
 
-/// The vaults one artifact listener serves by subdomain, and under which domains.
+/// The vaults one artifact listener serves by subdomain, and under which names.
 #[derive(Clone, Default)]
 pub(crate) struct ArtifactHosts {
-    domains: Vec<String>,
+    names: HostNames,
     vaults: BTreeMap<String, Router>,
 }
 
+/// Which hosts name a vault on the listener.
+#[derive(Clone)]
+enum HostNames {
+    /// Subdomains of the configured artifact domains, keyed by vault label.
+    Domains(Vec<String>),
+    /// A managed vault's internal authority alone, keyed by vault id.
+    Internal,
+}
+
+impl Default for HostNames {
+    fn default() -> Self {
+        Self::Domains(Vec::new())
+    }
+}
+
 enum HostRoute {
-    /// Not under a configured domain: local serving.
+    /// Not under a configured domain (or the internal authority): local
+    /// serving.
     Local,
     /// A vault served here, and maybe one of its apps.
     Vault(Router, Option<String>),
-    /// Under a configured domain, naming no vault served here.
+    /// Under a configured domain (or the internal authority), naming no
+    /// vault served here.
     Unknown,
 }
 
 impl ArtifactHosts {
     pub(crate) fn new(domains: &[String]) -> Self {
         Self {
-            domains: domains
-                .iter()
-                .map(|domain| normalize_artifact_domain(domain))
-                .filter(|domain| !domain.is_empty())
-                .collect(),
+            names: HostNames::Domains(
+                domains
+                    .iter()
+                    .map(|domain| normalize_artifact_domain(domain))
+                    .filter(|domain| !domain.is_empty())
+                    .collect(),
+            ),
+            vaults: BTreeMap::new(),
+        }
+    }
+
+    /// A managed vault's listener: vaults by their id on the internal
+    /// authority, `<vault_id>.artifact.invalid`, and on no artifact domain.
+    pub(crate) fn internal() -> Self {
+        Self {
+            names: HostNames::Internal,
             vaults: BTreeMap::new(),
         }
     }
 
     /// Serves one vault's artifact app at `<name>.<domain>`, and its apps at
-    /// `<app>--<name>.<domain>`, under every domain. A name that is not a DNS
-    /// label free of `--` is never served.
+    /// `<app>--<name>.<domain>`, under every domain; on the internal
+    /// authority, at `<name>.artifact.invalid` and
+    /// `<app>.<name>.artifact.invalid`, where `name` is the vault id. A name
+    /// that is not a DNS label (free of `--` under a domain) is never served.
     pub(crate) fn with_vault_app(mut self, name: &str, app: Router) -> Self {
         let name = name.to_ascii_lowercase();
-        if valid_app_label(&name) {
+        let served = match self.names {
+            HostNames::Domains(_) => valid_app_label(&name),
+            HostNames::Internal => valid_vault_name(&name),
+        };
+        if served {
             self.vaults.insert(name, app);
         }
         self
     }
 
     /// The listener's router: `local` for every host outside the configured
-    /// domains, and each vault at its subdomain inside them.
+    /// domains (or the internal authority), and each vault at its host
+    /// inside them. With no domain and no internal authority, `local` alone.
     pub(crate) fn into_app(self, local: Router) -> Router {
-        if self.domains.is_empty() {
+        if matches!(&self.names, HostNames::Domains(domains) if domains.is_empty()) {
             return local;
         }
         let hosts = Arc::new(self);
@@ -92,13 +135,22 @@ impl ArtifactHosts {
         let Some(host) = host else {
             return HostRoute::Local;
         };
-        match ArtifactHost::read(host, &self.domains) {
-            ArtifactHostRead::Outside => HostRoute::Local,
-            ArtifactHostRead::Unnamed => HostRoute::Unknown,
-            ArtifactHostRead::Named(named) => match self.vaults.get(&named.vault) {
-                Some(app) => HostRoute::Vault(app.clone(), named.app),
-                None => HostRoute::Unknown,
+        let (vault, artifact) = match &self.names {
+            HostNames::Domains(domains) => match ArtifactHost::read(host, domains) {
+                ArtifactHostRead::Outside => return HostRoute::Local,
+                ArtifactHostRead::Unnamed => return HostRoute::Unknown,
+                ArtifactHostRead::Named(named) => (named.vault, named.app),
             },
+            // The vault id must be this vault's: another id names nothing.
+            HostNames::Internal => match ArtifactInternalHost::read(host) {
+                ArtifactInternalRead::Outside => return HostRoute::Local,
+                ArtifactInternalRead::Unnamed => return HostRoute::Unknown,
+                ArtifactInternalRead::Named(named) => (named.vault_id, named.app),
+            },
+        };
+        match self.vaults.get(&vault) {
+            Some(app) => HostRoute::Vault(app.clone(), artifact),
+            None => HostRoute::Unknown,
         }
     }
 
@@ -109,7 +161,9 @@ impl ArtifactHosts {
             HostRoute::Vault(app, artifact) => (app, artifact),
         };
         // `<vault>.<domain>/<artifact>/…` is that vault's `/a/<artifact>/…`,
-        // and `<app>--<vault>.<domain>/…` is its `/a/<app>/…`.
+        // and `<app>--<vault>.<domain>/…` is its `/a/<app>/…`; so are
+        // `<vault_id>.artifact.invalid/<artifact>/…` and
+        // `<app>.<vault_id>.artifact.invalid/…`.
         let Some(uri) = vault_route_uri(request.uri(), artifact.as_deref()) else {
             return unknown_artifact();
         };

@@ -179,20 +179,14 @@ pub struct ServeArgs {
     pub maximum_tier: Option<bool>,
 
     /// Managed mode: the unix socket the vault's artifact origin listens on,
-    /// an absolute path the supervisor chose and routes `<slug>.<domain>` to
-    /// (`oneiron_vault_contract::artifact_origin`). Without it a managed vault
-    /// serves `/a/` on its API socket alone.
+    /// an absolute path the supervisor chose. The edge forwards this vault's
+    /// artifact names to it on the vault's internal authority,
+    /// `<vault-name>.artifact.invalid` and `<app>.<vault-name>.artifact.invalid`
+    /// (`oneiron_vault_contract::artifact_origin`, FIX 6716), the one host it
+    /// answers on. Without it a managed vault serves `/a/` on its API socket
+    /// alone.
     #[arg(long = "artifact-http-socket")]
     pub artifact_http_socket: Option<PathBuf>,
-
-    /// Managed mode: the vault's public slug, the DNS label free of `--` its
-    /// artifact origin answers to under every artifact domain
-    /// (`<slug>.<domain>`, `<app>--<slug>.<domain>`), as the supervisor's
-    /// slug map names it (FIX 5389). The vault name, its local id, never
-    /// names a public host: without a slug the origin answers no vault host
-    /// and serves `/a/` alone.
-    #[arg(long = "artifact-public-slug", requires = "managed_by_hypnos")]
-    pub artifact_public_slug: Option<String>,
 
     /// The vault's owner settings, one TOML file in the server's own config
     /// schema, `[models]`, `[embedder]` and `[gpu]` included. Flags stand
@@ -318,6 +312,8 @@ pub struct ServeArgs {
     /// Comma-separated domains whose subdomains name vaults on the artifact
     /// listener: `<vault>.<domain>/<artifact>/…` serves that vault's synced,
     /// pinned artifacts. DNS, certificates and the edge stay static config.
+    /// Managed mode refuses it: a managed vault answers on its internal
+    /// authority alone.
     #[arg(long = "artifact-domains", value_delimiter = ',', num_args = 1..)]
     pub artifact_domains: Option<Vec<String>>,
 
@@ -567,7 +563,6 @@ impl fmt::Debug for ServeArgs {
             .field("escrow_outbox_dir", &self.escrow_outbox_dir)
             .field("maximum_tier", &self.maximum_tier)
             .field("artifact_http_socket", &self.artifact_http_socket)
-            .field("artifact_public_slug", &self.artifact_public_slug)
             .field("settings_file", &self.settings_file)
             .field("voice_socket", &self.voice_socket)
             .field("seal_key_file", &self.seal_key_file)

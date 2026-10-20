@@ -493,11 +493,11 @@ pub enum CtlResponse {
     /// `settings_paths_revision` is the revision of the owner-path rule the
     /// vault boots by
     /// ([`SETTINGS_PATHS_REVISION`](crate::settings_paths::SETTINGS_PATHS_REVISION),
-    /// FIX 5187), and `artifact_public_slug_revision` that of its artifact
-    /// origin's public slug binding
-    /// ([`ARTIFACT_PUBLIC_SLUG_REVISION`](crate::artifact_origin::ARTIFACT_PUBLIC_SLUG_REVISION),
-    /// FIX 5389), never the slug itself. `slim_recovery_revision` is that of
-    /// the supervisor SLIM recovery surface
+    /// FIX 5187), and `artifact_internal_host_revision` that of the internal
+    /// authority its artifact origin answers on
+    /// ([`ARTIFACT_INTERNAL_HOST_REVISION`](crate::artifact_origin::ARTIFACT_INTERNAL_HOST_REVISION),
+    /// FIX 6716). `slim_recovery_revision` is that of the supervisor SLIM
+    /// recovery surface
     /// ([`SLIM_RECOVERY_REVISION`](crate::slim_control::SLIM_RECOVERY_REVISION),
     /// FIX 5186): `slim_status`, `unslim` and `Shed.wait_id`.
     /// `vm_outbox_revision` is that of a vault VM's outbox carrier
@@ -530,7 +530,7 @@ pub enum CtlResponse {
             skip_serializing_if = "Option::is_none",
             deserialize_with = "super::version::observed_revision"
         )]
-        artifact_public_slug_revision: Option<u32>,
+        artifact_internal_host_revision: Option<u32>,
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
