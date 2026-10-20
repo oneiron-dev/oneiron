@@ -9,6 +9,7 @@
 
 mod codec;
 mod decls;
+mod erased;
 mod key;
 #[cfg(test)]
 mod tests;
@@ -28,6 +29,7 @@ pub(crate) use codec::{
     CodecError, LegacyCompact, LegacyJson, Named, Raw, RawValue, SideCodec, VersionedNamed,
 };
 pub(crate) use decls::*;
+pub(crate) use erased::{Erased, ErasedForm};
 pub(crate) use key::{FixedSideKey, HexId, SideKey};
 
 /// Where a side table's rows live: the two side databases of a write target.
