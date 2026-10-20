@@ -1091,6 +1091,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         // A search reads on the credential's lane, a facet stamp places only
         // a row that lane reads, a consult lands only refs it reads, and a
         // TASK binding reads its TASK and workflow there (FIX 5316).
+        // The run repo rows read on that lane too (FIX 6867).
         if !matches!(
             call,
             RunCall::Bridge(
@@ -1099,7 +1100,8 @@ impl AgentVerbDoor for McpCodeModeVerbs {
                     | SelfEffect::ConsultResult
                     | SelfEffect::WorkflowDispatch
             )
-        ) {
+        ) && !matches!(call, RunCall::Bridge(effect) if effect.is_repo())
+        {
             return Ok(None);
         }
         self.credential_lane().map(Some)

@@ -38202,6 +38202,22 @@ pub enum SelfEffect {
     Team,
     #[serde(rename = "WorkflowDispatch")]
     WorkflowDispatch,
+    #[serde(rename = "RepoSnapshotsGet")]
+    RepoSnapshotsGet,
+    #[serde(rename = "RepoSnapshotsRead")]
+    RepoSnapshotsRead,
+    #[serde(rename = "RepoSymbolsDefinitions")]
+    RepoSymbolsDefinitions,
+    #[serde(rename = "RepoViewsGet")]
+    RepoViewsGet,
+    #[serde(rename = "RepoViewsRead")]
+    RepoViewsRead,
+    #[serde(rename = "RepoMergeQueueObserve")]
+    RepoMergeQueueObserve,
+    #[serde(rename = "RepoSnapshotsIngest")]
+    RepoSnapshotsIngest,
+    #[serde(rename = "RepoWorkOpen")]
+    RepoWorkOpen,
 }
 
 /// `oneiron::code_run::types::SelfDurableWaitReason`.

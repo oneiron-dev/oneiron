@@ -230,6 +230,19 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         // FIX 5316: the run's agent binds a TASK to a saved workflow's run;
         // the closed input names no parent, actor, payer or scope.
         RunVerb::SelfWorkflowsDispatchBound => SelfCall::WorkflowDispatch(Box::new(decode(input)?)),
+        // FIX 6867: the run repo rows; each closed input names no actor,
+        // lease, TASK or run.
+        verb @ (RunVerb::SelfCodeSnapshotsGet
+        | RunVerb::SelfCodeSnapshotsRead
+        | RunVerb::SelfCodeSymbolsDefinitions
+        | RunVerb::SelfCodeViewsGet
+        | RunVerb::SelfCodeViewsRead
+        | RunVerb::SelfCodeMergeQueueObserve
+        | RunVerb::SelfCodeSnapshotsIngest
+        | RunVerb::SelfCodeWorkOpen) => SelfCall::Repo(
+            super::RepoRunCall::decode(verb, input)?
+                .ok_or_else(|| failure("invalid typed component arguments"))?,
+        ),
     })
 }
 
