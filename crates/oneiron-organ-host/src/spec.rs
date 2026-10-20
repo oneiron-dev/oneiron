@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use oneiron::EntityId;
+use oneiron::secret_custody::SecretSight;
 use oneiron_organ_protocol::{DEFAULT_FRAME_LIMIT, Hash32, TypedBody};
 use serde::{Deserialize, Serialize};
 
@@ -201,6 +202,18 @@ pub struct OrganInput {
     pub version: u64,
 }
 
+/// A vault input with the sight its caller reads it under, judged before
+/// the call as the whole-body door judges the same version (FIX 6508). A
+/// masked caller's organ reads a marked body's masked copy; the owner's and
+/// a granted agent's read the stored bytes, and a body no mark covers is
+/// lent as it is stored. The sight never crosses the wire: a node that runs
+/// the call for another is sent the bytes this sight read, and judges none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SightedInput {
+    pub input: OrganInput,
+    pub sight: SecretSight,
+}
+
 /// Bytes the caller holds and hands the organ for one call, such as a
 /// document the engine prepared in memory. They cross like a vault input,
 /// and the host hashes them itself.
@@ -218,7 +231,8 @@ pub struct OrganCall {
     pub schema: u32,
     pub args: rmpv::Value,
     pub body: Option<TypedBody>,
-    pub inputs: Vec<OrganInput>,
+    /// The vault inputs, each with the sight its caller reads it under.
+    pub inputs: Vec<SightedInput>,
     pub class: CallClass,
     pub deadline: Duration,
     /// The grant this call runs under; revoking it stops the call.

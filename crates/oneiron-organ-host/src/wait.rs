@@ -6,6 +6,7 @@
 
 use oneiron::edit_settle::{OrganWait, OrganWaitView, PendingProposalView};
 use oneiron::provenance::made_by::MadeByTrigger;
+use oneiron::secret_custody::SecretSight;
 use oneiron::{EntityId, Vault, WriteActor};
 use oneiron_organ_protocol::{ByteBuf, TypedBody};
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ use crate::error::HostError;
 use crate::handlers::AskHandlers;
 use crate::landing::propose_organ_outputs;
 use crate::route::{OrganRouter, RanOn, Routed};
-use crate::spec::{CallClass, LentInput, OrganCall, OrganInput};
+use crate::spec::{CallClass, LentInput, OrganCall, OrganInput, SightedInput};
 
 /// One organ call whose export files are for an artifact's proposal
 /// landing.
@@ -69,13 +70,35 @@ struct HeldCall {
     schema: u32,
     args: rmpv::Value,
     body: Option<TypedBody>,
-    /// Artifact (hex) and version: a version never changes, so a redrive
-    /// reads the bytes the call named.
-    inputs: Vec<(String, u64)>,
+    /// A version never changes, so a redrive reads the bytes the call named.
+    inputs: Vec<HeldInput>,
     class: CallClass,
     deadline_ms: u64,
     grant: String,
     lent: Vec<(String, ByteBuf)>,
+}
+
+/// One vault input of a held call.
+#[derive(Debug, Serialize, Deserialize)]
+struct HeldInput {
+    /// The artifact, in hex.
+    artifact: String,
+    version: u64,
+    /// Whether the call was admitted with the owner's sight of it; a redrive
+    /// reads it as [`redrive_sight`] says.
+    owner: bool,
+}
+
+/// The sight a held call's vault input is read under when it is redriven
+/// (FIX 6508): the owner's only when the call was admitted with it, else
+/// the masked copy's. A granted agent's sight is never kept: its grant and
+/// its read receipt are for the one read they were given for.
+const fn redrive_sight(admitted_as_owner: bool) -> SecretSight {
+    if admitted_as_owner {
+        SecretSight::Owner
+    } else {
+        SecretSight::Masked
+    }
 }
 
 impl HeldCall {
@@ -89,7 +112,11 @@ impl HeldCall {
             inputs: call
                 .inputs
                 .iter()
-                .map(|input| (input.artifact.to_hex(), input.version))
+                .map(|sighted| HeldInput {
+                    artifact: sighted.input.artifact.to_hex(),
+                    version: sighted.input.version,
+                    owner: sighted.sight == SecretSight::Owner,
+                })
                 .collect(),
             class: call.class,
             deadline_ms: u64::try_from(call.deadline.as_millis()).unwrap_or(u64::MAX),
@@ -105,11 +132,14 @@ impl HeldCall {
         let inputs = self
             .inputs
             .iter()
-            .map(|(artifact, version)| {
-                EntityId::from_hex(artifact)
-                    .map(|artifact| OrganInput {
-                        artifact,
-                        version: *version,
+            .map(|held| {
+                EntityId::from_hex(&held.artifact)
+                    .map(|artifact| SightedInput {
+                        input: OrganInput {
+                            artifact,
+                            version: held.version,
+                        },
+                        sight: redrive_sight(held.owner),
                     })
                     .map_err(|_| "a held call names no artifact".to_owned())
             })
