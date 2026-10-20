@@ -186,7 +186,7 @@ impl<'a> ScopedRead<'a> {
         self.audience_cache
             .lock()
             .map_err(|_| Error::InvariantViolation("audience cache lock"))?
-            .own_entry_readable_raw(self.vault, txn, *id, raw, reader)
+            .own_entry_readable_raw(self.vault, &self.store_read(), txn, *id, raw, reader)
     }
 
     /// The audience conjunct over the exact revision `raw` being served. A

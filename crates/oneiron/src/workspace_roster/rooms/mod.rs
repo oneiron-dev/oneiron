@@ -52,7 +52,8 @@ pub(crate) use audience::{
 #[cfg(feature = "sync")]
 pub(crate) use audience_carriers::{carried_audience_edit_in_txn, scrub_audience_edits};
 pub use audience_doors::{
-    ThreadAudienceAddRequest, ThreadAudienceReceipt, ThreadAudienceRemoveRequest,
+    MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN, ThreadAudienceAddRequest, ThreadAudienceReceipt,
+    ThreadAudienceRemoveRequest,
 };
 pub(crate) use audience_doors::{VaultStanding, vault_standing_in};
 #[cfg(feature = "sync")]

@@ -86,6 +86,19 @@ pub enum NotificationKind {
     /// its reason, and the notice's one tap is its undo, the owner's own act
     /// (`Vault::undo_weave_digest_setting_change`).
     WeaveDigestSettingsChanged,
+    /// The vault's Owner or an Admin walked into a private thread, reading
+    /// from now on (FIX 6381, 6466): told to the thread's members alone.
+    /// `source.result` names the thread's root and `source.detail` the op.
+    ThreadWalkIn,
+    /// A private thread's full history was opened (FIX 6383, 6466): the
+    /// Owner's own, or the Owner's add of someone with full history from
+    /// outside the thread. Told to the thread's members alone;
+    /// `source.result` names the root and `source.detail` which it was.
+    ThreadHistoryOpened,
+    /// Someone asked to join a private thread (FIX 6384, 6466): a decision
+    /// waiting on each member it is for, who approves or denies it.
+    /// `source.result` names the root and `source.detail` the op.
+    ThreadJoinRequested,
 }
 
 impl NotificationKind {

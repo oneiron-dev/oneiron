@@ -63,9 +63,9 @@ use crate::settings::room_threads::{
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::workspace_roster::RosterActor;
 
-/// The rule an agent's self-add into a private thread it is not in meets
-/// (FIX 6384), as its refusal names it.
-const AGENT_THREAD_WALK_IN_FORBIDDEN: &str = "AGENT_THREAD_WALK_IN_FORBIDDEN";
+/// The code of an agent's self-add into a private thread it is not in
+/// (FIX 6384, 6464), as its refusal names it: a conflict, HTTP 409.
+pub const MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN: &str = "AGENT_THREAD_WALK_IN_FORBIDDEN";
 
 /// `vault.rooms.thread_audience.add`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -178,9 +178,9 @@ pub(super) fn unknown_thread() -> MemoryError {
 /// (FIX 6384), a pen of the Owner or an Admin included: it asks to join.
 fn agent_walk_in_forbidden() -> MemoryError {
     MemoryError::new(
-        MEMORY_CODE_INVALID_STATE,
+        MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN,
         format!(
-            "{AGENT_THREAD_WALK_IN_FORBIDDEN}: agents may request to join a private thread; they cannot walk in"
+            "{MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN}: agents may request to join a private thread; they cannot walk in"
         ),
         &["Ask the thread's members to add the agent, or have it request to join."],
     )
@@ -199,7 +199,9 @@ fn admin_walk_in_off() -> MemoryError {
 }
 
 /// Writes `event` as a new TURN of the thread `binding` names, in `txn`:
-/// carried by its room, with an `About` edge to its root. Answers its id.
+/// carried by its room, with an `About` edge to its root, and filed in the
+/// room's history under that root ([`index_audience_event_in`]). Answers
+/// its id.
 pub(super) fn put_audience_event_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -221,7 +223,66 @@ pub(super) fn put_audience_event_in(
         binding.root,
         &event_body(&reply, event)?,
     )?;
+    match index_audience_event_in(vault, txn, binding, event, id) {
+        Ok(true) => {}
+        Ok(false) => tracing::warn!(
+            thread = %binding.root.to_hex(),
+            event = %id.to_hex(),
+            "thread audience edit: no root turn row or no editor; not in the room's history"
+        ),
+        Err(error) => tracing::warn!(
+            thread = %binding.root.to_hex(),
+            event = %id.to_hex(),
+            %error,
+            "thread audience edit: not filed in the room's history"
+        ),
+    }
     Ok(id)
+}
+
+/// Files the audience edit `id` of the thread `binding` names in its
+/// room's history (FIX 5637): a turn row answering the thread's root and
+/// hanging from the root's own trunk anchor, so the room's history and
+/// thread indexes hold it under that root as one of its turns. It names
+/// no MESSAGE: the edit's TURN is its whole record, and no text is made
+/// for it. Who reads it is the thread's own CONTENT and CURRENT gates', as
+/// for any turn of the thread. Another machine of the vault takes the row
+/// beside the TURN it rides and indexes it there (`crate::sync::room_turns`).
+/// `false` when the root has no turn row to hang it from, or the edit
+/// names no editor.
+fn index_audience_event_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    binding: &ThreadBinding,
+    event: &AudienceEvent,
+    id: EntityId,
+) -> Result<bool> {
+    let Some(anchor) = TURNS
+        .get(&vault.store, txn, &binding.root)?
+        .and_then(|root| root.thread_of)
+    else {
+        return Ok(false);
+    };
+    let actor = match event.by.id() {
+        Some(actor) => actor.to_hex(),
+        None => return Ok(false),
+    };
+    let turn = RoomTurn {
+        turn_id: id.to_hex(),
+        room_id: binding.room.to_hex(),
+        actor,
+        addressed_agents: BTreeSet::new(),
+        message_ids: Vec::new(),
+        reply_to: Some(binding.root.to_hex()),
+        thread_of: Some(anchor),
+        at: vault.store.clock.now_recorded_at(),
+        task_ids: Vec::new(),
+        converted_project: None,
+        quotes: std::collections::BTreeMap::new(),
+    };
+    TURNS.put(&vault.store, txn, &id, &turn)?;
+    super::history::index_turn(&vault.store, txn, &turn)?;
+    Ok(true)
 }
 
 /// The receipt of the edit `id` of the thread `binding` names, read in its

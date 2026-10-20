@@ -1622,7 +1622,10 @@ impl From<MemoryError> for FacadeApiError {
             // the vocabulary has no hole.
             MEMORY_CODE_INVALID_STATE
             | MEMORY_CODE_OFF_RECORD_SESSION_DOOR
-            | MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER => StatusCode::CONFLICT,
+            | MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER
+            | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN => {
+                StatusCode::CONFLICT
+            }
             // OF-123: the person the effect names is not settled yet; the
             // same request succeeds once `self.identity.settle` settles it.
             oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => StatusCode::CONFLICT,

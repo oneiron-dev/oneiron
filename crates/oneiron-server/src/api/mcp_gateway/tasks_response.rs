@@ -443,6 +443,7 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED
         | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
         | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
+        | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
         _ => -32602,

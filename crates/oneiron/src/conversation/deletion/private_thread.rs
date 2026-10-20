@@ -10,8 +10,11 @@
 //! a human Admin while the switch is on. An Admin's policy delete of such a
 //! record while the switch is off is refused before any room role answers,
 //! a seated room Admin's included; an Admin's own author delete is not a
-//! policy delete and stays as it was. Every legal hold check of the rail
-//! runs as before.
+//! policy delete and stays as it was. So is a seated room Owner's or
+//! Admin's, by room role alone, who is neither the vault's Owner nor an
+//! Admin and is not in the thread's audience now (FIX 6504): the switch is
+//! not passed by a room role. With the switch on that role deletes as it
+//! did. Every legal hold check of the rail runs as before.
 
 use super::*;
 use crate::settings::room_threads::room_thread_admin_settings_in_txn;
@@ -74,9 +77,10 @@ fn private_root_of(
 /// vault's Owner or an Admin holds over a private thread's root and its
 /// own messages, as a person (FIX 6381). `None` for any other record or
 /// actor. An Admin, a pen of one included, is refused while the Owner's
-/// switch is off (FIX 6382), whatever room role it holds. A record whose
-/// thread does not read is no private root here, logged: this read never
-/// fails a delete that does not reach one.
+/// switch is off (FIX 6382), whatever room role it holds, and so is a
+/// seated room Owner or Admin who is neither and is not in the thread
+/// (FIX 6504). A record whose thread does not read is no private root
+/// here, logged: this read never fails a delete that does not reach one.
 pub(super) fn private_thread_delete_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -84,8 +88,8 @@ pub(super) fn private_thread_delete_in(
     record: EntityId,
     actor: WriteActor,
 ) -> Result<Option<ThreadDelete>> {
-    match private_root_of(vault, txn, room, record) {
-        Ok(Some(_)) => {}
+    let root = match private_root_of(vault, txn, room, record) {
+        Ok(Some(root)) => root,
         Ok(None) => return Ok(None),
         Err(error) => {
             tracing::warn!(
@@ -95,15 +99,20 @@ pub(super) fn private_thread_delete_in(
             );
             return Ok(None);
         }
-    }
+    };
     let held = match crate::workspace_roster::vault_standing_in(vault, txn, actor.entity_ref())? {
-        None => return Ok(None),
+        None => {
+            if !room_thread_admin_settings_in_txn(vault, txn)?.admin_delete
+                && room_role_outside_in(vault, txn, room, root, actor)
+            {
+                return Err(admin_delete_off());
+            }
+            return Ok(None);
+        }
         Some(VaultStanding::Owner) => ThreadDelete::Owner,
         Some(VaultStanding::Admin) => {
             if !room_thread_admin_settings_in_txn(vault, txn)?.admin_delete {
-                return Err(Error::Refused(format!(
-                    "the Owner's setting {ROOM_THREADS_ADMIN_DELETE_KEY} is off: an Admin may not delete a private thread; ask the Owner to delete it or to turn the setting on"
-                )));
+                return Err(admin_delete_off());
             }
             ThreadDelete::Admin
         }
@@ -113,4 +122,50 @@ pub(super) fn private_thread_delete_in(
     }
     authorize(vault, txn, actor)?;
     Ok(Some(held))
+}
+
+/// The refusal of a private thread's policy delete while the Owner's
+/// switch is off (FIX 6382, 6504), naming the setting.
+fn admin_delete_off() -> Error {
+    Error::Refused(format!(
+        "the Owner's setting {ROOM_THREADS_ADMIN_DELETE_KEY} is off: an Admin may not delete a private thread; ask the Owner to delete it or to turn the setting on"
+    ))
+}
+
+/// Whether `actor` holds a room Owner or Admin role in `room`, seated, and
+/// is not in the audience of the private thread rooted at `root` now, a
+/// pen through its PERSON (FIX 6504). A role that does not read is no such
+/// role, and an audience that does not read is logged and refuses nothing:
+/// this read never fails a delete it does not refuse.
+fn room_role_outside_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    root: EntityId,
+    actor: WriteActor,
+) -> bool {
+    if !matches!(
+        roles::role_in(vault, txn, room, actor),
+        Ok(RoomRole::Owner | RoomRole::Admin)
+    ) {
+        return false;
+    }
+    let inside = match crate::workspace_roster::thread_audience_now_in(vault, txn, room, root) {
+        Ok(Some(audience)) => {
+            crate::workspace_roster::names_actor_in(vault, txn, &audience, actor.entity_ref())
+        }
+        Ok(None) => return false,
+        Err(error) => Err(error),
+    };
+    match inside {
+        Ok(inside) => !inside,
+        Err(error) => {
+            tracing::warn!(
+                record = %root.to_hex(),
+                %error,
+                "room record delete: its private thread's audience not read"
+            );
+            false
+        }
+    }
 }

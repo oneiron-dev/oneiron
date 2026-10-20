@@ -560,7 +560,14 @@ fn own_entry_kept(
     let mut kept = Vec::with_capacity(hits.len());
     for hit in hits {
         let readable = match raw_of(&hit.id)? {
-            Some(raw) => entry.own_entry_readable_raw(vault, txn, hit.id, &raw, reader)?,
+            Some(raw) => entry.own_entry_readable_raw(
+                vault,
+                &vault.store.read(),
+                txn,
+                hit.id,
+                &raw,
+                reader,
+            )?,
             None => true,
         };
         if readable {

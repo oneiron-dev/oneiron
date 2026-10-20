@@ -173,7 +173,7 @@ export type IdentityActNow = { state: "settled"; entity: string } | { state: "un
 /** `oneiron::task_verb::sdk::InboxListRequest` */
 export type InboxListRequest = { after?: string | null; limit?: number | null }
 /** `oneiron::inbox::notification::NotificationKind` */
-export type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed" | "weave_digest_settings_changed"
+export type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed" | "weave_digest_settings_changed" | "thread_walk_in" | "thread_history_opened" | "thread_join_requested"
 /** `oneiron::inbox::notification::NotificationSource` */
 export type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null; detail?: string | null }
 /** `oneiron::inbox::list::NotificationRow` */
