@@ -233,6 +233,11 @@ impl Vault {
             }
             // An actor with no other state here may still be named in the
             // rows that record it, so the purge's actor sweep runs (FIX 3654).
+            // Its code runs' replies retire first, as the provenance door's
+            // erase retires them, read before the sweep releases them (FIX
+            // 5718).
+            #[cfg(unix)]
+            crate::code_run::retire_actor_responses_in_txn(&self.store, wtxn, id)?;
             crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id)?;
             return Ok((
                 ReplayedTombstoneOutcome::HardPurged {

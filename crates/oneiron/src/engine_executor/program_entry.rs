@@ -558,12 +558,17 @@ fn row_at(record: &CodeRunReplayRecord, seq: u64) -> Option<&CodeRunBridgeCall> 
         .filter(|row| row.seq == seq)
 }
 
-/// The reply `wait_id`'s wait was resumed with, as the record keeps it.
+/// The reply `wait_id`'s wait was resumed with, as the record keeps it. Once
+/// an erase of the run's actor took its replies, a typed unavailable, never
+/// the kept bytes and never none (FIX 5718).
 fn delivered_reply(
     storage: &ExecutorStorage<'_>,
     record: &CodeRunReplayRecord,
     wait_id: EntityId,
 ) -> EngineExecutorResult<Option<serde_json::Value>> {
+    if storage.code_run_response_erased(record.run_id)? {
+        return Err(crate::code_run::response_erased_error("a resumed wait's reply").into());
+    }
     let wanted = wait_id.to_hex();
     let Some(output) = record
         .outputs

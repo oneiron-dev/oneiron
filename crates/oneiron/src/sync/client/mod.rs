@@ -57,7 +57,7 @@ mod types;
 pub use self::base::SyncClient;
 pub use self::federated::ImportTier;
 pub(crate) use self::residence::custody::relay_custody;
-pub(crate) use self::residence::home_handoff::{HandoffLane, TargetStanding};
+pub(crate) use self::residence::home_handoff::{HandoffLane, TargetCancel, TargetStanding};
 pub use self::residence::{
     OpenedItem, PadAdmissionReport, ResidenceHit, ResidenceIndexWindow, ResidenceSearch,
     SealedBundleRelay, SearchSource, ThinItem, fetch_sealed_bundle_with_kit,

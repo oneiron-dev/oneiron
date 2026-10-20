@@ -32,8 +32,11 @@ use super::args::{ManagedArgs, ManagedError};
 use super::ledger::{SYNC_UPGRADE_SETTLE_SECS, WakeLedger};
 use super::listener::{BoundServeListener, ManagedCtl, ServeListener, init_managed_tracing};
 use super::vault_gates::{open_managed_vault, provision_host_authority};
+use boot_keys::{escrow_vault_key, managed_page_seal, spool_vault_key_escrow};
 use oneiron_vault_contract::host::{Host, HostLimits};
 
+/// The vault data key's boot steps: its page seal, escrow wraps and spool.
+mod boot_keys;
 /// The ctl dispatcher, [`ManagedState::handle_request`].
 mod control;
 
@@ -162,6 +165,9 @@ pub struct ManagedState {
     /// row (b)): set once at boot, before ctl serves. `None` until set, which
     /// a supervisor reads as unknown.
     backup_facts: Option<ManagedBackupFacts>,
+    /// The cold restore this process kept, which `restore_status` answers
+    /// for: set once at boot, before ctl serves; `None` for an open.
+    restore: Option<Arc<super::restore::RestoreOutcome>>,
 }
 
 /// A supervisor-signed account action, not the child process's host-root slip.
@@ -399,6 +405,7 @@ impl ManagedState {
             voice_actions: std::sync::Mutex::default(),
             readiness: ManagedReadiness::Ready,
             backup_facts: None,
+            restore: None,
         }
     }
 
@@ -415,6 +422,17 @@ impl ManagedState {
     #[must_use]
     pub fn with_backup_facts(mut self, facts: ManagedBackupFacts) -> Self {
         self.backup_facts = Some(facts);
+        self
+    }
+
+    /// This state with `restore`, the cold restore this start kept, for
+    /// `restore_status` to answer for.
+    #[must_use]
+    pub(super) fn with_restore(
+        mut self,
+        restore: Option<Arc<super::restore::RestoreOutcome>>,
+    ) -> Self {
+        self.restore = restore;
         self
     }
 
@@ -936,108 +954,6 @@ fn writes_frozen_body(error: &ManagedError) -> serde_json::Value {
     })
 }
 
-/// Seals the vault's held data key to the node's managed escrow recipient
-/// and the owner's break-glass recipient, each named by the supervisor.
-/// A wrap is labelled by its recipient's fingerprint, so a restart adds
-/// nothing, and a recipient of a new epoch gets a wrap of its own.
-fn escrow_vault_key(vault: &oneiron::Vault, managed: &ManagedArgs) -> anyhow::Result<()> {
-    let present = vault.vault_key_wraps()?;
-    for (role, path) in [
-        ("managed", &managed.escrow_recipient),
-        ("break-glass", &managed.break_glass_recipient),
-    ] {
-        let Some(path) = path else {
-            continue;
-        };
-        let bytes = std::fs::read(path)
-            .map_err(|error| anyhow::anyhow!("{role} escrow recipient unreadable: {error}"))?;
-        let recipient = oneiron::world_keys::HybridPublicKey::from_bytes(&bytes)
-            .map_err(|_| anyhow::anyhow!("{role} escrow recipient is not a hybrid public key"))?;
-        let fingerprint = blake3::hash(&bytes);
-        let label = format!("{role}.{}", &fingerprint.to_hex()[..16]);
-        let sealed = present.iter().any(|wrap| {
-            matches!(&wrap.kind, oneiron::world_keys::VaultKeyWrapKind::Escrow { label: held } if *held == label)
-        });
-        if !sealed {
-            vault.add_vault_key_escrow(&label, &recipient)?;
-        }
-    }
-    Ok(())
-}
-
-/// The page seal a managed vault opens with (OF-570 maximum tier), from the
-/// data key its supervisor delivered: a sealed vault's, reopened from the
-/// mirror beside it; a new one where no vault is yet and `maximum_tier`
-/// (`--maximum-tier`, else the settings file's) opted in; none for a plain
-/// vault, which stays plain (no converter).
-fn managed_page_seal(
-    managed: &ManagedArgs,
-    maximum_tier: bool,
-    dek: &[u8; 32],
-) -> anyhow::Result<Option<oneiron::VaultPageSeal>> {
-    let path = &managed.data_dir;
-    if oneiron::world_keys::vault_is_sealed(path)? {
-        return Ok(Some(oneiron::world_keys::reopen_delivered_page_seal(
-            path, dek,
-        )?));
-    }
-    if !maximum_tier {
-        return Ok(None);
-    }
-    if path.join("data.mdb").exists() {
-        tracing::warn!(
-            "the maximum tier is chosen when a vault is created; this plain vault opens plain"
-        );
-        return Ok(None);
-    }
-    Ok(Some(oneiron::world_keys::new_delivered_page_seal(
-        path, dek,
-    )?))
-}
-
-/// Hands each escrow capsule the outbox does not hold yet to the outbox the
-/// supervisor named (CROSS-ARCH-0022 #ov-custody, invariant 03): the report
-/// is written durably first and marked in the vault after, so a crash
-/// between the two writes the same report again. The node ships it and
-/// removes it only after the registry's durable acknowledgement. A capsule
-/// that cannot be spooled waits for the next start; the vault still serves,
-/// since the node holds the key it runs on.
-fn spool_vault_key_escrow(vault: &oneiron::Vault, managed: &ManagedArgs) {
-    let Some(outbox) = &managed.escrow_outbox else {
-        return;
-    };
-    let spool = || -> anyhow::Result<()> {
-        for capsule in vault.vault_key_escrow_capsules()? {
-            let Some((role @ ("managed" | "break-glass"), _)) = capsule.label.split_once('.')
-            else {
-                continue;
-            };
-            if capsule.spooled {
-                continue;
-            }
-            let report = oneiron_vault_contract::escrow::EscrowCapsuleReport {
-                schema_version: oneiron_vault_contract::escrow::ESCROW_REPORT_SCHEMA_VERSION,
-                report_type: oneiron_vault_contract::escrow::ESCROW_REPORT_TYPE.to_owned(),
-                report_id: blake3::hash(&capsule.capsule).to_hex().to_string(),
-                vault_name: managed.vault_name.clone(),
-                vault_id: oneiron_vault_contract::hex(&capsule.vault_id),
-                role: role.to_owned(),
-                label: capsule.label.clone(),
-                wrap_id: capsule.wrap_id.clone(),
-                key_commitment: oneiron_vault_contract::hex(&capsule.commitment),
-                capsule: oneiron_vault_contract::hex(&capsule.capsule),
-                sealed_at: capsule.created_at,
-            };
-            oneiron_vault_contract::escrow::spool_escrow_report(outbox, &report)?;
-            vault.mark_vault_key_escrow_spooled(&capsule.wrap_id, &capsule.capsule)?;
-        }
-        Ok(())
-    };
-    if let Err(error) = spool() {
-        tracing::warn!(%error, "an escrow capsule was not spooled; the next start spools it");
-    }
-}
-
 /// Boots the engine as a supervised child process.
 ///
 /// The startup order is the contract, not an implementation detail: the
@@ -1080,6 +996,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let mut host =
         super::host::ManagedHost::new(&managed, HostLimits::unbounded(), shutdown.clone())?;
     let http = host.listener()?;
+    // A cold restore's plan, on its own pipe before the credential frame: no
+    // socket below listens until the restore is verified and kept.
+    let mut restore = super::restore::ManagedRestore::begin(&managed, &mut config)?;
 
     // The contract requires the credential frame to be read before the data
     // directory is opened, so a refused frame never touches storage.
@@ -1096,19 +1015,33 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // takes the managed default, and unset training follows the export.
     vault_config.failure_signals.deployment =
         oneiron::config::failure_signals::DeploymentTier::Managed;
-    // Set before the open: LMDB takes the page key with the environment.
-    vault_config.page_seal = managed_page_seal(&managed, config.maximum_tier, &credentials.dek)?;
-    // The live seal opens the live vault and creates none: a rehearsal's
-    // scratch takes a fresh incarnation of it (`owner::backup`).
-    let mut rehearsal_config = vault_config.clone();
-    rehearsal_config.page_seal = None;
-    let vault = Arc::new(open_managed_vault(
-        &managed.data_dir,
-        vault_config,
-        &managed.vault_name,
-        &credentials,
-        managed.derivation_owner,
-    )?);
+    let (vault, rehearsal_config) = match restore.as_mut() {
+        // The restored vault, verified and kept, in place of the open.
+        Some(restore) => {
+            let anchor = anchor.clone();
+            restore
+                .land(&managed, &config, vault_config, &credentials.dek, anchor)
+                .await?
+        }
+        None => {
+            // Set before the open: LMDB takes the page key with the environment.
+            vault_config.page_seal =
+                managed_page_seal(&managed, config.maximum_tier, &credentials.dek)?;
+            // The live seal opens the live vault and creates none: a rehearsal's
+            // scratch takes a fresh incarnation of it (`owner::backup`).
+            let mut rehearsal_config = vault_config.clone();
+            rehearsal_config.page_seal = None;
+            let vault = open_managed_vault(
+                &managed.data_dir,
+                vault_config,
+                &managed.vault_name,
+                &credentials,
+                managed.derivation_owner,
+            )?;
+            (vault, rehearsal_config)
+        }
+    };
+    let vault = Arc::new(vault);
 
     let mut server_config = config.sync_server_config();
     server_config.lease_vault_id = super::vault_gates::managed_lease_scope(&vault)?;
@@ -1141,7 +1074,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // recipient the node's operator installed keeps a copy of it.
     vault.admit_vault_key(&credentials.dek)?;
     escrow_vault_key(&vault, &managed)?;
-    spool_vault_key_escrow(&vault, &managed);
+    let spooled = spool_vault_key_escrow(&vault, &managed);
     // A sealed vault serves only once its mirror reopens it at the next start.
     vault.check_page_custody()?;
     // The owner's embedding spaces and kind slots, as plain serve applies them.
@@ -1257,10 +1190,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // rest of the process lifetime.
     drop(credentials);
     host.clear_secrets();
+    // A kept restore's receipt, sealed once its escrow reports are spooled.
+    let restored = restore
+        .as_mut()
+        .map(|restore| restore.seal_receipt(spooled.as_ref()))
+        .transpose()?;
     let state = Arc::new(
         ManagedState::new(managed.vault_name.clone(), Arc::clone(&sync_server), ledger)
             .with_readiness(readiness.clone())
-            .with_backup_facts(backup_facts),
+            .with_backup_facts(backup_facts)
+            .with_restore(restored),
     );
     let _ = reap_gate.set(Arc::clone(&state));
     // A public live voice session (`ai.voice.start`) holds an admission like
@@ -1312,6 +1251,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         state.background_admission(),
     )
     .await?;
+    // Every fallible step is done: a cold restore's receipt and `verified`
+    // go out before ctl serves or ready is said.
+    if let Some(restore) = restore {
+        restore.verified(&vault)?;
+    }
 
     let ctl_task = tokio::spawn({
         let state = Arc::clone(&state);
