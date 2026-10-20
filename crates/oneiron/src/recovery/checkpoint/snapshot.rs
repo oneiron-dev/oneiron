@@ -214,7 +214,7 @@ impl Vault {
             inline_bodies,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
-        let (id, head) = artifact::write_artifact(
+        let (id, head, _evidence) = artifact::write_artifact(
             path,
             &key,
             kind,

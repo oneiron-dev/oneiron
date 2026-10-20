@@ -50,12 +50,13 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
+use oneiron_crypto::Kek;
 pub use oneiron_crypto::backup::ArtifactKind;
 use oneiron_crypto::backup::{
-    ARTIFACT_VERSION_V2 as VERSION, ArtifactPrelude, CustodyRef,
+    ARTIFACT_SEAL_EPOCH as EPOCH, ARTIFACT_SEAL_SUITE as AEAD, ARTIFACT_VERSION_V2 as VERSION,
+    ArtifactPrelude, CustodyRef, IMAGE_STREAM, MANIFEST_STREAM, MAX_FRAME_LEN as MAX_FRAME,
     MAX_KEY_HEADER_LEN as MAX_KEY_HEADER, PRELUDE_V2_LEN as PRELUDE_LEN,
 };
-use oneiron_crypto::{Kek, MAX_PLAINTEXT_LEN, SuiteId};
 use serde::{Deserialize, Serialize};
 
 use self::sink::Sealer;
@@ -67,16 +68,9 @@ use crate::world_keys::{
 use crate::{Error, Result, Vault};
 
 const SEAL_CONTEXT: &str = "oneiron/checkpoint-seal/v1";
-const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
-/// The crypto epoch every artifact envelope is sealed at.
-const EPOCH: u64 = 1;
 /// Plaintext per chunk, before compression: well under E0's 16 MiB.
 const CHUNK_LEN: usize = 4 << 20;
 const ZSTD_LEVEL: i32 = 3;
-const IMAGE_STREAM: u32 = 0;
-const MANIFEST_STREAM: u32 = u32::MAX;
-/// No envelope's header and tag come near 64 KiB above its plaintext.
-const MAX_FRAME: u64 = MAX_PLAINTEXT_LEN as u64 + (1 << 16);
 
 fn codec() -> Error {
     Error::CorruptedIndex("sealed checkpoint artifact")

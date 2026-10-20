@@ -53,6 +53,13 @@ pub(super) struct ChainHead {
     commitment: [u8; 32],
 }
 
+impl ChainHead {
+    /// The digest of the commitment this head names.
+    pub(super) fn digest(&self) -> [u8; 32] {
+        self.commitment
+    }
+}
+
 /// Whose signatures a restore accepts.
 #[derive(Clone)]
 pub(super) enum Trust {

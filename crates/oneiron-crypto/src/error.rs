@@ -182,4 +182,8 @@ pub enum Error {
     /// Reading a sealed artifact failed with this I/O error kind.
     #[error("reading the backup artifact failed: {0:?}")]
     BackupRead(std::io::ErrorKind),
+    /// What a sealed artifact's signed commitment says, at the named field, is
+    /// not what its clear parts say.
+    #[error("backup artifact {0} disagrees with its signed commitment")]
+    BackupCommitmentMismatch(&'static str),
 }
