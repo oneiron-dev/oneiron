@@ -6,11 +6,16 @@
 //! A walk-in, an opened full history, the Owner's add with full history
 //! from outside the thread and the Owner's export of the vault tell every
 //! member of the thread now, the walker included: one inbox NOTIFICATION
-//! each, of the existing `Finding` kind, naming the thread's root, who acted
-//! and what happened, never a name, a title or a turn's words. A request to
-//! join asks every member, one `Ask` each (FIX 6381, 6384); its approval or
-//! denial tells the one who asked alone, naming no member. No notice
-//! attaches to the room, whose members off the thread do not learn of it.
+//! each, naming the thread's root, who acted and what happened, never a
+//! name, a title or a turn's words. A walk-in is a `ThreadWalkIn`, an
+//! opened history either way a `ThreadHistoryOpened`, and an export a
+//! `Finding` (FIX 6466). A request to join asks every member, one
+//! `ThreadJoinRequested` each (FIX 6381, 6384, 6466); its approval or
+//! denial tells the one who asked alone, as a `Finding`, naming no member.
+//! A member is everyone the thread's audience names now, and each live pen
+//! it admits through its PERSON anchor, told under the pen's own id (FIX
+//! 6472). No notice attaches to the room, whose members off the thread do
+//! not learn of it.
 //! A notice never fails or undoes what it tells of: the doors here tell
 //! after their edit committed, in a write of their own, and a member whose
 //! notice is not written is logged and skipped.
@@ -30,7 +35,8 @@ use super::audience_events::{AudienceOp, fold_audience_in};
 use super::liveness::{RoomThread, RoomThreadAudienceEvent, RoomThreadAudienceOp};
 use super::*;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::ports::EntityStoreRead;
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The producer a private thread's notices are recorded under; a read
@@ -109,23 +115,32 @@ impl ThreadNotice {
         }
     }
 
-    /// The NOTIFICATION kind it is written as: a request asks, anything
-    /// else tells.
+    /// The NOTIFICATION kind it is written as (FIX 6466): a walk-in, an
+    /// opened full history and a request to join each its own thread kind;
+    /// anything else tells as a finding.
     const fn kind(self) -> NotificationKind {
         match self {
-            Self::JoinRequested { .. } => NotificationKind::Ask,
-            _ => NotificationKind::Finding,
+            Self::WalkIn { .. } => NotificationKind::ThreadWalkIn,
+            Self::OpenFullHistory { .. } | Self::OwnerAddedFullHistory { .. } => {
+                NotificationKind::ThreadHistoryOpened
+            }
+            Self::JoinRequested { .. } => NotificationKind::ThreadJoinRequested,
+            Self::VaultExported { .. } | Self::JoinApproved { .. } | Self::JoinDenied { .. } => {
+                NotificationKind::Finding
+            }
         }
     }
 }
 
 /// Tells every member of the private thread rooted at `root` now, the
 /// walker included, `notice` of `actor`'s act, in the caller's `txn`: one
-/// `Finding` NOTIFICATION each, for that member alone, naming the root, the
-/// actor, the op and the person added, if any. Best-effort: it never fails
-/// or rolls back its caller. A member whose notice is not written, or a
-/// thread whose members do not read, is logged and skipped, so a caller
-/// whose own write must stand tells after it commits.
+/// NOTIFICATION of the notice's kind each, for that member alone, naming
+/// the root, the actor, the op and the person added, if any. A live pen
+/// the audience admits through its PERSON anchor is a member too (FIX
+/// 6472), told once under its own id. Best-effort: it never fails or rolls
+/// back its caller. A member whose notice is not written, or a thread
+/// whose members do not read, is logged and skipped, so a caller whose own
+/// write must stand tells after it commits.
 pub(crate) fn notify_thread_members_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -133,7 +148,7 @@ pub(crate) fn notify_thread_members_in_txn(
     actor: EntityId,
     notice: ThreadNotice,
 ) {
-    let members = match thread_members_now_in(vault, txn, root) {
+    let audience = match thread_members_now_in(vault, txn, root) {
         Ok(members) => members,
         Err(error) => {
             tracing::warn!(
@@ -143,6 +158,19 @@ pub(crate) fn notify_thread_members_in_txn(
                 "private thread notice: members not read"
             );
             return;
+        }
+    };
+    // A pen not read is told nothing more; the audience it names still is.
+    let members = match with_anchored_pens_in(vault, txn, &audience) {
+        Ok(members) => members,
+        Err(error) => {
+            tracing::warn!(
+                thread = %root.to_hex(),
+                op = notice.op(),
+                %error,
+                "private thread notice: pens not read"
+            );
+            audience
         }
     };
     let at = match crate::ports::recorded_at_in_txn(&vault.store, txn) {
@@ -256,6 +284,36 @@ pub(super) fn tell_requester(
             "private thread notice: write failed"
         );
     }
+}
+
+/// `audience` and each live pen it admits through the PERSON its subject
+/// anchor names now ([`names_actor_in`], FIX 6472), each once: a pen is
+/// told under its own id, beside its PERSON. Only a pen whose PERSON the
+/// audience names is added, never anyone else of the room. Every AGENT_DEF
+/// is read, however many (rule 5).
+fn with_anchored_pens_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    audience: &BTreeSet<EntityId>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut members = audience.clone();
+    if audience.is_empty() {
+        return Ok(members);
+    }
+    let agents = vault
+        .store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_AGENT_DEF, None)?
+        .collect::<Result<Vec<_>>>()?;
+    for agent in agents {
+        if !members.contains(&agent)
+            && live_entity_row_in_txn(&vault.store, txn, &agent)?.live_type()
+                == Some(ENTITY_TYPE_AGENT_DEF)
+            && names_actor_in(vault, txn, audience, agent)?
+        {
+            members.insert(agent);
+        }
+    }
+    Ok(members)
 }
 
 /// Everyone in the audience of the private thread rooted at `root` now; no
