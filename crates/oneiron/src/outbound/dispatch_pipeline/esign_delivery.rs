@@ -21,7 +21,8 @@ use crate::gate::{
 use crate::outbound::capability::outbound_verb_contract;
 use crate::outbound::outbound_dispatch_attempt_id;
 use crate::outbound_intent_ledger::{
-    AdmittedApproval, IntentLedgerError, IntentState, read_intent_for_attempt_in_txn,
+    AdmittedApproval, IntentLedgerError, IntentState, check_intent_attempt_format_in_txn,
+    read_intent_for_attempt_in_txn,
 };
 
 /// One e-sign send's admitted call, as its frozen ledger payload holds it:
@@ -78,27 +79,40 @@ struct FrozenCall {
 /// The completed call `dispatch_ref` admitted: call 0 of its dispatch
 /// attempt, the one OF-327 ran the e-sign sink for. `None` while no such call
 /// completed, or for one on another channel.
+///
+/// The outer error is the store's own failure, the ledger-wide attempt
+/// index's included. The inner one is this send's own data not reading: its
+/// dispatch ref, its ledger row or its frozen payload. The caller then waits
+/// that one delivery (FIX 6455), and every other send still reads.
 pub(crate) fn esign_delivery_call_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     dispatch_ref: &str,
-) -> Result<Option<EsignDeliveryCall>> {
-    let attempt_id = outbound_dispatch_attempt_id(dispatch_ref)
-        .map_err(|_| Error::InvariantViolation("e-sign dispatch attempt id"))?;
-    let record =
-        read_intent_for_attempt_in_txn(vault, txn, attempt_id, 0).map_err(|error| match error {
-            IntentLedgerError::Engine(error) => error,
-            _ => Error::InvariantViolation("e-sign dispatch ledger row"),
-        })?;
-    let Some(record) = record.filter(|record| record.state == IntentState::Done) else {
-        return Ok(None);
+) -> Result<Result<Option<EsignDeliveryCall>>> {
+    let Ok(attempt_id) = outbound_dispatch_attempt_id(dispatch_ref) else {
+        return Ok(Err(Error::InvariantViolation("e-sign dispatch attempt id")));
     };
-    let frozen: FrozenCall = serde_json::from_slice(record.payload())
-        .map_err(|_| Error::InvariantViolation("e-sign dispatch frozen payload"))?;
+    check_intent_attempt_format_in_txn(vault, txn).map_err(|error| match error {
+        IntentLedgerError::Engine(error) => error,
+        _ => Error::InvariantViolation("outbound attempt index"),
+    })?;
+    let record = match read_intent_for_attempt_in_txn(vault, txn, attempt_id, 0) {
+        Ok(record) => record,
+        Err(IntentLedgerError::Engine(error)) => return Err(error),
+        Err(_) => return Ok(Err(Error::InvariantViolation("e-sign dispatch ledger row"))),
+    };
+    let Some(record) = record.filter(|record| record.state == IntentState::Done) else {
+        return Ok(Ok(None));
+    };
+    let Ok(frozen) = serde_json::from_slice::<FrozenCall>(record.payload()) else {
+        return Ok(Err(Error::InvariantViolation(
+            "e-sign dispatch frozen payload",
+        )));
+    };
     if frozen.channel != "esign" {
-        return Ok(None);
+        return Ok(Ok(None));
     }
-    frozen_call(frozen, dispatch_ref, record.admitted_approval).map(Some)
+    Ok(frozen_call(frozen, dispatch_ref, record.admitted_approval).map(Some))
 }
 
 /// The digest an owner's one-send press on the e-sign `tool` call frozen in

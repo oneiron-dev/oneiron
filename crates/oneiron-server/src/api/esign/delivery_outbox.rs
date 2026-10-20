@@ -32,8 +32,13 @@
 //!   valid https one, or without the send's authority, the delivery stays
 //!   queued and unexported, its reason logged. So does one whose document
 //!   has an event awaiting its owner's answer (`document_awaits_owner`) or
-//!   whose trail no longer reads (`document_unreadable`), on its own: the
-//!   other deliveries are still claimed and written (FIX 6423).
+//!   whose trail no longer reads (`document_unreadable`), and one whose own
+//!   queued notice (`notice_unreadable`) or whose send's admitted call on
+//!   the ledger (`send_unreadable`) does not read. Each waits on its own,
+//!   logged with its attempt and its code, and the other deliveries are
+//!   still claimed and written (FIX 6423, 6455). The owner reads a
+//!   document's waits on `vault.esign.get`, as `delivery_receipts` whose
+//!   `state` is `waits`.
 //! - The sender answers with `esign-delivery-<key>.ack.json`. It carries
 //!   `schema_version` 2, the envelope's `dedupe_key`, `attempt_id`,
 //!   `lease_owner`, `attempt_count` and `payload_sha256`, a `status` of
@@ -59,7 +64,11 @@
 //! `recipient_ended`) kept on the failed intent as the owner's receipt
 //! (FIX 6363); it is checked before any base, directory or slot check could
 //! hold it, and no envelope, ack or receipt is written for it. Nothing else
-//! here fails an intent, so none is ever dropped. Both
+//! here fails an intent, so none is ever dropped. Only the store's own
+//! failure or the directory's fails a tick: the queue, a store read that is
+//! not about one row's data, the lock, or an envelope or ack write. The next
+//! tick then writes the leases this one holds first. One delivery's own data
+//! never fails a tick: the vault returns it as that delivery's wait. Both
 //! sides write a file whole: a private temporary sibling, synced, renamed,
 //! then the directory synced. The directory is 0700 and every file 0600: a
 //! link is written only while no other user may enter it.
@@ -189,9 +198,12 @@ enum Published {
     /// Written, already written, or left unexported (not an e-sign notice).
     Done,
     /// Its slot still holds a completion the sender has not taken, or its
-    /// link cannot be minted yet: the lease stays leased and unwritten.
+    /// link cannot be minted yet, a wait on its own data or its document
+    /// included: the lease stays leased and unwritten.
     Held,
-    /// The write failed.
+    /// The store or the directory failed: an envelope write, or a read not
+    /// about this one row's data. One delivery's own data is a wait instead
+    /// (FIX 6455).
     Failed,
 }
 
@@ -423,7 +435,7 @@ impl Outbox {
 
     /// Claims every ready intent and writes its envelope. One that could not
     /// be written stays leased, and claiming stops; one that waits stays
-    /// leased and unwritten, and claiming goes on.
+    /// leased and unwritten, for any reason of its own, and claiming goes on.
     fn claim_ready(&self, vault: &Vault, queue: &AttemptQueue<'_>) -> oneiron::Result<Published> {
         let mut outcome = Published::Done;
         loop {
@@ -452,6 +464,8 @@ impl Outbox {
     ) -> Published {
         match self.publish(vault, queue, row) {
             Ok(published) => published,
+            // Only the store or the directory errs here: the vault returns
+            // one delivery's own data as its wait (FIX 6455).
             Err(error) => {
                 tracing::warn!(
                     error = %format!("{error:#}"),
@@ -572,8 +586,9 @@ impl Outbox {
         let link = match minted {
             EsignDeliveryMint::Minted(link) => link,
             EsignDeliveryMint::Held(reason) => return Ok(LinkedEnvelope::Held(reason)),
-            // FIX 6423: its document keeps this one delivery waiting, logged
-            // with its typed reason; the other leases go on.
+            // FIX 6423, 6455: its document or its own data keeps this one
+            // delivery waiting, logged with its typed reason; the other
+            // leases go on.
             EsignDeliveryMint::Waits(wait) => return Ok(LinkedEnvelope::Held(wait.code())),
             EsignDeliveryMint::Settled(reason) => return Ok(LinkedEnvelope::Settled(reason)),
         };

@@ -141,7 +141,9 @@ pub struct EsignDocumentView {
     pub sealed_sha256: Vec<String>,
     /// The hash-chained trail, oldest first: every event, its actor and time.
     pub audit: Vec<EsignEventRow>,
-    /// The invitations and reminders that ended unsent, oldest first (FIX 6363).
+    /// The invitations and reminders that ended unsent (FIX 6363), and the
+    /// ones still queued that wait unexported on their own (FIX 6455), each
+    /// with its `state` and typed `reason`, oldest first.
     pub delivery_receipts: Vec<EsignDeliveryReceipt>,
 }
 
@@ -388,7 +390,8 @@ impl Memory<'_> {
     /// first, so a project's document reads only in its audience.
     /// # Errors
     /// A `document_ref` that is no id or names no signing document, or a
-    /// broken trail.
+    /// broken trail: a document whose own trail does not read errors here,
+    /// before its receipts are built.
     pub fn esign_get(&self, input: &EsignGetRequest) -> MemoryResult<EsignDocumentView> {
         let document = document_id(&input.document_ref)?;
         let vault = self.vault();

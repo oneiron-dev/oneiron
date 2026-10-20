@@ -16,7 +16,7 @@ mod vault;
 pub(super) mod verdict;
 
 pub(crate) use self::esign_delivery::{
-    esign_approval_digest_from_frozen_payload, esign_delivery_call_in_txn,
+    EsignDeliveryCall, esign_approval_digest_from_frozen_payload, esign_delivery_call_in_txn,
     esign_delivery_grant_in_txn,
 };
 pub use self::pipeline::OutboundDispatchPipeline;

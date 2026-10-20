@@ -43,7 +43,7 @@ pub(crate) use self::dispatch_pipeline::FrozenDispatchIdentity;
 pub use self::dispatch_pipeline::OutboundDispatchPipeline;
 pub(crate) use self::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
 pub(crate) use self::dispatch_pipeline::{
-    esign_approval_digest_from_frozen_payload, esign_delivery_call_in_txn,
+    EsignDeliveryCall, esign_approval_digest_from_frozen_payload, esign_delivery_call_in_txn,
     esign_delivery_grant_in_txn,
 };
 pub use self::dispatch_types::{
