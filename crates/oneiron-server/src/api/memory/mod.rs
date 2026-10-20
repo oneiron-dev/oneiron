@@ -358,6 +358,7 @@ pub(crate) async fn core_memory_verb(
                 entity.entity_type,
                 timestamps,
                 &entity.body,
+                super::announcement_authority(&server, &auth),
                 entity.text.as_deref(),
             )?;
             commit_core_batch(&server, &auth, batch).map_err(|error| {

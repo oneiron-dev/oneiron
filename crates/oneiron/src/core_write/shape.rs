@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::memory::{MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
-use crate::{BatchBuilder, EntityId, TimeRange};
+use crate::{BatchBuilder, EntityId, TimeRange, Vault};
 
 /// The most entities one atomic batch puts.
 pub const CORE_MAX_BATCH_ENTITIES: usize = 256;
@@ -24,6 +24,37 @@ pub const ANNOUNCEMENT_STATUS_ACTIVE: &str = "active";
 pub const ANNOUNCEMENT_STATUS_CORRECTED: &str = "corrected";
 
 pub const ANNOUNCEMENT_STATUS_RETRACTED: &str = "retracted";
+
+/// The byline keys an announcement stamps with the platform voice.
+const ANNOUNCEMENT_BYLINE_KEYS: [&str; 5] =
+    ["spkr", "speaker", "voice", "attribution", "render_voice"];
+
+/// Who writes a TURN, as its host or the engine resolved it from the writer,
+/// never from the body (FIX 5968). Only the vault's owner publishes a
+/// platform announcement; any other writer's TURN lands as an ordinary one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnnouncementAuthority {
+    /// The vault's owner: an announcement is normalized and platform-voiced.
+    Owner,
+    /// Any other writer: the announcement selectors and status, the platform
+    /// voice and every platform byline are stripped; the rest of the body,
+    /// every text included, is kept.
+    Writer,
+}
+
+impl AnnouncementAuthority {
+    /// An actor-bound write's authority: the owner's while `actor` is a live
+    /// owner of `vault`, read now.
+    /// # Errors
+    /// Storage errors.
+    pub(crate) fn of_actor(vault: &Vault, actor: &EntityId) -> crate::Result<Self> {
+        Ok(if vault.is_live_owner_person(actor)? {
+            Self::Owner
+        } else {
+            Self::Writer
+        })
+    }
+}
 
 /// One text-index field written with an entity body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -99,13 +130,18 @@ pub fn core_write_times(
     })
 }
 
-/// The body as stored: a TURN's platform announcement is normalized.
+/// The body as stored: a TURN's platform announcement is normalized for the
+/// owner, and its platform styling stripped for any other writer.
 #[must_use]
-pub fn core_body_for_write(entity_type: u8, body: &Value) -> Cow<'_, Value> {
+pub fn core_body_for_write(
+    entity_type: u8,
+    body: &Value,
+    announcement: AnnouncementAuthority,
+) -> Cow<'_, Value> {
     if entity_type != ENTITY_TYPE_TURN {
         return Cow::Borrowed(body);
     }
-    normalize_platform_announcement_body(body)
+    normalize_platform_announcement_body(body, announcement)
 }
 
 /// # Errors
@@ -115,10 +151,18 @@ pub fn encode_core_body(body: &Value) -> Result<Vec<u8>, CoreWriteRefusal> {
 }
 
 #[must_use]
-pub fn normalize_platform_announcement_body(body: &Value) -> Cow<'_, Value> {
+pub fn normalize_platform_announcement_body(
+    body: &Value,
+    announcement: AnnouncementAuthority,
+) -> Cow<'_, Value> {
     let Value::Object(object) = body else {
         return Cow::Borrowed(body);
     };
+    if announcement == AnnouncementAuthority::Writer {
+        return strip_platform_announcement(object).map_or(Cow::Borrowed(body), |stripped| {
+            Cow::Owned(Value::Object(stripped))
+        });
+    }
     if !is_platform_announcement_body(object) {
         return Cow::Borrowed(body);
     }
@@ -131,7 +175,7 @@ pub fn normalize_platform_announcement_body(body: &Value) -> Cow<'_, Value> {
         "message_type".to_owned(),
         Value::String(PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE.to_owned()),
     );
-    for key in ["spkr", "speaker", "voice", "attribution", "render_voice"] {
+    for key in ANNOUNCEMENT_BYLINE_KEYS {
         normalized.insert(
             key.to_owned(),
             Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
@@ -175,6 +219,47 @@ pub fn normalize_platform_announcement_body(body: &Value) -> Cow<'_, Value> {
     }
 
     Cow::Owned(Value::Object(normalized))
+}
+
+/// A non-owner's TURN body without the platform styling (FIX 5968): both
+/// announcement selectors, the announcement status, `platform_voice` and each
+/// platform-valued byline go, and every other key, each text included, stays
+/// where it was. `None` when the body carries none of them.
+fn strip_platform_announcement(
+    object: &serde_json::Map<String, Value>,
+) -> Option<serde_json::Map<String, Value>> {
+    let valued = |key: &str, platform: &str| {
+        object
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.eq_ignore_ascii_case(platform))
+    };
+    let mut stripped_keys: Vec<&str> = ["message_type", "messageType"]
+        .into_iter()
+        .filter(|key| valued(*key, PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE))
+        .collect();
+    stripped_keys.extend(
+        ANNOUNCEMENT_BYLINE_KEYS
+            .into_iter()
+            .filter(|key| valued(*key, PLATFORM_ANNOUNCEMENT_VOICE)),
+    );
+    stripped_keys.extend(
+        [
+            "platform_voice",
+            "announcement_status",
+            "announcementStatus",
+        ]
+        .into_iter()
+        .filter(|key| object.contains_key(*key)),
+    );
+    if stripped_keys.is_empty() {
+        return None;
+    }
+    let mut stripped = object.clone();
+    for key in stripped_keys {
+        stripped.shift_remove(key);
+    }
+    Some(stripped)
 }
 
 #[must_use]
@@ -271,9 +356,10 @@ pub fn stage_core_put<'a, 't>(
     entity_type: u8,
     times: CoreWriteTimes,
     body: &Value,
+    announcement: AnnouncementAuthority,
     text: Option<impl IntoIterator<Item = (&'t str, &'t str)>>,
 ) -> Result<BatchBuilder<'a>, CoreWriteRefusal> {
-    let body = core_body_for_write(entity_type, body);
+    let body = core_body_for_write(entity_type, body, announcement);
     let data = encode_core_body(&body)?;
     // ARCH-0006a: only the Dreamer writes a scope summary's body. A caller
     // declares the scope; it never puts the body through a generic write.
