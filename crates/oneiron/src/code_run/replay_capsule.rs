@@ -22,7 +22,17 @@
 //! secret in it its custody handle, and the capsule names the actor whose
 //! step it was, so an erase of that actor releases them (FIX 6144, KEY STORE
 //! = A; `storage::replay_capsule`). Staged captures are kept and measured,
-//! never capped (FIX 6143).
+//! never capped (FIX 6143). A request the wall refuses outright (a recovery
+//! phrase, a key split over members, an opaque codec) is withheld: no copy
+//! of it is kept, and the capsule keeps the step's start when that admits,
+//! so a continuation still forks from it (FIX 6254, [`CapsuleRequest`]).
+//!
+//! The answering rung also names the route it went out on
+//! ([`note_answering_route_pin`], PR-S1): its route, offer, catalog
+//! revision, wire model and route prompt digest, finalized with the rung in
+//! the same write. A strict replay checks it goes out on that route again
+//! (`shadow_runner`); a capture that pins no route leaves it `None`, and no
+//! live step is refused for it.
 
 use std::cell::RefCell;
 
@@ -154,6 +164,43 @@ pub struct CapsuleRungBinding {
     pub prompt: Option<String>,
 }
 
+/// The route the rung that answered a captured call went out on (PR-S1):
+/// what a strict replay of the call checks it goes out on again. Taken from
+/// the answering rung as it answered, never rebuilt from a later catalog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplayRoutePin {
+    /// The rung's route, `adapter@origin`.
+    pub route_id: String,
+    /// The offer the call was admitted under.
+    pub offer_id: String,
+    /// The provider catalog's revision the offer was bound at, if it names one.
+    pub catalog_revision: Option<String>,
+    /// The model id the provider was sent.
+    pub wire_model: String,
+    /// BLAKE3 of the rung's route prompt as JSON: `null` for a rung that
+    /// puts none, so no prompt and an empty one differ.
+    pub route_prompt_digest: [u8; 32],
+}
+
+/// What a capsule keeps of its step's request (FIX 6254).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapsuleRequest {
+    /// Its canonical JSON as stored, each secret in it its custody handle,
+    /// by its body ref, its path and the hash of the stored bytes, which a
+    /// read of the body checks.
+    Kept {
+        body: OutputRef,
+        path: String,
+        stored_hash: [u8; 32],
+    },
+    /// The side-row wall refused the request outright, for these reasons
+    /// (a recovery phrase, a key split over members, an opaque codec): no
+    /// copy of it is kept, raw or masked, and every read of it is
+    /// unavailable. The capsule holds the step's start in its place.
+    Withheld { reasons: Vec<String> },
+}
+
 /// What a capsule holds of the step it captured (FIX 6144, KEY STORE = A).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -188,17 +235,13 @@ pub struct StepReplayCapsule {
     pub run: EntityId,
     pub step: u64,
     pub host: CapsuleHost,
-    /// The request as assembled and bound, before its route's prompt, by its
-    /// body ref: its canonical JSON as stored, each secret in it its custody
-    /// handle.
-    pub request: OutputRef,
-    pub request_path: String,
+    /// The request as assembled and bound, before its route's prompt: its
+    /// body as stored (FIX 6144), or withheld when the wall refused it
+    /// outright (FIX 6254).
+    pub request: CapsuleRequest,
     /// The canonical hash of the request as it was sent, before any mask:
     /// the identity a sent request is matched by.
     pub request_hash: [u8; 32],
-    /// The hash of the request's body as stored, masked (FIX 6144): what a
-    /// read of the body checks.
-    pub stored_request_hash: [u8; 32],
     /// The hash of its messages, which the answering rung is matched by.
     pub messages_digest: [u8; 32],
     pub exposures: Vec<ExposureSlot>,
@@ -207,6 +250,9 @@ pub struct StepReplayCapsule {
     /// The rung that answered; `None` while staged, and for good when no
     /// rung answered it.
     pub binding: Option<CapsuleRungBinding>,
+    /// The route that rung went out on (PR-S1), written with it; `None`
+    /// while staged, and for good when no rung pinned its route.
+    pub route_pin: Option<ReplayRoutePin>,
     /// Unix seconds it was captured.
     pub captured_at: u64,
     /// The executor run's state before the step; `None` for a workflow step
@@ -218,10 +264,14 @@ pub struct StepReplayCapsule {
 
 impl StepReplayCapsule {
     /// Whether the request as stored is the request as sent (FIX 6144): the
-    /// wall placed no handle in it. A replay of a masked copy says so.
+    /// wall placed no handle in it. A replay of a masked copy says so, and a
+    /// withheld request has no copy (FIX 6254).
     #[must_use]
     pub fn as_sent(&self) -> bool {
-        self.stored_request_hash == self.request_hash
+        matches!(
+            &self.request,
+            CapsuleRequest::Kept { stored_hash, .. } if *stored_hash == self.request_hash
+        )
     }
 }
 
@@ -316,6 +366,8 @@ struct Awaiting {
     key: (EntityId, u64, u64),
     messages: [u8; 32],
     binding: Option<CapsuleRungBinding>,
+    /// The route the answering rung went out on, beside its binding.
+    route_pin: Option<ReplayRoutePin>,
     /// The request bytes it captured.
     bytes: u64,
 }
@@ -362,6 +414,26 @@ pub fn note_answering_rung(
     });
 }
 
+/// Notes the route the rung that answered `request` went out on (PR-S1), for
+/// the capture on this thread that staged the same messages, matched as
+/// [`note_answering_rung`] matches it. A host's ladder calls it beside that
+/// note; with no capture waiting on this thread it does nothing. Best
+/// effort: a capture with no pin is finalized with its rung all the same.
+pub fn note_answering_route_pin(request: &LlmRequest, pin: &ReplayRoutePin) {
+    AWAITING.with(|awaiting| {
+        let mut awaiting = awaiting.borrow_mut();
+        if awaiting.is_empty() {
+            return;
+        }
+        let Some(digest) = messages_digest(&request.messages) else {
+            return;
+        };
+        for entry in awaiting.iter_mut().filter(|entry| entry.messages == digest) {
+            entry.route_pin = Some(pin.clone());
+        }
+    });
+}
+
 /// Finalizes this thread's staged captures for `vault`, once their calls are
 /// done: each that a rung answered takes that rung, and each that none did
 /// stays unreplayable. A capture site calls it after its step's call; a
@@ -386,7 +458,7 @@ pub fn finalize_step_captures(vault: &Vault) {
             unanswered += 1;
             continue;
         };
-        match finalize_capsule(vault, &entry.key, binding) {
+        match finalize_capsule(vault, &entry.key, binding, entry.route_pin) {
             Ok(()) => finalized += 1,
             Err(error) => {
                 failed += 1;
@@ -507,6 +579,7 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
         key: draft.key(),
         messages,
         binding: None,
+        route_pin: None,
         bytes: draft.request.len() as u64,
     }))
 }

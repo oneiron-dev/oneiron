@@ -20,6 +20,7 @@ mod host;
 mod program_entry;
 mod record;
 mod repl;
+mod shadow_step;
 mod skill_call;
 mod stack_floor;
 mod store;
@@ -35,6 +36,8 @@ pub use self::driver::EngineNativeExecutor;
 pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 #[cfg(test)]
 use self::record::step_state_hash;
+pub use self::shadow_step::run_shadow_step;
+pub(crate) use self::shadow_step::shadow_readable_outputs;
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
 pub(crate) use self::store::{
     RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, clean_for_context, is_result_output_path,

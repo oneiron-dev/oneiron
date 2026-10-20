@@ -50,6 +50,7 @@ mod policy;
 mod question_timer;
 pub(crate) mod resident_craft;
 pub(crate) mod self_heal_detectors;
+pub mod shadow_runner;
 mod skill_author;
 mod skill_discovery;
 mod status;

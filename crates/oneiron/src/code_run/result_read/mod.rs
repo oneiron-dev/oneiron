@@ -11,6 +11,7 @@
 //! of the run's occurrence of it (Docs Q08). `can({read: r})` asks the same
 //! checks for their verdict and reads no byte.
 
+mod arm;
 mod chunks;
 mod outside;
 mod query;
@@ -266,6 +267,12 @@ impl ResultRead {
     /// its parent's, with the range's `ref`, bytes and preview. A body that
     /// is not clean shows no preview and no shape.
     pub(crate) fn card(&self, storage: &ExecutorStorage<'_>) -> Result<Value> {
+        self.card_of(&self.body(storage))
+    }
+
+    /// [`Self::card`] over `body`, the result's bytes where they are held: a
+    /// run's storage, or a shadow arm's own store (`arm`).
+    fn card_of(&self, body: &dyn ResultBody) -> Result<Value> {
         let mut card = result_handle_json(&self.output);
         card["name"] = json!(self.name);
         card["taint"] = json!({"state": taint_word(self.state), "secret": self.secret});
@@ -282,7 +289,6 @@ impl ResultRead {
             card["preview"] = json!(CODE_RUN_OUTPUT_PREVIEW_WITHHELD);
             return Ok(card);
         }
-        let body = self.body(storage);
         let head = body.read(0, SHAPE_HEAD_BYTES)?;
         if self.range.is_some() {
             let cut = floor_boundary(&head, RANGE_PREVIEW_BYTES);
@@ -357,28 +363,35 @@ impl ResultRead {
         input: Value,
         spill: Option<&mut BodySink>,
     ) -> Result<Reply> {
+        let body = self.body(storage);
+        self.read_of(&body, storage.limit_watch(), facet, input, spill)
+    }
+
+    /// [`Self::read`] over `body`, under the `[limits]` rows of `watch`.
+    fn read_of(
+        &self,
+        body: &dyn ResultBody,
+        watch: &LimitWatch,
+        facet: ResultFacet,
+        input: Value,
+        spill: Option<&mut BodySink>,
+    ) -> Result<Reply> {
         if self.state.is_tainted() {
             return Ok(Reply::Output(self.withheld()));
         }
-        let body = self.body(storage);
         let bounds = ReadBounds {
             reply_bytes: RESULT_REPLY_INLINE_BYTES,
-            watch: storage.limit_watch(),
+            watch,
         };
         let reference = self.reference();
         let reply = match facet {
-            ResultFacet::Slice => slice::slice(&body, &reference, input, &bounds),
-            ResultFacet::Search => search::search(&body, &reference, input, &bounds),
-            ResultFacet::Query => query::query(
-                &body,
-                &reference,
-                &self.output.handle,
-                input,
-                &bounds,
-                spill,
-            ),
+            ResultFacet::Slice => slice::slice(body, &reference, input, &bounds),
+            ResultFacet::Search => search::search(body, &reference, input, &bounds),
+            ResultFacet::Query => {
+                query::query(body, &reference, &self.output.handle, input, &bounds, spill)
+            }
             ResultFacet::Chunks => {
-                chunks::chunks(&body, &reference, &self.output.handle, input, &bounds)
+                chunks::chunks(body, &reference, &self.output.handle, input, &bounds)
             }
         }?;
         // A spilled selection is a new body, which its own sink's scan marks.

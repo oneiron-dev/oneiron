@@ -31,6 +31,7 @@ mod replay_capsule;
 mod result_read;
 pub(crate) mod run_verb_call;
 mod run_verbs;
+pub mod shadow_runner;
 mod storage;
 mod support;
 mod team_submit;
@@ -95,9 +96,9 @@ pub use self::replay::{
 };
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
 pub use self::replay_capsule::{
-    CapsuleContent, CapsuleHost, CapsuleRungBinding, ExecutorStepStart, ExposureKind, ExposureSlot,
-    StepReplayCapsule, StoredSpan, TaskExposure, capture_workflow_step, finalize_step_captures,
-    note_answering_rung,
+    CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
+    ExposureKind, ExposureSlot, ReplayRoutePin, StepReplayCapsule, StoredSpan, TaskExposure,
+    capture_workflow_step, finalize_step_captures, note_answering_route_pin, note_answering_rung,
 };
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub use self::result_read::ResultFacet;
