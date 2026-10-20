@@ -4938,6 +4938,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.esign.notices.dispatch",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignNoticesDispatchRequest,
+                >(),
+            ),
+            (
                 "vault.esign.remind",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::esign::EsignDispatchRequest,
@@ -6634,6 +6640,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.search.temporal",
     "vault.productivity.create",
     "vault.productivity.tree",
+    "vault.esign.notices.dispatch",
     "vault.esign.signing.act",
     "vault.esign.signing.pdf",
     "vault.esign.signing.image",
@@ -8577,6 +8584,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.productivity.tree" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>,
+        >(),
+        "vault.esign.notices.dispatch" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignNoticesDispatchView,
         >(),
         "vault.esign.signing.act" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::esign::SigningOutcome,
@@ -15288,6 +15298,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.esign.notices.dispatch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.esign.remind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19564,6 +19581,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.esign.send_for_signature" => {
             let _input: crate::blob_artifact::esign::EsignDispatchRequest = decode(value.clone())?;
         }
+        "vault.esign.notices.dispatch" => {
+            let _input: crate::blob_artifact::esign::EsignNoticesDispatchRequest =
+                decode(value.clone())?;
+        }
         "vault.esign.remind" => {
             let _input: crate::blob_artifact::esign::EsignDispatchRequest = decode(value.clone())?;
         }
@@ -21921,6 +21942,9 @@ pub fn invoke(
         "vault.esign.links.issue" => encode(vault_esign_links_issue(memory, decode(value)?)?),
         "vault.esign.send_for_signature" => {
             encode(vault_esign_send_for_signature(memory, decode(value)?)?)
+        }
+        "vault.esign.notices.dispatch" => {
+            encode(vault_esign_notices_dispatch(memory, decode(value)?)?)
         }
         "vault.esign.remind" => encode(vault_esign_remind(memory, decode(value)?)?),
         "vault.esign.void" => encode(vault_esign_void(memory, decode(value)?)?),
@@ -30047,6 +30071,18 @@ pub fn vault_esign_send_for_signature(
         &["/document_ref"],
     )?;
     memory.esign_send_for_signature(&input)
+}
+pub fn vault_esign_notices_dispatch(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignNoticesDispatchRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignNoticesDispatchView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.esign.notices.dispatch",
+        &input,
+        &["/document_ref"],
+    )?;
+    memory.esign_notices_dispatch(&input)
 }
 pub fn vault_esign_remind(
     memory: &Memory<'_>,
