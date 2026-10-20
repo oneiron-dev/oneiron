@@ -14356,7 +14356,7 @@
      "path": "src/code_sandbox/egress/mod.rs",
      "purpose": "The engine's open egress proxy",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "re-export": 1,
       "struct": 2
      }
@@ -42911,8 +42911,7 @@
      "path": "src/provenance/birth.rs",
      "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
      "surface": {
-      "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 9,
       "struct": 3
@@ -44499,7 +44498,7 @@
      "path": "src/recovery/checkpoint/response_rows.rs",
      "purpose": "The row-held responses a checkpoint carries (KS-2B1, FIX 5683 part B1): a turn program's STEP bodies, LLM…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -51977,9 +51976,9 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 27,
       "mod": 1,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -52408,6 +52407,33 @@
      "purpose": "Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IdempotencyEntry",
+      "ResponseStamps"
+     ],
+     "path": "src/store/sync_responses.rs",
+     "purpose": "The host's row-held responses in `sync_state` under body custody (KS-2B2, FIX 5683 part B2; owner KEY STORE…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/sync_responses/media.rs",
+     "purpose": "A media job row's stamps, mask and fenced write (KS-2B2)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -53901,7 +53927,7 @@
      "path": "src/sync/ingest/tombstone.rs",
      "purpose": "The tombstone classification every replicated tombstone takes before replay",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -55090,7 +55116,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward/tombstone_pass.rs",
@@ -59870,6 +59896,16 @@
       "crate-vis": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/response_bodies.rs",
+     "purpose": "The host's typed writes of its row-held responses (KS-2B2, FIX 5683 part B2): an HTTP idempotency entry and…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -65135,7 +65171,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 115,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65275,7 +65311,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65361,7 +65397,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4066,
+   "source_files": 4069,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67665,7 +67701,7 @@
      "purpose": "The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -67676,6 +67712,16 @@
      "path": "src/strip/tests.rs",
      "purpose": "The strip forms of ARCH-0069 `#model-adapter-strip-forms`, each written the way a provider could echo it…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/strip/watch.rs",
+     "purpose": "The strip rule read as a reply streams (FIX 6103), moved out of the strip module whole: [`KeyWatch`]",
+     "surface": {
+      "crate-vis": 4
+     }
     },
     {
      "bucket": "s",
@@ -67779,7 +67825,7 @@
      "purpose": "The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the…"
     },
     "strip": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -67795,7 +67841,7 @@
    },
    "over_bar": 0,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
-   "source_files": 15,
+   "source_files": 16,
    "test_files": 5
   },
   "oneiron-browser": {
@@ -68321,6 +68367,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostNetFloor",
+      "HostNetPermit",
+      "UnmeteredFloor"
+     ],
+     "path": "src/host_net_floor.rs",
+     "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)",
+     "surface": {
+      "const": 2,
+      "fn": 4,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -68350,7 +68413,7 @@
      "surface": {
       "enum": 2,
       "fn": 12,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 8,
       "type": 1
      }
@@ -68411,7 +68474,17 @@
      "path": "src/supervisor/lifetime.rs",
      "purpose": "A guest socket's host entry lives as long as the guest holds the socket (FIX 5978)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/relay_workers.rs",
+     "purpose": "Bounded relay workers for a guest's datagrams (FIX 5979)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -68448,6 +68521,13 @@
      "layout": "file",
      "purpose": "Host-owned transport"
     },
+    "host_net_floor": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)"
+    },
     "launcher": {
      "files": 1,
      "impl_vault": false,
@@ -68477,7 +68557,7 @@
      "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)"
     },
     "supervisor": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -68500,7 +68580,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 11,
+   "source_files": 13,
    "test_files": 0
   },
   "oneiron-contracts": {
@@ -78669,6 +78749,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/esign/delivery_outbox/completion.rs",
+     "purpose": "A completed delivery's hand-off (FIX 5306): the completion receipt the sender takes to retire its own record…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/esign/delivery_outbox/wire.rs",
+     "purpose": "The outbox's file codec: the envelope the vault writes, the sender's ack, the lease an envelope names, and…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/esign/editor_auth.rs",
      "purpose": "The owner's editor capability (FIX 5618)",
      "surface": {
@@ -82264,7 +82364,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 46
+      "crate-vis": 47
      }
     },
     {
@@ -84744,7 +84844,7 @@
      "path": "src/http_listener.rs",
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -85261,7 +85361,7 @@
      "purpose": "Managed wake ledger: entries, revision, and supervisor pushes",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 10,
       "struct": 2
      }
@@ -85318,6 +85418,16 @@
       "enum": 1,
       "fn": 11,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/owner_recovery.rs",
+     "purpose": "Owner-signing recovery (FIX 5260): the vault's proof, on its supervisor's `recover_owner_signing` challenge…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -85425,9 +85535,19 @@
      "surface": {
       "const": 1,
       "crate-vis": 17,
-      "fn": 21,
+      "fn": 20,
       "struct": 3,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/control.rs",
+     "purpose": "The ctl dispatcher: every parsed ctl request a managed vault answers",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -86089,7 +86209,17 @@
      "path": "src/models/media/jobs.rs",
      "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/jobs/custody.rs",
+     "purpose": "A media job's owners and its erased answer (KS-2B2, FIX 5683 part B2)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -88384,7 +88514,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 471,
+     "files": 473,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -88678,7 +88808,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 24,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -88692,7 +88822,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -88834,7 +88964,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 885,
+   "source_files": 890,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -92925,6 +93055,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EsignDeliveryCompleted"
+     ],
+     "path": "src/lib/esign_delivery.rs",
+     "purpose": "The e-sign delivery outbox's completion receipt (FIX 5306)",
+     "surface": {
+      "const": 6,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Host",
       "HostLimits",
       "PreviewPortHost"
@@ -93073,8 +93217,23 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 11,
-      "re-export": 7
+      "mod": 12,
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerSigningRecovery",
+      "OwnerSigningRecoveryAck"
+     ],
+     "path": "src/lib/owner_signing_recovery.rs",
+     "purpose": "Owner-signing recovery (FIX 5260): an adopted vault proves, on its supervisor's challenge, that it still…",
+     "surface": {
+      "const": 2,
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -93205,7 +93364,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 24,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93214,7 +93373,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 23,
+   "source_files": 25,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
