@@ -40,7 +40,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/seal/observe.rs` | src | s | 5 crate-vis | — | What one seal or verification call measured, against the engine's `[limits]` rows (OF-520, Rule 5) |
 | `src/seal/verify.rs` | src | s | 2 crate-vis | — | The seal's fresh verification and its suffix gate (OF-415, C032, Engine ruling D) |
 | `src/slot.rs` | src | m | 1 struct · 1 enum · 14 crate-vis | OrganState, OrganStatus | One installed organ: its process, its crash history, its condition |
-| `src/spec.rs` | src | s | 8 struct · 2 enum · 3 fn | AskGrant, CallClass, FetchGrant, FetchOrigin, HostConfig, LentInput, OrganCall, OrganInput +2 | What the engine installs and what a caller asks |
+| `src/spec.rs` | src | s | 9 struct · 2 enum · 3 fn | AskGrant, CallClass, FetchGrant, FetchOrigin, HostConfig, LentInput, OrganCall, OrganInput +3 | What the engine installs and what a caller asks |
 | `src/wait.rs` | src | s | 2 struct · 2 enum · 2 fn | OrganJob, Redrive, Redriven, Submitted | Organ calls that wait for a node, held in the vault (OF-575, owner ruling MESH: "one node is too weak, means… |
 | `tests/host_asks.rs` | test | L | — | — | Protocol 1.1 asks against a real organ process (the probe) |
 | `tests/host_e2e.rs` | test | m | — | — | The host against a real organ process (the probe), over real vault blobs |
