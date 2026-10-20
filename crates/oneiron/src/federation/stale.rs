@@ -288,6 +288,11 @@ impl<'v> StaleSweepWatch<'v> {
     /// tries again.
     pub(crate) fn finish(self) -> Result<()> {
         let noted = SWEEP_DUE.with(|due| due.replace(false));
+        // A turn program held for a lapsed authority resumes on the ingest
+        // that restores it (FIX 5875, an L07 seam): a no-op unless the
+        // commit stored an authority row, and never the sweep's failure.
+        self.vault
+            .resume_turn_programs_after_authority_ingest(noted);
         let owed = &self.vault.store.federation_stale_sweep_owed;
         if (owed.swap(false, Ordering::AcqRel) || noted)
             && let Err(error) = apply_federation_stale_stamps(self.vault)
