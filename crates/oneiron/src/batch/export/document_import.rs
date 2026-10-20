@@ -279,7 +279,9 @@ impl Vault {
             }
         }
         // FIX 5972: an archived `regenerates` link is proven on its
-        // MESSAGEs' restored axes, so it lands after every other edge.
+        // MESSAGEs' restored axes, so it lands after every other edge. One
+        // its restored pair does not prove stays out, counted (FIX 6206).
+        let mut skipped_unproven_regenerates_edges = 0;
         for regenerates in [false, true] {
             let mut edges = archive.spool.rows(ArchiveRecordKind::Edge);
             while let Some((_, edge)) = edges.next_parsed::<ExportEdge>(&archive.spool)? {
@@ -296,7 +298,10 @@ impl Vault {
                 {
                     continue;
                 }
-                import_edge(self, &mut wtxn, &edge, &archive.index)?;
+                let landed = import_edge(self, &mut wtxn, &edge, &archive.index)?;
+                if landed == EdgeImport::UnprovenRegenerates {
+                    skipped_unproven_regenerates_edges += 1;
+                }
             }
         }
         let mut archived_receipt_sources = 0;
@@ -359,6 +364,7 @@ impl Vault {
             restored_secrets,
             unchanged_secrets,
             skipped_revoked_secrets,
+            skipped_unproven_regenerates_edges,
             missing_secrets,
             embedding_setup,
             restored_side_rows,
@@ -548,11 +554,21 @@ fn put_run_results_in_txn<R: Read + Seek>(
             if archive.index.insert(Tag::Staged, &digest, &[])? && listed != output.bytes {
                 return Err(invalid("run result body does not match its digest"));
             }
-            let body = std::io::Cursor::new(archive.files.read_file(blake3)?);
+            // Masked at write as a run's reply body is (FIX 5718 part 3).
+            let may_spill = swept.is_some() || listed > vault.code_result_inline_bytes();
+            let body = archive.files.read_file(blake3)?;
+            let body = vault.admit_imported_result_in_txn(
+                wtxn,
+                run_id,
+                &output.path,
+                body,
+                swept.as_ref(),
+                may_spill,
+            )?;
             let finished = vault.stage_code_run_output_from(
                 output.path.clone(),
                 vault.code_run_output_sink_knowing(known.clone(), swept.clone())?,
-                body,
+                std::io::Cursor::new(body),
             )?;
             let occurrence = finished.at(output.path.clone(), output.complete)?;
             vault.put_code_run_output_in_txn(wtxn, &finished, &occurrence, Some(run_id))?;
@@ -1035,6 +1051,16 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
     })
 }
 
+/// What [`import_edge`] did with one archived edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EdgeImport {
+    /// Written, or already here as the archive has it.
+    Landed,
+    /// An archived `regenerates` link its restored pair does not prove,
+    /// left out (FIX 5972); the import's last edge pass counts it (FIX 6206).
+    UnprovenRegenerates,
+}
+
 /// Writes one archived edge; `inserted` names the rows this import put in or
 /// queued, whose own doors may have minted the edge already.
 pub(super) fn import_edge(
@@ -1042,7 +1068,7 @@ pub(super) fn import_edge(
     wtxn: &mut heed::RwTxn<'_>,
     edge: &ExportEdge,
     inserted: &ArchiveIndex<'_>,
-) -> Result<()> {
+) -> Result<EdgeImport> {
     let source = parse_id(&edge.source)?;
     let target = parse_id(&edge.target)?;
     let kind = EdgeKind::try_from_u8(edge.kind).ok_or_else(|| invalid("unknown edge kind"))?;
@@ -1057,7 +1083,7 @@ pub(super) fn import_edge(
                 .map(|p| [p.confirmation_status as u8, p.actor_class as u8])
                 == edge.provenance;
         if same {
-            return Ok(());
+            return Ok(EdgeImport::Landed);
         }
         // A newly imported claim's typed door creates its own ClaimOf link, and
         // a newly imported project's projector its damped parent membership.
@@ -1098,9 +1124,9 @@ pub(super) fn import_edge(
         if crate::edge::regeneration_pair(&vault.store, wtxn, &source, &target)?
             != crate::edge::Regeneration::Admits
         {
-            return Ok(());
+            return Ok(EdgeImport::UnprovenRegenerates);
         }
-        return vault
+        vault
             .batch_in()
             .edge_with_value_fields(
                 &source,
@@ -1113,12 +1139,14 @@ pub(super) fn import_edge(
                     provenance: None,
                 },
             )
-            .apply(wtxn);
+            .apply(wtxn)?;
+        return Ok(EdgeImport::Landed);
     }
     vault
         .batch_in()
         .edge_with_created_at_and_vad(&source, kind, &target, edge.weight, edge.created_at, vad)
-        .apply(wtxn)
+        .apply(wtxn)?;
+    Ok(EdgeImport::Landed)
 }
 
 fn decode_import_claim(bytes: &[u8]) -> Result<crate::claim::ClaimBody> {

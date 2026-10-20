@@ -452,7 +452,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/bundle_types.rs` | src | s | 6 struct · 6 enum | AgentBundleOmission, BundleOmissionReason, ExportAgentBundle, ExportBundleOmission, ExportFileTree, ExportImportOmission, ExportImportRefusal, ExportSkillBundle +4 | Portable source files and typed bundle facets |
 | `src/batch/export/bundle_validation.rs` | src | m | 13 crate-vis | — | Validate source identities, facet/body agreement and explicit archive-only omissions |
 | `src/batch/export/credential_filter.rs` | src | m | 9 fn · 2 crate-vis | — | Credential filtering at memory serve and export serialization boundaries |
-| `src/batch/export/document_import.rs` | src | L | 6 fn · 3 crate-vis | — | Validating archive import through ordinary admission doors, never sync replay |
+| `src/batch/export/document_import.rs` | src | L | 6 fn · 4 crate-vis | — | Validating archive import through ordinary admission doors, never sync replay |
 | `src/batch/export/document_snapshot.rs` | src | m | 4 fn · 6 crate-vis | — | Snapshot enumeration for whole-vault export |
 | `src/batch/export/document_tests.rs` | test | m | — | — | Observable whole-vault export/import contracts |
 | `src/batch/export/document_types.rs` | src | m | 18 struct · 1 enum · 7 fn · 1 const · 1 crate-vis | ExportAdapterDescriptor, ExportDerivationEnvelope, ExportEdge, ExportEntity, ExportEpochFloor, ExportLedger, ExportPack, ExportPackSource +11 | The typed whole-vault document: what the archive's JSONL rows assemble into on import, and what the snapshot… |
@@ -501,7 +501,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply/put_staging.rs` | src | m | 26 crate-vis | — | Body/index/edge row staging helpers shared by the put and update paths |
 | `src/batch/put_apply/request.rs` | src | s | 13 crate-vis | — | The one typed request `apply_put` takes: the row, the options that govern how it is admitted, and the… |
 | `src/batch/recovery_shell.rs` | src | s | 1 crate-vis | — | Header-only recovery of a retained soft-delete shell, never a body put |
-| `src/batch/secret_scan.rs` | src | L | 1 enum · 1 re-export · 38 crate-vis | SecretScanMode | — |
+| `src/batch/secret_scan.rs` | src | L | 1 enum · 1 re-export · 39 crate-vis | SecretScanMode | — |
 | `src/batch/secret_scan/container.rs` | src | s | 12 crate-vis | — | Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office… |
 | `src/batch/secret_scan/container/archive.rs` | src | s | 2 crate-vis | — | A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its… |
 | `src/batch/secret_scan/container/gzip.rs` | src | s | 2 crate-vis | — | A gzip file's payload: every member it chains, decoded in order as one payload, each member's CRC-32 and… |
@@ -517,11 +517,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/lift_history/records.rs` | src | m | 5 crate-vis | — | The entity table |
 | `src/batch/secret_scan/lift_history/retained.rs` | src | s | 3 crate-vis | — | Retained carriers with a door of their own (OF-067, Engine ruling D = a) |
 | `src/batch/secret_scan/lift_history/side_rows.rs` | src | s | 4 crate-vis | — | The side tables the catalog classes as authored |
-| `src/batch/secret_scan/mask.rs` | src | L | 9 crate-vis | — | Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the… |
+| `src/batch/secret_scan/mask.rs` | src | L | 10 crate-vis | — | Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the… |
 | `src/batch/secret_scan/mask/admit.rs` | src | s | 6 crate-vis | — | Mask on write for content a writer stores outside the batch door (OF-067): a message stream's seed, a NOTE's… |
 | `src/batch/secret_scan/mask/carrier.rs` | src | s | 13 crate-vis | — | The batch door's file mark (owner ruling C2) for a carrier's stored text no door rewrites (OF-067, Engine… |
 | `src/batch/secret_scan/mask/file_plane.rs` | src | s | 1 crate-vis | — | Body files with keys in them (FIX 5507) |
 | `src/batch/secret_scan/mask/side_row.rs` | src | m | 10 crate-vis | — | The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A) |
+| `src/batch/secret_scan/mask/spool.rs` | src | m | 12 crate-vis | — | The spool-aware admission adapter (FIX 5718 part 3, Engine ruling 3; CALLS C5718-19) |
 | `src/batch/secret_scan/mask/stream_known.rs` | src | s | 6 crate-vis | — | Known custody values in a streamed ASSET body (FIX 5395, CALLS KNOWN_VALUE_STREAM_FINDER) |
 | `src/batch/secret_scan/mask/text.rs` | src | s | 2 crate-vis | — | A text's mask on write (OF-560): each span the door's text rules place, and each value custody already… |
 | `src/batch/secret_scan/shapes.rs` | src | m | 18 crate-vis | — | Credential-shape detection shared by write, serve, and export |
@@ -1095,19 +1096,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/replay_capsule.rs` | src | m | 7 struct · 4 enum · 7 fn · 7 crate-vis | CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart, ExposureKind, ExposureSlot, ReplayRoutePin +3 | Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical… |
 | `src/code_run/result_read/arm.rs` | src | s | 3 crate-vis | — | A shadow arm's reads of its own results (PR-S1, FIX 1661/2144): the card, the verdict and the facets a run's… |
 | `src/code_run/result_read/chunks.rs` | src | m | 2 crate-vis | — | `chunks`: a result cut into range refs, a page at a time |
-| `src/code_run/result_read/mod.rs` | src | m | 1 enum · 2 fn · 1 const · 21 crate-vis | ResultFacet | Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`… |
+| `src/code_run/result_read/mod.rs` | src | m | 1 enum · 2 fn · 1 const · 22 crate-vis | ResultFacet | Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`… |
 | `src/code_run/result_read/outside.rs` | src | s | 2 fn | — | Reads of a code run's results for a caller outside the run: the cards of its named results, and one read of… |
 | `src/code_run/result_read/query.rs` | src | L | 2 crate-vis | — | `query`: the values a JSON path picks out of a result, or the rows of a line table (JSON lines, CSV, TSV)… |
 | `src/code_run/result_read/search.rs` | src | s | 1 crate-vis | — | `search`: the matches of a literal (by default) or a regex in a result, each with its offset, line and… |
 | `src/code_run/result_read/shape.rs` | src | s | 1 crate-vis | — | The shape a result's head shows of its format, for its card and for the way `query` reads it |
 | `src/code_run/result_read/slice.rs` | src | s | 1 crate-vis | — | `slice`: one range of a result's body, by bytes or by lines, at most one reply of it, with where to go on from |
+| `src/code_run/result_read/unplaced.rs` | src | s | 1 crate-vis | — | What a run's guest gets in place of an answer the side-row wall could not admit (FIX 5718 part 3, Engine… |
 | `src/code_run/run_verb_call.rs` | src | s | 3 crate-vis | — | The run rows as typed calls (OF-181) |
 | `src/code_run/run_verbs.rs` | src | m | 25 struct · 9 enum · 1 fn · 1 const · 3 crate-vis | AgentSpawnInput, AgentSpawnKind, AgentSpawnOutput, LeaderAdviceInput, LeaderPatternFile, LeaderPatternInput, LeaderPatternOutput, LeaderSplitInput +26 | The inputs and outputs of the verb-table rows a code run answers itself (`context: "run"` in… |
+| `src/code_run/shadow_runner/admit.rs` | src | s | 1 fn · 3 crate-vis | — | A shadow arm's writes, masked at write (FIX 5718 part 3; shadow items 2 and 5; CALLS C5718-21) |
 | `src/code_run/shadow_runner/bridge.rs` | src | m | 9 crate-vis | — | The bridge an arm's program calls (PR-S1): every `self.*` call the program makes joins the arm's… |
 | `src/code_run/shadow_runner/frames.rs` | src | s | 2 struct · 2 enum · 1 fn | ShadowFrame, ShadowFrameBody, ShadowModelAnswer, ShadowReceiptFrame | The frames an arm and its host speak (PR-S1 defines them; the candidate process runner speaks them, PR-S2) |
-| `src/code_run/shadow_runner/mod.rs` | src | s | 1 trait · 1 type · 1 const · 4 re-export · 1 crate-vis | ShadowRunner | The shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): one captured step of a canonical… |
+| `src/code_run/shadow_runner/mod.rs` | src | s | 1 trait · 1 type · 1 const · 5 re-export · 1 crate-vis | ShadowRunner | The shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): one captured step of a canonical… |
 | `src/code_run/shadow_runner/source.rs` | src | m | 1 struct · 14 fn · 1 crate-vis | PreparedShadowStep | The source an arm runs from (PR-S1): one captured step of a canonical run, read from its capsule and frozen… |
-| `src/code_run/shadow_runner/store.rs` | src | s | 2 struct · 7 fn · 6 crate-vis | ShadowBodyStore, ShadowSourceHold | A shadow arm's own body store (PR-S1): one directory, outside any vault, of whole bodies, each a file named… |
+| `src/code_run/shadow_runner/store.rs` | src | s | 2 struct · 9 fn · 7 crate-vis | ShadowBodyStore, ShadowSourceHold | A shadow arm's own body store (PR-S1): one directory, outside any vault, of whole bodies, each a file named… |
 | `src/code_run/shadow_runner/types.rs` | src | m | 16 struct · 12 enum · 10 fn · 1 crate-vis | ArtifactDigest, ArtifactDigestAlgorithm, EngineArtifactPin, ShadowArmLease, ShadowBodyRef, ShadowBridgeWindow, ShadowDeterminism, ShadowIsolation +20 | The shadow runner's request, result and their parts (PR-S1): what a caller asks an arm to run, by immutable… |
 | `src/code_run/storage/compaction.rs` | src | m | 18 crate-vis | — | Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY |
 | `src/code_run/storage/compaction/tests.rs` | test | s | — | — | — |
@@ -1118,7 +1121,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/program_resume.rs` | src | m | 12 crate-vis | — | A turn program's resume checkpoint (DOOR-141 PR3b, FIX 4382): the compact head and keyed pages its pinned… |
 | `src/code_run/storage/reader_folds.rs` | src | m | 19 crate-vis | — | A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where… |
 | `src/code_run/storage/reader_jobs.rs` | src | L | 2 struct · 1 enum · 11 fn · 28 crate-vis | ReaderJobs, SummaryMember, SummaryRead | One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record… |
-| `src/code_run/storage/records.rs` | src | m | 2 struct · 8 fn · 20 crate-vis | CodeRunModelHealCount, CodeRunSecretLiftProposal | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
+| `src/code_run/storage/records.rs` | src | m | 2 struct · 8 fn · 21 crate-vis | CodeRunModelHealCount, CodeRunSecretLiftProposal | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
+| `src/code_run/storage/records/admitted.rs` | src | s | 4 crate-vis | — | A run's reply bodies masked at write (FIX 5718 part 3, Engine rulings 3 and 4) |
 | `src/code_run/storage/records/bodies.rs` | src | m | 3 fn · 24 crate-vis | — | The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish… |
 | `src/code_run/storage/replay_bodies.rs` | src | s | 5 crate-vis | — | A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1) |
 | `src/code_run/storage/replay_capsule.rs` | src | s | 1 fn · 12 crate-vis | — | The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt… |
@@ -1127,11 +1131,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/response_erase.rs` | src | s | 5 crate-vis | — | An erase of a code run's actor, over the reply content its runs kept (FIX 5718, KEY STORE = A): the replay… |
 | `src/code_run/storage/response_owners.rs` | src | s | 11 crate-vis | — | Whose reply content a code run's replay row holds (FIX 5718, KEY STORE = A): one row per replay record, a… |
 | `src/code_run/storage/routing.rs` | src | L | 33 crate-vis | — | Where one run's reads and writes land: the canonical vault or a bound off-record session |
-| `src/code_run/storage/routing/bodies.rs` | src | s | 8 crate-vis | — | A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the… |
+| `src/code_run/storage/routing/bodies.rs` | src | s | 10 crate-vis | — | A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the… |
 | `src/code_run/storage/session_write.rs` | src | s | 1 crate-vis | — | One write a run bound to an off-record session stages in its room, kept on its receipt in the same segment… |
 | `src/code_run/storage/speech_identity.rs` | src | s | 12 crate-vis | — | Deterministic conversation, turn and message ids derived from a run's identity |
 | `src/code_run/storage/wait_delivery.rs` | src | m | 3 struct · 10 fn · 16 crate-vis | WaitDeliveries, WaitDelivery, WaitKey | Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it |
-| `src/code_run/storage/wait_holders.rs` | src | m | 9 crate-vis | — | Who held each code-run wait's reply (FIX 5718, KEY STORE = A; Engine ruling 2): one durable row per run a… |
+| `src/code_run/storage/wait_holders.rs` | src | m | 10 crate-vis | — | Who held each code-run wait's reply (FIX 5718, KEY STORE = A; Engine ruling 2): one durable row per run a… |
 | `src/code_run/support.rs` | src | s | 28 crate-vis | — | — |
 | `src/code_run/team_submit.rs` | src | s | 2 struct · 5 crate-vis | TeamSubmitAnswer, TeamSubmitInput | `self.team.submit` (OF-540): what a team's leader submits for the owner's review, and what the host answers |
 | `src/code_run/tests.rs` | test | XL | 1 crate-vis | — | — |
@@ -1552,11 +1556,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/coop_reply.rs` | src | s | 2 struct · 1 enum · 5 fn · 3 const | CooperativeDeletionReply, CooperativeDeletionReplyOutcome, SignedCooperativeDeletionReply | The recipient's one-line answer to a courtesy deletion ask (OF-273): its owner acted on the ask, or declined… |
 | `src/deletion/coop_request.rs` | src | m | 2 struct · 6 fn · 4 const · 9 crate-vis | CooperativeDeletionRequest, SignedCooperativeDeletionRequest | One-way authenticated courtesy deletion requests |
 | `src/deletion/coop_succession.rs` | src | m | 1 struct · 2 fn · 2 const · 1 crate-vis | CooperativeDeletionSuccession | Courtesy asks and answers across a former peer's host re-root (FIX 3014) |
-| `src/deletion/delete/facade.rs` | src | L | 4 fn · 2 crate-vis | — | Public and gated delete entry points plus the headerful orchestration state machine |
-| `src/deletion/delete/headerless.rs` | src | s | 1 crate-vis | — | Headerless-residue delete leg: scope probe, tombstone publish, purge, and conditional receipt |
+| `src/deletion/delete/confirmed.rs` | src | s | 8 crate-vis | — | The pending-confirmed-delete gate of a due owner-confirmed erase (FIX 6337) |
+| `src/deletion/delete/facade.rs` | src | L | 4 fn · 3 crate-vis | — | Public and gated delete entry points plus the headerful orchestration state machine |
+| `src/deletion/delete/headerless.rs` | src | m | 1 crate-vis | — | Headerless-residue delete leg: scope probe, tombstone publish, purge, and conditional receipt |
 | `src/deletion/delete/impact.rs` | src | s | 2 struct · 8 fn · 1 crate-vis | HeldBytes, LfsChunkImpact | Shared-bytes impact for the delete preview: whether the record is the last holder of its bytes or one of… |
 | `src/deletion/delete/markers.rs` | src | s | 9 crate-vis | — | pt:/ac: marker and gate-decision commit helpers plus the cleanup-archive door |
-| `src/deletion/delete/mod.rs` | src | s | 3 re-export | — | — |
+| `src/deletion/delete/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | — |
 | `src/deletion/delete/outcome.rs` | src | s | 2 struct · 1 crate-vis | DeleteEntityOptions, DeleteEntityOutcome | Reason-aware delete result type and its missing() constructor |
 | `src/deletion/delete/preview.rs` | src | s | 1 struct · 6 fn · 3 crate-vis | DeleteEntityPreview | Snapshot-bound impact preview for the one-action, confirmed delete door |
 | `src/deletion/derived_rows.rs` | src | s | 2 crate-vis | — | Rows a record feeds outside the generic index set, torn with the record |
@@ -1571,8 +1576,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/identity_event_stamps.rs` | src | s | 2 crate-vis | — | Erase independent author-attribution carriers without changing decisions |
 | `src/deletion/legal_hold/mod.rs` | src | m | 14 fn · 1 re-export · 3 crate-vis | — | Legal hold doors (OF-470, design B; owner ruling 2026-10-17: "B, and that stuff is for cloud only + we… |
 | `src/deletion/legal_hold/types.rs` | src | m | 6 struct · 7 enum · 4 fn · 7 const | ErasePendingReason, HostOrderHold, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldMaintenance +5 | The legal-hold vocabulary (OF-470, design B; ARCH-0038 #legal-hold, BIZ-LEGAL-0004 §12, owner ruling… |
-| `src/deletion/mod.rs` | src | s | 11 re-export · 28 crate-vis | — | ARCH-0038 deletion/redaction contract types |
-| `src/deletion/publish.rs` | src | L | 4 crate-vis | — | — |
+| `src/deletion/mod.rs` | src | s | 11 re-export · 29 crate-vis | — | ARCH-0038 deletion/redaction contract types |
+| `src/deletion/publish.rs` | src | L | 5 crate-vis | — | — |
 | `src/deletion/receipt.rs` | src | m | 16 crate-vis | — | — |
 | `src/deletion/receipt_completion.rs` | src | s | 3 crate-vis | — | The linked REDACTION_AUDIT completion row (OF-470, ARCH-0038 step 10) |
 | `src/deletion/rendezvous.rs` | src | s | 15 crate-vis | — | — |
@@ -4042,6 +4047,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/body_envelope/rows.rs` | src | s | 10 crate-vis | — | A body instance's row (FIX 5348, KS-2A): one per digest, in `PROVENANCE_BODY_KEY`, beside the body's… |
 | `src/store/body_envelope/spill.rs` | src | m | 19 crate-vis | — | Writing body files (FIX 5348, KS-2A): a body spilled as it streams as one minted instance, sealed chunk by… |
 | `src/store/body_store.rs` | src | m | 35 crate-vis | — | File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++) |
+| `src/store/body_store/spool.rs` | src | s | 3 crate-vis | — | A body sink that spools its body raw for admission (FIX 5718 part 3, Engine ruling 3): it measures and scans… |
 | `src/store/channel_identity_receipts.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | ChannelIdentityLifecycleReceiptId, ChannelIdentityLifecycleReceiptRecord | Append-only channel-identity lifecycle receipt ledger |
 | `src/store/checkpoint_payload/instance.rs` | src | s | 10 crate-vis | — | The instance table of checkpoint payload compartments (KS-7, `checkpoint_payload:instance:v1:`): one row per… |
 | `src/store/checkpoint_payload/loro.rs` | src | m | 17 crate-vis | — | The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full… |
