@@ -472,8 +472,10 @@ side_tables! {
     /// write-time stamps name; it outlives the row, so an erase of the owner retires every
     /// image's copy. Key: id16 (owner) + bytes16 (instance); value: the row's carrier.
     PROVENANCE_BODY_RESPONSE_OWNER: VaultMeta b"provenance:body_response_owner:v1:" Raw;
-    /// One row's immutable birth envelope (Rule A made_by). Key: id16.
-    PROVENANCE_ROW_BIRTH: VaultMeta b"provenance:row_birth:v1:" Named;
+    /// One row's immutable birth envelope (Rule A made_by); an erase of its process actor drops
+    /// it (FIX 6074). Key: id16.
+    PROVENANCE_ROW_BIRTH: VaultMeta b"provenance:row_birth:v1:" Named
+        => crate::provenance::birth::erase_birth_actor_in_txn;
     /// The local secret that keys a destination's withheld-ref handles (Q26 = B). Key: `()`. Never
     /// shipped.
     PROVENANCE_WITHHELD_SECRET: VaultMeta b"provenance:withheld_secret:v1:" Raw;
