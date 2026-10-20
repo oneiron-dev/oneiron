@@ -5749,6 +5749,18 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_runs_pause(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runs.pause", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_runs_resume(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runs.resume", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_consults_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consults.get", js_json(input))
