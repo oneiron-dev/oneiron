@@ -1,6 +1,14 @@
-//! Bounded PDF structural tokens. Never use a non-match as evidence of absence.
+//! PDF structural tokens. Never use a non-match as evidence of absence.
+//!
+//! Nesting of any depth is lexed whole (Rule 5): literal strings and stream
+//! dictionaries are loops, and a skipped value keeps its open arrays and
+//! dictionaries on an explicit stack, never the call stack. The deepest
+//! nesting a lexer met and the tokens it took go to the running analysis's
+//! counts for the `[limits]` rows.
 
 use std::ops::Range;
+
+use crate::api::{Counter, note_current};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -19,7 +27,6 @@ pub(super) struct Token<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LexError {
     Malformed,
-    WorkLimit,
 }
 
 pub(super) fn space(b: u8) -> bool {
@@ -34,23 +41,29 @@ fn delimiter(b: u8) -> bool {
 
 /// A single grammar for comments, strings and dictionaries. The caller owns
 /// stream provenance and skips exactly its validated length-delimited span.
+/// It counts the tokens it reads and the deepest nesting it meets, never
+/// stopping at either; dropping it notes that depth.
 pub(super) struct PdfLexer<'a> {
     bytes: &'a [u8],
     pub(super) at: usize,
     work: usize,
-    max_work: usize,
+    depth: usize,
 }
 impl<'a> PdfLexer<'a> {
-    pub(super) fn new(bytes: &'a [u8], at: usize, max_work: usize) -> Self {
+    pub(super) fn new(bytes: &'a [u8], at: usize) -> Self {
         Self {
             bytes,
             at,
             work: 0,
-            max_work,
+            depth: 0,
         }
     }
     pub(super) fn work(&self) -> usize {
         self.work
+    }
+    /// Records nesting `depth` if it is the deepest yet.
+    fn deepen(&mut self, depth: usize) {
+        self.depth = self.depth.max(depth);
     }
     pub(super) fn skip_to(&mut self, end: usize) -> Result<(), LexError> {
         if end < self.at || end > self.bytes.len() {
@@ -76,10 +89,7 @@ impl<'a> PdfLexer<'a> {
         if self.at >= len {
             return Ok(None);
         }
-        self.work += 1;
-        if self.work > self.max_work {
-            return Err(LexError::WorkLimit);
-        }
+        self.work = self.work.saturating_add(1);
         let start = self.at;
         let b = self.bytes[start];
         let kind = match b {
@@ -93,6 +103,7 @@ impl<'a> PdfLexer<'a> {
                         }
                         b'(' => {
                             depth += 1;
+                            self.deepen(depth);
                             self.at += 1;
                         }
                         b')' => {
@@ -100,9 +111,6 @@ impl<'a> PdfLexer<'a> {
                             self.at += 1;
                         }
                         _ => self.at += 1,
-                    }
-                    if depth > 64 {
-                        return Err(LexError::WorkLimit);
                     }
                 }
                 if depth != 0 || self.at > len {
@@ -172,16 +180,22 @@ impl<'a> PdfLexer<'a> {
         }))
     }
 }
+impl Drop for PdfLexer<'_> {
+    fn drop(&mut self) {
+        note_current(Counter::PdfDepth, self.depth);
+    }
+}
 
 /// The first stream keyword following the dictionary, including LF/CRLF.
 pub(super) fn stream_delimiter(header: &[u8]) -> Option<(usize, usize)> {
-    let mut lexer = PdfLexer::new(header, 0, header.len());
+    let mut lexer = PdfLexer::new(header, 0);
     let mut depth = 0usize;
     let mut seen_dict = false;
     while let Ok(Some(token)) = lexer.next() {
         match token.kind {
             Kind::DictStart => {
                 depth += 1;
+                lexer.deepen(depth);
                 seen_dict = true;
             }
             Kind::DictEnd => depth = depth.checked_sub(1)?,
@@ -196,9 +210,6 @@ pub(super) fn stream_delimiter(header: &[u8]) -> Option<(usize, usize)> {
                 return None;
             }
             _ => {}
-        }
-        if depth > 64 {
-            return None;
         }
     }
     None
@@ -233,46 +244,57 @@ fn name_is(token: &Token<'_>, expected: &[u8]) -> Result<bool, LexError> {
     Ok(equal && decoded == expected.len())
 }
 
-fn skip_value(lexer: &mut PdfLexer<'_>, first: Token<'_>, depth: usize) -> Result<(), LexError> {
-    if depth >= 64 {
-        return Err(LexError::WorkLimit);
-    }
-    match first.kind {
-        Kind::DictStart => loop {
-            let next = lexer.next()?.ok_or(LexError::Malformed)?;
-            if next.kind == Kind::DictEnd {
-                break;
+/// Skips the value `first` opens, however deeply its arrays and
+/// dictionaries nest: each open container waits on an explicit stack
+/// (`true` for a dictionary, which reads a key before each value). An
+/// indirect reference's three tokens are one value.
+fn skip_value<'a>(lexer: &mut PdfLexer<'a>, first: Token<'a>) -> Result<(), LexError> {
+    let mut open: Vec<bool> = Vec::new();
+    let mut value = first;
+    loop {
+        match value.kind {
+            Kind::DictStart => open.push(true),
+            Kind::Delimiter if value.value == b"[" => open.push(false),
+            Kind::Word if value.value.iter().all(u8::is_ascii_digit) => {
+                // An indirect reference is three tokens: object, generation, R.
+                let checkpoint = lexer.at;
+                let next = lexer.next()?;
+                let end = lexer.next()?;
+                if !matches!((&next, &end), (Some(generation), Some(r))
+                    if generation.kind == Kind::Word && generation.value.iter().all(u8::is_ascii_digit)
+                        && r.kind == Kind::Word && r.value == b"R")
+                {
+                    lexer.at = checkpoint;
+                }
             }
-            if next.kind != Kind::Name {
-                return Err(LexError::Malformed);
-            }
-            let value = lexer.next()?.ok_or(LexError::Malformed)?;
-            skip_value(lexer, value, depth + 1)?;
-        },
-        Kind::Delimiter if first.value == b"[" => loop {
-            let next = lexer.next()?.ok_or(LexError::Malformed)?;
-            if next.kind == Kind::Delimiter && next.value == b"]" {
-                break;
-            }
-            skip_value(lexer, next, depth + 1)?;
-        },
-        Kind::Word if first.value.iter().all(u8::is_ascii_digit) => {
-            // An indirect reference is three tokens: object, generation, R.
-            let checkpoint = lexer.at;
-            let next = lexer.next()?;
-            let end = lexer.next()?;
-            if !matches!((&next, &end), (Some(generation), Some(r))
-                if generation.kind == Kind::Word && generation.value.iter().all(u8::is_ascii_digit)
-                    && r.kind == Kind::Word && r.value == b"R")
-            {
-                lexer.at = checkpoint;
-            }
+            Kind::DictEnd => return Err(LexError::Malformed),
+            Kind::Delimiter if value.value == b"]" => return Err(LexError::Malformed),
+            _ => {}
         }
-        Kind::DictEnd => return Err(LexError::Malformed),
-        Kind::Delimiter if first.value == b"]" => return Err(LexError::Malformed),
-        _ => {}
+        lexer.deepen(open.len());
+        // The next value to skip, past every container that closes first.
+        value = loop {
+            let Some(&dictionary) = open.last() else {
+                return Ok(());
+            };
+            let next = lexer.next()?.ok_or(LexError::Malformed)?;
+            if dictionary {
+                if next.kind == Kind::DictEnd {
+                    open.pop();
+                    continue;
+                }
+                if next.kind != Kind::Name {
+                    return Err(LexError::Malformed);
+                }
+                break lexer.next()?.ok_or(LexError::Malformed)?;
+            }
+            if next.kind == Kind::Delimiter && next.value == b"]" {
+                open.pop();
+                continue;
+            }
+            break next;
+        };
     }
-    Ok(())
 }
 
 /// [`table_prev_work`] without its token count.
@@ -287,7 +309,7 @@ pub(super) fn table_prev(section: &[u8]) -> Result<Option<usize>, LexError> {
 /// whole section is lexed however long it is (Rule 5); the tokens it took
 /// come back beside the offset for the `[limits]` structural-work row.
 pub(super) fn table_prev_work(section: &[u8]) -> Result<(Option<usize>, usize), LexError> {
-    let mut lexer = PdfLexer::new(section, 0, usize::MAX);
+    let mut lexer = PdfLexer::new(section, 0);
     if lexer
         .next()?
         .is_none_or(|t| t.kind != Kind::Word || t.value != b"xref")
@@ -327,7 +349,7 @@ pub(super) fn table_prev_work(section: &[u8]) -> Result<(Option<usize>, usize), 
                 .map_err(|_| LexError::Malformed)?;
             prev = Some(offset);
         } else {
-            skip_value(&mut lexer, value, 0)?;
+            skip_value(&mut lexer, value)?;
         }
     }
     Ok((prev, lexer.work()))

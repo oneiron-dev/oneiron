@@ -80,6 +80,14 @@ struct Observed {
     revisions: u64,
     prefix_bytes: u64,
     dss_decode_bytes: u64,
+    stream_decode_bytes: u64,
+    stream_header_tokens: u64,
+    pdf_depth: u64,
+    security_name_hops: u64,
+    reference_hops: u64,
+    dss_reference_work: u64,
+    field_tree_work: u64,
+    contents_bytes: u64,
 }
 
 impl Observed {
@@ -109,6 +117,17 @@ impl Observed {
             (EngineLimit::SealRevisions, self.revisions),
             (EngineLimit::SealPrefixBytes, self.prefix_bytes),
             (EngineLimit::SealDssDecodeBytes, self.dss_decode_bytes),
+            (EngineLimit::SealStreamDecodeBytes, self.stream_decode_bytes),
+            (
+                EngineLimit::SealStreamHeaderTokens,
+                self.stream_header_tokens,
+            ),
+            (EngineLimit::SealPdfDepth, self.pdf_depth),
+            (EngineLimit::SealSecurityNameHops, self.security_name_hops),
+            (EngineLimit::SealReferenceHops, self.reference_hops),
+            (EngineLimit::SealDssReferenceWork, self.dss_reference_work),
+            (EngineLimit::SealFieldTreeWork, self.field_tree_work),
+            (EngineLimit::SealContentsBytes, self.contents_bytes),
         ] {
             vault.measure_limit(row, measured);
         }

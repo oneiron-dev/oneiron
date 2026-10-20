@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 105] = [
+    pub const ALL: [Self; 113] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -90,6 +90,14 @@ impl EngineLimit {
         Self::SealTsaBytes,
         Self::SealReportJsonBytes,
         Self::SealPreparedStreamBytes,
+        Self::SealStreamDecodeBytes,
+        Self::SealStreamHeaderTokens,
+        Self::SealPdfDepth,
+        Self::SealSecurityNameHops,
+        Self::SealReferenceHops,
+        Self::SealDssReferenceWork,
+        Self::SealFieldTreeWork,
+        Self::SealContentsBytes,
         Self::OrganAsks,
         Self::OrganAskPerVerb,
         Self::OrganAnswerBytes,
@@ -200,6 +208,14 @@ impl EngineLimit {
             Self::SealTsaBytes => "limits.seal_tsa_bytes",
             Self::SealReportJsonBytes => "limits.seal_report_json_bytes",
             Self::SealPreparedStreamBytes => "limits.seal_prepared_stream_bytes",
+            Self::SealStreamDecodeBytes => "limits.seal_stream_decode_bytes",
+            Self::SealStreamHeaderTokens => "limits.seal_stream_header_tokens",
+            Self::SealPdfDepth => "limits.seal_pdf_depth",
+            Self::SealSecurityNameHops => "limits.seal_security_name_hops",
+            Self::SealReferenceHops => "limits.seal_reference_hops",
+            Self::SealDssReferenceWork => "limits.seal_dss_reference_work",
+            Self::SealFieldTreeWork => "limits.seal_field_tree_work",
+            Self::SealContentsBytes => "limits.seal_contents_bytes",
             Self::OrganAsks => "limits.organ_asks",
             Self::OrganAskPerVerb => "limits.organ_ask_per_verb",
             Self::OrganAnswerBytes => "limits.organ_answer_bytes",
@@ -351,6 +367,18 @@ impl EngineLimit {
             Self::SealTsaBytes => 1 << 20,
             Self::SealReportJsonBytes => 8 << 20,
             Self::SealPreparedStreamBytes => 64 << 20,
+            // The native PDF ceilings the seal refused past before Rule 5:
+            // one stream's decode, the /Length header lexer, lexical depth,
+            // the security-name and lopdf reference chains, DSS coverage and
+            // field-tree work, and the contents ladder's last rung.
+            Self::SealStreamDecodeBytes => 256 << 20,
+            Self::SealStreamHeaderTokens => 4096,
+            Self::SealPdfDepth => 64,
+            Self::SealSecurityNameHops => 8,
+            Self::SealReferenceHops => 128,
+            Self::SealDssReferenceWork => 16_384,
+            Self::SealFieldTreeWork => 16_384,
+            Self::SealContentsBytes => 256 << 10,
             Self::OrganAsks => 32,
             Self::OrganAskPerVerb => 32,
             Self::OrganAnswerBytes => 16 << 20,

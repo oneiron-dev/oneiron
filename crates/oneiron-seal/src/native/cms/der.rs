@@ -73,7 +73,10 @@ impl<'a> DerReader<'a> {
         self.pos >= self.buf.len()
     }
 
-    /// Strict DER read: rejects indefinite and non-minimal lengths.
+    /// Strict DER read: rejects indefinite and non-minimal lengths. A long
+    /// form length may take as many octets as the native word holds, its
+    /// representation bound (Rule 5: no fixed four), and the content must
+    /// then fit the input.
     pub(crate) fn read(&mut self) -> Result<Tlv<'a>, SealError> {
         let start = self.pos;
         if self.buf.len() < start + 2 {
@@ -85,7 +88,7 @@ impl<'a> DerReader<'a> {
             (usize::from(first_len), 2)
         } else {
             let n = usize::from(first_len & 0x7F);
-            if n == 0 || n > 4 || self.buf.len() < start + 2 + n {
+            if n == 0 || n > std::mem::size_of::<usize>() || self.buf.len() < start + 2 + n {
                 return Err(cms_err());
             }
             if self.buf[start + 2] == 0 {

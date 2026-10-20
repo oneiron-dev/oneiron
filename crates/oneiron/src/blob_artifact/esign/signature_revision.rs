@@ -60,26 +60,29 @@ impl EsignSealInput {
 }
 
 /// The bytes the largest stream lopdf decoded while it read `doc` came to:
-/// an object stream's or a cross-reference stream's, the ones it decodes
-/// as it loads. Each decoded within the codec bound, or the read failed.
+/// an object stream's, which it leaves decoded in place, or a
+/// cross-reference stream's, decoded again here to be measured. Each
+/// decoded within the codec bound, or the read failed.
 fn largest_decoded_stream(doc: &Document) -> u64 {
     doc.objects
         .values()
         .filter_map(|object| object.as_stream().ok())
-        .filter(|stream| {
+        .filter_map(|stream| {
             let kind = stream
                 .dict
                 .get(b"Type")
                 .ok()
                 .and_then(|kind| kind.as_name().ok());
-            matches!(kind, Some(b"ObjStm" | b"XRef"))
+            match kind {
+                Some(b"ObjStm") if !stream.is_compressed() => Some(stream.content.len()),
+                Some(b"ObjStm" | b"XRef") => stream
+                    .decompressed_content_with_limit(STREAM_CODEC_BYTES)
+                    .ok()
+                    .map(|content| content.len()),
+                _ => None,
+            }
         })
-        .filter_map(|stream| {
-            stream
-                .decompressed_content_with_limit(STREAM_CODEC_BYTES)
-                .ok()
-        })
-        .map(|content| content.len() as u64)
+        .map(|len| len as u64)
         .max()
         .unwrap_or(0)
 }

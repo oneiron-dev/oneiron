@@ -13,42 +13,66 @@ pub(super) const BYTERANGE_DIGITS: usize = 20;
 
 /// Serialize the subset of PDF objects the writer re-emits (catalog and
 /// AcroForm updates). Streams are never re-emitted; existing stream objects
-/// stay reachable by reference.
+/// stay reachable by reference. Arrays and dictionaries nest to any depth
+/// the reader accepted: what is left to write waits on an explicit stack,
+/// never the call stack (Rule 5).
 fn write_object(obj: &Object, out: &mut Vec<u8>) -> Result<(), SealError> {
-    match obj {
-        Object::Null => out.extend_from_slice(b"null"),
-        Object::Boolean(b) => out.extend_from_slice(if *b { b"true" } else { b"false" }),
-        Object::Integer(i) => out.extend_from_slice(i.to_string().as_bytes()),
-        Object::Real(r) => write_real(*r, out)?,
-        Object::Name(n) => write_name(n, out),
-        Object::String(s, StringFormat::Literal) => write_literal_bytes(s, out),
-        Object::String(s, StringFormat::Hexadecimal) => write_hex_string(s, out),
-        Object::Array(a) => {
-            out.push(b'[');
-            for (i, item) in a.iter().enumerate() {
-                if i > 0 {
-                    out.push(b' ');
+    let mut pending = vec![Emit::Value(obj)];
+    while let Some(step) = pending.pop() {
+        let value = match step {
+            Emit::Value(value) => value,
+            Emit::Key(name) => {
+                write_name(name, out);
+                continue;
+            }
+            Emit::Text(text) => {
+                out.extend_from_slice(text);
+                continue;
+            }
+        };
+        match value {
+            Object::Null => out.extend_from_slice(b"null"),
+            Object::Boolean(b) => out.extend_from_slice(if *b { b"true" } else { b"false" }),
+            Object::Integer(i) => out.extend_from_slice(i.to_string().as_bytes()),
+            Object::Real(r) => write_real(*r, out)?,
+            Object::Name(n) => write_name(n, out),
+            Object::String(s, StringFormat::Literal) => write_literal_bytes(s, out),
+            Object::String(s, StringFormat::Hexadecimal) => write_hex_string(s, out),
+            Object::Array(a) => {
+                out.push(b'[');
+                pending.push(Emit::Text(b"]"));
+                for (i, item) in a.iter().enumerate().rev() {
+                    pending.push(Emit::Value(item));
+                    if i > 0 {
+                        pending.push(Emit::Text(b" "));
+                    }
                 }
-                write_object(item, out)?;
             }
-            out.push(b']');
-        }
-        Object::Dictionary(d) => {
-            out.extend_from_slice(b"<< ");
-            for (k, v) in d {
-                write_name(k, out);
-                out.push(b' ');
-                write_object(v, out)?;
-                out.push(b' ');
+            Object::Dictionary(d) => {
+                out.extend_from_slice(b"<< ");
+                pending.push(Emit::Text(b">>"));
+                for (k, v) in d.iter().rev() {
+                    pending.push(Emit::Text(b" "));
+                    pending.push(Emit::Value(v));
+                    pending.push(Emit::Text(b" "));
+                    pending.push(Emit::Key(k));
+                }
             }
-            out.extend_from_slice(b">>");
+            Object::Reference(r) => {
+                out.extend_from_slice(format!("{} {} R", r.0, r.1).as_bytes());
+            }
+            Object::Stream(_) => return Err(fatal_pdf(FatalCode::PdfInvariantFailed)),
         }
-        Object::Reference(r) => {
-            out.extend_from_slice(format!("{} {} R", r.0, r.1).as_bytes());
-        }
-        Object::Stream(_) => return Err(fatal_pdf(FatalCode::PdfInvariantFailed)),
     }
     Ok(())
+}
+
+/// One step [`write_object`] has left: a value, a dictionary key, or the
+/// separator or closing delimiter between them.
+enum Emit<'a> {
+    Value(&'a Object),
+    Key(&'a [u8]),
+    Text(&'static [u8]),
 }
 
 /// A real as the same real: the shortest decimal that reads back as the

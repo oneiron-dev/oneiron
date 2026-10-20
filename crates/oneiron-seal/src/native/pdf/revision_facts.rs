@@ -2,18 +2,18 @@
 //!
 //! A clean renewal requires a complete raw inventory reconciled with the
 //! strict semantic parse; a lexical ambiguity never becomes an empty set.
-//! Revisions, prefix bytes, raw definitions and structural tokens are
-//! counted, never capped (Rule 5): the host measures each against its
-//! `[limits]` row.
+//! Revisions, prefix bytes, raw definitions, structural tokens, each
+//! stream header's tokens and each decoded stream are counted, never capped
+//! (Rule 5): the host measures each against its `[limits]` row.
 
 use super::{
-    last_startxref,
+    decode, last_startxref,
     lex::{Kind, LexError, PdfLexer, Token, stream_delimiter},
-    revision_ends,
+    revision_ends, walk,
 };
-use crate::api::{Counter, STREAM_DECODE_BYTES, SealResourceLimits};
+use crate::api::{Counter, SealResourceLimits};
 use lopdf::{
-    Document, LoadOptions, ObjectId,
+    Document, ObjectId,
     xref::{XrefEntry, XrefType},
 };
 use std::{
@@ -30,7 +30,6 @@ pub(crate) enum RevisionAnalysisError {
 impl From<LexError> for RevisionAnalysisError {
     fn from(err: LexError) -> Self {
         match err {
-            LexError::WorkLimit => Self::Limit,
             LexError::Malformed => Self::Framing,
         }
     }
@@ -102,13 +101,8 @@ impl RevisionFacts {
 }
 
 fn strict(bytes: &[u8], limits: &SealResourceLimits) -> Result<Document, RevisionAnalysisError> {
-    let options = LoadOptions {
-        strict: true,
-        max_decompressed_size: Some(STREAM_DECODE_BYTES),
-        ..LoadOptions::default()
-    };
-    let doc = Document::load_mem_with_options(bytes, options)
-        .map_err(|_| RevisionAnalysisError::Framing)?;
+    let doc =
+        decode::load_strict(bytes, &limits.observed).map_err(|_| RevisionAnalysisError::Framing)?;
     limits.observed.note(Counter::PdfObjects, doc.objects.len());
     // The ISO object bound, the one count a PDF cannot pass.
     if doc.objects.len() > limits.max_pdf_objects {
@@ -137,7 +131,43 @@ fn stream_span(
     // `Stream.content` for object streams, so its length cannot frame the
     // original bytes. Direct lengths are bound to this definition's header.
     // An indirect length is resolved only when this stream is xref-selected.
-    let mut lex = PdfLexer::new(bytes, object_start, 4096);
+    // The header is lexed whole however many tokens it holds; they are
+    // counted, on a failed read too.
+    let mut lex = PdfLexer::new(bytes, object_start);
+    let length = declared_length(bytes, &mut lex, &header, object_start, doc, id);
+    limits
+        .observed
+        .note(Counter::StreamHeaderTokens, lex.work());
+    let length = length?;
+    if length > limits.max_input_bytes {
+        return Err(RevisionAnalysisError::Limit);
+    }
+    let end = begin
+        .checked_add(length)
+        .ok_or(RevisionAnalysisError::Limit)?;
+    if bytes.get(begin..end).is_none()
+        || !bytes.get(end..).is_some_and(|tail| {
+            tail.starts_with(b"\nendstream")
+                || tail.starts_with(b"\r\nendstream")
+                || tail.starts_with(b"\rendstream")
+                || tail.starts_with(b"endstream")
+        })
+    {
+        return Err(RevisionAnalysisError::Framing);
+    }
+    Ok(begin..end)
+}
+
+/// The `/Length` of the stream dictionary `lex` reads from its definition's
+/// start up to the `stream` keyword `header`.
+fn declared_length(
+    bytes: &[u8],
+    lex: &mut PdfLexer<'_>,
+    header: &Token<'_>,
+    object_start: usize,
+    doc: &Document,
+    id: ObjectId,
+) -> Result<usize, RevisionAnalysisError> {
     let mut length = None;
     while let Some(t) = lex.next()? {
         if t.span.start >= header.span.start {
@@ -158,7 +188,7 @@ fn stream_span(
             // A PDF stream may reference a separate /Length object. Bind
             // that value to this strict revision snapshot, never a future
             // document state or an unindexed shadow definition.
-            let mut lookahead = PdfLexer::new(bytes, lex.at, 3);
+            let mut lookahead = PdfLexer::new(bytes, lex.at);
             let second = lookahead.next()?;
             let third = lookahead.next()?;
             let indirect =
@@ -182,9 +212,7 @@ fn stream_span(
                     .and_then(|t| std::str::from_utf8(t.value).ok()?.parse::<u16>().ok())
                     .ok_or(RevisionAnalysisError::UnresolvedStream)?;
                 let num = u32::try_from(n).map_err(|_| RevisionAnalysisError::UnresolvedStream)?;
-                let value = doc
-                    .get_object((num, generation))
-                    .ok()
+                let value = walk::resolve_id(doc, (num, generation))
                     .and_then(|o| o.as_i64().ok())
                     .and_then(|v| usize::try_from(v).ok())
                     .ok_or(RevisionAnalysisError::UnresolvedStream)?;
@@ -194,24 +222,7 @@ fn stream_span(
             }
         }
     }
-    let length = length.ok_or(RevisionAnalysisError::UnresolvedStream)?;
-    if length > limits.max_input_bytes {
-        return Err(RevisionAnalysisError::Limit);
-    }
-    let end = begin
-        .checked_add(length)
-        .ok_or(RevisionAnalysisError::Limit)?;
-    if bytes.get(begin..end).is_none()
-        || !bytes.get(end..).is_some_and(|tail| {
-            tail.starts_with(b"\nendstream")
-                || tail.starts_with(b"\r\nendstream")
-                || tail.starts_with(b"\rendstream")
-                || tail.starts_with(b"endstream")
-        })
-    {
-        return Err(RevisionAnalysisError::Framing);
-    }
-    Ok(begin..end)
+    length.ok_or(RevisionAnalysisError::UnresolvedStream)
 }
 
 /// Every raw definition between `start` and `end`, and the tokens lexing
@@ -224,7 +235,7 @@ fn definitions(
     xref_offset: usize,
     limits: &SealResourceLimits,
 ) -> Result<(Vec<ObjectDefinition>, usize), RevisionAnalysisError> {
-    let mut lexer = PdfLexer::new(bytes, start, usize::MAX);
+    let mut lexer = PdfLexer::new(bytes, start);
     let mut first: Option<Token<'_>> = None;
     let mut second: Option<Token<'_>> = None;
     let mut current: Option<(ObjectId, usize, Option<Range<usize>>)> = None;
@@ -308,6 +319,7 @@ pub(crate) fn analyze(
     if bytes.len() > limits.max_input_bytes {
         return Err(RevisionAnalysisError::Limit);
     }
+    let _analysis = limits.observed.enter();
     let final_doc = strict(bytes, limits)?;
     let ends = revision_ends(bytes, &final_doc, limits).ok_or(RevisionAnalysisError::Framing)?;
     limits.observed.note(Counter::Revisions, ends.len());

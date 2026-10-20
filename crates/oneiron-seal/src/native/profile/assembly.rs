@@ -5,9 +5,9 @@ use std::sync::Arc;
 use rsa::rand_core::RngCore;
 
 use crate::api::{
-    FetchMethod, FetchPurpose, FetchRequest, PadesProfile, PreparedRevision, ProfileDegradeReason,
-    SealBackend, SealConfig, SealFetcher, SealWarning, Sha256Digest, SignRevisionRequest,
-    SignatureAlgorithm, SigningIdentity,
+    Counter, FetchMethod, FetchPurpose, FetchRequest, PadesProfile, PreparedRevision,
+    ProfileDegradeReason, SealBackend, SealConfig, SealFetcher, SealWarning, Sha256Digest,
+    SignRevisionRequest, SignatureAlgorithm, SigningIdentity,
 };
 use crate::error::{FatalCode, RetryableCode, SealError, SealStage};
 
@@ -15,8 +15,35 @@ use super::super::{cms, pdf, tsp};
 use super::dss::append_dss;
 use super::material::{gather_validation_material, trust_anchors};
 
-/// `/Contents` DER capacity ladder in bytes (§7.2 rule 5).
+/// `/Contents` DER capacity ladder in bytes (§7.2 rule 5): the first
+/// capacities a revision this engine writes tries. Past the last, a
+/// signature or document timestamp the engine writes grows its hole to what
+/// its DER needs (Rule 5); a revision the caller wrote holds only its own.
 pub(crate) const CAPACITY_LADDER: [usize; 3] = [64 * 1024, 128 * 1024, 256 * 1024];
+
+/// The capacity to try after `capacity` held too little for `needed` DER
+/// bytes: the ladder's next rung, or past the ladder the larger of twice
+/// `capacity` and `needed` to the next power of two, so a fresh signature
+/// or token a few bytes longer than the last still fits. `None` past the
+/// ladder for a revision the caller wrote.
+fn next_capacity(capacity: usize, needed: usize, grows: bool) -> Option<usize> {
+    match CAPACITY_LADDER.iter().find(|rung| **rung > capacity) {
+        Some(rung) => Some(*rung),
+        None if grows => Some(
+            capacity
+                .saturating_mul(2)
+                .max(needed.checked_next_power_of_two().unwrap_or(usize::MAX)),
+        ),
+        None => None,
+    }
+}
+
+/// What one capacity's attempt came to: the signed revision, or the DER
+/// bytes it needed and its hole could not hold.
+enum Fit<T> {
+    Signed(T),
+    Short(usize),
+}
 
 /// Everything the profile assembler needs, bundled to keep signatures small.
 pub(crate) struct SealContext<'a> {
@@ -199,10 +226,10 @@ fn supplied_draft(
     ))
 }
 
-/// Build the signature revision at one capacity, returning `Ok(None)` when
-/// the CMS does not fit and the caller must rebuild at the next capacity.
-/// With `revisions`, the caller's revision of that capacity is signed and
-/// none is written here.
+/// Build the signature revision at one capacity, returning the DER bytes
+/// the CMS needed when it does not fit and the caller must rebuild at a
+/// larger capacity. With `revisions`, the caller's revision of that
+/// capacity is signed and none is written here.
 #[allow(clippy::too_many_arguments)]
 async fn try_capacity(
     ctx: &SealContext<'_>,
@@ -213,7 +240,7 @@ async fn try_capacity(
     identity: &SigningIdentity,
     target: PadesProfile,
     capacity: usize,
-) -> Result<Option<SignedCandidate>, SealError> {
+) -> Result<Fit<SignedCandidate>, SealError> {
     let (revision_id, mut draft) = if revisions.is_empty() {
         let kind = pdf::RevisionKind::Signature {
             field_name: pdf::field_name_for(operation_id),
@@ -262,12 +289,16 @@ async fn try_capacity(
         chain_ders: &identity.certificate_chain_der,
     };
     let cms_der = cms::build_signed_data(&material, &wire, &signature, &unsigned);
+    ctx.config
+        .resource_limits
+        .observed
+        .note(Counter::ContentsBytes, cms_der.len());
     match pdf::patch_contents(&mut draft, &cms_der) {
-        Ok(()) => Ok(Some(SignedCandidate { draft, token })),
+        Ok(()) => Ok(Fit::Signed(SignedCandidate { draft, token })),
         Err(SealError::Fatal {
             code: FatalCode::ContentsCapacityExceeded,
             ..
-        }) => Ok(None),
+        }) => Ok(Fit::Short(cms_der.len())),
         Err(e) => Err(e),
     }
 }
@@ -285,12 +316,15 @@ fn degrade_warning(
 }
 
 /// Append the DocTimeStamp revision for B-LTA (§7.6). `Ok(None)` means the
-/// archival timestamp could not be produced; caller degrades to B-LT.
+/// archival timestamp could not be produced; caller degrades to B-LT. The
+/// engine writes this revision, so past the ladder its hole grows to the
+/// token's size and a fresh token is fetched for it (Rule 5).
 async fn append_doc_timestamp(
     bytes: &[u8],
     ctx: &SealContext<'_>,
 ) -> Result<Option<Vec<u8>>, SealError> {
-    for capacity in CAPACITY_LADDER {
+    let mut capacity = CAPACITY_LADDER[0];
+    loop {
         let state = pdf::reparse_revision(bytes, &ctx.config.resource_limits)?;
         let mut draft = pdf::append_revision(
             bytes,
@@ -306,19 +340,25 @@ async fn append_doc_timestamp(
         let Some(token) = fetch_timestamp_token(ctx, &imprint).await? else {
             return Ok(None);
         };
+        let needed = token.content_info_der.len();
+        ctx.config
+            .resource_limits
+            .observed
+            .note(Counter::ContentsBytes, needed);
         match pdf::patch_contents(&mut draft, &token.content_info_der) {
             Ok(()) => return Ok(Some(draft.bytes)),
             Err(SealError::Fatal {
                 code: FatalCode::ContentsCapacityExceeded,
                 ..
-            }) => continue,
+            }) => {
+                capacity = next_capacity(capacity, needed, true).ok_or(SealError::Fatal {
+                    stage: SealStage::DocumentTimestamp,
+                    code: FatalCode::ContentsCapacityExceeded,
+                })?;
+            }
             Err(e) => return Err(e),
         }
     }
-    Err(SealError::Fatal {
-        stage: SealStage::DocumentTimestamp,
-        code: FatalCode::ContentsCapacityExceeded,
-    })
 }
 
 /// Full profile assembly (§7). Always produces at least B-B or an error;
@@ -340,9 +380,12 @@ pub(crate) async fn assemble(
         });
     }
     let input_sha = cms::sha256(&prepared.bytes);
-    let mut candidate = None;
-    for capacity in CAPACITY_LADDER {
-        candidate = try_capacity(
+    // Each capacity is a fresh revision, signed once under its own derived
+    // operation id. A revision this engine writes grows past the ladder; the
+    // caller's revisions hold only the capacities it wrote.
+    let mut capacity = CAPACITY_LADDER[0];
+    let SignedCandidate { draft, token } = loop {
+        match try_capacity(
             ctx,
             prepared,
             revisions,
@@ -352,15 +395,19 @@ pub(crate) async fn assemble(
             target,
             capacity,
         )
-        .await?;
-        if candidate.is_some() {
-            break;
+        .await?
+        {
+            Fit::Signed(candidate) => break candidate,
+            Fit::Short(needed) => {
+                capacity = next_capacity(capacity, needed, revisions.is_empty()).ok_or(
+                    SealError::Fatal {
+                        stage: SealStage::PdfIncrementalUpdate,
+                        code: FatalCode::ContentsCapacityExceeded,
+                    },
+                )?;
+            }
         }
-    }
-    let SignedCandidate { draft, token } = candidate.ok_or(SealError::Fatal {
-        stage: SealStage::PdfIncrementalUpdate,
-        code: FatalCode::ContentsCapacityExceeded,
-    })?;
+    };
     let mut warnings = Vec::new();
     let mut achieved = PadesProfile::BaselineB;
     if token.is_some() {

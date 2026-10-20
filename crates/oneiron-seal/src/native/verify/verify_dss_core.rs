@@ -2,7 +2,7 @@
 
 use lopdf::{Document, Object};
 
-use crate::api::{VerifyCheckKind, VerifyFindingCode};
+use crate::api::{Counter, VerifyCheckKind, VerifyFindingCode, note_current};
 
 use super::super::pdf;
 use super::verify_revocation::{crl_entry_valid, issued_by, ocsp_entry_valid};
@@ -23,10 +23,11 @@ use super::verify_sig_pipeline::Checks;
 /// Invalid so a `/DSS` hidden inside it cannot dodge the failed-evidence
 /// classification.
 ///
-/// Each DSS stream decodes under `max_stream_bytes`, the per-stream codec
-/// bound; the material is read whole however much it decodes to in all
-/// (Rule 5). Returns the bytes this extraction decoded, for the `[limits]`
-/// DSS-decode row.
+/// Each DSS stream decodes under `max_stream_bytes`, the per-stream bound
+/// the caller sets (the verifier sets none: every stream decodes whole);
+/// the material is read whole however much it decodes to in all (Rule 5).
+/// Returns the bytes this extraction decoded, for the `[limits]` DSS-decode
+/// row; the largest single stream goes to the running analysis's counts.
 pub(super) fn verify_dss(
     doc: &Document,
     anchors: &[EmbeddedCert],
@@ -58,9 +59,9 @@ fn check_dss(
     decoded: &mut usize,
     checks: &mut Checks,
 ) {
-    let catalog = match doc.catalog() {
-        Ok(c) => c,
-        Err(_) => {
+    let catalog = match pdf::catalog(doc) {
+        Some(c) => c,
+        None => {
             if doc.trailer.has(b"Root") {
                 checks.record(
                     VerifyCheckKind::ValidationMaterial,
@@ -77,10 +78,7 @@ fn check_dss(
         checks.absent(VerifyCheckKind::ValidationMaterial);
         return;
     };
-    let dss = doc
-        .dereference(dss_obj)
-        .ok()
-        .and_then(|(_, o)| o.as_dict().ok());
+    let dss = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok());
     let Some(dss) = dss else {
         checks.record(
             VerifyCheckKind::ValidationMaterial,
@@ -252,9 +250,10 @@ pub(super) enum DssArray {
 /// Extract the decoded stream contents of one DSS array. Filtered streams
 /// (e.g. a FlateDecode-wrapped CRL) are decoded through the bounded
 /// decompression path; a malformed filter, a failed decode, or one stream
-/// expanding past `max_stream_bytes` (the per-stream codec bound) is
-/// Malformed, never a silent skip. Every decoded length is added to
-/// `decoded`, the extraction's total, which no bound stops.
+/// expanding past `max_stream_bytes` (a bound only a caller that sets one
+/// holds; the verifier decodes whole) is Malformed, never a silent skip.
+/// Every decoded length is added to `decoded`, the extraction's total,
+/// which no bound stops, and noted as one stream's.
 pub(super) fn dss_array(
     doc: &Document,
     dss: &lopdf::Dictionary,
@@ -265,68 +264,58 @@ pub(super) fn dss_array(
     let Ok(arr_obj) = dss.get(key) else {
         return DssArray::Absent;
     };
-    let Some(arr) = doc
-        .dereference(arr_obj)
-        .ok()
-        .and_then(|(_, o)| o.as_array().ok())
-    else {
+    let Some(arr) = pdf::resolve(doc, arr_obj).and_then(|o| o.as_array().ok()) else {
         return DssArray::Malformed;
     };
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
-        let Some(stream) = doc
-            .dereference(item)
-            .ok()
-            .and_then(|(_, o)| o.as_stream().ok())
-        else {
+        let Some(stream) = pdf::resolve(doc, item).and_then(|o| o.as_stream().ok()) else {
             return DssArray::Malformed;
         };
         let Ok(data) = stream.decompressed_content_with_limit(max_stream_bytes) else {
             return DssArray::Malformed;
         };
+        note_current(Counter::StreamDecodeBytes, data.len());
         *decoded = decoded.saturating_add(data.len());
         out.push(data);
     }
     DssArray::Entries(out)
 }
 
-/// Total reference-chain traversal budget across every `/DSS` array in one
-/// `dss_revision_end` evaluation. Chains are followed per array OCCURRENCE,
-/// so N repetitions of one deep chain must not multiply work without bound:
-/// past this many total hops the measurement fails closed.
-pub(super) const MAX_REFERENCE_WORK: usize = 16_384;
-
-/// Follow a reference chain exactly as `Document::dereference` does at
-/// evaluation time, recording every traversed object id (link and target
-/// alike) into a set shared across all chains — repetitions of one chain
-/// collapse to its unique objects, so the id set can never expand past the
-/// document's object count no matter how often a chain appears in the DSS
-/// arrays. `work` accumulates hops across every chain and fails closed past
-/// [`MAX_REFERENCE_WORK`]. `None` on a dangling, cyclic, or over-limit
-/// chain: coverage of the terminal object is then unprovable and the
-/// caller fails closed. The per-chain hop bound mirrors lopdf's
-/// dereference limit (128); a chain the evaluator would reject as
-/// over-limit is unprovable here too.
+/// Follow a reference chain exactly as the evaluation's resolver does,
+/// recording every traversed object id (link and target alike) into a set
+/// shared across all chains, so repetitions of one chain collapse to its
+/// unique objects. A chain is followed whole however long (Rule 5): a link
+/// met twice in this chain is a cycle, and a missing object a dangling
+/// link; either leaves the terminal object's coverage unprovable (`None`)
+/// and the caller fails closed. An id already in `ids` was reached by a
+/// chain collected whole before, so the rest of this one is there too: the
+/// walk stops at it, and N occurrences of one deep chain cost N steps, not
+/// N times its length. `work` counts the steps of every chain, for the
+/// `[limits]` DSS reference-work row.
 pub(super) fn collect_reference_chain(
     doc: &Document,
     id: lopdf::ObjectId,
     ids: &mut std::collections::BTreeSet<lopdf::ObjectId>,
     work: &mut usize,
 ) -> Option<()> {
+    let mut chain = std::collections::BTreeSet::new();
     let mut current = id;
-    for _ in 0..128 {
-        *work = work.checked_add(1)?;
-        if *work > MAX_REFERENCE_WORK {
+    loop {
+        *work = work.saturating_add(1);
+        if ids.contains(&current) {
+            break;
+        }
+        if !chain.insert(current) {
             return None;
         }
-        ids.insert(current);
-        let obj = doc.objects.get(&current)?;
-        let Ok(next) = obj.as_reference() else {
-            return Some(());
+        let Ok(next) = doc.objects.get(&current)?.as_reference() else {
+            break;
         };
         current = next;
     }
-    None
+    ids.extend(chain);
+    Some(())
 }
 
 /// Byte offset the effective `/DSS` revision provably ends before: the
@@ -343,45 +332,17 @@ pub(super) fn collect_reference_chain(
 /// timestamp.
 ///
 /// The measured id set must mirror the EVALUATION dereference paths exactly:
-/// `Document::dereference` follows reference CHAINS, so every traversed
+/// the shared resolver follows reference CHAINS whole, so every traversed
 /// object is collected — a bare-reference link collected without its target
 /// would let terminal evidence sit past the measured offsets, planted in a
-/// revision no DocTimeStamp attests (probe_c regression).
+/// revision no DocTimeStamp attests (probe_c regression). The evaluation
+/// and this measurement resolve through the same uncapped walk, so neither
+/// stops where the other goes on.
 pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
-    let catalog = doc.catalog().ok()?;
-    let dss_obj = catalog.get(b"DSS").ok()?;
-    let mut ids: std::collections::BTreeSet<lopdf::ObjectId> = std::collections::BTreeSet::new();
     let mut work = 0usize;
-    if let Ok(root) = doc.trailer.get(b"Root").and_then(Object::as_reference) {
-        collect_reference_chain(doc, root, &mut ids, &mut work)?;
-    }
-    if let Object::Reference(id) = dss_obj {
-        collect_reference_chain(doc, *id, &mut ids, &mut work)?;
-    }
-    let dss = doc
-        .dereference(dss_obj)
-        .ok()
-        .and_then(|(_, o)| o.as_dict().ok())?;
-    for key in [b"Certs".as_slice(), b"OCSPs".as_slice(), b"CRLs".as_slice()] {
-        let Ok(arr_obj) = dss.get(key) else {
-            continue;
-        };
-        if let Object::Reference(id) = arr_obj {
-            collect_reference_chain(doc, *id, &mut ids, &mut work)?;
-        }
-        let Some(arr) = doc
-            .dereference(arr_obj)
-            .ok()
-            .and_then(|(_, o)| o.as_array().ok())
-        else {
-            continue;
-        };
-        for item in arr {
-            if let Object::Reference(id) = item {
-                collect_reference_chain(doc, *id, &mut ids, &mut work)?;
-            }
-        }
-    }
+    let collected = dss_object_ids(doc, &mut work);
+    note_current(Counter::DssReferenceWork, work);
+    let ids = collected?;
     let mut newest = None;
     for (num, generation) in ids {
         match doc.reference_table.get(num) {
@@ -406,4 +367,41 @@ pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
         .filter(|o| *o > newest)
         .min()
         .or_else(|| pdf::last_startxref(bytes).ok())
+}
+
+/// Every object id the effective `/DSS` reaches through the chains the
+/// evaluation follows: the trailer's `/Root` and catalog, the `/DSS`
+/// dictionary, and its `/Certs` `/OCSPs` `/CRLs` arrays and their entries.
+/// `work` counts the reference steps taken, on a failed measurement too.
+fn dss_object_ids(
+    doc: &Document,
+    work: &mut usize,
+) -> Option<std::collections::BTreeSet<lopdf::ObjectId>> {
+    let catalog = pdf::catalog(doc)?;
+    let dss_obj = catalog.get(b"DSS").ok()?;
+    let mut ids: std::collections::BTreeSet<lopdf::ObjectId> = std::collections::BTreeSet::new();
+    if let Ok(root) = doc.trailer.get(b"Root").and_then(Object::as_reference) {
+        collect_reference_chain(doc, root, &mut ids, work)?;
+    }
+    if let Object::Reference(id) = dss_obj {
+        collect_reference_chain(doc, *id, &mut ids, work)?;
+    }
+    let dss = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok())?;
+    for key in [b"Certs".as_slice(), b"OCSPs".as_slice(), b"CRLs".as_slice()] {
+        let Ok(arr_obj) = dss.get(key) else {
+            continue;
+        };
+        if let Object::Reference(id) = arr_obj {
+            collect_reference_chain(doc, *id, &mut ids, work)?;
+        }
+        let Some(arr) = pdf::resolve(doc, arr_obj).and_then(|o| o.as_array().ok()) else {
+            continue;
+        };
+        for item in arr {
+            if let Object::Reference(id) = item {
+                collect_reference_chain(doc, *id, &mut ids, work)?;
+            }
+        }
+    }
+    Some(ids)
 }

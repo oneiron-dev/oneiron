@@ -1,8 +1,9 @@
 //! Prepared-input validation (§7.1): object/catalog scans, strict load, xref consistency, and RevisionState extraction.
 
-use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
+use lopdf::{Dictionary, Document, Object, ObjectId};
 
-use crate::api::{Counter, STREAM_DECODE_BYTES, SealResourceLimits};
+use super::{decode, walk};
+use crate::api::{Counter, SealResourceLimits};
 use crate::error::{FatalCode, InputInvalidCode, SealError, SealStage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,33 +55,26 @@ pub(super) fn name_is(obj: &Object, expected: &[u8]) -> bool {
 
 /// Resolve an object to its dictionary, seeing through both plain
 /// dictionaries and STREAM dictionaries: a security-slot name hidden in a
-/// stream object's dict must not bypass the prepared-input scan.
+/// stream object's dict must not bypass the prepared-input scan. A chain is
+/// followed whole.
 fn deref_dict<'d>(doc: &'d Document, obj: &'d Object) -> Option<&'d Dictionary> {
-    match doc.dereference(obj).ok()?.1 {
+    match walk::resolve(doc, obj)? {
         Object::Dictionary(d) => Some(d),
         Object::Stream(s) => Some(&s.dict),
         _ => None,
     }
 }
 
-/// Resolve bounded indirection for security-critical name slots: `/Type`,
+/// Resolve the indirection of security-critical name slots: `/Type`,
 /// `/FT`, and `/S` hidden behind a reference chain must still be compared
-/// against the denied names (§7.1 rules 6-7, §7.6 closing law). Returns
-/// `None` when the chain dangles or exceeds the 8-reference budget: an
-/// unresolvable security slot is a rejection in the matching violation
-/// class, never a silent non-match (a 9-hop `/S -> … -> /JavaScript`
-/// must not bypass the prepared-input rejection).
-fn resolved<'d>(doc: &'d Document, mut obj: &'d Object) -> Option<&'d Object> {
-    for _ in 0..8 {
-        match obj {
-            Object::Reference(r) => match doc.get_object(*r) {
-                Ok(next) => obj = next,
-                Err(_) => return None,
-            },
-            _ => return Some(obj),
-        }
-    }
-    None
+/// against the denied names (§7.1 rules 6-7, §7.6 closing law), however
+/// many links the chain takes (Rule 5: they are counted, not capped).
+/// Returns `None` when the chain dangles or cycles: an unresolvable
+/// security slot is a rejection in the matching violation class, never a
+/// silent non-match (a long `/S -> … -> /JavaScript` chain must not bypass
+/// the prepared-input rejection).
+fn resolved<'d>(doc: &'d Document, obj: &'d Object) -> Option<&'d Object> {
+    walk::resolve_security_name(doc, obj)
 }
 
 /// Scan every object for prepared-input contract violations (§7.1 rules 6-7).
@@ -169,9 +163,8 @@ fn scan_catalog_mode(
     if root.has(b"AF") {
         return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
     }
-    for page_id in doc.get_pages().values() {
-        if let Ok(page) = doc.get_object(*page_id)
-            && let Ok(page_dict) = page.as_dict()
+    for page_id in walk::pages(doc) {
+        if let Some(page_dict) = walk::dictionary(doc, page_id)
             && page_dict.has(b"AF")
         {
             return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
@@ -194,9 +187,7 @@ fn scan_catalog_mode(
 /// embedded files. Both doors resolve the same reference chains.
 pub(crate) fn analyze_security(doc: &Document, reject_signatures: bool) -> Result<(), SealError> {
     scan_objects_mode(doc, reject_signatures)?;
-    let root = doc
-        .catalog()
-        .map_err(|_| input_invalid(InputInvalidCode::MalformedXref))?;
+    let root = walk::catalog(doc).ok_or_else(|| input_invalid(InputInvalidCode::MalformedXref))?;
     scan_catalog_mode(doc, root, reject_signatures)
 }
 #[cfg(test)]
@@ -269,58 +260,38 @@ pub(super) fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionSta
         _ => None,
     };
     let prev = last_startxref(bytes)?;
-    let pages = doc.get_pages();
-    let first_page = *pages
-        .values()
-        .next()
+    let first_page = walk::pages(doc)
+        .first()
+        .copied()
         .ok_or_else(|| input_invalid(InputInvalidCode::MissingPage))?;
-    let root_dict = doc
-        .get_object(root)
-        .ok()
-        .and_then(|o| o.as_dict().ok())
-        .ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?;
+    let root_dict =
+        walk::dictionary(doc, root).ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?;
     // /AcroForm may be an indirect reference OR a direct dictionary; both
     // shapes must survive signing with their fields intact (a direct dict
     // treated as absent would be clobbered by a fresh AcroForm).
     let (acroform, acroform_dict) = match root_dict.get(b"AcroForm") {
-        Ok(Object::Reference(r)) => {
-            let dict = doc
-                .dereference(&Object::Reference(*r))
-                .ok()
-                .and_then(|(_, o)| o.as_dict().ok())
-                .cloned();
-            (Some(*r), dict)
-        }
+        Ok(Object::Reference(r)) => (Some(*r), walk::dictionary(doc, *r).cloned()),
         Ok(Object::Dictionary(d)) => (None, Some(d.clone())),
         _ => (None, None),
     };
     // /Fields may itself be an INDIRECT array (a valid direct /AcroForm can
-    // hold `/Fields 7 0 R`): dereference through the document — bounded by
-    // lopdf's chain limit — so register_field rewrites the FULL field list.
-    // A present /Fields that does not resolve to an array fails closed:
+    // hold `/Fields 7 0 R`): its chain is followed whole, so register_field
+    // rewrites the FULL field list. A present /Fields that does not resolve
+    // to an array (a dangling or cyclic chain included) fails closed:
     // rewriting an unreadable list would silently orphan every field.
     let acroform_fields = match acroform_dict.as_ref().and_then(|d| d.get(b"Fields").ok()) {
-        Some(f) => doc
-            .dereference(f)
-            .ok()
-            .and_then(|(_, o)| o.as_array().ok().cloned())
+        Some(f) => walk::resolve(doc, f)
+            .and_then(|o| o.as_array().ok().cloned())
             .ok_or_else(|| input_invalid(InputInvalidCode::MalformedXref))?,
         None => Vec::new(),
     };
-    let first_page_dict = doc
-        .get_object(first_page)
-        .ok()
-        .and_then(|o| o.as_dict().ok())
+    let first_page_dict = walk::dictionary(doc, first_page)
         .ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?
         .clone();
     let first_page_annots = first_page_dict
         .get(b"Annots")
         .ok()
-        .and_then(|a| {
-            doc.dereference(a)
-                .ok()
-                .and_then(|(_, o)| o.as_array().ok().cloned())
-        })
+        .and_then(|a| walk::resolve(doc, a).and_then(|o| o.as_array().ok().cloned()))
         .unwrap_or_default();
     // Allocation starts past BOTH the highest referenced object number and
     // the trailer /Size: free or unreferenced numbers below /Size stay out
@@ -375,15 +346,10 @@ pub(super) fn xref_offsets_consistent(doc: &Document, bytes: &[u8]) -> bool {
         })
 }
 
-/// A strict parse, each stream decoded under the per-stream codec bound;
-/// its object count goes to the invocation's counts.
+/// A strict parse, each stream decoded whole; its object count and its
+/// largest stream go to the invocation's counts.
 fn load_strict(bytes: &[u8], limits: &SealResourceLimits) -> Result<Document, SealError> {
-    let options = LoadOptions {
-        strict: true,
-        max_decompressed_size: Some(STREAM_DECODE_BYTES),
-        ..LoadOptions::default()
-    };
-    let doc = Document::load_mem_with_options(bytes, options)
+    let doc = decode::load_strict(bytes, &limits.observed)
         .map_err(|_| input_invalid(InputInvalidCode::MalformedXref))?;
     limits.observed.note(Counter::PdfObjects, doc.objects.len());
     Ok(doc)
@@ -392,11 +358,13 @@ fn load_strict(bytes: &[u8], limits: &SealResourceLimits) -> Result<Document, Se
 /// Full prepared-input validation (§7.1). Rejects instead of signing any
 /// input that violates the upstream preparation contract. On size it
 /// refuses only past the format bounds (`max_input_bytes`, lopdf's u32
-/// offsets; `max_pdf_objects`, ISO 32000-1's object count).
+/// offsets; `max_pdf_objects`, ISO 32000-1's object count); streams,
+/// nesting, reference chains and the page tree are read whole and counted.
 pub(crate) fn validate_prepared(
     bytes: &[u8],
     limits: &SealResourceLimits,
 ) -> Result<PreparedInput, SealError> {
+    let _analysis = limits.observed.enter();
     if bytes.is_empty() {
         return Err(input_invalid(InputInvalidCode::Empty));
     }
@@ -419,7 +387,7 @@ pub(crate) fn validate_prepared(
     if !xref_offsets_consistent(&doc, bytes) {
         return Err(input_invalid(InputInvalidCode::MalformedXref));
     }
-    if doc.get_pages().is_empty() {
+    if walk::pages(&doc).is_empty() {
         return Err(input_invalid(InputInvalidCode::MissingPage));
     }
     analyze_security(&doc, true)?;
@@ -440,6 +408,7 @@ pub(crate) fn reparse_revision(
     bytes: &[u8],
     limits: &SealResourceLimits,
 ) -> Result<RevisionState, SealError> {
+    let _analysis = limits.observed.enter();
     let doc = load_strict(bytes, limits).map_err(|_| fatal_pdf(FatalCode::PdfInvariantFailed))?;
     revision_state(&doc, bytes)
 }
