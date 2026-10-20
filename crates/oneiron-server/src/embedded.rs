@@ -274,10 +274,9 @@ async fn serve_prepared<A: AppHost>(
 /// The owner host serve gives its server: a rehearsal restores into a plain
 /// scratch vault, so its config carries no page seal.
 fn owner_host(config: &ServeConfig) -> crate::owner::schedule::OwnerHost {
-    let mut rehearsal_config = config.vault_config();
+    let mut rehearsal_config = config.base_vault_config();
     rehearsal_config.dict_search_paths =
         crate::commands::resolve_dict_search_paths(&config.dict_search_paths).paths;
-    rehearsal_config.page_seal = None;
     crate::owner::schedule::OwnerHost::from_config(config, rehearsal_config)
 }
 

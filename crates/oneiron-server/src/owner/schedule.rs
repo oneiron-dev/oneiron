@@ -115,6 +115,10 @@ pub(crate) struct OwnerHost {
     /// The managed pass's last decision said that took no backup, `0` for
     /// none (`managed`).
     managed_said: AtomicU8,
+    /// When the managed pass last landed a backup whose marker did not
+    /// write, in unix ms, `0` for none this run: it counts for the hour like
+    /// a recorded one (`managed`, FIX 6731).
+    managed_unrecorded_ms: AtomicU64,
     /// Where the scheduled pass is ([`PassStage`]).
     pass_stage: AtomicU8,
 }
@@ -143,6 +147,7 @@ impl OwnerHost {
             managed_every: None,
             backup_jobs: AtomicU64::new(0),
             managed_said: AtomicU8::new(0),
+            managed_unrecorded_ms: AtomicU64::new(0),
             pass_stage: AtomicU8::new(PassStage::Queued as u8),
         }
     }
