@@ -27704,7 +27704,7 @@
      "purpose": "The publisher training files' crypto (OF-420): the install signature on what the vault writes (C1, D6), the…",
      "surface": {
       "crate-vis": 3,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -27746,13 +27746,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/feedback/conversation_training/link.rs",
      "purpose": "The training link (TRAINING-LINK = C, TL-1): the opaque codes that stand in for this vault, its sources…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -86193,10 +86193,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/conversation_training/account.rs",
-     "purpose": "C1 (CALLS-1): a self-hosted vault's binding to the publisher's intake as the person's Oneiron account…",
+     "path": "src/conversation_training/descriptor.rs",
+     "purpose": "The intake's public descriptor on a self-hosted vault (TL-6): the intake's sealing key and receipt keys…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/http.rs",
+     "purpose": "The anonymous training window's HTTP client (TL-6, CALLS TL6_HTTP_CLIENT): one private blocking client per…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -86206,7 +86216,7 @@
      "path": "src/conversation_training/mod.rs",
      "purpose": "The publisher training outbox (OF-420 A1, \"Learn from my conversations\"): the worker that writes this…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -86216,7 +86226,17 @@
      "path": "src/conversation_training/outbox.rs",
      "purpose": "The outbox directory as the engine's training transport: three protocol subdirectories and the vault's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/retry.rs",
+     "purpose": "The anonymous training window's retry pace (TL-6, CALLS TL6_RETRY_PACE), one per endpoint a self-hosted…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -91140,7 +91160,7 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "conversation_training": {
-     "files": 4,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91471,7 +91491,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 944,
+   "source_files": 946,
    "test_files": 182
   },
   "oneiron-spawn": {
