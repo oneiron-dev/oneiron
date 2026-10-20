@@ -38,6 +38,7 @@ use super::proposals::CodeRevisionWriteOutcome;
 
 use super::types::{CodeRevision, CodeRevisionFork, CodeRevisionFrontierRecord, CodeRevisionKind};
 use crate::error::ArtifactError;
+pub(crate) mod checkpoint;
 
 impl Vault {
     pub fn commit_code_revision(
