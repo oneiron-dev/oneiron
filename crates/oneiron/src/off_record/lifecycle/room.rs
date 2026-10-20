@@ -18,7 +18,7 @@
 //! [`room_session_key`], so a name taken in one room says nothing about
 //! another room, nor about the owner's own 1:1s.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Vault;
 use crate::authority::VerifiedSlip;
@@ -30,7 +30,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
 use crate::memory::MessageResultAttachment;
 use crate::off_record::promote::PromoteOutcome;
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::session_overlay::{JournalEntry, JournalRole};
 use crate::side_table::{self, Raw, SideTable};
 
@@ -285,7 +285,11 @@ impl OffRecordSession<'_> {
 
     /// A copy of the talk for `person`, who is in the room: every turn of the
     /// stretch from the times their membership shows them, saved or not.
-    /// It posts an `exported` notice and writes no vault.
+    /// It posts an `exported` notice. When `person` owns this vault the copy
+    /// is also in its export audit (FIX 6427): one audit row, and a notice
+    /// to the members of each private thread it carries that he is not in,
+    /// written once the stretch is released, never failing the copy. It
+    /// writes nothing else to the vault.
     ///
     /// # Errors
     ///
@@ -301,19 +305,29 @@ impl OffRecordSession<'_> {
         let room = self.require_in_room(person)?;
         let mut state = self.recording_state()?;
         let gathered = self.gather_talk(&state)?;
-        // Who hears the export is read with the sight that admits it.
-        let (windows, hearing) = {
+        // Who hears the export is read with the sight that admits it, and so
+        // is whether its taker owns this vault (FIX 6427).
+        let (windows, hearing, owner) = {
             let txn = self.vault.store.env.read_txn()?;
             let windows = self.sight_in_txn(&txn, room, person, credential)?;
-            (windows, Hearing::in_txn(self.vault, &txn, Some(room)))
+            let owner = crate::memory::owner_copy_in_txn(self.vault, &txn, person);
+            (windows, Hearing::in_txn(self.vault, &txn, Some(room)), owner)
         };
+        let (turns, thread_roots) = gathered.finish_with_roots(Some(windows.as_slice()));
         let talk = OffRecordTalk {
             session_ref: self.session_ref.clone(),
             room: state.record.room,
-            turns: gathered.finish(Some(windows.as_slice())),
+            turns,
         };
         post_notice(&mut state, OffRecordNoticeAct::Exported, person, hearing);
         self.entry.publish_state(&state);
+        drop(state);
+        if owner {
+            crate::memory::record_export(
+                self.vault,
+                crate::memory::ExportCopy::off_record_room(person, thread_roots),
+            );
+        }
         Ok(talk)
     }
 
@@ -367,19 +381,21 @@ impl OffRecordSession<'_> {
     /// this vault (saved, or said while the room was on record) read back
     /// from the vault, and the turns and messages still in the room read from
     /// its journal. [`Talk::finish`] keeps only what a reader's membership
-    /// shows.
+    /// shows. Each turn's thread is read from the turn as it is gathered.
     fn gather_talk(&self, state: &OffRecordSessionEntryState) -> Result<Talk> {
         let mut talk = Talk::default();
         for (message, kept) in &state.kept_messages {
             self.read_kept_message(&mut talk, *message, kept)?;
         }
         let snapshot = self.entry.overlay.snapshot()?;
-        for (turn, at) in snapshot
-            .journal_entries()
-            .iter()
-            .filter_map(|entry| turn_put(entry))
-        {
+        for entry in snapshot.journal_entries() {
+            let Some((turn, at)) = turn_put(entry) else {
+                continue;
+            };
             talk.turn(turn, at, false);
+            if let BatchOp::Put { data, .. } = &entry.op {
+                talk.thread_root(turn, ENTITY_TYPE_TURN, data);
+            }
         }
         for entry in snapshot.journal_entries() {
             match (&entry.role, &entry.op) {
@@ -450,10 +466,11 @@ impl OffRecordSession<'_> {
         let Some(header) = self.vault.read_entity_header(&turn)? else {
             return Ok(());
         };
-        if self.vault.get(&turn)?.is_none() {
+        let Some(turn_body) = self.vault.get(&turn)? else {
             return Ok(());
-        }
+        };
         talk.turn(turn, header.occurred_start, true);
+        talk.thread_root(turn, header.entity_type, &turn_body);
         let (Some(body), Some(header)) = (
             self.vault.get(&message)?,
             self.vault.read_entity_header(&message)?,
@@ -482,6 +499,8 @@ struct Talk {
     turns: BTreeMap<EntityId, OffRecordTalkTurn>,
     /// Each message with when it was said.
     messages: BTreeMap<EntityId, (EntityId, u64, Option<OffRecordTalkMessage>)>,
+    /// The root of the thread each turn is of, by turn (FIX 6427).
+    roots: BTreeMap<[u8; 16], EntityId>,
 }
 
 impl Talk {
@@ -507,6 +526,29 @@ impl Talk {
         if let Some(turn) = self.turns.get_mut(&turn) {
             turn.speaker.get_or_insert(*speaker.as_bytes());
         }
+    }
+
+    /// Notes the root of the thread `turn` is of, read from its stored
+    /// `body`, as the turn is first gathered.
+    fn thread_root(&mut self, turn: EntityId, entity_type: u8, body: &[u8]) {
+        if let Some(root) = crate::memory::turn_thread_root(entity_type, body) {
+            self.roots.entry(*turn.as_bytes()).or_insert(root);
+        }
+    }
+
+    /// [`Self::finish`], beside the root of each thread a turn it keeps is
+    /// of: the threads the copy carries (FIX 6427).
+    fn finish_with_roots(
+        mut self,
+        windows: Option<&[MembershipWindow]>,
+    ) -> (Vec<OffRecordTalkTurn>, BTreeSet<EntityId>) {
+        let roots = std::mem::take(&mut self.roots);
+        let turns = self.finish(windows);
+        let carried = turns
+            .iter()
+            .filter_map(|turn| roots.get(&turn.turn).copied())
+            .collect();
+        (turns, carried)
     }
 
     /// The turns holding a visible message the reader's membership shows at
