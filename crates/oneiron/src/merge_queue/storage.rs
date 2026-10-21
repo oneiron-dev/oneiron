@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// One repo's queue state: a singleton row per repo, keyed by the repo's hex identity.
-const QUEUE_STATE: SideTable<String, QueueRecord, Named> =
+pub(super) const QUEUE_STATE: SideTable<String, QueueRecord, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_STATE);
 
 /// One merge batch, keyed by `{repo_hex}:{batch_id}` exactly as `batch_key` spelled it.
@@ -22,6 +22,18 @@ impl MergeQueue<'_> {
         &self,
         baseline_id: &str,
         graph: WorkspaceGraph,
+    ) -> Result<MergeQueuePointers> {
+        self.initialize_bound(baseline_id, graph, None)
+    }
+
+    /// [`Self::initialize`] that saves a served queue's binding init work
+    /// key with its initial pointers, atomically (FIX 6869). An existing
+    /// queue answers its pointers and keeps its own binding.
+    pub(super) fn initialize_bound(
+        &self,
+        baseline_id: &str,
+        graph: WorkspaceGraph,
+        source_init_work: Option<String>,
     ) -> Result<MergeQueuePointers> {
         let _guard = lock_repository(self.repo.common_dir())?;
         if let Some(state) = self.read_queue()? {
@@ -44,6 +56,7 @@ impl MergeQueue<'_> {
             graph,
             pointers: pointers.clone(),
             intent: None,
+            source_init_work,
         };
         self.save(&state, &[])?;
         Ok(pointers)

@@ -52,15 +52,31 @@ impl Vault {
     }
 
     /// The queue an enrolled configuration names: its CODE_ARTIFACT's stored
-    /// pointer resolved again, which must still name that object store.
+    /// pointer resolved again, which must still name that object store. A
+    /// served import's queue opens its exact init source, a missing
+    /// projection put back first under the store's writer (FIX 6869).
     ///
     /// # Errors
-    /// A missing artifact, another object store or a store failure.
+    /// A missing artifact, another object store, a held source by name or
+    /// a store failure.
     pub fn queue_driver_open(&self, config: &QueueCheckConfiguration) -> Result<MergeQueue<'_>> {
         let artifact = self
             .get_code_artifact(&config.repo)?
             .ok_or(Error::EntityNotFound)?;
-        let queue = MergeQueue::open(self, RepoRef::parse(&artifact.repo_ref)?)?;
+        let queue = match self.store_queue_source(&config.store)? {
+            Some(bound)
+                if bound.anchor == config.repo && bound.repo_ref.canonical() == config.repo_ref =>
+            {
+                self.ensure_served_queue_source(&bound)?
+                    .map_err(|held| Error::Refused(format!("held_materialization: {held}")))?
+            }
+            Some(_) => {
+                return Err(Error::ConcurrentWrite(
+                    "the checked configuration names another queue source",
+                ));
+            }
+            None => MergeQueue::open(self, RepoRef::parse(&artifact.repo_ref)?)?,
+        };
         if queue.repo.identity().as_hex() != config.store {
             return Err(Error::ConcurrentWrite(
                 "the code artifact no longer names the checked object store",
@@ -97,10 +113,14 @@ impl MergeQueue<'_> {
         config: &QueueCheckConfiguration,
         request: QueueCheckRequest,
     ) -> Result<QueueDriveOutcome> {
-        let work =
-            self.submit_check_work(config.repo, request, ConfigWrite::Keep, None, |_, _| {
-                Err(invalid("the queue driver mints no approval"))
-            })?;
+        let work = self.submit_check_work(
+            config.repo,
+            request,
+            None,
+            ConfigWrite::Keep,
+            None,
+            |_, _| Err(invalid("the queue driver mints no approval")),
+        )?;
         Ok(match work.status {
             QueueCheckStatus::Queued | QueueCheckStatus::Running => {
                 QueueDriveOutcome::RequestedCheck {

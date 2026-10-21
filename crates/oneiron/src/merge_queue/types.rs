@@ -95,6 +95,10 @@ pub(super) struct QueueRecord {
     pub graph: WorkspaceGraph,
     pub pointers: MergeQueuePointers,
     pub intent: Option<EffectIntent>,
+    /// A served import's queue: its binding init work's full key, saved
+    /// with the initial pointers (FIX 6869). `None` for a native queue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_init_work: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) enum EffectIntent {
