@@ -856,6 +856,7 @@ both bindings and their export-census tests in one change.
 - `vault.voices.targets.provision`
 - `vault.voices.targets.evict`
 - `vault.voices.inspect`
+- `vault.voices.lineage`
 - `ai.transcribe`
 - `ai.embed`
 - `ai.video`

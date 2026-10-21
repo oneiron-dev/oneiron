@@ -444,6 +444,7 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
         | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
         | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
+        | oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
         _ => -32602,
@@ -463,6 +464,11 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         // management; an agent reads the name, not the sentence.
         oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => {
             Some("off_record_room_management_consent_unavailable")
+        }
+        // FIX 7650: a foreign guest's proposal spool met the host's disk
+        // floor; the agent reads the name, not the sentence.
+        oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR => {
+            Some("sandbox_proposal_disk_floor")
         }
         _ => None,
     };
@@ -1844,6 +1850,7 @@ fn mcp_agent_verb_input(
         "vault.voices.targets.provision" => a.spec.clone().ok_or_else(invalid),
         "vault.voices.targets.evict" => a.spec.clone().ok_or_else(invalid),
         "vault.voices.inspect" => a.spec.clone().ok_or_else(invalid),
+        "vault.voices.lineage" => a.spec.clone().ok_or_else(invalid),
         "ai.transcribe" => a.spec.clone().ok_or_else(invalid),
         "ai.embed" => a.spec.clone().ok_or_else(invalid),
         "ai.video" => a.spec.clone().ok_or_else(invalid),
@@ -4772,6 +4779,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.voices.inspect" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.voices.lineage" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "ai.transcribe" => {
@@ -18128,6 +18138,20 @@ async fn execute_agent_verb_row(
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.voices.lineage" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.voices.lineage", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::VoiceRenderLineageRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_voices_lineage(server, auth, input).await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
         "ai.transcribe" => {

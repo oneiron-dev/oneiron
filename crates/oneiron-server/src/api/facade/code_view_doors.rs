@@ -35,11 +35,20 @@ pub(crate) async fn vault_code_views_materialize(
     auth: &CoreAuth,
     input: CodeViewMaterializeRequest,
 ) -> Listed<CodeWorkingView> {
+    // An MCP tool reads repo bytes masked (FIX 7608, ASK 1); the owner's
+    // own door reads them as stored.
+    let tool = crate::api::mcp_gateway::skill_execution::mcp_call_in_scope();
     as_owner(
         server,
         auth,
         "vault.code.views.materialize",
-        move |memory, owner| memory.code_view_materialize_as(owner, input),
+        move |memory, owner| {
+            if tool {
+                memory.code_view_materialize_projected_as(owner, input)
+            } else {
+                memory.code_view_materialize_as(owner, input)
+            }
+        },
     )
     .await
 }
@@ -63,11 +72,20 @@ pub(crate) async fn vault_code_views_read(
     auth: &CoreAuth,
     input: CodeViewReadRequest,
 ) -> Listed<CodeViewFileBytes> {
+    // An MCP tool reads repo bytes masked (FIX 7608, ASK 1); the owner's
+    // own door reads them as stored.
+    let tool = crate::api::mcp_gateway::skill_execution::mcp_call_in_scope();
     as_owner(
         server,
         auth,
         "vault.code.views.read",
-        move |memory, owner| memory.code_view_read_as(owner, input),
+        move |memory, owner| {
+            if tool {
+                memory.code_view_read_projected_as(owner, input)
+            } else {
+                memory.code_view_read_as(owner, input)
+            }
+        },
     )
     .await
 }
