@@ -253,6 +253,7 @@ impl Vault {
             publication,
             custody_note: report.custody_note.clone(),
             training_note: report.training_note.clone(),
+            pad_notes: report.pad_notes.clone(),
         };
         forked.keep();
         made.keep(&mut vault);

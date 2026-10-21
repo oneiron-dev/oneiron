@@ -9,6 +9,10 @@ mod check_requests;
 mod check_store;
 mod check_tree;
 mod checks;
+mod driver;
+mod driver_materialize;
+mod driver_store;
+mod driver_types;
 mod initialize;
 mod landing;
 mod mirror_green;
@@ -37,6 +41,13 @@ pub use check_inputs::{
 pub use check_store::{
     DEFAULT_QUEUE_CHECK_CONCURRENCY, QUEUE_CHECK_ATTEMPT_KIND, QueueCheckConfiguration,
     QueueCheckInitStage, QueueCheckLease, QueueCheckRequest, QueueCheckStatus, QueueCheckWork,
+};
+// The restart driver and overlap handoff (FIX 6868, G2 PR2).
+pub(crate) use driver_types::QueueStageOverlap;
+pub use driver_types::{
+    QueueBatchDrive, QueueConflictLink, QueueConflictView, QueueDriveHold, QueueDriveHoldReason,
+    QueueDriveOutcome, QueueDrivePass, QueueDriveStatus, QueueDriveView, QueueDriverTarget,
+    QueueSurvivorLink, QueueWork,
 };
 pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
 pub use reviewed::ReviewedProposalLanding;
