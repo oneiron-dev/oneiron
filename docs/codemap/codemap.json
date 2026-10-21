@@ -834,6 +834,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DirectSpawnReceipt",
+      "SpawnAskField",
+      "SpawnUnapplied",
+      "SpawnUnappliedReason"
+     ],
+     "path": "src/agent_dispatch/direct_spawn.rs",
+     "purpose": "OF-541: a direct spawn's ask, carried whole onto its child",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -966,7 +983,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 2,
-      "re-export": 23
+      "re-export": 24
      }
     },
     {
@@ -1325,7 +1342,7 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 7,
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 7,
       "fn": 26,
       "struct": 9
@@ -67598,7 +67615,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69105,7 +69122,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4369,
+   "source_files": 4370,
    "test_files": 902
   },
   "oneiron-android": {
@@ -98449,6 +98466,7 @@
       "SpaceMoveState",
       "SpaceProbe",
       "SpaceRef",
+      "SpawnAskField",
       "SpawnAskKnobString",
       "SpawnAskKnobU32",
       "SpawnAskKnobU64",
@@ -98462,6 +98480,8 @@
       "SpawnPattern",
       "SpawnPhase",
       "SpawnPins",
+      "SpawnUnapplied",
+      "SpawnUnappliedReason",
       "SpeakerLink",
       "SpeakerTarget",
       "SpendBasis",
@@ -98938,8 +98958,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 925,
-      "struct": 2908
+      "enum": 927,
+      "struct": 2909
      }
     },
     {
