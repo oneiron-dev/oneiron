@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3959 declarations.
-// Replies: 1057 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1179 code-mode rows (1139 host rows, 40 run rows), 3973 declarations.
+// Replies: 1059 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2192,6 +2192,20 @@ declare namespace Sdk {
   type OriginPublicationState = "prepared" | "published" | "failed" | "conflicted";
   type OriginPublicationView = { receipt: EntityId; repo_id: EntityId; ref_name: string; git_commit: string; provenance_receipt: EntityId; publication_claim?: EntityId | null; actor?: EntityId | null; status: OriginPublicationState; failure?: string | null; created_at: number; finished_at?: number | null };
   type CodeExportResult = { revision: EntityId; git_commit: string; remote_url: string; receipt: EntityId; publication: OriginPublicationView; ref_was_already_applied: boolean; wire_replayed: boolean; wire_rejected: boolean };
+  type CodeExportPreviewRequest = { repo: string; code_repo: EntityId; checkout: string; epoch: number; revision: EntityId; ref_name: string; expected_old_oid?: string | null; endpoint: string };
+  type CodeExportSide = "before" | "after";
+  type CodeExportByteHandle = { preview_digest: string; side: CodeExportSide; path: string };
+  type CodeExportFileIdentity = { mode: number; size_bytes: number; git_oid: string; content_hash: string; handle: CodeExportByteHandle };
+  type CodeExportFileDelta = { path: string; before?: CodeExportFileIdentity | null; after?: CodeExportFileIdentity | null };
+  type CodeExportPreview = { request: CodeExportPreviewRequest; code_repo: EntityId; origin_repo_id: EntityId; object_store: string; source_tree?: string | null; target_tree: string; inventory_digest: string; preview_digest: string; exact: boolean; observed_ref_oid?: string | null; expected_matches_observed: boolean; before_paths: string[]; after_paths: string[]; files: CodeExportFileDelta[] };
+  type CodeExportBlockingSource = { kind: "entity"; entity: EntityId } | { kind: "file"; side: CodeExportSide; path: string; entity?: EntityId | null } | { kind: "object"; object_store: string; oid: string } | { kind: "evidence"; reference: string } | { kind: "outside_grant" };
+  type CodeExportPreviewBlockReason = "unavailable" | "withheld" | "masked" | "incomplete_evidence" | "unreviewed" | "unsupported_tree" | "outside_grant";
+  type CodeExportPreviewBlocker = { source: CodeExportBlockingSource; reason: CodeExportPreviewBlockReason; message: string; way_out: string };
+  type CodeExportPreviewHold = { code: string; blockers: CodeExportPreviewBlocker[] };
+  type CodeExportPreviewAnswer = { state: "ready"; preview: CodeExportPreview } | { state: "held"; hold: CodeExportPreviewHold };
+  type CodeExportFileReadRequest = { preview: CodeExportPreviewRequest; handle: CodeExportByteHandle };
+  type CodeExportFileBytes = { handle: CodeExportByteHandle; mode: number; size_bytes: number; git_oid: string; content_hash: string; bytes: number[] };
+  type CodeExportFileReadAnswer = { state: "ready"; file: CodeExportFileBytes } | { state: "held"; hold: CodeExportPreviewHold };
   type CodeImportAcceptance = { manifest_digest: string; baseline_revision: EntityId; catalog: LensCatalog; review_verdict?: EntityId | null };
   type CodeRepoImportRequest = { repo: string; project: EntityId; source_ref: string; source_commit: string; admission_receipt: EntityId; accept?: CodeImportAcceptance | null };
   type CodeImportAnchor = { repo: EntityId; project: EntityId; served_repo: string; object_store: string; source_ref: string; source_commit: string; source_tree: string; admission_receipt: EntityId; receive_provenance: EntityId; snapshot: EntityId; snapshot_fork_hash: string };
@@ -4972,7 +4986,13 @@ declare const vault: Sdk.VaultHost & {
     /** The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort. */
     diff(input: Sdk.CodeDiffRequest): Promise<Sdk.CodeDiffView | null | StoredResult>;
     /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
-    export(input: Sdk.CodeExportRequest): Promise<Sdk.CodeExportResult | StoredResult>;
+    export: ((input: Sdk.CodeExportRequest) => Promise<Sdk.CodeExportResult | StoredResult>) & {
+      /** Read the complete raw-byte and Git-mode delta for one explicit sealed export revision and ref expectation. Live owner or a caller under one covering Grant. Missing, withheld or masked sources return a typed hold; no export or ref is written. */
+      preview: ((input: Sdk.CodeExportPreviewRequest) => Promise<Sdk.CodeExportPreviewAnswer | StoredResult>) & {
+        /** Read the exact bytes and mode of one changed preview side by its recomputed handle. Live owner or a caller under one covering preview Grant. Missing, withheld or masked sources return a typed hold; no caller-selected host file is read. */
+        read(input: Sdk.CodeExportFileReadRequest): Promise<Sdk.CodeExportFileReadAnswer | StoredResult>;
+      };
+    };
     forks: {
       /** Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork. */
       get(input: Sdk.CodeForkGetRequest): Promise<Sdk.CodeForkView | null | StoredResult>;

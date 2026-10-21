@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1127 facade rows, 3906 declarations.
-Inputs: 1062 of 1127 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1014 of 1127 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1129 facade rows, 3920 declarations.
+Inputs: 1064 of 1129 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1016 of 1129 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -10565,6 +10565,96 @@ class CodeExportResult(TypedDict):
     ref_was_already_applied: bool
     wire_replayed: bool
     wire_rejected: bool
+class CodeExportPreviewRequest(TypedDict):
+    repo: str
+    code_repo: EntityId
+    checkout: str
+    epoch: int
+    revision: EntityId
+    ref_name: str
+    expected_old_oid: NotRequired[str | None]
+    endpoint: str
+CodeExportSide = Literal["before", "after"]
+class CodeExportByteHandle(TypedDict):
+    preview_digest: str
+    side: CodeExportSide
+    path: str
+class CodeExportFileIdentity(TypedDict):
+    mode: int
+    size_bytes: int
+    git_oid: str
+    content_hash: str
+    handle: CodeExportByteHandle
+class CodeExportFileDelta(TypedDict):
+    path: str
+    before: NotRequired[CodeExportFileIdentity | None]
+    after: NotRequired[CodeExportFileIdentity | None]
+class CodeExportPreview(TypedDict):
+    request: CodeExportPreviewRequest
+    code_repo: EntityId
+    origin_repo_id: EntityId
+    object_store: str
+    source_tree: NotRequired[str | None]
+    target_tree: str
+    inventory_digest: str
+    preview_digest: str
+    exact: bool
+    observed_ref_oid: NotRequired[str | None]
+    expected_matches_observed: bool
+    before_paths: list[str]
+    after_paths: list[str]
+    files: list[CodeExportFileDelta]
+class CodeExportBlockingSourceEntity(TypedDict):
+    kind: Literal["entity"]
+    entity: EntityId
+class CodeExportBlockingSourceFile(TypedDict):
+    kind: Literal["file"]
+    side: CodeExportSide
+    path: str
+    entity: NotRequired[EntityId | None]
+class CodeExportBlockingSourceObject(TypedDict):
+    kind: Literal["object"]
+    object_store: str
+    oid: str
+class CodeExportBlockingSourceEvidence(TypedDict):
+    kind: Literal["evidence"]
+    reference: str
+class CodeExportBlockingSourceOutsideGrant(TypedDict):
+    kind: Literal["outside_grant"]
+CodeExportBlockingSource = CodeExportBlockingSourceEntity | CodeExportBlockingSourceFile | CodeExportBlockingSourceObject | CodeExportBlockingSourceEvidence | CodeExportBlockingSourceOutsideGrant
+CodeExportPreviewBlockReason = Literal["unavailable", "withheld", "masked", "incomplete_evidence", "unreviewed", "unsupported_tree", "outside_grant"]
+class CodeExportPreviewBlocker(TypedDict):
+    source: CodeExportBlockingSource
+    reason: CodeExportPreviewBlockReason
+    message: str
+    way_out: str
+class CodeExportPreviewHold(TypedDict):
+    code: str
+    blockers: list[CodeExportPreviewBlocker]
+class CodeExportPreviewAnswerReady(TypedDict):
+    state: Literal["ready"]
+    preview: CodeExportPreview
+class CodeExportPreviewAnswerHeld(TypedDict):
+    state: Literal["held"]
+    hold: CodeExportPreviewHold
+CodeExportPreviewAnswer = CodeExportPreviewAnswerReady | CodeExportPreviewAnswerHeld
+class CodeExportFileReadRequest(TypedDict):
+    preview: CodeExportPreviewRequest
+    handle: CodeExportByteHandle
+class CodeExportFileBytes(TypedDict):
+    handle: CodeExportByteHandle
+    mode: int
+    size_bytes: int
+    git_oid: str
+    content_hash: str
+    bytes: list[int]
+class CodeExportFileReadAnswerReady(TypedDict):
+    state: Literal["ready"]
+    file: CodeExportFileBytes
+class CodeExportFileReadAnswerHeld(TypedDict):
+    state: Literal["held"]
+    hold: CodeExportPreviewHold
+CodeExportFileReadAnswer = CodeExportFileReadAnswerReady | CodeExportFileReadAnswerHeld
 class CodeImportAcceptance(TypedDict):
     manifest_digest: str
     baseline_revision: EntityId
