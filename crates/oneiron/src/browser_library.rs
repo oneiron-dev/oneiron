@@ -17,7 +17,13 @@
 //! `superseded:<new id>`. The retire chain is the lineage, which
 //! [`resolve_workflow_in_txn`] follows to the live program. Each record
 //! keeps its lineage's newest outcomes ([`RECENT_RUNS`]), which a successor
-//! takes over.
+//! takes over, and its strict misses in a row, the
+//! [`STRICT_MISSES_BEFORE_DRIFT`]th retiring it [`DRIFT_REASON`] in the same
+//! write (CUA E2).
+//!
+//! `find` reads a program by its task type too (CUA E4): the node and tree
+//! version its subgoal placed at when it was filed, in the canonical
+//! `node_id@tree_version` form ([`type_filter`]), matched exactly.
 //!
 //! Erasing an actor keeps every row and its times and states
 //! [`ERASED_CALL_IDENTITY`] for whose run filed a program and whose word
@@ -26,8 +32,8 @@
 use std::cmp::Reverse;
 
 use oneiron_browser::{
-    LibraryCard, RecentCounts, RetiredCard, SupersedeOutcome, SupersedeRefusal, WorkflowProgram,
-    WorkflowProof,
+    BatchStopCause, LibraryCard, LibraryRunMode, RecentCounts, RetiredCard, RunOutcome,
+    SupersedeOutcome, SupersedeRefusal, WorkflowProgram, WorkflowProof,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +44,7 @@ use crate::error::Result;
 use crate::learning::TypeRef;
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, SideTable};
-use crate::task_type::{PlacementDecisions, PlacementRequest, place_type_ref};
+use crate::task_type::{PlacementDecisions, PlacementRequest, TaskTypeRef, place_type_ref};
 
 /// The library's programs. Key: the site's BLAKE3 hash, then the program's id.
 const WORKFLOWS: SideTable<([u8; 32], EntityId), WorkflowRecord, Named> =
@@ -69,6 +75,33 @@ const SUPERSEDED_PREFIX: &str = "superseded:";
 /// The reason a retire records for a program that stopped working on its
 /// site (its strict misses, counted by the run path).
 pub const DRIFT_REASON: &str = "drift";
+
+/// The strict misses in a row that retire a program [`DRIFT_REASON`] (CUA
+/// E2 drift, CALLS row): the run that makes them this many retires it.
+pub const STRICT_MISSES_BEFORE_DRIFT: u32 = 3;
+
+/// A program's strict misses in a row after one run (CUA E2 drift, CALLS
+/// row): a strict run that met its postcondition starts them again; a
+/// strict run that stopped on an unmet postcondition or a missing locator
+/// adds one. An assisted run, and a strict one that stopped for any other
+/// cause (a clock, a press, a person's hold, a cut read, an ask-up, the
+/// browser's own refusal, field text, no progress), leaves them: none of
+/// those shows the program no longer fits its site.
+#[must_use]
+pub fn strict_misses_after(misses: u32, outcome: &RunOutcome) -> u32 {
+    if outcome.mode != LibraryRunMode::Strict {
+        return misses;
+    }
+    if outcome.done {
+        return 0;
+    }
+    match outcome.stop_cause {
+        Some(BatchStopCause::PostconditionUnmet | BatchStopCause::LocatorMissing) => {
+            misses.saturating_add(1)
+        }
+        _ => misses,
+    }
+}
 
 /// The reason a retire records for a program `successor` repaired.
 #[must_use]
@@ -172,6 +205,8 @@ pub struct WorkflowRecord {
     /// Its lineage's newest outcomes, the oldest first: its own, after
     /// those of the programs it supersedes.
     pub recent: Vec<RecentRun>,
+    /// Its strict runs in a row that missed ([`strict_misses_after`]).
+    pub strict_misses: u32,
 }
 
 impl WorkflowRecord {
@@ -182,6 +217,7 @@ impl WorkflowRecord {
             workflow: self.id.to_hex(),
             site: self.site.clone(),
             subgoal: self.program.subgoal.clone(),
+            type_ref: TaskTypeRef::from(&self.type_ref).wire_form(),
             params: self.program.params.clone(),
             runs: self.runs,
             failures: self.failures,
@@ -191,6 +227,7 @@ impl WorkflowRecord {
             seed: self.proof.seed.clone(),
             filed_at: self.filed_at,
             last_run_at: self.last_run_at,
+            strict_misses: self.strict_misses,
         }
     }
 }
@@ -237,9 +274,34 @@ fn site_key(site: &str) -> [u8; 32] {
     *blake3::hash(site.as_bytes()).as_bytes()
 }
 
+/// A `find` filter that is not a task type's `node_id@tree_version`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("type_ref {0:?} names no task type: it is written node_id@tree_version")]
+pub struct TypeFilterMalformed(pub String);
+
+/// The task type a `find` filter names (CUA E4), read once from the
+/// canonical form [`TaskTypeRef::wire_form`] writes and each card's
+/// `type_ref` carries.
+///
+/// # Errors
+///
+/// [`TypeFilterMalformed`], naming `wire`, when it is not that form.
+pub fn type_filter(wire: &str) -> std::result::Result<TaskTypeRef, TypeFilterMalformed> {
+    TaskTypeRef::parse_wire(wire).map_err(|_| TypeFilterMalformed(wire.to_owned()))
+}
+
+/// Whether a program filed at `filed` is of the task type `wanted`: the
+/// same node at the same tree version, with no descendant read in and no
+/// other version's node put in its place. A version past what a filed
+/// stamp holds matches nothing.
+fn of_type(filed: &TypeRef, wanted: &TaskTypeRef) -> bool {
+    filed.node_id == wanted.node_id && u64::from(filed.tree_version) == wanted.tree_version
+}
+
 /// The programs filed for `site` whose subgoal holds every word of
-/// `subgoal`, ignoring case: the most runs that met their postcondition
-/// first, then the newest.
+/// `subgoal`, ignoring case, and, with `type_ref`, whose task type it is
+/// ([`type_filter`]): the most runs that met their postcondition first,
+/// then the newest. Finding places nothing and asks no model.
 ///
 /// # Errors
 ///
@@ -248,6 +310,7 @@ pub fn site_workflows(
     vault: &Vault,
     site: &str,
     subgoal: Option<&str>,
+    type_ref: Option<&TaskTypeRef>,
 ) -> Result<Vec<WorkflowRecord>> {
     let words: Vec<String> = subgoal
         .unwrap_or("")
@@ -262,6 +325,7 @@ pub fn site_workflows(
         .filter(|record| {
             let filed = record.program.subgoal.to_lowercase();
             words.iter().all(|word| filed.contains(word.as_str()))
+                && type_ref.is_none_or(|wanted| of_type(&record.type_ref, wanted))
         })
         .collect();
     records.sort_by_key(|record| {
@@ -354,7 +418,7 @@ pub fn file_workflow(
     // A filed program holds handles where this one may hold the secrets the
     // side-row wall lifted (OF-067); it is still the same program.
     let mut filed = None;
-    for record in site_workflows(vault, site, None)? {
+    for record in site_workflows(vault, site, None, None)? {
         if serde_json::to_value(&record.program).ok() == same
             || admitted_from(&named_tree(&record.program)?, &named_tree(program)?)?
         {
@@ -428,6 +492,7 @@ pub fn file_workflow(
             last_run_at: None,
             supersedes,
             recent,
+            strict_misses: 0,
         };
         WORKFLOWS.put(vault, wtxn, &(site_key(site), id), &record)?;
         if let Some(old) = retire {
@@ -438,14 +503,23 @@ pub fn file_workflow(
     })
 }
 
-/// Counts one library run of `id`, and whether it met its postcondition,
-/// among its lineage's recent outcomes too. A program no longer filed
-/// counts nothing.
+/// Counts one library run of `id` from `by`'s call at `at`: whether it met
+/// its postcondition, among its lineage's recent outcomes too, and its
+/// strict misses in a row ([`strict_misses_after`]). The run that brings
+/// them to [`STRICT_MISSES_BEFORE_DRIFT`] retires the program
+/// [`DRIFT_REASON`] at `by`'s word, in the same write. A program no longer
+/// filed counts nothing.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub fn record_workflow_run(vault: &Vault, id: EntityId, met: bool, at: u64) -> Result<()> {
+pub fn record_workflow_run(
+    vault: &Vault,
+    id: EntityId,
+    outcome: &RunOutcome,
+    by: EntityId,
+    at: u64,
+) -> Result<()> {
     let Some(filed) = workflow(vault, id)? else {
         return Ok(());
     };
@@ -455,16 +529,21 @@ pub fn record_workflow_run(vault: &Vault, id: EntityId, met: bool, at: u64) -> R
             return Ok(());
         };
         record.runs = record.runs.saturating_add(1);
-        if !met {
+        if !outcome.done {
             record.failures = record.failures.saturating_add(1);
         }
-        let outcome = if met {
+        let recent = if outcome.done {
             RecentOutcome::Pass
         } else {
             RecentOutcome::Miss
         };
-        push_recent(&mut record.recent, outcome, at);
+        push_recent(&mut record.recent, recent, at);
         record.last_run_at = Some(at);
+        record.strict_misses = strict_misses_after(record.strict_misses, outcome);
+        if record.strict_misses >= STRICT_MISSES_BEFORE_DRIFT {
+            retire_in_txn(vault, wtxn, record, by, Some(DRIFT_REASON), at)?;
+            return Ok(());
+        }
         WORKFLOWS.put(vault, wtxn, &key, &record)
     })
 }

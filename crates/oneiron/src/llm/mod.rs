@@ -89,6 +89,11 @@ pub use oneiron_model::llm::{
     joint_marginals,
 };
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
+// FIX 6567: the cache evidence a backend reports on a physical call.
+pub use oneiron_model::llm::{
+    CACHE_CALLS_KEY, CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch,
+    CacheEvidenceError, CacheIdentity, CacheOutcome, CachePassReport, CachePassUsage, CachePhase,
+};
 
 pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,

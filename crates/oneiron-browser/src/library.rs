@@ -13,10 +13,12 @@
 //! the site's programs, each card with its lineage's recent outcomes. A
 //! library run is live: every effect in it still crosses its gated door,
 //! and a run that misses its postcondition goes back to the planner with
-//! the checks it missed and the page it left. A program that stops working
-//! leaves by retire, and a later solved run that passes both checks files
-//! it afresh, or files its repair as its successor (`supersedes`), which
-//! retires it in the same write.
+//! the checks it missed and the page it left. A run is strict, where only a
+//! rule answers its routine steps, or assisted (CUA E2); a program whose
+//! strict runs miss three times in a row retires `drift`. A program that
+//! stops working leaves by retire, and a later solved run that passes both
+//! checks files it afresh, or files its repair as its successor
+//! (`supersedes`), which retires it in the same write.
 //!
 //! A program's `{{name}}` slots take the run's arguments as data, in the
 //! batch's own fields; nothing is spliced into code.
@@ -27,12 +29,20 @@
 //! is checked; each step resolves its locators on the page as it runs.
 
 mod admission;
+mod live_run;
 
 pub use admission::{
     AdmissionRefusal, Admitted, RecentCounts, ReplayGuest, SupersedeOutcome, SupersedeRefusal,
     WorkflowSeed, validate_replay_args,
 };
+#[cfg(feature = "driver")]
+pub(crate) use live_run::run;
+pub use live_run::{
+    FiledWorkflow, LibraryRunMode, RunOutcome, default_mode, effective_mode, model_free,
+};
 
+#[cfg(feature = "driver")]
+use crate::CheckReceipt;
 #[cfg(feature = "driver")]
 use crate::{BatchInput, BrowserDriver, ObserveInput, RoutineDecider, SwitchStage};
 use crate::{
@@ -164,6 +174,12 @@ pub struct LibraryFindInput {
     /// Words the program's subgoal holds, ignoring case.
     #[serde(default)]
     pub subgoal: Option<String>,
+    /// The task type the program was filed under, as `node_id@tree_version`
+    /// (a card's `type_ref`): that node at that tree version only, never a
+    /// descendant or another version's node (CUA E4). A filter in another
+    /// form is refused.
+    #[serde(default)]
+    pub type_ref: Option<String>,
 }
 
 /// One library program as a planner reads it: its lifetime runs and
@@ -174,6 +190,9 @@ pub struct LibraryCard {
     pub workflow: String,
     pub site: String,
     pub subgoal: String,
+    /// The task type its subgoal placed at when it was filed, as
+    /// `node_id@tree_version`: the form `find`'s `type_ref` takes.
+    pub type_ref: String,
     pub params: Vec<String>,
     pub runs: u32,
     pub failures: u32,
@@ -192,6 +211,10 @@ pub struct LibraryCard {
     pub filed_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run_at: Option<u64>,
+    /// Its strict runs in a row that missed their postcondition or a
+    /// locator: the third retires it `drift`, and a strict run that met it
+    /// starts the count again.
+    pub strict_misses: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -211,14 +234,31 @@ pub struct LibraryRunInput {
     /// `base`; by default the last one the caller read whole.
     #[serde(default)]
     pub base: Option<ObservationBase>,
+    /// Strict or assisted; by default the program's own ([`default_mode`]).
+    #[serde(default)]
+    pub mode: Option<LibraryRunMode>,
 }
 
 /// A library run: its batch, and the postcondition checks the page missed.
-/// A miss sets `NEEDS_AGENT`: the run goes back to the planner.
+/// A miss sets `NEEDS_AGENT`: the run goes back to the planner, with the
+/// batch's `failed_receipt` naming each missed check and what the page
+/// showed for it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LibraryRunOutput {
     pub workflow: String,
     pub status: SubgoalStatus,
+    /// The mode the run ran in.
+    pub mode: LibraryRunMode,
+    /// Whether no model answered any of the run's routine decisions, as
+    /// their receipts show ([`model_free`]); never read from the mode.
+    pub model_free: bool,
+    /// The first decision whose record shows neither the rungs that ran nor
+    /// a strict denial: no evidence proves the run model-free, so
+    /// `model_free` is false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_free_unproven: Option<usize>,
+    /// The postcondition checks the page missed, by index; each, with what
+    /// its read found, is in the batch's `failed_receipt`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmet: Vec<usize>,
     pub batch: BatchOutput,
@@ -269,10 +309,17 @@ pub struct LibraryRetiredOutput {
 
 /// Where library programs are kept: the engine's vault, behind the session.
 pub trait WorkflowLibrary: Send {
-    /// The programs filed for `site`, those whose subgoal holds `subgoal`.
-    fn find(&mut self, site: &str, subgoal: Option<&str>)
-    -> Result<Vec<LibraryCard>, BrowserError>;
-    fn program(&mut self, workflow: &str) -> Result<Option<WorkflowProgram>, BrowserError>;
+    /// The programs filed for `site`, those whose subgoal holds `subgoal`
+    /// and, with `type_ref` (`node_id@tree_version`), whose task type is
+    /// that node at that version; one in another form is refused.
+    fn find(
+        &mut self,
+        site: &str,
+        subgoal: Option<&str>,
+        type_ref: Option<&str>,
+    ) -> Result<Vec<LibraryCard>, BrowserError>;
+    /// The program filed under `workflow`, with its admission's proof.
+    fn program(&mut self, workflow: &str) -> Result<Option<FiledWorkflow>, BrowserError>;
     /// Files a program both checks passed, as the successor of the program
     /// `supersedes` names when it names one: its ref and what became of
     /// that program, or the link's refusal, with nothing filed.
@@ -283,8 +330,10 @@ pub trait WorkflowLibrary: Send {
         proof: &WorkflowProof,
         supersedes: Option<&str>,
     ) -> Result<Admitted, BrowserError>;
-    /// Counts one library run, and whether it met its postcondition.
-    fn record_run(&mut self, workflow: &str, met: bool) -> Result<(), BrowserError>;
+    /// Counts one library run: whether it met its postcondition, and, for
+    /// a strict run, its strict misses in a row, the third retiring it
+    /// `drift` in the same write.
+    fn record_run(&mut self, workflow: &str, outcome: &RunOutcome) -> Result<(), BrowserError>;
     /// Takes a program out of the library for `reason`; `None` when none is
     /// filed under `workflow`.
     fn retire(
@@ -471,18 +520,33 @@ fn fill_slots(
 }
 
 #[cfg(feature = "driver")]
+/// The checks the page as it is now misses, by index, each with what its
+/// read found.
+fn missed<D: BrowserDriver + ?Sized>(
+    driver: &mut D,
+    checks: &[ExpectInput],
+) -> Result<Vec<(usize, CheckReceipt)>, BrowserError> {
+    let mut missed = Vec::new();
+    for (index, check) in checks.iter().enumerate() {
+        let observed = driver.expect(check.clone())?;
+        if !observed.met {
+            let expect = check.clone();
+            missed.push((index, CheckReceipt { expect, observed }));
+        }
+    }
+    Ok(missed)
+}
+
+#[cfg(feature = "driver")]
 /// The checks the page as it is now misses, by index.
 fn unmet<D: BrowserDriver + ?Sized>(
     driver: &mut D,
     checks: &[ExpectInput],
 ) -> Result<Vec<usize>, BrowserError> {
-    let mut missed = Vec::new();
-    for (index, check) in checks.iter().enumerate() {
-        if !driver.expect(check.clone())?.met {
-            missed.push(index);
-        }
-    }
-    Ok(missed)
+    Ok(missed(driver, checks)?
+        .into_iter()
+        .map(|(index, _)| index)
+        .collect())
 }
 
 #[cfg(feature = "driver")]
@@ -698,50 +762,5 @@ pub(crate) fn replay_and_file<D: BrowserDriver + ?Sized>(
         replay: Some(replay),
         replay_guest: Some(proof.replay_guest),
         ..output
-    })
-}
-
-#[cfg(feature = "driver")]
-/// Runs a library program live, then checks its postcondition on the page.
-pub(crate) fn run<D: BrowserDriver + ?Sized>(
-    driver: &mut D,
-    library: &mut dyn WorkflowLibrary,
-    decider: &mut dyn RoutineDecider,
-    input: LibraryRunInput,
-) -> Result<LibraryRunOutput, BrowserError> {
-    let program = library
-        .program(&input.workflow)?
-        .ok_or_else(|| BrowserError::NoWorkflow(input.workflow.clone()))?;
-    let (steps, checks) = program.fill(&input.args)?;
-    let mut batch = driver.batch_with(
-        BatchInput {
-            subgoal: Some(program.subgoal.clone()),
-            steps,
-            base: input.base.clone(),
-            until_ms: None,
-            no_model: false,
-        },
-        decider,
-    )?;
-    let missed = if batch.status == SubgoalStatus::Done {
-        unmet(driver, &checks)?
-    } else {
-        Vec::new()
-    };
-    if !missed.is_empty() {
-        // A missed postcondition goes back to the planner, with the page.
-        batch.status = SubgoalStatus::NeedsAgent;
-        batch.error = Some("postcondition_unmet".to_owned());
-        batch.observation = Some(driver.observe(ObserveInput {
-            base: input.base,
-            ..ObserveInput::default()
-        })?);
-    }
-    library.record_run(&input.workflow, batch.status == SubgoalStatus::Done)?;
-    Ok(LibraryRunOutput {
-        workflow: input.workflow,
-        status: batch.status,
-        unmet: missed,
-        batch,
     })
 }

@@ -79,6 +79,7 @@ use crate::driver::CdpDriver;
 use crate::driver::pages::Base;
 use crate::request::{BrowserRequestHandler, Custody};
 use crate::retention::HandleRetention;
+use crate::stop::elapsed_ms;
 use crate::{
     AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserEngine, BrowserError,
     BrowserPersonInput, BrowserTab, ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE,
@@ -97,7 +98,7 @@ use oneiron_container::{
 };
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The longest reason a `handover` ask may give, in characters.
 const HANDOVER_REASON_CHARS: usize = 500;
@@ -556,9 +557,10 @@ impl BrowserSession {
         press_for(&mut self.policy, class, row)
     }
 
-    /// Stamps `observation` with the receipt of the effect that made it.
-    /// The receipt's screenshot is best-effort: an effect that already
-    /// happened is receipted even when its evidence could not be captured.
+    /// Stamps `observation` with the receipt of the effect that made it,
+    /// which its verb entered at `started`. The receipt's screenshot is
+    /// best-effort: an effect that already happened is receipted even when
+    /// its evidence could not be captured.
     fn receipt(
         &mut self,
         verb: &str,
@@ -566,6 +568,7 @@ impl BrowserSession {
         effect_class: Option<&str>,
         press: PressMode,
         observation: &mut Observation,
+        started: Instant,
     ) {
         self.receipt_seq += 1;
         // Never compared: each receipt's screenshot is a capture of its own.
@@ -595,6 +598,8 @@ impl BrowserSession {
             engine: Some(self.driver.engine()),
             fact: observation.fact.clone(),
             engine_switch: None,
+            // Stamped before the host keeps the screenshot.
+            duration_ms: elapsed_ms(started),
         };
         // The pixels are kept before the receipt is stored, while the
         // session still holds them.
@@ -689,20 +694,28 @@ pub(crate) fn receipt_class(
 
 impl BrowserDriver for BrowserSession {
     fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         self.agent_has()?;
         if !web_page(&input.url) {
             return Err(BrowserError::Url(input.url));
         }
         let opened = self.live()?.open(input);
         let mut observation = self.crossed(opened)?;
-        self.receipt("open", None, None, PressMode::None, &mut observation);
+        self.receipt(
+            "open",
+            None,
+            None,
+            PressMode::None,
+            &mut observation,
+            started,
+        );
         self.undelivered()?;
         // Repeated work on a site tries the library first. A lookup that
         // fails leaves the page open without its programs.
         if let Some(site) = site_of(&observation.url)
             && let Some(library) = self.library.as_mut()
         {
-            observation.library = library.find(&site, None).unwrap_or_default();
+            observation.library = library.find(&site, None, None).unwrap_or_default();
         }
         Ok(observation)
     }
@@ -724,6 +737,7 @@ impl BrowserDriver for BrowserSession {
     }
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         let target = self.live()?.resolve_target(&input.target)?;
         let class = effect_class(&target.row.name);
         let press = match class {
@@ -733,12 +747,20 @@ impl BrowserDriver for BrowserSession {
         let clicked = self.driver.click_target(&target, &Base::of(input.base));
         let mut observation = self.crossed(clicked)?;
         let class = receipt_class(class, Some(&target.row));
-        self.receipt("click", Some(&target.row), class, press, &mut observation);
+        self.receipt(
+            "click",
+            Some(&target.row),
+            class,
+            press,
+            &mut observation,
+            started,
+        );
         self.undelivered()?;
         Ok(observation)
     }
 
     fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         let (x, y) = self.live()?.point(&input)?;
         let row = self.driver.row_at(x, y)?;
         let class = row.as_ref().and_then(|row| effect_class(&row.name));
@@ -750,12 +772,20 @@ impl BrowserDriver for BrowserSession {
         let clicked = self.driver.click_point(x, y, row.as_ref(), &base);
         let mut observation = self.crossed(clicked)?;
         let class = receipt_class(class, row.as_ref());
-        self.receipt("click_at", row.as_ref(), class, press, &mut observation);
+        self.receipt(
+            "click_at",
+            row.as_ref(),
+            class,
+            press,
+            &mut observation,
+            started,
+        );
         self.undelivered()?;
         Ok(observation)
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         let target = self.live()?.resolve_target(&input.target)?;
         let base = Base::of(input.base);
         let typed = self
@@ -768,12 +798,14 @@ impl BrowserDriver for BrowserSession {
             None,
             PressMode::None,
             &mut observation,
+            started,
         );
         self.undelivered()?;
         Ok(observation)
     }
 
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         let target = self.live()?.resolve_target(&input.target)?;
         let base = Base::of(input.base);
         let selected = self.driver.select_target(&target, &input.option, &base);
@@ -784,6 +816,7 @@ impl BrowserDriver for BrowserSession {
             None,
             PressMode::None,
             &mut observation,
+            started,
         );
         self.undelivered()?;
         Ok(observation)
@@ -831,7 +864,7 @@ impl BrowserDriver for BrowserSession {
         };
         let library = self.library.as_mut().ok_or_else(no_library)?;
         Ok(LibraryFindOutput {
-            workflows: library.find(&site, input.subgoal.as_deref())?,
+            workflows: library.find(&site, input.subgoal.as_deref(), input.type_ref.as_deref())?,
             site,
         })
     }

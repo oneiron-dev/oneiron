@@ -196,11 +196,11 @@ fn ceremony_responses(ok: Value) -> Value {
         ),
         (
             "503",
-            "The signing transport peer is unavailable (signing_transport_unavailable).",
+            "The signing transport peer is unavailable (signing_transport_unavailable); or, at POST /sign/image, the wait for the machine memory reading and decoding the image takes passed its deadline (signing_memory_waited_out).",
         ),
         (
             "507",
-            "The vault's disk is at its free-space reserve, limits.disk_reserve_bytes (signing_disk_floor). A body's size alone is never refused.",
+            "The vault's disk is at its free-space reserve, limits.disk_reserve_bytes (signing_disk_floor); or, at POST /sign/image, the machine memory reading and decoding the image takes does not fit past the server's free-memory reserve (signing_memory_floor). A body's size alone is never refused.",
         ),
     ] {
         responses.insert(
@@ -376,12 +376,12 @@ fn editor_responses(ok: Value) -> Value {
         ),
         (
             "503",
-            "The editor's state is unavailable (signing_transport_unavailable), or an admitted request waited [limits] queue_wait_timeout_ms for a slot (editor_waited_out, Retry-After: 1).",
+            "The editor's state is unavailable (signing_transport_unavailable), or an admitted request waited [limits] queue_wait_timeout_ms for a slot (editor_waited_out, Retry-After: 1); or, at POST /sign/geometry with a token, the wait for the machine memory reading the PDF takes passed its deadline (signing_memory_waited_out).",
             true,
         ),
         (
             "507",
-            "With a token: the vault's disk is at its free-space reserve, limits.disk_reserve_bytes (signing_disk_floor). An admitted body's size alone is never refused.",
+            "With a token: the vault's disk is at its free-space reserve, limits.disk_reserve_bytes (signing_disk_floor); or, at POST /sign/geometry, the machine memory reading the PDF takes does not fit past the server's free-memory reserve (signing_memory_floor). An admitted body's size alone is never refused.",
             true,
         ),
     ] {

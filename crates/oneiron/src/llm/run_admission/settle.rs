@@ -102,6 +102,7 @@ impl RunInner {
                     CallOutcome::Answered(usage) => Some(RunTokenUsage {
                         input: usage.input,
                         output: usage.output,
+                        cache_calls: usage.cache_calls(),
                     }),
                     _ => None,
                 },

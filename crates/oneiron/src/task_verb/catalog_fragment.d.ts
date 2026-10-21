@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3946 declarations.
+// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3959 declarations.
 // Replies: 1057 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -114,6 +114,7 @@ declare namespace Sdk {
   type AgentHealthCounter = "results_changed" | "refused_calls" | "queue_wait" | "few_runs";
   type AgentHealthMove = "note" | "steer" | "budget" | "reassign" | "ask_coach" | "hold";
   type AgentHealthOutcome = "open" | "confirmed" | "dismissed" | "unresolved";
+  type HealthBriefPin = { task: EntityId; rev: number; digest: string; observed_at: number };
   type AgentHealthPadRead = { state: "read"; read?: EntityId | null; pads: number } | { state: "pending_review"; request: EntityId } | { state: "declined"; request: EntityId } | { state: "not_covered" } | { state: "refused"; code: string };
   type AgentHealthCoachRoute = "skill_edit" | "prompt_inject" | "neither";
   type AgentHealthSkillTarget = { skill: string; version: string };
@@ -121,8 +122,9 @@ declare namespace Sdk {
   type AgentHealthCoachAnswer = { at: number; pads: AgentHealthPadRead; draft?: AgentHealthCoachDraft | null };
   type AgentHealthApplicationState = "pending" | "admitted" | "rejected";
   type AgentHealthCoachApplication = { by: EntityId; at: number; skill: EntityId; version: string; instructions: string; candidate: EntityId; state: AgentHealthApplicationState; verdict?: EntityId | null; disposition?: string | null; updated_at: number };
-  type AgentHealthCoachAsk = { asked_by: EntityId; asked_at: number; diagnostic?: EntityId | null; attempt: string; answer?: AgentHealthCoachAnswer | null; application?: AgentHealthCoachApplication | null };
-  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null };
+  type AgentHealthCoachAsk = { asked_by: EntityId; asked_at: number; diagnostic?: EntityId | null; attempt: string; observed_brief?: HealthBriefPin | null; answer?: AgentHealthCoachAnswer | null; application?: AgentHealthCoachApplication | null };
+  type HealthReviewReceipt = { receipt: string; outcome: AgentHealthOutcome; by: EntityId; by_owner: boolean; at: number; reviewer: string; dial: number; measured: number; diagnostics: EntityId[]; evidence: EntityId[]; observed_brief?: HealthBriefPin | null; label?: boolean | null; projected: boolean };
+  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[] };
   type RunTreeStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned";
   type RunTreeTimestamps = { created_at: number; updated_at: number };
   type RunTreeFailure = { reason: string };
@@ -311,7 +313,10 @@ declare namespace Sdk {
   type WorldPrivacyWaitStatus = { state: "pending" } | { state: "applied"; receipt_id: string } | { state: "declined" };
   type WorldPrivacyWaitResult = { request_id: string; world: string; status: WorldPrivacyWaitStatus };
   type TaskAskStatus = { Pending: { hold?: TaskAskHoldReason | null } } | { Changed: { voided: EntityId[]; generation: number } } | { Settled: TaskAskResult } | { WorldPrivacy: WorldPrivacyWaitResult };
-  type TaskStatusView = { handle: TaskHandle; task_ref?: EntityId | null; phase: TaskPhase; brief_current?: BriefStamp | null; brief_running?: BriefStamp | null; attempt?: AttemptView | null; pending: boolean; asks: [TaskAskHandle, TaskAskStatus][]; last_receipt?: string | null; observed: string };
+  type TaskWorkflowHandoff = "program" | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } };
+  type TaskWorkflowOutcome = "pending" | { done: { receipt_ref: EntityId } } | { handoff: { cause: TaskWorkflowHandoff; receipt_ref: EntityId } };
+  type TaskWorkflowStatus = { attempt_ref: string; requested: EntityId; resolved?: EntityId | null; brief: BriefStamp; outcome: TaskWorkflowOutcome };
+  type TaskStatusView = { handle: TaskHandle; task_ref?: EntityId | null; phase: TaskPhase; brief_current?: BriefStamp | null; brief_running?: BriefStamp | null; attempt?: AttemptView | null; pending: boolean; asks: [TaskAskHandle, TaskAskStatus][]; last_receipt?: string | null; workflow?: TaskWorkflowStatus | null; observed: string };
   type TaskOutcome = { kind: "proposed"; decision_ref?: string | null; reason_codes: string[] } | { kind: "created"; route?: TaskRouteOutcome | null } | { kind: "accepted"; attempt?: AttemptHandle | null } | { kind: "held_by_other"; since: number } | { kind: "asked_up"; ask: TaskAskHandle } | { kind: "reported"; phase: TaskPhase } | (TaskStatusView & { kind: "snapshot" }) | { kind: "unchanged" } | { kind: "stale_fence" } | { kind: "wrong_node" } | { kind: "rejected"; decision_ref?: string | null };
   type TaskActor = string;
   type TaskLifecycleRecord = { call: string; outcome: string; occurred_at: number; actor: TaskActor; on_behalf_of?: string | null; job_ref?: string | null; trigger_ref?: string | null; fields: Record<string, string> };
@@ -325,9 +330,11 @@ declare namespace Sdk {
   type BriefConstraints = { notes?: string[]; policy_refs?: EntityId[]; budget_ref?: EntityId | null; deadline?: number | null; pins?: SpawnPins };
   type PinnedPack = { pack_ref: EntityId; context_version?: number | null; retrieval_run_id?: EntityId | null; digest: string };
   type PinnedRef = { target: EntityId; frontier?: number[] | null; digest: string };
-  type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[] };
+  type WorkflowBinding = { handle: string; args?: Record<string, string> };
+  type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[]; workflow?: WorkflowBinding | null };
   type Criterion = { text: string; evidence_ref?: EntityId | null };
-  type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null };
+  type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
+  type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[] };
   type EscalationTrigger = "blocked" | "criteria_unmet" | "scope_widen" | "spend_over" | "deadline" | "brief_revised" | "retry_requested";
   type Reversibility = "reversible_read" | "outbound_effect";
   type EscalationRule = { to: TaskAskTarget; triggers?: EscalationTrigger[]; default?: TaskAskDefault; until?: number | null; reversibility: Reversibility; question_ref?: ConsultPayloadRef | null };
@@ -3079,10 +3086,10 @@ declare namespace Sdk {
   type SwitchStage = "start" | "attach" | "cookies" | "navigate";
   type SwitchOutcome = { state: "switched" } | { state: "unchanged" } | { state: "failed"; stage: SwitchStage; code: string; detail: string };
   type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reason: string; url: string; carried?: SwitchCarried[]; not_carried?: SwitchNotCarried[]; outcome: SwitchOutcome };
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; duration_ms: number };
   type RecentCounts = { pass: number; miss: number; repair: number; of: number };
   type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
-  type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null };
+  type LibraryCard = { workflow: string; site: string; subgoal: string; type_ref: string; params: string[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
   type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null };
   type ObservationPage = Observation2 & { next?: string | null };
@@ -3100,7 +3107,6 @@ declare namespace Sdk {
   type ScrollInput = { direction: ScrollDirection; amount?: number | null; ref?: string | null; base?: ObservationBase | null };
   type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null; cursor?: string | null };
   type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number; next?: string | null; partial?: PartialTree | null; walk_next?: string | null; rebindings?: Rebound[] };
-  type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
   type ExpectOutput = { met: boolean; row?: Row | null; partial?: PartialTree | null; rebindings?: Rebound[] };
   type ScreenshotTrigger = "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt";
   type ScreenshotInput = { trigger: ScreenshotTrigger; since_capture?: string | null };
@@ -3113,8 +3119,14 @@ declare namespace Sdk {
   type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text: string; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
+  type StrictDenial = "rule_abstained" | "no_rule" | "image";
+  type AskUpReason = { why: "asked"; ladder?: string | null } | { why: "looks" } | { why: "no_answer" } | { why: "wrong_answer" } | { why: "strict"; denied: StrictDenial };
+  type ClockScope = "wait" | "navigation" | "decision";
+  type BatchStopCause = { cause: "postcondition_unmet" } | { cause: "locator_missing" } | { cause: "incomplete_observation" } | { cause: "decider_asked_up"; reason: AskUpReason } | { cause: "clock"; scope: ClockScope } | { cause: "press_needed" } | { cause: "taken_over" } | { cause: "field_text" } | { cause: "no_progress" } | { cause: "browser"; code: string };
+  type CheckReceipt = { expect: ExpectInput; observed: ExpectOutput };
+  type FailedStepReceipt = { step?: number | null; stop_cause: BatchStopCause; missed?: CheckReceipt[]; observation?: Observation2 | null; error?: string | null };
   type StepRebound = { step: number; rebound: Rebound };
-  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null; rebindings?: StepRebound[] };
+  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; stop_cause?: BatchStopCause | null; failed_receipt?: FailedStepReceipt | null; elapsed_ms: number; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null; rebindings?: StepRebound[] };
   type WindowsInput = { app?: string | null };
   type DesktopWindow = { window: string; app: string; title: string; current: boolean; front: boolean };
   type WindowsOutput = { windows: DesktopWindow[] };
@@ -3606,7 +3618,7 @@ declare namespace Sdk {
   type SievePolicyRequest = Record<string, never>;
   type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: number; max_text_bytes_per_pass: number; date_interest: number; name_interest: number; absolute_date_confidence: number; relative_date_confidence: number; vague_date_confidence: number; name_confidence: number; initial_name_confidence: number; katakana_name_confidence: number; uncertain_low: number; uncertain_high: number };
   type SievePolicySetRequest = { policy: SievePolicy };
-  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; audit_window_instruction: string };
+  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; audit_window_instruction: string };
   type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy };
   type SieveLeaseRequest = { budget_id: string };
   type SieveLeaseCounter = { total_units: number; remaining_units: number; reserved_units: number; updated_at: number };
@@ -3854,7 +3866,7 @@ declare namespace Sdk {
   type BrowserScreenshotOutput = BrowserAnswer<ScreenshotOutput>;
   type BrowserImageOutput = BrowserAnswer<ImageOutput>;
   type BrowserBatchOutput = BrowserAnswer<BatchOutput>;
-  type LibraryFindInput = { site?: string | null; subgoal?: string | null };
+  type LibraryFindInput = { site?: string | null; subgoal?: string | null; type_ref?: string | null };
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type BrowserLibraryFindOutput = BrowserAnswer<LibraryFindOutput>;
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null };
@@ -3872,8 +3884,9 @@ declare namespace Sdk {
   type RetiredCard = { card: LibraryCard; retired_at: number; reason?: string | null };
   type LibraryRetiredOutput = { site: string; retired: RetiredCard[] };
   type BrowserLibraryRetiredOutput = BrowserAnswer<LibraryRetiredOutput>;
-  type LibraryRunInput = { workflow: string; args?: Record<string, string>; base?: ObservationBase | null };
-  type LibraryRunOutput = { workflow: string; status: SubgoalStatus; unmet?: number[]; batch: BatchOutput };
+  type LibraryRunMode = "strict" | "assisted";
+  type LibraryRunInput = { workflow: string; args?: Record<string, string>; base?: ObservationBase | null; mode?: LibraryRunMode | null };
+  type LibraryRunOutput = { workflow: string; status: SubgoalStatus; mode: LibraryRunMode; model_free: boolean; model_free_unproven?: number | null; unmet?: number[]; batch: BatchOutput };
   type BrowserLibraryRunOutput = BrowserAnswer<LibraryRunOutput>;
   type BrowserHandoverOutput = BrowserAnswer<HandoverOutput>;
   type SwitchEngineInput = { engine: BrowserEngine; reason: string };
@@ -4096,7 +4109,7 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
 };
 /** Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion. */
 declare function crawl(input: Sdk.WebCrawlRequest): Promise<Sdk.CrawlResult | StoredResult>;
-/** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it), or the whole TASKS section when nothing is named. */
+/** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it; `workflow`: its bound try), or the whole TASKS section when nothing is named. */
 declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
 declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.TaskDescription | StoredResult>;
 /** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent. */
@@ -4163,7 +4176,7 @@ declare namespace self {
     spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.AgentSpawnOutput | StoredResult>;
   };
   const browser: {
-    /** Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one. */
+    /** Runs one batched program of browser steps for a subgoal, stopping at the first failing step with a stop_cause and a failed_receipt (missed checks, the page); elapsed_ms times it, duration_ms each effect; the last observation edits the base. */
     batch(input: Sdk.BatchInput): Promise<Sdk.BrowserBatchOutput | StoredResult>;
     /** Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next. */
     click(input: Sdk.ClickInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
@@ -4178,7 +4191,7 @@ declare namespace self {
     /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.BrowserHandoverOutput | StoredResult>;
     library: {
-      /** The replay library's programs for a site, or for the open page's site, each card with its lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of` outcomes), held_out, supersedes and seed. */
+      /** The replay library's programs for a site, or the open page's; type_ref (node_id@tree_version) keeps that exact task type. Each card: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
       find(input: Sdk.LibraryFindInput): Promise<Sdk.BrowserLibraryFindOutput | StoredResult>;
       /** Offers a solved run's program to the replay library, refs as locators; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance. */
       propose(input: Sdk.ProposeInput): Promise<Sdk.BrowserLibraryProposeOutput | StoredResult>;
@@ -4186,7 +4199,7 @@ declare namespace self {
       retire(input: Sdk.LibraryRetireInput): Promise<Sdk.BrowserLibraryRetireOutput | StoredResult>;
       /** The programs retires took out of the replay library for a site, or for the open page's site, the newest first, each with when and why. */
       retired(input: Sdk.LibraryRetiredInput): Promise<Sdk.BrowserLibraryRetiredOutput | StoredResult>;
-      /** Runs a replay library program live with its arguments, resolving its locators as each step runs; its last observation edits the caller's base, and a missed postcondition goes back to the planner. */
+      /** Runs a replay library program live, strict (rules only; a step needing a model asks up at zero tokens) or assisted, by default as its proof allows; model_free reads receipts, a miss returns a failed_receipt; 3 strict misses retire it drift. */
       run(input: Sdk.LibraryRunInput): Promise<Sdk.BrowserLibraryRunOutput | StoredResult>;
     };
     /** Observes the run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched. */
@@ -4437,12 +4450,12 @@ declare const tasks: {
   consult: {
     result(input: Sdk.ConsultLandRequest): Promise<Sdk.ConsultLandReply | StoredResult>;
   };
-  /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway. */
+  /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway, and may bind an agent TASK to a library program (`context.workflow`). */
   create(input: Sdk.TaskCreateRequest): Promise<Sdk.TaskCreateReceipt | StoredResult>;
   /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
   outcomes(input: Sdk.TaskAskHandle): Promise<Sdk.CalibrationPair[] | StoredResult>;
   refuse(input: Sdk.TaskRefuseInput): Promise<Sdk.TaskRefuseOutput | StoredResult>;
-  /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. */
+  /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries. */
   update(input: Sdk.TaskUpdateRequest & { resultRef: NonNullable<Sdk.TaskUpdateRequest["resultRef"]> }): Promise<Sdk.ReaderReportReceipt | StoredResult>;
   update(input: Sdk.TaskUpdateRequest): Promise<Sdk.TaskUpdateReceipt | StoredResult>;
   wait(input: Sdk.TaskWaitInput): Promise<Sdk.TaskWaitOutput | StoredResult>;
