@@ -511,8 +511,11 @@ pub(crate) fn pump_due_while(
     if !may_start() || !at_home(server, now)? {
         return Ok(());
     }
-    let batch =
-        refresh_due_questions_by_role_while(server.vault(), now, may_start, |record, runner, to| {
+    let batch = refresh_due_questions_by_role_while(
+        server.vault(),
+        now,
+        may_start,
+        |record, runner, to| {
             Ok(LadderGraphAnswerer::routed(
                 server,
                 record.principal,
@@ -523,7 +526,8 @@ pub(crate) fn pump_due_while(
             )
             .with_criteria(record.definition.criteria.clone())
             .with_posture(record.definition.posture))
-        })?;
+        },
+    )?;
     for failure in &batch.failures {
         tracing::warn!(
             question = %failure.question.to_hex(),
