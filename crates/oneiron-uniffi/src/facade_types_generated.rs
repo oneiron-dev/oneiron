@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1117 facade rows, 3817 generated types.
+// UniFFI census: 1117 facade rows, 3818 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1069.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -25248,6 +25248,19 @@ pub enum NotWorse {
     Unknown,
 }
 
+/// `oneiron::embed::space_move::CohortProbe`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CohortProbe {
+    #[serde(rename = "probe")]
+    pub probe: String,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "from")]
+    pub from: u64,
+    #[serde(rename = "until")]
+    pub until: u64,
+}
+
 /// `oneiron::embed::space_move::KindProbeCheck`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct KindProbeCheck {
@@ -25287,6 +25300,12 @@ pub struct KindProbeCheck {
     pub rubric: Option<String>,
     #[serde(rename = "card", default, skip_serializing_if = "Option::is_none")]
     pub card: Option<SufficiencyCard>,
+    #[serde(
+        rename = "cohort_members",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cohort_members: Option<Vec<CohortProbe>>,
 }
 
 /// `oneiron::embed::space_move::SpaceMoveCheck`.
@@ -25298,6 +25317,12 @@ pub struct SpaceMoveCheck {
     pub kinds: Vec<KindProbeCheck>,
     #[serde(rename = "verdict")]
     pub verdict: NotWorse,
+    #[serde(
+        rename = "cohort_check",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cohort_check: Option<String>,
 }
 
 /// `oneiron::embed::space_move::SpaceMove`.
