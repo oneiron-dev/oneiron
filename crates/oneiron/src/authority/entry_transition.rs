@@ -470,7 +470,9 @@ pub(super) fn fold_entry_state(
         return EntryFold::Ready(state);
     }
     if let AuthorityOp::FederationLifecycle(action) = &entry.op {
-        if let Err(reason) = apply_federation_lifecycle(&mut state, action, context) {
+        if let Err(reason) =
+            apply_federation_lifecycle(&mut state, action, context, (hash, &signer))
+        {
             return EntryFold::Invalid(AuthorityFoldIssue::FederationLifecycleRejected {
                 entry: hash,
                 reason,

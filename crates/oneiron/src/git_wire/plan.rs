@@ -4,6 +4,7 @@ use super::argv::FrozenGitArgv;
 use super::config::{GIT_WIRE_MAX_PLAN_OBJECTS, GIT_WIRE_MAX_PUBLICATIONS};
 use super::failure::invalid;
 use super::record::hash_field;
+use super::retained_object::GitRetainedObject;
 use super::{
     GIT_WIRE_DOMAIN, GitCommitRequest, GitOid, GitRefExpectation, GitRefName, GitTreeEntry,
     GitWireResult,
@@ -16,6 +17,9 @@ pub enum GitWireObjectWrite {
     Blob(Vec<u8>),
     Tree(Vec<GitTreeEntry>),
     Commit(GitCommitRequest),
+    /// One object of any of the four types, its exact bytes streamed from
+    /// a retained spool (FIX 7608 slice 2b-i).
+    Retained(GitRetainedObject),
 }
 
 impl GitWireObjectWrite {
@@ -24,6 +28,7 @@ impl GitWireObjectWrite {
             Self::Blob(bytes) => Ok(FrozenGitArgv::write_blob(bytes)),
             Self::Tree(entries) => FrozenGitArgv::write_tree(entries),
             Self::Commit(request) => FrozenGitArgv::write_commit(request),
+            Self::Retained(object) => Ok(FrozenGitArgv::write_retained(object)),
         }
     }
 }
@@ -77,6 +82,16 @@ impl GitWirePlan {
     /// Adds a commit write and returns a handle to its object id.
     pub fn write_commit(&mut self, request: GitCommitRequest) -> GitWireResult<GitWirePlannedOid> {
         self.push_object(GitWireObjectWrite::Commit(request))
+    }
+
+    /// Adds one retained object's write and returns a handle to its object
+    /// id (FIX 7608 slice 2b-i). A copy writes each object as its own plan,
+    /// so the plan bound never limits how many it writes.
+    pub fn write_retained(
+        &mut self,
+        object: GitRetainedObject,
+    ) -> GitWireResult<GitWirePlannedOid> {
+        self.push_object(GitWireObjectWrite::Retained(object))
     }
 
     /// Names an object that already exists in the store.
@@ -175,7 +190,11 @@ impl GitWirePlan {
         for write in &self.objects {
             let argv = write.argv()?;
             hash_field(&mut hasher, argv.operation().as_str().as_bytes());
-            hash_field(&mut hasher, argv.stdin().unwrap_or(&[]));
+            match write {
+                // The spool's own sealed bytes, in the same framing.
+                GitWireObjectWrite::Retained(object) => object.spool().hash_framed(&mut hasher)?,
+                _ => hash_field(&mut hasher, argv.stdin().unwrap_or(&[])),
+            }
         }
         for oid in &self.existing {
             hash_field(&mut hasher, oid.as_str().as_bytes());

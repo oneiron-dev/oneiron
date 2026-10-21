@@ -2963,6 +2963,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/current_scope.rs",
+     "purpose": "The current scope a pact and a guest's credential stand in (Phase2 C)",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -3487,7 +3497,7 @@
      "path": "src/authority/machine_profile/apply.rs",
      "purpose": "The fold transitions of a machine revision: a roster revision, an owner anchor's mark, and the checks every…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -3868,7 +3878,7 @@
      "path": "src/authority/slip.rs",
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 15,
       "struct": 4
      }
@@ -5895,7 +5905,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -12342,6 +12352,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/claim/scoped_read/guest_bound.rs",
+     "purpose": "FIX 7929: a guest's read stays inside its grant's current effective scope at every row, in the serving…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/claim/scoped_read/lifecycle.rs",
      "purpose": "Status-only history reads for already-served session rows, without weakening body reads",
      "surface": {
@@ -15743,7 +15763,7 @@
      "path": "src/code_sandbox/mod.rs",
      "purpose": "Sandbox boundary contract for code-mode execution",
      "surface": {
-      "mod": 7,
+      "mod": 8,
       "re-export": 5
      }
     },
@@ -15841,6 +15861,25 @@
      "path": "src/code_sandbox/quickjs/tests.rs",
      "purpose": "Acceptance tests require the real artifacts produced by the pinned build",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PreparationNote",
+      "PreparedSource",
+      "SourceLanguage",
+      "TranspiledSource"
+     ],
+     "path": "src/code_sandbox/source.rs",
+     "purpose": "Code-mode source preparation (FIX 8276, owner ruling CODE-MODE-TS = A)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 15,
+      "struct": 2
+     }
     },
     {
      "bucket": "s",
@@ -21125,7 +21164,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 31,
       "re-export": 11
      }
     },
@@ -21146,7 +21185,7 @@
      "path": "src/deletion/receipt.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -21156,7 +21195,28 @@
      "path": "src/deletion/receipt_completion.rs",
      "purpose": "The linked REDACTION_AUDIT completion row (OF-470, ARCH-0038 step 10)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/receipt_final.rs",
+     "purpose": "An erase's overall final REDACTION_AUDIT row (FIX 5844, C-ERASE-FINAL)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/receipt_grammar.rs",
+     "purpose": "The pinned REDACTION_AUDIT body grammar (ONE-1134, ONE-1140, FIX 5844): the one structural validator every…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -27218,13 +27278,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/edit_roundtrip/judgment_cells.rs",
-     "purpose": "Independent OOXML reads for typed sheet answers",
+     "purpose": "Typed sheet-answer verification and reader seam",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/judgment_cells/read.rs",
+     "purpose": "Independent named-sheet cell reads from OOXML",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -27451,7 +27521,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ShapeReviewAnchor",
@@ -27471,14 +27541,47 @@
       "SlideUnitRefusalReason"
      ],
      "path": "src/edit_roundtrip/slides_review.rs",
-     "purpose": "Bounded typed review of slide/shape units into one retained comment proposal",
+     "purpose": "Typed slide review model and API seam",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 6,
       "enum": 3,
-      "fn": 5,
+      "fn": 3,
+      "re-export": 1,
       "struct": 11,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/slides_review/carry.rs",
+     "purpose": "Slide identities and carried judgments over a new head",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/slides_review/doors.rs",
+     "purpose": "Vault access and policy admission for slide reviews",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/slides_review/run.rs",
+     "purpose": "Typed slide and shape review execution",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -27488,6 +27591,16 @@
      "path": "src/edit_roundtrip/slides_review/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/slides_review/verify.rs",
+     "purpose": "Verification of retained slide judgment rows",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "L",
@@ -28142,7 +28255,7 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 2,
       "struct": 1
      }
@@ -28196,7 +28309,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 51
+      "crate-vis": 56
      }
     },
     {
@@ -32212,7 +32325,7 @@
      "path": "src/git_wire/argv.rs",
      "purpose": "Frozen typed argv: one constructor per git verb plus the token validators",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 39
      }
     },
     {
@@ -32232,6 +32345,7 @@
      "path": "src/git_wire/checkout.rs",
      "purpose": "Checkout custody: owned handle directories plus the `CheckoutRepoOps` trait impl",
      "surface": {
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -32242,7 +32356,7 @@
      "path": "src/git_wire/checkout_remote.rs",
      "purpose": "Lease-bound worktree remotes",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -32278,7 +32392,7 @@
      "path": "src/git_wire/execution_context.rs",
      "purpose": "Typed Git invocation context: repository selector and operation policy travel together",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -32348,7 +32462,7 @@
      "path": "src/git_wire/import_fetch.rs",
      "purpose": "The outside import's Git legs (FIX 6871, G7 PR1): one exact fetch of one outside ref into a fresh private…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -32381,19 +32495,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GitPeeledRef",
       "GitRefEnd",
-      "GitRefTag"
+      "GitRefTag",
+      "GitRetainedPeeledRef",
+      "GitRetainedRefTag"
      ],
      "path": "src/git_wire/mirror_plan_review.rs",
      "purpose": "What a whole ref an automatic mirror plan pushes names beyond the commits it reaches (FIX 6866 part 2), and…",
      "surface": {
       "enum": 1,
-      "fn": 4,
-      "struct": 2
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -32414,8 +32530,8 @@
      "path": "src/git_wire/mod.rs",
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
-      "crate-vis": 5,
-      "re-export": 16
+      "crate-vis": 6,
+      "re-export": 18
      }
     },
     {
@@ -32429,7 +32545,7 @@
      "path": "src/git_wire/objects.rs",
      "purpose": "Commit and tree object model: tree entries, commit headers, commit-request bytes, tree parsers",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 3
      }
@@ -32462,7 +32578,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -32474,6 +32590,30 @@
      "purpose": "The crate's single git child-process constructor plus its bounded IO and thread-pump helpers",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/projected_checkout.rs",
+     "purpose": "A lease's checkout of a masked copy (FIX 7608 slice 2b-i): the constructors a later slice selects, with no…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GitProjectedPayload"
+     ],
+     "path": "src/git_wire/projected_object.rs",
+     "purpose": "A masked copy's objects and its store (FIX 7608 slice 2b-i, CALL P2 `PreservePayload`)",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -32502,7 +32642,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -32512,7 +32652,7 @@
      "path": "src/git_wire/publish_review_trees.rs",
      "purpose": "The tree-by-tree half of an exact publish's review (FIX 6866): one commit whose diff alone passed its output…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -32570,6 +32710,22 @@
      "purpose": "Admission of immutable Git layout and worktree semantics before an attribute-consuming effect",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GitObjectKind",
+      "GitRetainedObject"
+     ],
+     "path": "src/git_wire/retained_object.rs",
+     "purpose": "Retained Git object IO (FIX 7608 slice 2b-i, Rule 5)",
+     "surface": {
+      "crate-vis": 20,
+      "enum": 1,
+      "fn": 11,
+      "struct": 1
      }
     },
     {
@@ -39005,7 +39161,7 @@
       "RecordEraseSweepRequest"
      ],
      "path": "src/memory/erase_sweep.rs",
-     "purpose": "Owner-bound historical erasure timing from the immutable redaction receipt",
+     "purpose": "Owner-bound historical erasure timing from the immutable redaction receipt, its factual sweep row and its…",
      "surface": {
       "const": 1,
       "fn": 1,
@@ -40197,7 +40353,8 @@
      "path": "src/memory/repo_secret_reads.rs",
      "purpose": "Repo bytes a Memory handle's masked reader reads (FIX 7608 slice 2a, ASK 1)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 9,
+      "fn": 1
      }
     },
     {
@@ -42786,6 +42943,17 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/doors.rs",
+     "purpose": "Vault doors for office body import, edits, forks and export",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 17
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -42815,28 +42983,14 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ForkState",
-      "OfficeBodyEdit",
-      "OfficeBodyExport",
-      "OfficeBodyExportRecord",
-      "OfficeBodyExportRequest",
-      "OfficeBodyFork",
-      "OfficeBodyHead",
-      "OfficeBodyKind",
-      "OfficeRecalcZone",
-      "XlsxPreview"
-     ],
+     "notable": [],
      "path": "src/office_body/mod.rs",
-     "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…",
+     "purpose": "Live office body records and Vault doors",
      "surface": {
-      "crate-vis": 7,
-      "enum": 2,
-      "fn": 18,
-      "re-export": 8,
-      "struct": 8
+      "crate-vis": 5,
+      "re-export": 9
      }
     },
     {
@@ -42984,6 +43138,40 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ForkState",
+      "OfficeBodyEdit",
+      "OfficeBodyExport",
+      "OfficeBodyExportRecord",
+      "OfficeBodyExportRequest",
+      "OfficeBodyFork",
+      "OfficeBodyHead",
+      "OfficeBodyKind",
+      "OfficeRecalcZone",
+      "XlsxPreview"
+     ],
+     "path": "src/office_body/records.rs",
+     "purpose": "Office body records and side-table bindings",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 2,
+      "fn": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/support.rs",
+     "purpose": "Shared office body storage, validation and projection helpers",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -43022,7 +43210,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "BodyCell",
@@ -43033,11 +43221,71 @@
       "XlsxBodyOp"
      ],
      "path": "src/office_body/xlsx.rs",
-     "purpose": "The XLSX body inside its Loro document, schema 2 (ARCH-0075: \"XLSX is a map keyed by sheet and address\")",
+     "purpose": "Live XLSX body model and module seam",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 4,
       "enum": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/xlsx/apply.rs",
+     "purpose": "Application of one live XLSX operation",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/xlsx/axis.rs",
+     "purpose": "Live XLSX axis edits and formula retargeting",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/xlsx/diff.rs",
+     "purpose": "XLSX admission, projection changes and three-way diffs",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/xlsx/read.rs",
+     "purpose": "XLSX body import and typed Loro reads",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/xlsx/sheets.rs",
+     "purpose": "XLSX sheet identity, order and visibility storage",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/xlsx/wire.rs",
+     "purpose": "Loro cell, name, table and axis codecs",
+     "surface": {
+      "crate-vis": 16
      }
     },
     {
@@ -43892,7 +44140,7 @@
      "path": "src/origin/secret_marks/read.rs",
      "purpose": "The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -43902,17 +44150,37 @@
      "path": "src/origin/secret_projection.rs",
      "purpose": "Who reads a marked repo blob's real bytes (FIX 7608 slice 2a, owner ruling SECRETS-IN-REPOS = A, ASK 1)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_projection/claims.rs",
+     "purpose": "A masked Git copy's record (FIX 7608 slice 2b-i, CALL M): value-free `repo.secret_projection` claims at…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_projection/git.rs",
+     "purpose": "The Git side of a marked repo's projection",
+     "surface": {
+      "crate-vis": 17
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/origin/secret_projection/git.rs",
-     "purpose": "The exact-source identity (FIX 7608, owner ruling A2): an export back to a repo's own original source is…",
+     "path": "src/origin/secret_projection/graph_objects.rs",
+     "purpose": "The copy of a masked Git graph's object closure (FIX 7608 slice 2b-i): every object the roots reach, written…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 6
      }
     },
     {
@@ -43937,7 +44205,7 @@
      "path": "src/origin/smart_http/advertise.rs",
      "purpose": "The publication-gated ref-advertisement rewrite: pkt-line state machine and keep policy",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -44287,6 +44555,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/read_projection.rs",
+     "purpose": "The read-only backend over a masked Git copy (FIX 7608 slice 2b-i): its constructor only, with no serving…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -44352,7 +44630,7 @@
      "path": "src/origin/smart_http/serve_cmd.rs",
      "purpose": "The frozen `git http-backend` invocation: typed request, closed argv/env command, and the running child handle",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 13,
       "struct": 3
      }
@@ -57575,6 +57853,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/erase_binding.rs",
+     "purpose": "The custody retirements one erase owes, bound by name on its receipt (FIX 5844, C-ERASE-FINAL): read in the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -61950,7 +62238,7 @@
      "path": "src/task_verb/ask_guest.rs",
      "purpose": "Ask-scoped guest authority: reuse a person's owner-stamped bounds",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -70940,7 +71228,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 193,
+     "files": 194,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71073,7 +71361,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 88,
+     "files": 89,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71122,7 +71410,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71318,7 +71606,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 36,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71416,9 +71704,9 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 33,
+     "files": 38,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
@@ -71528,7 +71816,7 @@
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 34,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -71752,14 +72040,14 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 22,
+     "files": 31,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "m",
      "layout": "dir",
-     "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
+     "purpose": "Live office body records and Vault doors"
     },
     "origin": {
-     "files": 111,
+     "files": 114,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72172,7 +72460,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 135,
+     "files": 136,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72403,9 +72691,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 171,
+   "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4640,
+   "source_files": 4666,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72616,23 +72904,25 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FederationGrantActivation",
       "FederationLifecycleAction",
       "FederationLifecycleKind",
       "FederationLifecycleRejection",
+      "FederationNarrowing",
       "FederationPactGesture",
       "FederationPactState",
-      "FederationPactStatus"
+      "FederationPactStatus",
+      "NarrowingParty"
      ],
      "path": "src/authority/federation_pact.rs",
      "purpose": "Federation lifecycle and pact types",
      "surface": {
-      "enum": 4,
+      "enum": 5,
       "fn": 6,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -76137,6 +76427,14 @@
   "oneiron-code-check": {
    "files": [
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/backend_screen.rs",
+     "purpose": "Fleet-only, sequential direction screen; no fallback and no default switch",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -76162,7 +76460,7 @@
       "ShadowCheck"
      ],
      "path": "src/lib.rs",
-     "purpose": "An optional type check of code-mode programs before they run",
+     "purpose": "An optional type check of code-mode programs, run beside them",
      "surface": {
       "enum": 4,
       "fn": 6,
@@ -76196,7 +76494,7 @@
       "MicrosoftTsc"
      ],
      "path": "src/microsoft.rs",
-     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when tsc-rs is…",
+     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when the…",
      "surface": {
       "const": 1,
       "fn": 1,
@@ -76274,7 +76572,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when tsc-rs is…"
+     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when the…"
     },
     "output": {
      "files": 1,
@@ -76306,8 +76604,8 @@
     }
    },
    "over_bar": 0,
-   "purpose": "An optional type check of code-mode programs before they run",
-   "source_files": 8,
+   "purpose": "An optional type check of code-mode programs, run beside them",
+   "source_files": 9,
    "test_files": 1
   },
   "oneiron-container": {
@@ -78632,13 +78930,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/edit/structure/arrange.rs",
-     "purpose": "The live-deck projector's shape verbs: a sibling reorder (z-order), an empty group framed over slide space…",
+     "purpose": "Projector arrangement verbs and their verification seam",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/structure/arrange/verify.rs",
+     "purpose": "Independent read-back checks for projector arrangement verbs",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -78782,7 +79090,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AssetRef",
@@ -78806,13 +79114,25 @@
       "TransactionError"
      ],
      "path": "src/edit/transaction.rs",
-     "purpose": "Deck transactions (ARCH-0077, \"Transactions and allowed part changes\"): the unit the engine proposes and…",
+     "purpose": "Deck transaction grammar, reports and runner seam",
      "surface": {
       "const": 2,
       "enum": 8,
-      "fn": 15,
+      "fn": 14,
+      "re-export": 1,
       "struct": 10,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/transaction/run.rs",
+     "purpose": "Ordered deck transaction execution",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1
      }
     },
     {
@@ -79715,13 +80035,25 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/pptx_comments/comments.rs",
-     "purpose": "Modern threaded comments using retained XML surgery and a derived part allowlist",
+     "purpose": "Modern PPTX comment topology and patch seam",
      "surface": {
-      "fn": 2
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pptx_comments/comments/patch.rs",
+     "purpose": "Modern PPTX comment edits over retained XML",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1
      }
     },
     {
@@ -79783,13 +80115,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/pptx_comments/xml.rs",
-     "purpose": "Namespace-aware XML spans for surgical edits",
+     "purpose": "PPTX comment XML spans, queries and surgery",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pptx_comments/xml/parse.rs",
+     "purpose": "Namespace-aware parsing for PPTX comment XML",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -79807,7 +80149,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Editability",
@@ -79815,12 +80157,23 @@
       "Package"
      ],
      "path": "src/retained_opc/package.rs",
-     "purpose": "ZIP central-directory reader and copy-through writer",
+     "purpose": "Retained OPC package state and copy-through writing",
      "surface": {
       "enum": 1,
-      "fn": 8,
+      "fn": 7,
       "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/retained_opc/package/open.rs",
+     "purpose": "Retained ZIP admission, metadata inspection and expansion",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -79892,33 +80245,43 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
-     "notable": [
-      "XlsxArea",
-      "XlsxBodyError",
-      "XlsxBook",
-      "XlsxCell",
-      "XlsxChange",
-      "XlsxLock",
-      "XlsxName",
-      "XlsxProjection",
-      "XlsxSheet",
-      "XlsxSheetPlan",
-      "XlsxSheetVisibility",
-      "XlsxStyle",
-      "XlsxTable",
-      "XlsxTableShift",
-      "XlsxValue"
-     ],
+     "notable": [],
      "path": "src/xlsx_body.rs",
-     "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")",
+     "purpose": "SpreadsheetML workbook read and projection seam",
      "surface": {
-      "const": 2,
-      "enum": 5,
-      "fn": 17,
-      "re-export": 4,
-      "struct": 10
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/attachments.rs",
+     "purpose": "Drawing, note, table and slicer changes after an axis edit",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/axis.rs",
+     "purpose": "Shared-formula expansion and worksheet axis changes",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/coordinates.rs",
+     "purpose": "Coordinate XML rewrites after an axis edit",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -79944,6 +80307,67 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/layout.rs",
+     "purpose": "Worksheet layout and pivot/formula retargeting",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "XlsxArea",
+      "XlsxBook",
+      "XlsxCell",
+      "XlsxChange",
+      "XlsxLock",
+      "XlsxName",
+      "XlsxProjection",
+      "XlsxSheet",
+      "XlsxSheetPlan",
+      "XlsxSheetVisibility",
+      "XlsxStyle",
+      "XlsxTable",
+      "XlsxTableShift",
+      "XlsxValue"
+     ],
+     "path": "src/xlsx_body/model.rs",
+     "purpose": "SpreadsheetML model, validation and A1 rules",
+     "surface": {
+      "const": 2,
+      "crate-vis": 7,
+      "enum": 4,
+      "fn": 14,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/project.rs",
+     "purpose": "Workbook format, cell and name projection",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/read.rs",
+     "purpose": "Workbook cells, tables, styles, names and shared-string reads",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -79961,6 +80385,18 @@
      "purpose": "The worksheet titles a sheet layout leaves in the extended properties (`docProps/app.xml`, FIX 3441)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "XlsxBodyError"
+     ],
+     "path": "src/xlsx_error.rs",
+     "purpose": "Workbook read and projection errors",
+     "surface": {
+      "enum": 1
      }
     },
     {
@@ -80082,9 +80518,9 @@
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
-     "files": 22,
+     "files": 24,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Narrow value and text edits in place (ARCH-0077, \"Edit in place with passthrough\"): `set_text`…"
     },
@@ -80131,16 +80567,16 @@
      "purpose": "Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks"
     },
     "pptx_comments": {
-     "files": 7,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Narrow, byte-preserving modern PowerPoint comment edits and the slide and shape identities they anchor to"
     },
     "retained_opc": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Bounded, retained OPC archives"
     },
@@ -80152,11 +80588,18 @@
      "purpose": "Excel's storage qualifiers for post-2007 worksheet functions"
     },
     "xlsx_body": {
-     "files": 5,
+     "files": 12,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")"
+     "purpose": "SpreadsheetML workbook read and projection seam"
+    },
+    "xlsx_error": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Workbook read and projection errors"
     },
     "xlsx_shift": {
      "files": 1,
@@ -80173,9 +80616,9 @@
      "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its named cell style…"
     }
    },
-   "over_bar": 9,
+   "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 125,
+   "source_files": 138,
    "test_files": 14
   },
   "oneiron-driver": {

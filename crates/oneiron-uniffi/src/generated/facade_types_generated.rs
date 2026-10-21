@@ -21502,6 +21502,14 @@ pub struct RecordEraseSweep {
         skip_serializing_if = "Option::is_none"
     )]
     pub sweep_complete_at: Option<u64>,
+    #[serde(
+        rename = "erase_complete_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub erase_complete_at: Option<u64>,
+    #[serde(rename = "final_ref", default, skip_serializing_if = "Option::is_none")]
+    pub final_ref: Option<String>,
     #[serde(rename = "custody", default, skip_serializing_if = "Option::is_none")]
     pub custody: Option<RecordEraseCustody>,
 }
@@ -25664,6 +25672,8 @@ pub struct LegalHoldLiftAndEraseRequest {
 pub enum ErasePendingReason {
     #[serde(rename = "historical_sweep")]
     HistoricalSweep,
+    #[serde(rename = "custody_retirement")]
+    CustodyRetirement,
 }
 
 /// `oneiron_contracts::error::legal_hold::LegalHoldBoundKind`.
@@ -52144,7 +52154,7 @@ pub struct OfficeBodyImportRequest {
     pub made_by: Option<crate::WireJson>,
 }
 
-/// `oneiron::office_body::OfficeBodyKind`.
+/// `oneiron::office_body::records::OfficeBodyKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum OfficeBodyKind {
     #[serde(rename = "docx")]
@@ -52155,7 +52165,7 @@ pub enum OfficeBodyKind {
     Pptx,
 }
 
-/// `oneiron::office_body::OfficeBodyHead`.
+/// `oneiron::office_body::records::OfficeBodyHead`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeBodyHead {
     #[serde(rename = "artifact")]
@@ -52273,7 +52283,7 @@ pub struct DocxBodyView {
     pub blocks: Vec<DocxBlockView>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxValue`.
+/// `oneiron_docedit::xlsx_body::model::XlsxValue`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum XlsxValue {
     #[serde(rename = "blank")]
@@ -52288,7 +52298,7 @@ pub enum XlsxValue {
     Error(String),
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxLock`.
+/// `oneiron_docedit::xlsx_body::model::XlsxLock`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum XlsxLock {
     #[serde(rename = "shared_formula")]
@@ -52324,7 +52334,7 @@ pub struct BodyCell {
     pub locked: Option<XlsxLock>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxArea`.
+/// `oneiron_docedit::xlsx_body::model::XlsxArea`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxArea {
     #[serde(rename = "first")]
@@ -52335,7 +52345,7 @@ pub struct XlsxArea {
     pub lock: XlsxLock,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxTable`.
+/// `oneiron_docedit::xlsx_body::model::XlsxTable`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxTable {
     #[serde(rename = "name")]
@@ -52360,7 +52370,7 @@ pub struct XlsxTable {
     pub calculated: Option<Vec<Option<String>>>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxSheetVisibility`.
+/// `oneiron_docedit::xlsx_body::model::XlsxSheetVisibility`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum XlsxSheetVisibility {
     #[serde(rename = "visible")]
@@ -52401,7 +52411,7 @@ pub struct BodyName {
     pub locked: Option<XlsxLock>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxStyle`.
+/// `oneiron_docedit::xlsx_body::model::XlsxStyle`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxStyle {
     #[serde(rename = "num_fmt")]
@@ -53639,7 +53649,7 @@ pub struct OfficeBodyEditRequest {
     pub made_by: Option<crate::WireJson>,
 }
 
-/// `oneiron::office_body::OfficeBodyEdit`.
+/// `oneiron::office_body::records::OfficeBodyEdit`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeBodyEdit {
     #[serde(rename = "frontier")]
@@ -53672,7 +53682,7 @@ pub struct OfficeBodyForkOpenRequest {
     pub proposal_ref: Option<String>,
 }
 
-/// `oneiron::office_body::ForkState`.
+/// `oneiron::office_body::records::ForkState`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
 pub enum ForkState {
@@ -53696,7 +53706,7 @@ pub enum ForkState {
     },
 }
 
-/// `oneiron::office_body::OfficeBodyFork`.
+/// `oneiron::office_body::records::OfficeBodyFork`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeBodyFork {
     #[serde(rename = "id")]
@@ -54051,7 +54061,7 @@ pub struct OfficeBodyExportVerbRequest {
     pub iana_timezone: Option<String>,
 }
 
-/// `oneiron::office_body::OfficeBodyExportRecord`.
+/// `oneiron::office_body::records::OfficeBodyExportRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeBodyExportRecord {
     #[serde(rename = "artifact")]
@@ -54107,7 +54117,7 @@ pub struct OfficeBodyPreviewRequest {
     pub iana_timezone: Option<String>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxCell`.
+/// `oneiron_docedit::xlsx_body::model::XlsxCell`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxCell {
     #[serde(rename = "col")]
@@ -54124,7 +54134,7 @@ pub struct XlsxCell {
     pub locked: Option<XlsxLock>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxSheet`.
+/// `oneiron_docedit::xlsx_body::model::XlsxSheet`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxSheet {
     #[serde(rename = "name")]
@@ -54139,7 +54149,7 @@ pub struct XlsxSheet {
     pub visibility: XlsxSheetVisibility,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxName`.
+/// `oneiron_docedit::xlsx_body::model::XlsxName`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxName {
     #[serde(rename = "name")]
@@ -54154,7 +54164,7 @@ pub struct XlsxName {
     pub locked: Option<XlsxLock>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxBook`.
+/// `oneiron_docedit::xlsx_body::model::XlsxBook`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxBook {
     #[serde(rename = "date1904")]
@@ -54167,7 +54177,7 @@ pub struct XlsxBook {
     pub styles: Vec<XlsxStyle>,
 }
 
-/// `oneiron::office_body::XlsxPreview`.
+/// `oneiron::office_body::records::XlsxPreview`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxPreview {
     #[serde(rename = "frontier")]
