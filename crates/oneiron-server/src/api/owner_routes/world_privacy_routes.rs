@@ -130,7 +130,9 @@ pub(super) fn holder(
         return Err(owner_refusal);
     }
     let refused = || ApiError::forbidden_scope("owner");
-    if !admits_other_holders(server) || !auth.has_scope(scope) {
+    // A managed vault's other holders come on their own forwarded slips
+    // (FIX 5122, FIX 5510), judged here as anywhere else.
+    if !auth.has_scope(scope) {
         return Err(refused());
     }
     let slip = auth
@@ -153,14 +155,6 @@ pub(super) fn holder(
         .vault()
         .bind_person_credential(person, slip.clone())
         .map_err(|_| refused())
-}
-
-/// Whether a holder who does not own the vault reaches these routes here. A
-/// managed vault admits only its attested owner until its ingress carries
-/// such a caller (L14's managed-ingress row; CALLS "FIX 4707 managed
-/// holders").
-fn admits_other_holders(server: &SyncServer) -> bool {
-    server.managed_issuer.is_none()
 }
 
 /// `GET /v1/owner/worlds/privacy/requests[?pending=true]`: the requests,

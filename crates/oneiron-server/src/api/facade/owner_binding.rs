@@ -199,6 +199,18 @@ pub(super) fn caller_bound_admits(
         "vault.artifacts.publish" | "vault.artifacts.repoint" => {
             super::artifact_hosting_doors::publisher(server, auth, verb).map(drop)
         }
+        // The usage repair rows (FIX 7039): the owner's own proof or an
+        // agent's own Grant naming the verb, as their writer admits it.
+        "vault.usage.events.undecodable" => super::usage_repair_doors::repair_admits(
+            server,
+            auth,
+            oneiron::memory::usage_repair::UsageRepairVerb::List,
+        ),
+        "vault.usage.events.remove_undecodable" => super::usage_repair_doors::repair_admits(
+            server,
+            auth,
+            oneiron::memory::usage_repair::UsageRepairVerb::Remove,
+        ),
         _ => return None,
     })
 }
