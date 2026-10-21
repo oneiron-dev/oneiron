@@ -92535,7 +92535,7 @@
      "path": "src/server/tagging.rs",
      "purpose": "The tagging worker: the one thing that drives the engine's tagging reconciler",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -92545,7 +92545,7 @@
      "path": "src/server/tagging/coordinator.rs",
      "purpose": "The tagging coordinator (FIX 6755): one loop per vault that keeps live and bulk markers in flight through…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
