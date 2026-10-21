@@ -137,14 +137,17 @@ fn strict_vad<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Optio
 }
 /// The scheduling class of one extraction call. It orders calls in a host's
 /// dispatcher and is never part of the input, its digest or a marker's dedupe
-/// key: the tagger never sees it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// key: the tagger never sees it. A tagging marker carries one, and the
+/// reconciler passes each marker's effective class (FIX 6755).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ExtractionWork {
-    /// A call someone waits on: the explicit tag door. It goes before every
-    /// waiting bulk call, and a running call is never pre-empted for it.
+    /// A call someone waits on: the explicit tag door, and a marker a chat or
+    /// voice witness commit owes. It goes before every waiting bulk call, and
+    /// a running call is never pre-empted for it.
     Live,
-    /// Everything else: the backlog the tagging worker drains, and feedback
-    /// redaction.
+    /// Everything else: a marker an import, a host executor, a promotion, a
+    /// publication or a recovery owes, and feedback redaction.
     Bulk,
 }
 /// The runtime that ran one call. A call names the runtime that actually ran
