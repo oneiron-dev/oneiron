@@ -6,7 +6,7 @@ use super::*;
 
 /// One proposal's rows as its writer persists them: the row, its encoded
 /// base snapshot and its two journal claims.
-pub(in crate::repo_mutation) struct PreparedRepoProposal {
+pub(crate) struct PreparedRepoProposal {
     pub(in crate::repo_mutation) row: RepoProposal,
     snapshot: Vec<u8>,
     body: ClaimBody,
@@ -24,35 +24,50 @@ impl PreparedRepoProposal {
         let session = row.session;
         let provenance_claim = row.provenance_claim;
         let fork = row.pre_action_fork_hash;
+        // An ordinary operation binds its one path and bytes exactly as
+        // before; a received bundle binds every file it carries (G4 PR2).
+        let (files_key, operation_hash, content_hash) = match row.ordinary_file() {
+            Ok((path, content)) => (
+                (Value::from("path"), Value::from(path)),
+                blake3::hash(
+                    &rmp_serde::to_vec_named(&(&row.operation, path, content, &row.message))
+                        .map_err(|_| invalid("proposal operation encoding failed"))?,
+                ),
+                blake3::hash(content),
+            ),
+            Err(_) => {
+                let files = rmp_serde::to_vec_named(&row.files)
+                    .map_err(|_| invalid("proposal operation encoding failed"))?;
+                (
+                    (
+                        Value::from("paths"),
+                        Value::Array(row.paths().into_iter().map(Value::from).collect()),
+                    ),
+                    blake3::hash(
+                        &rmp_serde::to_vec_named(&(&row.operation, &row.files, &row.message))
+                            .map_err(|_| invalid("proposal operation encoding failed"))?,
+                    ),
+                    blake3::hash(&files),
+                )
+            }
+        };
         let mut body = ClaimBody::new(
             "repo.proposed_diff",
             ClaimSubject::Entity(session),
             Value::Map(vec![
                 (Value::from("actor"), Value::from(actor.to_hex())),
-                (Value::from("path"), Value::from(row.path.clone())),
+                files_key,
                 (
                     Value::from("operation"),
                     Value::from(row.request()?.operation.kind()),
                 ),
                 (
                     Value::from("operation_hash"),
-                    Value::Binary(
-                        blake3::hash(
-                            &rmp_serde::to_vec_named(&(
-                                &row.operation,
-                                &row.path,
-                                &row.content,
-                                &row.message,
-                            ))
-                            .map_err(|_| invalid("proposal operation encoding failed"))?,
-                        )
-                        .as_bytes()
-                        .to_vec(),
-                    ),
+                    Value::Binary(operation_hash.as_bytes().to_vec()),
                 ),
                 (
                     Value::from("content_hash"),
-                    Value::Binary(blake3::hash(&row.content).as_bytes().to_vec()),
+                    Value::Binary(content_hash.as_bytes().to_vec()),
                 ),
                 (
                     Value::from("pre_action_fork_hash"),

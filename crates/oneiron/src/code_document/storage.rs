@@ -8,8 +8,8 @@ use super::codec::{
     doc_from_snapshot, encode, frontier, hash, invalid, path_hash, path_key, validate_path,
 };
 use super::{
-    CodeDocumentFrontier, CodeDocumentSession, CodeEditReceipt, CodeFileEdit, CodeOpAttribution,
-    CodeOpProvenance,
+    CodeDocumentFrontier, CodeDocumentSession, CodeEditReceipt, CodeFileEdit, CodeFileMetadataEdit,
+    CodeOpAttribution, CodeOpProvenance,
 };
 use crate::Vault;
 use crate::edge::EdgeActorClass;
@@ -75,26 +75,39 @@ pub(super) struct ReceiptRow {
     pub(super) counter_start: i32,
     pub(super) counter_end: i32,
     pub(super) edit: CodeFileEdit,
+    /// The metadata change made with the text (G4 PR2); an ordinary text
+    /// receipt has none and encodes as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) metadata_edit: Option<CodeFileMetadataEdit>,
     pub(super) before: CodeDocumentFrontier,
     pub(super) after: CodeDocumentFrontier,
 }
 
 /// The Loro commit message of one operation. It binds the ingress identity,
 /// edit and provenance into the document's operation fold. The actor stays on
-/// the receipts, so an actor's erase leaves every fold whole (FIX 3520).
+/// the receipts, so an actor's erase leaves every fold whole (FIX 3520). An
+/// operation with a metadata change binds the text edit and that change
+/// together under its own domain (G4 PR2); a text edit keeps its stamp.
 fn op_stamp(
     operation: &str,
     session: &str,
     peer_id: u64,
     counter_start: i32,
     edit: &CodeFileEdit,
+    metadata: Option<&CodeFileMetadataEdit>,
     provenance: &CodeOpProvenance,
 ) -> Result<String> {
-    Ok(format!(
-        "oneiron.code_document.v3:{operation}:{session}:{peer_id}:{counter_start}:{}:{}",
-        crate::entity_id::bytes_to_hex_lower(&hash(&encode(edit)?)),
-        crate::entity_id::bytes_to_hex_lower(&hash(&encode(provenance)?)),
-    ))
+    let provenance = crate::entity_id::bytes_to_hex_lower(&hash(&encode(provenance)?));
+    Ok(match metadata {
+        None => format!(
+            "oneiron.code_document.v3:{operation}:{session}:{peer_id}:{counter_start}:{}:{provenance}",
+            crate::entity_id::bytes_to_hex_lower(&hash(&encode(edit)?)),
+        ),
+        Some(metadata) => format!(
+            "oneiron.code_document.metadata.v1:{operation}:{session}:{peer_id}:{counter_start}:{}:{provenance}",
+            crate::entity_id::bytes_to_hex_lower(&hash(&encode(&(edit, metadata))?)),
+        ),
+    })
 }
 
 /// A host-approved exact-base ingress item. Cooperative editor sessions use
@@ -104,6 +117,9 @@ pub(crate) struct CodeFileIngress {
     pub operation: EntityId,
     pub session: CodeDocumentSession,
     pub edit: CodeFileEdit,
+    /// A reviewed metadata change made with the edit (G4 PR2); `None` on
+    /// every ordinary text ingress.
+    pub metadata_edit: Option<CodeFileMetadataEdit>,
     pub actor: WriteActor,
     pub expected_text: String,
 }
@@ -155,6 +171,7 @@ impl ReceiptRow {
             counter_start: self.counter_start,
             counter_end: self.counter_end,
             edit: self.edit.clone(),
+            metadata_edit: self.metadata_edit.clone(),
             before: self.before.clone(),
             after: self.after.clone(),
         })
@@ -251,8 +268,16 @@ impl Vault {
     }
     pub fn code_file_edit_receipt(&self, operation: EntityId) -> Result<Option<CodeEditReceipt>> {
         let txn = self.store.env.read_txn()?;
+        self.code_file_edit_receipt_in_txn(&txn, operation)
+    }
+    /// [`Vault::code_file_edit_receipt`] in the caller's snapshot.
+    pub(crate) fn code_file_edit_receipt_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        operation: EntityId,
+    ) -> Result<Option<CodeEditReceipt>> {
         CODE_DOCUMENT_INGRESS
-            .get(&self.store, &txn, &operation)?
+            .get(&self.store, txn, &operation)?
             .map(|row| row.receipt())
             .transpose()
     }
@@ -265,6 +290,19 @@ impl Vault {
         edit: &CodeFileEdit,
         actor: WriteActor,
     ) -> Result<CodeEditReceipt> {
+        self.apply_code_file_edit_once_with(operation, session, edit, None, actor)
+    }
+
+    /// [`Vault::apply_code_file_edit_once`]'s one body, with the metadata
+    /// change a reviewed file operation makes beside its text, if any.
+    pub(super) fn apply_code_file_edit_once_with(
+        &self,
+        operation: EntityId,
+        session: &mut CodeDocumentSession,
+        edit: &CodeFileEdit,
+        metadata: Option<&CodeFileMetadataEdit>,
+        actor: WriteActor,
+    ) -> Result<CodeEditReceipt> {
         let mut txn = self.store.env.write_txn()?;
         if let Some(row) = CODE_DOCUMENT_INGRESS.get(&self.store, &txn, &operation)? {
             let receipt = row.receipt()?;
@@ -273,6 +311,7 @@ impl Vault {
                 || receipt.actor != Some(actor)
                 || receipt.provenance != session.provenance
                 || receipt.edit != *edit
+                || receipt.metadata_edit.as_ref() != metadata
             {
                 return Err(invalid());
             }
@@ -282,8 +321,8 @@ impl Vault {
         }
         let old_doc = session.doc.clone();
         let result = (|| {
-            let receipt =
-                self.apply_code_file_edit_in_txn(&mut txn, operation, session, edit, actor)?;
+            let receipt = self
+                .apply_code_file_edit_in_txn(&mut txn, operation, session, edit, metadata, actor)?;
             txn.commit()?;
             Ok(receipt)
         })();
@@ -329,6 +368,7 @@ impl Vault {
                     || receipt.actor != Some(item.actor)
                     || receipt.provenance != item.session.provenance
                     || receipt.edit != item.edit
+                    || receipt.metadata_edit != item.metadata_edit
                     || receipt.before.text_hash != hash(item.expected_text.as_bytes())
                 {
                     return Err(invalid());
@@ -361,6 +401,7 @@ impl Vault {
                 item.operation,
                 &mut item.session,
                 &item.edit,
+                item.metadata_edit.as_ref(),
                 item.actor,
             )?;
             receipts.push(receipt);
@@ -425,6 +466,7 @@ impl Vault {
                     r.peer_id,
                     r.counter_start,
                     &r.edit,
+                    r.metadata_edit.as_ref(),
                     &r.provenance,
                 )?;
                 let change = doc

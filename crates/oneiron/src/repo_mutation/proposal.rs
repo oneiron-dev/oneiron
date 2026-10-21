@@ -31,12 +31,15 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 pub(super) mod actor_erase;
+mod files;
 mod guards;
+pub(super) mod persist;
 mod review;
 mod run;
 pub mod settlement;
-mod persist;
 mod submit;
+pub use files::RepoProposedFile;
+pub(super) use files::received_bundle_queue_only;
 pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
 use submit::ProposalBase;
@@ -107,8 +110,9 @@ pub struct RepoProposal {
     pub provenance_claim: EntityId,
     /// Stamped onto the document operation this proposal lands as.
     pub op_provenance: crate::code_document::CodeOpProvenance,
-    pub path: String,
-    pub content: Vec<u8>,
+    /// The reviewed files: exactly one for an ordinary operation; every
+    /// file of one pushed ref update for a received bundle (G4 PR2).
+    pub files: Vec<RepoProposedFile>,
     pub message: String,
     pub operation: RepoProposalOperation,
     /// Set only by atomic, all-member merge-queue admission.
@@ -139,6 +143,12 @@ pub enum RepoProposalOperation {
         open_conflict_claim_id: EntityId,
         branch_name: String,
     },
+    /// Every file of one accepted pushed ref update, as ONE reviewed
+    /// bundle (G4 PR2): it lands through its merge queue only.
+    ReceivedFiles {
+        #[serde(with = "entity_serde")]
+        candidate: EntityId,
+    },
 }
 
 pub(super) fn invalid(reason: &'static str) -> Error {
@@ -150,14 +160,26 @@ pub(super) fn store(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &RepoProposal
 impl RepoProposal {
     /// File writes preserve the mode committed by the reviewed pre-action fork.
     /// The live checkout and revision metadata are not authority for a mode.
+    /// A received bundle's file takes its reviewed replacement mode.
     pub(crate) fn reviewed_file_mode(
         &self,
         vault: &Vault,
         frontier: &crate::code_document::CodeDocumentFrontier,
     ) -> Result<u32> {
-        if super::oplog::repo_mutation_repo_key(&RepoRef::parse(&self.repo)?) != frontier.repo
-            || self.path != frontier.path
-        {
+        if super::oplog::repo_mutation_repo_key(&RepoRef::parse(&self.repo)?) != frontier.repo {
+            return Err(invalid("reviewed file belongs to another document"));
+        }
+        if self.received_candidate().is_some() {
+            return self
+                .files
+                .iter()
+                .find(|file| file.path == frontier.path)
+                .and_then(|file| file.metadata_edit.as_ref())
+                .and_then(|edit| edit.replacement.mode)
+                .ok_or(invalid("a received file has no reviewed present mode"));
+        }
+        let (path, _) = self.ordinary_file()?;
+        if path != frontier.path {
             return Err(invalid("reviewed file belongs to another document"));
         }
         let txn = vault.store.env.read_txn()?;
@@ -173,11 +195,7 @@ impl RepoProposal {
             return Err(Error::CorruptedIndex("reviewed fork hash mismatch"));
         }
         let snapshot = super::snapshot::require_snapshot_schema(snapshot)?;
-        match snapshot
-            .entries
-            .iter()
-            .find(|entry| entry.path == self.path)
-        {
+        match snapshot.entries.iter().find(|entry| entry.path == path) {
             None => Ok(crate::codebase::DEFAULT_CODE_FILE_MODE),
             Some(entry) if entry.kind == super::snapshot::StoredRepoSnapshotEntryKind::File => {
                 Ok(if entry.executable { 0o100755 } else { 0o100644 })
@@ -193,23 +211,43 @@ impl RepoProposal {
         Ok(RepoMutationRequest::new(
             RepoRef::parse(&self.repo)?,
             match &self.operation {
-                RepoProposalOperation::CommitFile => RepoMutationOperation::CommitFile {
-                    path: self.path.clone(),
-                    content: self.content.clone(),
-                    message: self.message.clone(),
-                },
+                RepoProposalOperation::CommitFile => {
+                    let (path, content) = self.ordinary_file()?;
+                    RepoMutationOperation::CommitFile {
+                        path: path.to_owned(),
+                        content: content.to_vec(),
+                        message: self.message.clone(),
+                    }
+                }
                 RepoProposalOperation::ResolveConflictFile {
                     branch_subject,
                     open_conflict_claim_id,
                     branch_name,
-                } => RepoMutationOperation::ResolveConflictFile {
-                    branch_subject: *branch_subject,
-                    open_conflict_claim_id: *open_conflict_claim_id,
-                    branch_name: branch_name.clone(),
-                    path: self.path.clone(),
-                    content: self.content.clone(),
-                    message: self.message.clone(),
-                },
+                } => {
+                    let (path, content) = self.ordinary_file()?;
+                    RepoMutationOperation::ResolveConflictFile {
+                        branch_subject: *branch_subject,
+                        open_conflict_claim_id: *open_conflict_claim_id,
+                        branch_name: branch_name.clone(),
+                        path: path.to_owned(),
+                        content: content.to_vec(),
+                        message: self.message.clone(),
+                    }
+                }
+                RepoProposalOperation::ReceivedFiles { candidate } => {
+                    RepoMutationOperation::ReceivedFiles {
+                        candidate: *candidate,
+                        source_operations: self
+                            .files
+                            .iter()
+                            .map(|file| {
+                                file.source_operation
+                                    .ok_or(invalid("a received file names its source operation"))
+                            })
+                            .collect::<Result<Vec<_>>>()?,
+                        message: self.message.clone(),
+                    }
+                }
             },
         )
         .with_recorded_actor(self.actor.id())
@@ -335,6 +373,10 @@ impl Vault {
         if row.merge_stack.is_some() {
             return Err(invalid("stack-bound proposal requires its merge queue"));
         }
+        // A received push bundle has one route: its owner's merge queue.
+        if row.received_candidate().is_some() {
+            return Err(received_bundle_queue_only());
+        }
         if let Some(seq) = row.operation_seq {
             drop(txn);
             let entry = self
@@ -405,7 +447,18 @@ pub(super) fn authorize(
     stack: Option<&super::reviewed_stack::StackStep>,
 ) -> Result<()> {
     let attributed = request.actor_id.is_some() || request.session_id.is_some();
-    if !attributed
+    // A received bundle never runs as a trusted unattributed write: it
+    // needs its source's pusher and fork, its review and its stack.
+    if let RepoMutationOperation::ReceivedFiles { .. } = request.operation {
+        if request.actor_id.is_none() || request.session_id.is_none() || proposal.is_none() {
+            return Err(invalid(
+                "a received push bundle lands under its pusher, fork and review",
+            ));
+        }
+        if stack.is_none() {
+            return Err(received_bundle_queue_only());
+        }
+    } else if !attributed
         || !matches!(
             request.operation,
             RepoMutationOperation::CommitFile { .. }
@@ -603,7 +656,9 @@ pub(super) fn resolution_claim_id(vault: &Vault, row: &RepoProposal) -> Result<O
             claim.open_conflict_claim_id == *open_conflict_claim_id
                 && claim.repo_ref == repo
                 && claim.branch == *branch_name
-                && claim.resolved_paths.as_slice() == std::slice::from_ref(&row.path)
+                && row
+                    .ordinary_file()
+                    .is_ok_and(|(path, _)| claim.resolved_paths.as_slice() == [path])
         })
         .ok_or(Error::CorruptedIndex(
             "applied proposal resolution receipt missing",

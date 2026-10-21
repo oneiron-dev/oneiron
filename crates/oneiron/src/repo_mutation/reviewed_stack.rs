@@ -195,7 +195,7 @@ fn landed_prefix_in_txn(
         if entry.status != RepoMutationStatus::Applied.as_str()
             || entry.seq <= sequence
             || entry.pre_action_fork_hash != hash
-            || entry.operation_subject.as_deref() != Some(row.path.as_str())
+            || entry.operation_subject.as_deref() != Some(row.operation_subject().as_str())
         {
             break;
         }
@@ -603,7 +603,13 @@ impl Vault {
         for candidate in &tested.batch().proposals {
             let id = EntityId::from_hex(&candidate.id)?;
             let row = self.repo_proposal(id)?.ok_or(Error::EntityNotFound)?;
-            if !ids.insert(id) || !paths.insert(row.path.clone()) {
+            // Every path of every member, a received bundle's all of them.
+            if !ids.insert(id)
+                || !row
+                    .paths()
+                    .into_iter()
+                    .all(|path| paths.insert(path.to_owned()))
+            {
                 return Err(invalid("reviewed stack repeats a proposal or path"));
             }
             if let RepoProposalOperation::ResolveConflictFile {

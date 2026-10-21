@@ -17,10 +17,13 @@ mod operations;
 mod publish;
 mod setup;
 mod types;
+mod workbench;
+mod workbench_types;
 
 pub use import_types::*;
 pub use publish::OriginPublishProof;
 pub use types::*;
+pub use workbench_types::*;
 
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::EntityId;

@@ -5,8 +5,8 @@
 use heed::RwTxn;
 
 use super::graph::{
-    put_lifecycle_edge, require_entity_type, require_known_code_revision,
-    require_revision_session, validate_child_of_insert,
+    put_lifecycle_edge, require_entity_type, require_known_code_revision, require_revision_session,
+    validate_child_of_insert,
 };
 use super::integrity::backfill_code_revision_integrity_for_revision_in_txn;
 use super::keys::{FORK_PARENT_INDEX, FORKS};
@@ -42,13 +42,8 @@ pub(crate) fn branch_code_revision_in_txn(
         ENTITY_TYPE_SESSION,
         "parent_session_id must be a SESSION entity",
     )?;
-    backfill_code_revision_integrity_for_revision_in_txn(
-        store,
-        wtxn,
-        &fork.base_revision_id,
-    )?;
-    let base_revision =
-        require_known_code_revision(store, wtxn, &fork.base_revision_id)?;
+    backfill_code_revision_integrity_for_revision_in_txn(store, wtxn, &fork.base_revision_id)?;
+    let base_revision = require_known_code_revision(store, wtxn, &fork.base_revision_id)?;
     require_revision_session(
         &base_revision,
         fork.parent_session_id,
@@ -59,12 +54,7 @@ pub(crate) fn branch_code_revision_in_txn(
             "code revision fork already recorded for session",
         )));
     }
-    validate_child_of_insert(
-        store,
-        wtxn,
-        &fork.fork_session_id,
-        &fork.parent_session_id,
-    )?;
+    validate_child_of_insert(store, wtxn, &fork.fork_session_id, &fork.parent_session_id)?;
 
     let mut graph_changed = false;
     put_lifecycle_edge(
@@ -96,4 +86,26 @@ pub(crate) fn branch_code_revision_in_txn(
         ppr::increment_graph_version(store, wtxn)?;
     }
     Ok(())
+}
+
+/// Records a validated pushed candidate's `fork` once in `wtxn`: an
+/// exactly equal fork already recorded is kept, any other refuses. Only
+/// candidate matching compares and attaches; `branch_code_revision` keeps
+/// its duplicate refusal.
+///
+/// # Errors
+/// Another fork for the session, or as [`branch_code_revision_in_txn`].
+pub(crate) fn attach_code_revision_fork_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    fork: &CodeRevisionFork,
+) -> Result<()> {
+    super::codec::validate_code_revision_fork_shape(fork)?;
+    match FORKS.get(store, wtxn, &fork.fork_session_id)? {
+        Some(recorded) if recorded == *fork => Ok(()),
+        Some(_) => Err(Error::ConcurrentWrite(
+            "a candidate fork session holds another fork",
+        )),
+        None => branch_code_revision_in_txn(store, wtxn, fork),
+    }
 }

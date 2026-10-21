@@ -9,7 +9,9 @@ use super::super::support::hex_bytes;
 use super::super::types::RepoMutationOperation;
 use crate::error::Result;
 
-pub(in crate::repo_mutation) fn validate_operation(operation: &RepoMutationOperation) -> Result<()> {
+pub(in crate::repo_mutation) fn validate_operation(
+    operation: &RepoMutationOperation,
+) -> Result<()> {
     match operation {
         RepoMutationOperation::CommitFile { path, message, .. } => {
             validate_relative_repo_path(path)?;
@@ -46,6 +48,21 @@ pub(in crate::repo_mutation) fn validate_operation(operation: &RepoMutationOpera
             validate_relative_repo_path(path)?;
             validate_commit_message(message)
         }
+        RepoMutationOperation::ReceivedFiles {
+            source_operations,
+            message,
+            ..
+        } => {
+            // CALL R: a bundle carries at least one changed file.
+            if source_operations.is_empty() {
+                return Err(crate::Error::Code(
+                    crate::error::CodeError::InvalidRepoMutationRecord(
+                        "a received bundle carries at least one changed file",
+                    ),
+                ));
+            }
+            validate_commit_message(message)
+        }
     }
 }
 
@@ -54,6 +71,7 @@ pub(super) fn writes_file(operation: &RepoMutationOperation) -> bool {
         operation,
         RepoMutationOperation::CommitFile { .. }
             | RepoMutationOperation::ResolveConflictFile { .. }
+            | RepoMutationOperation::ReceivedFiles { .. }
     )
 }
 
@@ -72,5 +90,6 @@ pub(super) fn operation_subject(operation: &RepoMutationOperation) -> String {
         } => format!("{branch_name}:{ours_ref}..{theirs_ref}"),
         RepoMutationOperation::RecoverSnapshot { fork_hash } => hex_bytes(fork_hash),
         RepoMutationOperation::ResolveConflictFile { path, .. } => path.clone(),
+        RepoMutationOperation::ReceivedFiles { candidate, .. } => candidate.to_hex(),
     }
 }

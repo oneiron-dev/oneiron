@@ -7,7 +7,7 @@ use heed::RwTxn;
 use loro::{CommitOptions, ExportMode};
 
 use super::super::codec::{doc_from_snapshot, frontier, invalid, path_hash, validate_path};
-use super::super::{CodeDocumentSession, CodeEditReceipt, CodeFileEdit};
+use super::super::{CodeDocumentSession, CodeEditReceipt, CodeFileEdit, CodeFileMetadataEdit};
 use super::{
     CODE_DOCUMENT_GENERATION, CODE_DOCUMENT_HEAD, CODE_DOCUMENT_INGRESS, CODE_DOCUMENT_PATH,
     HeadRow, MAX_FILE_BYTES, ReceiptActor, ReceiptRow, SnapshotRow, checked_snapshot,
@@ -26,14 +26,22 @@ impl Vault {
         operation: EntityId,
         session: &mut CodeDocumentSession,
         edit: &CodeFileEdit,
+        metadata: Option<&CodeFileMetadataEdit>,
         actor: WriteActor,
     ) -> Result<CodeEditReceipt> {
         validate_path(&session.repo, &edit.path)?;
         session.provenance.validate()?;
         let provenance = session.provenance.clone();
         let before = session.frontier()?;
-        if before.path != edit.path {
+        // A removed document's path is free; recreation births a new one.
+        if before.path != edit.path || before.file_presence.is_some_and(|state| !state.present) {
             return Err(invalid());
+        }
+        if let Some(metadata) = metadata {
+            metadata.validate(&session.repo)?;
+            if metadata.path != edit.path || metadata.new_path != edit.new_path {
+                return Err(invalid());
+            }
         }
         let text = session.text();
         if edit.start > edit.end
@@ -58,7 +66,7 @@ impl Vault {
             {
                 return Err(invalid());
             }
-        } else if edit.expected == edit.replacement {
+        } else if edit.expected == edit.replacement && metadata.is_none() {
             return Err(invalid());
         }
         let candidate = doc_from_snapshot(
@@ -70,6 +78,9 @@ impl Vault {
         let peer_id = session.doc.peer_id();
         candidate.set_peer_id(peer_id).map_err(|_| invalid())?;
         let counter_start = candidate.oplog_vv().get(&peer_id).copied().unwrap_or(0);
+        if let Some(metadata) = metadata {
+            super::super::file_metadata::apply_presence(&candidate.get_map("meta"), metadata)?;
+        }
         if let Some(path) = &edit.new_path {
             candidate
                 .get_map("meta")
@@ -92,6 +103,7 @@ impl Vault {
             peer_id,
             counter_start,
             edit,
+            metadata,
             &provenance,
         )?;
         candidate.commit_with(CommitOptions::new().commit_msg(&stamp));
@@ -182,6 +194,7 @@ impl Vault {
             counter_start,
             counter_end,
             edit: edit.clone(),
+            metadata_edit: metadata.cloned(),
             before: before.clone(),
             after: after.clone(),
         };
@@ -200,7 +213,9 @@ impl Vault {
             receipts,
         };
         CODE_DOCUMENT_HEAD.put(&self.store, wtxn, &session.document_id, &row)?;
-        if edit.new_path.is_some() {
+        // A removal frees its path as a rename does, and claims none.
+        let removed = metadata.is_some_and(CodeFileMetadataEdit::removes);
+        if edit.new_path.is_some() || removed {
             CODE_DOCUMENT_PATH.delete(&self.store, wtxn, &path_hash(&session.repo, &edit.path))?;
             let generation = path_generation(&self.store, &*wtxn, &session.repo, &edit.path)?
                 .checked_add(1)
@@ -212,12 +227,14 @@ impl Vault {
                 &generation,
             )?;
         }
-        CODE_DOCUMENT_PATH.put(
-            &self.store,
-            wtxn,
-            &path_hash(&session.repo, &after.path),
-            &session.document_id,
-        )?;
+        if !removed {
+            CODE_DOCUMENT_PATH.put(
+                &self.store,
+                wtxn,
+                &path_hash(&session.repo, &after.path),
+                &session.document_id,
+            )?;
+        }
         merged.set_peer_id(peer_id).map_err(|_| invalid())?;
         session.doc = merged;
         Ok(result)
