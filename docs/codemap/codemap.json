@@ -6145,6 +6145,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/secret_scan/container/retained_iterative.rs",
+     "purpose": "The retained repository read's walk and rebuild with their frames on the heap (FIX 8031): the same readers…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/secret_scan/lift_history/attempts.rs",
      "purpose": "The attempt records (`job_records`), with the intake events their rows carry",
      "surface": {
@@ -43179,9 +43189,19 @@
      "path": "src/origin/smart_http/evidence.rs",
      "purpose": "Receive-pack wire types and the admission/outcome evidence claims: producer receipts plus the…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/evidence/scan.rs",
+     "purpose": "What a receive-pack outcome says of its push's scan (FIX 8032): the summary the intent's writer records in…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -43381,7 +43401,7 @@
      "purpose": "Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and…",
      "surface": {
       "const": 11,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 4
      }
     },
@@ -69392,7 +69412,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 138,
+     "files": 139,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70197,7 +70217,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 106,
+     "files": 107,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70836,7 +70856,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4505,
+   "source_files": 4507,
    "test_files": 902
   },
   "oneiron-android": {
