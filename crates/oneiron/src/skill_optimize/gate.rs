@@ -144,6 +144,7 @@ mod basis;
 mod decision;
 mod deferred_approval;
 mod goal_axis;
+mod judge_binding;
 mod ledger;
 mod live;
 mod measurement;
@@ -242,6 +243,7 @@ use goal_axis::{
     GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, goal_id_in_txn,
     is_tradeoff, score_goal_axes, validate_goal_vector,
 };
+use judge_binding::JudgeBinding;
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
 use measurement::{anchor_score, measure, validate_measurements, world_labels_digest};
 
