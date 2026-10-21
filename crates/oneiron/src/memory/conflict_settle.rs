@@ -9,7 +9,9 @@
 //! authenticates. A decision ladder's answer is never that authority, and no
 //! Grant is inferred for any actor but the Dreamer principal. The marker
 //! reads and settlement mechanics live beside the markers, in
-//! `crate::dreamer_consolidation::settle`.
+//! `crate::dreamer_consolidation::settle`. Only the root owner takes the
+//! optional ApproveAndKeep, which approves a Keep staged in its import's
+//! review and keeps it in one transaction (FIX 6151).
 
 use super::authorship::*;
 use super::{Memory, MemoryResult};
@@ -22,6 +24,7 @@ use crate::dreamer_consolidation::{
 };
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
+use crate::run_tree::GateConsentBundleAction;
 use crate::{EntityId, Vault, WriteActor, WriteEnvelope, WriteProvenance};
 use rmpv::Value;
 
@@ -85,7 +88,11 @@ impl Memory<'_> {
     /// [`Self::revert_conflict_settlement`]. A Keep of a retained
     /// alternative from imported words is staged in its import's review
     /// instead (FIX 5754): nothing is settled, the conflict stays open, and
-    /// a pending receipt names the responder's Keep.
+    /// a pending receipt names the responder's Keep. An ApproveAndKeep is
+    /// the root owner's alone: the staged member is approved through the
+    /// same owner Gate a claim settlement uses and kept in this transaction,
+    /// and its approval consolidates VAD once it commits, as that
+    /// settlement's does (FIX 6151).
     pub fn settle_conflict(
         &self,
         reviewer: Option<&AuthenticatedOwner>,
@@ -93,7 +100,8 @@ impl Memory<'_> {
         settlement: ConflictSettlement,
         now: u64,
     ) -> MemoryResult<ConflictSettleOutcome> {
-        self.with_verified_actor_write_txn(|txn| {
+        let mut consolidate = None;
+        let outcome = self.with_verified_actor_write_txn(|txn| {
             let owner = self.conflict_responder_is_owner(txn, reviewer)?;
             let dreamer = !owner && self.conflict_responder_is_dreamer()?;
             let conflict = open_conflict_in_txn(self.vault, txn, marker)?;
@@ -115,6 +123,16 @@ impl Memory<'_> {
                 )
             };
             let actor = WriteActor::new(self.actor, self.actor_class);
+            if let ConflictSettlement::ApproveAndKeep(staged) = settlement {
+                let dreamer_run = self.approve_staged_keep_in_txn(
+                    txn,
+                    reviewer.filter(|_| owner),
+                    &conflict,
+                    staged,
+                    now,
+                )?;
+                consolidate = dreamer_run.then_some(staged);
+            }
             let person = self.actor_class == EdgeActorClass::Human;
             let mut provenance = vec![
                 (Value::from("surface"), Value::from(KIND)),
@@ -200,7 +218,44 @@ impl Memory<'_> {
                 superseded: settled.superseded,
                 receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
             }))
-        })
+        })?;
+        // Consent is committed before the consolidator opens its own writer;
+        // a VAD failure is returned with the settlement durable.
+        if let Some(approved) = consolidate {
+            self.vault.consolidate_claim_vad_now(&approved, now)?;
+        }
+        Ok(outcome)
+    }
+
+    /// The owner's approval of `staged`, a Keep of `conflict` still waiting
+    /// in its import's review, in the settlement's transaction (FIX 6151):
+    /// through the owner Gate a claim settlement approves by, as `reviewer`,
+    /// the authenticated root owner, and nobody else. Returns whether its
+    /// approval consolidates VAD once the transaction commits.
+    fn approve_staged_keep_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        reviewer: Option<&AuthenticatedOwner>,
+        conflict: &OpenConflict,
+        staged: EntityId,
+        now: u64,
+    ) -> Result<bool, Error> {
+        let Some(reviewer) = reviewer else {
+            return Err(authority_denied(
+                "only the vault's owner approves a staged Keep and keeps it",
+            ));
+        };
+        conflict.staged_keep_in_txn(self.vault, txn, staged)?;
+        let owner_answer = reviewer.owner_answer_in_txn(self.vault, txn)?;
+        let approved = self.vault.settle_proposed_claim_in_txn(
+            txn,
+            staged,
+            GateConsentBundleAction::Approve,
+            WriteActor::new(self.actor, self.actor_class),
+            owner_answer.as_ref(),
+            now,
+        )?;
+        Ok(approved.dreamer_run)
     }
 
     /// The standing settlements the owner may revert, on `subject` alone
