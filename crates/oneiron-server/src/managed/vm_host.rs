@@ -128,7 +128,12 @@ pub struct VaultVmConfig {
     /// (below), and the managed profile's five files (FIX 6809), which give
     /// the engine its `--organization-owner`, `--member-vault`,
     /// `--failure-signal-export`, `--failure-signal-training` and
-    /// `--fast-dims`. Without it the guest runs with none of them.
+    /// `--fast-dims`. It reads the guests' one-line runtime bindings,
+    /// `browser-runtime` and `desktop-runtime`, itself too (FIX 7671): each
+    /// must name the image's own guest-local container CLI, and the engine
+    /// gets it only once the bootstrap has prepared that runtime for the
+    /// vault's UID; no host path is a binding. Without it the guest runs
+    /// with none of them.
     #[serde(default)]
     pub config_disk: Option<PathBuf>,
     /// The vault's provision binding (FIX 6308): the UID its engine runs as,
