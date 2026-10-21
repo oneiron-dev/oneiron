@@ -64,6 +64,7 @@ use crate::driver::{crop_region, encode_png, png_dimensions};
 use crate::mcp::{Mcp, ToolError, ToolReply};
 use crate::observation::match_target;
 use crate::session::{effect_class, press_for, receipt_class};
+use crate::stop::elapsed_ms;
 use crate::{
     BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, DesktopWindow,
     EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HandoverInput,
@@ -1162,9 +1163,10 @@ impl DesktopSession {
         }
     }
 
-    /// Stamps `observation` with the receipt of the effect that made it.
-    /// The receipt's screenshot is best-effort: an effect that already
-    /// happened is receipted even when its evidence could not be captured.
+    /// Stamps `observation` with the receipt of the effect that made it,
+    /// which its verb entered at `started`. The receipt's screenshot is
+    /// best-effort: an effect that already happened is receipted even when
+    /// its evidence could not be captured.
     fn receipt(
         &mut self,
         verb: &str,
@@ -1172,6 +1174,7 @@ impl DesktopSession {
         effect_class: Option<&str>,
         press: PressMode,
         observation: &mut Observation,
+        started: Instant,
     ) {
         self.receipt_seq += 1;
         // Never compared: each receipt's screenshot is a capture of its own.
@@ -1200,6 +1203,8 @@ impl DesktopSession {
             engine: None,
             fact: None,
             engine_switch: None,
+            // Stamped before the host keeps the screenshot.
+            duration_ms: elapsed_ms(started),
         };
         // The pixels are kept before the receipt is stored, while the
         // session still holds them.
@@ -1642,6 +1647,7 @@ fn mask(
 impl BrowserDriver for DesktopSession {
     /// Opens an app of the guest's set, `app:<name>`, and reads its window.
     fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         self.live()?;
         let app = input
             .url
@@ -1684,7 +1690,14 @@ impl BrowserDriver for DesktopSession {
         let before = self.fingerprint()?;
         self.settle(before, Instant::now())?;
         let mut observation = self.observation(&Base::Whole)?;
-        self.receipt("open", None, None, PressMode::None, &mut observation);
+        self.receipt(
+            "open",
+            None,
+            None,
+            PressMode::None,
+            &mut observation,
+            started,
+        );
         Ok(observation)
     }
 
@@ -1752,6 +1765,7 @@ impl BrowserDriver for DesktopSession {
     }
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         self.live()?;
         let snapshot = self.reach(&input.target)?;
         let (line, token) = Self::token(&snapshot, &input.target)?;
@@ -1764,11 +1778,19 @@ impl BrowserDriver for DesktopSession {
                 .map_err(|e| refusal(e, Some(input.target.as_str())))
         })?;
         let class = receipt_class(class, Some(&line.row));
-        self.receipt("click", Some(&line.row), class, press, &mut observation);
+        self.receipt(
+            "click",
+            Some(&line.row),
+            class,
+            press,
+            &mut observation,
+            started,
+        );
         Ok(observation)
     }
 
     fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         self.live()?;
         let (_, frame) = self.held(&input.image)?;
         if !(0.0..=1.0).contains(&input.x) || !(0.0..=1.0).contains(&input.y) {
@@ -1832,11 +1854,19 @@ impl BrowserDriver for DesktopSession {
                 .map_err(BrowserError::from)
         })?;
         let class = receipt_class(class, row.as_ref());
-        self.receipt("click_at", row.as_ref(), class, press, &mut observation);
+        self.receipt(
+            "click_at",
+            row.as_ref(),
+            class,
+            press,
+            &mut observation,
+            started,
+        );
         Ok(observation)
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         self.live()?;
         let snapshot = self.reach(&input.target)?;
         let (line, token) = Self::token(&snapshot, &input.target)?;
@@ -1870,11 +1900,19 @@ impl BrowserDriver for DesktopSession {
             }
             Ok(())
         })?;
-        self.receipt("type", Some(&line.row), class, press, &mut observation);
+        self.receipt(
+            "type",
+            Some(&line.row),
+            class,
+            press,
+            &mut observation,
+            started,
+        );
         Ok(observation)
     }
 
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         self.live()?;
         let snapshot = self.reach(&input.target)?;
         let (line, token) = Self::token(&snapshot, &input.target)?;
@@ -1894,6 +1932,7 @@ impl BrowserDriver for DesktopSession {
             None,
             PressMode::None,
             &mut observation,
+            started,
         );
         Ok(observation)
     }
@@ -2123,6 +2162,7 @@ impl BrowserDriver for DesktopSession {
     }
 
     fn press_key(&mut self, input: KeyInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         self.live()?;
         let snapshot = match input.target.as_deref() {
             Some(target) => self.reach(target)?,
@@ -2157,11 +2197,12 @@ impl BrowserDriver for DesktopSession {
                 .map_err(|e| refusal(e, input.target.as_deref()))
         })?;
         let target = aimed.as_ref().map(|(line, _)| &line.row);
-        self.receipt("key", target, class, press, &mut observation);
+        self.receipt("key", target, class, press, &mut observation, started);
         Ok(observation)
     }
 
     fn hotkey(&mut self, input: HotkeyInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         self.live()?;
         if input.keys.len() < 2 {
             return Err(BrowserError::Input(
@@ -2185,7 +2226,7 @@ impl BrowserDriver for DesktopSession {
                 )
                 .map_err(BrowserError::from)
         })?;
-        self.receipt("hotkey", None, class, press, &mut observation);
+        self.receipt("hotkey", None, class, press, &mut observation, started);
         Ok(observation)
     }
 

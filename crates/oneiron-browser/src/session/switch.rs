@@ -37,6 +37,7 @@ use crate::cdp::{Visits, web_origin};
 use crate::driver::CdpDriver;
 use crate::request::Custody;
 use crate::retention::HandleRetention;
+use crate::stop::elapsed_ms;
 use crate::{
     BrowserDriver, BrowserEngine, BrowserError, EffectReceipt, EngineSwitchRecord, Observation,
     PressMode, ScreenshotInput, ScreenshotTrigger, SwitchCarried, SwitchComponent,
@@ -45,7 +46,7 @@ use crate::{
 };
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The verb a switch's receipt names.
 const SWITCH_VERB: &str = "switch_engine";
@@ -534,6 +535,7 @@ impl BrowserSession {
         &mut self,
         input: SwitchEngineInput,
     ) -> Result<SwitchEngineOutput, BrowserError> {
+        let started = Instant::now();
         self.agent_has()?;
         let reason = input
             .reason
@@ -557,7 +559,7 @@ impl BrowserSession {
         if !switch_request_policy(record.from, record.to) {
             let (url, title) = self.driver.page_now().unwrap_or_default();
             record.url.clone_from(&url);
-            let receipt = self.switch_record_policy(record, url, title, false);
+            let receipt = self.switch_record_policy(record, url, title, false, started);
             return Ok(SwitchEngineOutput {
                 receipt,
                 observation: None,
@@ -568,17 +570,19 @@ impl BrowserSession {
             .starter
             .take()
             .ok_or_else(|| BrowserError::Unsupported(SWITCH_VERB.to_owned()))?;
-        let output = self.carry(starter.as_mut(), record);
+        let output = self.carry(starter.as_mut(), record, started);
         self.starter = Some(starter);
         Ok(output)
     }
 
     /// The transaction: export, stage the target, then commit it, or keep
-    /// the source and record the stage that failed.
+    /// the source and record the stage that failed. The switch's verb
+    /// entered at `started`.
     fn carry(
         &mut self,
         starter: &mut dyn BrowserGuestStarter,
         mut record: EngineSwitchRecord,
+        started: Instant,
     ) -> SwitchEngineOutput {
         let (tab, mut state) = self.read_state(true, &mut record.not_carried);
         let mut charge = starter.state_charge();
@@ -600,7 +604,9 @@ impl BrowserSession {
         );
         drop(charge);
         match staged {
-            Ok((target, observation)) => self.commit(record, &tab, sink, target, observation),
+            Ok((target, observation)) => {
+                self.commit(record, &tab, sink, (target, observation), started)
+            }
             Err(Halt { stage, error }) => {
                 // Nothing moved: the page stays on the source as it was.
                 record.carried.clear();
@@ -610,7 +616,8 @@ impl BrowserSession {
                     code: error.code().to_owned(),
                     detail: error.to_string(),
                 };
-                let receipt = self.switch_record_policy(record, state.url, state.title, false);
+                let (url, title) = (state.url, state.title);
+                let receipt = self.switch_record_policy(record, url, title, false, started);
                 SwitchEngineOutput {
                     receipt,
                     observation: None,
@@ -661,8 +668,8 @@ impl BrowserSession {
         mut record: EngineSwitchRecord,
         tab: &str,
         sink: Option<Sink>,
-        target: EngineGuest,
-        observation: Observation,
+        (target, observation): (EngineGuest, Observation),
+        started: Instant,
     ) -> SwitchEngineOutput {
         let EngineGuest {
             driver,
@@ -682,7 +689,7 @@ impl BrowserSession {
         self.history.carry(tab, carried_to);
         record.outcome = SwitchOutcome::Switched;
         let (url, title) = (observation.url.clone(), observation.title.clone());
-        let receipt = self.switch_record_policy(record, url, title, true);
+        let receipt = self.switch_record_policy(record, url, title, true, started);
         SwitchEngineOutput {
             receipt,
             observation: Some(self.driver.paged(observation)),
@@ -693,13 +700,15 @@ impl BrowserSession {
     /// one per admitted switch, switched, unchanged or failed, with verb
     /// `switch_engine`, on the session's one sequence; never coalesced, and
     /// never a batch step. A switched one's screenshot is of the target's
-    /// page, kept as every effect receipt's is.
+    /// page, kept as every effect receipt's is; its duration runs from the
+    /// verb's entry at `started`.
     fn switch_record_policy(
         &mut self,
         record: EngineSwitchRecord,
         url: String,
         title: String,
         shot: bool,
+        started: Instant,
     ) -> EffectReceipt {
         self.receipt_seq += 1;
         let screenshot = ScreenshotInput {
@@ -729,6 +738,8 @@ impl BrowserSession {
             engine: Some(self.driver.engine()),
             fact: None,
             engine_switch: Some(record),
+            // Stamped before the host keeps the screenshot.
+            duration_ms: elapsed_ms(started),
         };
         if let Some(mut sink) = self.receipt_sink.take() {
             if let Some(png) = receipt
