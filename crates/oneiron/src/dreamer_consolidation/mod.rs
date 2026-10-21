@@ -44,6 +44,7 @@ mod gap;
 mod judge_context;
 mod kept_ask;
 mod neighbourhood;
+mod nightly_links;
 pub(crate) mod nightly_merge;
 mod note_classification;
 mod note_parts;
