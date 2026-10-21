@@ -1,6 +1,8 @@
 //! A run's immutable seat pin: born once per run, loaded again on resume.
 //! An agent run's seat also keeps the type stamp its dispatch carried
 //! (DOOR-111 S5); every other run's seat is born generic.
+use std::time::Instant;
+
 use serde::{Deserialize, Serialize};
 
 use super::{ModelSeat, SeatChoiceReceipt, SeatDecisions, SeatKind, SeatPool, SeatTask, invalid};
@@ -127,14 +129,17 @@ impl Vault {
     /// Child/follower owners use the same door with their own `SeatKind` and
     /// access-scoped warm prefix; raw LLM calls do not enter it. The seat is
     /// born generic: an agent run's is born through
-    /// [`Self::birth_task_model_seat`].
+    /// [`Self::birth_task_model_seat`]. `parent_at`, the cutoff of the parent
+    /// a child is born under, bounds a fresh pick ([`SeatPool::birth`], FIX
+    /// 8230); it is never stored, and a resumed pin ignores it.
     pub fn birth_model_seat(
         &self,
         run_id: EntityId,
         task: &SeatTask,
         decisions: &SeatDecisions,
+        parent_at: Option<Instant>,
     ) -> Result<ModelSeat> {
-        self.birth_run_seat(run_id, RunSeatBinding::Generic, task, decisions)
+        self.birth_run_seat(run_id, RunSeatBinding::Generic, task, decisions, parent_at)
     }
 
     /// An agent run's seat (DOOR-111 S5), born as [`Self::birth_model_seat`]
@@ -147,11 +152,12 @@ impl Vault {
         type_ref: &TaskTypeRef,
         task: &SeatTask,
         decisions: &SeatDecisions,
+        parent_at: Option<Instant>,
     ) -> Result<ModelSeat> {
         let binding = RunSeatBinding::Task {
             type_ref: type_ref.clone(),
         };
-        self.birth_run_seat(run_id, binding, task, decisions)
+        self.birth_run_seat(run_id, binding, task, decisions, parent_at)
     }
 
     /// [`Self::birth_model_seat`] for a run whose rows go where `storage`,
@@ -173,12 +179,13 @@ impl Vault {
         run_id: EntityId,
         task: &SeatTask,
         decisions: &SeatDecisions,
+        parent_at: Option<Instant>,
     ) -> Result<ModelSeat> {
         if storage.vault_id() != self.vault_id() {
             return Err(invalid("a run seat's route is another vault's"));
         }
         let Some(room) = storage.session_ref() else {
-            return self.birth_model_seat(run_id, task, decisions);
+            return self.birth_model_seat(run_id, task, decisions, parent_at);
         };
         let task = SeatTask {
             warm_scope: room_warm_scope(room, &task.warm_scope),
@@ -188,6 +195,7 @@ impl Vault {
             RunSeatBinding::Generic,
             &task,
             decisions,
+            parent_at,
             || storage.seat_pin_read(|txn, dbs| RUN_SEATS.get(&dbs, txn, &run_id)),
             |row| {
                 storage.seat_pin_write(|txn, read, write| {
@@ -208,11 +216,13 @@ impl Vault {
         binding: RunSeatBinding,
         task: &SeatTask,
         decisions: &SeatDecisions,
+        parent_at: Option<Instant>,
     ) -> Result<ModelSeat> {
         self.birth_seat(
             binding,
             task,
             decisions,
+            parent_at,
             || {
                 let txn = self.store.env.read_txn()?;
                 RUN_SEATS.get(&self.store, &txn, &run_id)
@@ -234,12 +244,14 @@ impl Vault {
     /// The one birth every run seat shares, wherever its pin lives: `prior`
     /// reads the run's stored pin, which a resume loads again, and `pin`
     /// commits a new one, refusing when another birth reached it first. A
-    /// birth whose pin does not commit leaves its fresh seat cold.
+    /// birth whose pin does not commit leaves its fresh seat cold. A fresh
+    /// pick runs inside `parent_at` when one is given ([`SeatPool::birth`]).
     fn birth_seat(
         &self,
         binding: RunSeatBinding,
         task: &SeatTask,
         decisions: &SeatDecisions,
+        parent_at: Option<Instant>,
         prior: impl FnOnce() -> Result<Option<StoredRunSeat>>,
         pin: impl FnOnce(&StoredRunSeat) -> Result<()>,
     ) -> Result<ModelSeat> {
@@ -253,7 +265,7 @@ impl Vault {
             }
             return pool.resume(task, &row);
         }
-        let seat = pool.birth(self, task, decisions)?;
+        let seat = pool.birth(self, task, decisions, parent_at)?;
         let row = StoredRunSeat::from_seat(task, binding, &seat)?;
         let result = pin(&row);
         if result.is_err()

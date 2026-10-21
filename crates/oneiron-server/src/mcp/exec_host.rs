@@ -24,7 +24,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod off_record_run;
 pub(crate) use self::off_record_run::{OffRecordRunSession, off_record_run_id};
@@ -858,14 +858,24 @@ fn planned_seat(plan: Option<&SpawnPlanReceipt>) -> Option<oneiron::ModelId> {
 /// manifest-backed vault, or the one it was born on; `None` on a vault with
 /// neither, whose run takes its configured model. `task` builds the birth's
 /// task from the host's capability profile. A run, a reader child and a
-/// summary job are each born on one this way.
+/// summary job are each born on one this way. `parent_at`, the cutoff of the
+/// parent a child is born under, bounds a fresh pick (FIX 8230); `None`, the
+/// seat budget alone.
 pub(crate) fn run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     run_id: EntityId,
+    parent_at: Option<Instant>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
-    seat_for(vault, provider, run_id, SeatPin::Base(None), task)
+    seat_for(
+        vault,
+        provider,
+        run_id,
+        SeatPin::Base(None),
+        parent_at,
+        task,
+    )
 }
 
 impl dyn McpCodeModeProvider + '_ {
@@ -880,9 +890,10 @@ impl dyn McpCodeModeProvider + '_ {
         vault: &Vault,
         bound: &GatedActorWrite<'_>,
         run_id: EntityId,
+        parent_at: Option<Instant>,
         task: impl FnOnce(&str) -> SeatTask,
     ) -> Result<Option<ModelSeat>, String> {
-        seat_for(vault, self, run_id, SeatPin::Routed(bound), task)
+        seat_for(vault, self, run_id, SeatPin::Routed(bound), parent_at, task)
     }
 }
 
@@ -896,7 +907,8 @@ pub(crate) fn task_run_seat(
     type_ref: &TaskTypeRef,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
-    seat_for(vault, provider, run_id, SeatPin::Base(Some(type_ref)), task)
+    let pin = SeatPin::Base(Some(type_ref));
+    seat_for(vault, provider, run_id, pin, None, task)
 }
 
 /// Where a run's seat pin is read and born: the base vault, generic or
@@ -915,6 +927,7 @@ fn seat_for(
     provider: &dyn McpCodeModeProvider,
     run_id: EntityId,
     pin: SeatPin<'_, '_>,
+    parent_at: Option<Instant>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let has_seat = vault
@@ -939,10 +952,12 @@ fn seat_for(
     let task = task(facet);
     match pin {
         SeatPin::Base(Some(type_ref)) => {
-            vault.birth_task_model_seat(run_id, type_ref, &task, decisions)
+            vault.birth_task_model_seat(run_id, type_ref, &task, decisions, parent_at)
         }
-        SeatPin::Base(None) => vault.birth_model_seat(run_id, &task, decisions),
-        SeatPin::Routed(bound) => bound.birth_model_seat(vault, run_id, &task, decisions),
+        SeatPin::Base(None) => vault.birth_model_seat(run_id, &task, decisions, parent_at),
+        SeatPin::Routed(bound) => {
+            bound.birth_model_seat(vault, run_id, &task, decisions, parent_at)
+        }
     }
     .map(Some)
     .map_err(|error| error.to_string())
@@ -964,7 +979,7 @@ pub(crate) fn engine_run_seat(
     listed: Vec<AgentModel>,
 ) -> Result<Option<ModelSeat>, String> {
     let model = planned_seat(plan);
-    run_seat(vault, provider, config.run_id, |facet| {
+    run_seat(vault, provider, config.run_id, None, |facet| {
         engine_seat_task(config, facet, warm_scope, model, listed)
     })
 }
