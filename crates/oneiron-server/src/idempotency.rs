@@ -113,17 +113,17 @@ impl IdempotencyStore {
         Ok(IdempotencyLookup::Replay(response))
     }
 
-    /// Keeps `response` under `store_key`, stamped with its `caller` when the
-    /// request's credential names one (KS-2B2).
+    /// Keeps `response` under `store_key`, stamped with its caller when the
+    /// request's credential names one (KS-2B2, FIX 7357).
     fn insert(
         &self,
         store_key: &str,
         request_target: String,
         request_body: Vec<u8>,
         response: CachedHttpResponse,
-        caller: Option<oneiron::EntityId>,
+        stamp: caller::EntryStamp,
     ) -> Result<(), IdempotencyStoreError> {
-        let stored = response.into_stored(self.now_secs(), request_target, request_body, caller);
+        let stored = response.into_stored(self.now_secs(), request_target, request_body, stamp);
         self.vault
             .http_idempotency_put(store_key, &stored)
             .map_err(IdempotencyStoreError::storage)
@@ -271,7 +271,7 @@ impl CachedHttpResponse {
         created_at_secs: u64,
         request_target: String,
         request_body: Vec<u8>,
-        caller: Option<oneiron::EntityId>,
+        stamp: caller::EntryStamp,
     ) -> StoredIdempotencyEntry {
         let mut headers = Vec::with_capacity(self.headers.len());
         for (name, value) in &self.headers {
@@ -289,10 +289,11 @@ impl CachedHttpResponse {
                 .admit
                 .map(|admit| admit.iter().map(oneiron::EntityId::to_hex).collect()),
             stamps: oneiron::store::ResponseStamps {
-                actor: caller,
+                actor: stamp.caller,
                 ..Default::default()
             },
             erased: false,
+            erase_drops: stamp.erase_drops,
         }
     }
 
@@ -456,16 +457,19 @@ async fn idempotent(
         IdempotencyKey::Invalid => return invalid_key_response(is_core_auth_route),
     };
 
+    // A verified individual on any other route keys its entries under its
+    // own partition (FIX 5404) and stamps them as its own (FIX 7357).
+    let (individual, individual_stamp) = owner_auth
+        .as_ref()
+        .and_then(|auth| auth.as_ref().ok())
+        .and_then(|auth| caller::individual_partition(auth, request.headers()))
+        .unzip();
     let principal = match &core_auth {
         Some(Ok(auth)) => auth.idempotency_principal(),
         Some(Err(_)) => {
             return api_error_response(ApiError::unauthorized(), is_core_auth_route);
         }
-        None => owner_auth
-            .as_ref()
-            .and_then(|auth| auth.as_ref().ok())
-            .and_then(|auth| caller::individual_principal(auth, request.headers()))
-            .unwrap_or_else(|| principal_for_non_core_route(&state.server.config)),
+        None => individual.unwrap_or_else(|| principal_for_non_core_route(&state.server.config)),
     };
     let store_key = store_key(&principal, &key);
     let target = request_target(&request);
@@ -583,14 +587,17 @@ async fn idempotent(
         };
 
         // The caller owns the response beside the rows it served: its
-        // principal's entity, when its credential names one (KS-2B2).
-        let caller = core_auth
+        // principal's entity, when its credential names one (KS-2B2), a
+        // verified individual's on any other route (FIX 7357).
+        let stamp = core_auth
             .as_ref()
             .and_then(|auth| auth.as_ref().ok())
-            .and_then(CoreAuth::principal_entity);
+            .map(caller::EntryStamp::core)
+            .or(individual_stamp)
+            .unwrap_or_default();
         if let Err(_error) = state
             .store
-            .insert(&store_key, target, request_body, cached, caller)
+            .insert(&store_key, target, request_body, cached, stamp)
         {
             tracing::error!(
                 reason = "idempotency_cache_write_failed",

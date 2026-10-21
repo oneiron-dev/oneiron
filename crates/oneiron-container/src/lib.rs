@@ -329,8 +329,11 @@ impl ContainerRuntime {
                 stderr_tail,
                 supervisor: None,
             };
-            let (proof, guard) =
-                supervisor.activate(self.program.clone(), name, &mut session.child, relay)?;
+            // A start that fails names what the guest said: the session's drop
+            // removes the container, and its stderr with it.
+            let (proof, guard) = supervisor
+                .activate(self.program.clone(), name, &mut session.child, relay)
+                .map_err(|error| with_stderr_tail(error, &session.stderr_tail()))?;
             session.manifest.fence_proof = Some(proof);
             session.manifest.fence_unproven = false;
             session.supervisor = Some(guard);
@@ -421,6 +424,19 @@ fn keep_tail(mut stderr: impl Read + Send + 'static, tail: Arc<Mutex<VecDeque<u8
             tail.drain(..excess);
         }
     });
+}
+
+/// `error` with the guest's last stderr appended, when it wrote any.
+#[cfg(target_os = "linux")]
+fn with_stderr_tail(error: Error, tail: &str) -> Error {
+    let tail = tail.trim();
+    match error {
+        Error::Fence(source) if !tail.is_empty() => Error::Fence(std::io::Error::new(
+            source.kind(),
+            format!("{source}; guest stderr: {tail}"),
+        )),
+        other => other,
+    }
 }
 
 /// One running guest. Dropping it stops and removes the container.
