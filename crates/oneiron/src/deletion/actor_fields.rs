@@ -55,6 +55,22 @@ fn scrub_actor_fields_in_txn(
     Ok(())
 }
 
+/// Whether `id`'s entity is no actor, so its erase has no one to take out of
+/// the rows that record actors. Each lane's actor scrub asks it (FIX 8908).
+pub(crate) fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    if let Some(raw) = vault.get_raw_in(txn, id)?
+        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
+    {
+        return Ok(!matches!(
+            header.entity_type,
+            crate::registry::ENTITY_TYPE_PERSON
+                | crate::registry::ENTITY_TYPE_MACHINE
+                | crate::registry::ENTITY_TYPE_AGENT_DEF
+        ));
+    }
+    Ok(false)
+}
+
 /// Every id `vault`'s hard-delete markers name: each hard-erased id, actor or
 /// not, a marker-only one a replay left included. Read while a restore's
 /// live source still stands, so its erasures since the checkpoint carry over.
