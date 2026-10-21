@@ -22726,7 +22726,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt.rs",
      "purpose": "The Dreamer writes a declared scope summary's body (ARCH-0006a)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2,
       "struct": 1
      }
@@ -22782,13 +22782,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/scope_summary_attempt/arc_output.rs",
      "purpose": "An Arc call's reply (FIX 7509 P8, its parts in PR3): `{lines: [{text, turn_refs}], keep, open_turns}`, each…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_part_merge.rs",
+     "purpose": "One Arc part's pieces, merged before the Arc is assembled (FIX 8285)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -22798,7 +22808,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt/arc_reduce.rs",
      "purpose": "The Arc assembled from its parts (FIX 7509 PR3): no model call, an ordered and lossless assembly",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -22836,9 +22846,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/scope_summary_attempt/output.rs",
-     "purpose": "A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came from by the labels the engine…",
+     "purpose": "A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came from by the call-local `T` labels…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 8
      }
     },
     {
@@ -51942,7 +51952,7 @@
      "path": "src/scope_summary/arc_gate.rs",
      "purpose": "An Arc's surprise gate and owed state (FIX 7509 P8, ARCH-0026 #gate): \"It compares the new material against…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -51990,14 +52000,15 @@
      "kind": "src",
      "notable": [
       "ScopeSummaryBody",
-      "SummarySourceMessage"
+      "SummarySourceMessage",
+      "SummarySourceNote"
      ],
      "path": "src/scope_summary/codec.rs",
      "purpose": "Strict, versioned scope-summary MessagePack codec (distinct from epochs)",
      "surface": {
       "crate-vis": 5,
       "fn": 2,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -52027,9 +52038,19 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/doors/note_versions.rs",
+     "purpose": "A NOTE set's summary at serve and admission (FIX 6321, SCAN C028 parity for NOTEs): its body pins each NOTE…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -52138,15 +52159,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ArcPendingStatus",
       "ScopeSummaryResult",
-      "ScopeSummaryStatus"
+      "ScopeSummaryStatus",
+      "SummaryStale"
      ],
      "path": "src/scope_summary/status.rs",
      "purpose": "Caller-visible queued completion and failure, without exposing runner payloads",
      "surface": {
       "crate-vis": 2,
+      "enum": 2,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/status/arc_status.rs",
+     "purpose": "An Arc declaration's owed state on its public status (FIX 8060, 8291): the typed cause its row records, and…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -71665,7 +71699,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 126,
+     "files": 127,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72323,7 +72357,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 20,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72717,7 +72751,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4668,
+   "source_files": 4671,
    "test_files": 902
   },
   "oneiron-android": {
@@ -100737,6 +100771,7 @@
       "AppendToStreamRequest",
       "ApproveOnceRequest",
       "ApproveScope",
+      "ArcPendingStatus",
       "ArchiveAxesProposal",
       "ArchiveAxis",
       "ArchiveCampaignProgramRequest",
@@ -104138,6 +104173,7 @@
       "SummaryScope",
       "SummarySourceVersion",
       "SummarySpan",
+      "SummaryStale",
       "SummaryStatusRequest",
       "SupersedeOutcome",
       "SupersedeRefusal",
@@ -104559,7 +104595,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 959,
+      "enum": 961,
       "struct": 2993
      }
     },
