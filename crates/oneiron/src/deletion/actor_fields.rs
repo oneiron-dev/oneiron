@@ -24,7 +24,9 @@ const ORIGIN_CLAIMS: ActorScrub = crate::origin::actor_erase::erase_publication_
 /// Runs in the purge's transaction: the identity ops first, then origin's
 /// claims, then every declared table's scrub in catalog order. Behind the
 /// permanent hard-delete marker, the dispatch text the actor owns leaves the
-/// attempt payloads too (FIX 7076); a delete writes no marker and keeps it.
+/// attempt payloads too (FIX 7076), and the planned intents' declared scrub
+/// leaves each intent it asked or whose plan seats it in its erased form
+/// (Engine 10-22); a delete writes no marker and keeps the text.
 pub(super) fn erase_actor_fields_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -81,8 +83,9 @@ fn hard_erased_ids_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<BTree
 /// A checkpoint restore's actor sweep, in its image-write transaction once
 /// the type index is back (FIX 3655): every id a restored hard-delete marker
 /// names, and each of `live`, gets the erase's actor sweep again, so a
-/// restored row does not bring back an erased actor's name. Only the name
-/// goes; the restored content stays.
+/// restored row does not bring back an erased actor's name. The text an
+/// erase takes from planned intents and attempt payloads goes again too;
+/// the rest of the restored content stays.
 pub(crate) fn rerun_actor_scrubs_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -90,6 +93,13 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
 ) -> Result<()> {
     let mut erased = hard_erased_ids_in_txn(vault, wtxn)?;
     erased.extend(live);
+    // The planned intents they asked or are seated by take their erased
+    // form first, while each still names its asker (Engine 10-22).
+    crate::agent_dispatch::AgentDispatcher::erase_planned_intent_content_in_txn(
+        &vault.store,
+        wtxn,
+        &erased,
+    )?;
     for actor in &erased {
         scrub_actor_fields_in_txn(vault, wtxn, actor)?;
         // The image's cleanup rows name it again; they go once more (FIX 7517).

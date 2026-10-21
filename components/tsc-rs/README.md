@@ -2,9 +2,10 @@
 
 `artifacts/ts_rust.wasm` is tsc-rs (`pingdotgg/ts-rust`, a Rust port of the
 native TypeScript 7 compiler) built for `wasm32-wasip1` from its `ts_wasm`
-crate. It is the default backend of the optional code-mode type check
-(`crates/oneiron-code-check`): the engine runs it on its own Wasmtime to check
-each program before it runs. The check is off by default. `mode = "shadow"`
+crate. It is a selectable backend (`backend = "tsc-rs"`) of the optional
+code-mode type check (`crates/oneiron-code-check`), whose default is tsrs: the
+engine runs it on its own Wasmtime to check each program beside it as it
+runs. The check is off by default. `mode = "shadow"`
 under `[models.code_mode.check]` turns it on; it then records each program's
 diagnostics and blocks nothing. The module is the compiler only: it never runs
 a program.

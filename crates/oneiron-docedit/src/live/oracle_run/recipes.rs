@@ -10,8 +10,8 @@ use super::record::{OfficeCheck, Res};
 use super::spec::Recipe;
 use crate::edit::Preset;
 use crate::live::{
-    ChartKind, ChartSeries, ChartSource, ConnectorEnd, DeckOp, NodeId, NodeKind, NodePayload,
-    TableBody,
+    ChartCategories, ChartKind, ChartSeries, ChartSource, ConnectorEnd, DeckOp, NodeId, NodeKind,
+    NodePayload, TableBody,
 };
 
 /// One mutation over the probed baseline.
@@ -195,7 +195,7 @@ fn carried(
                     None,
                     Some(NodePayload::Chart {
                         family: ChartKind::Bar,
-                        categories: vec!["Q1".to_owned(), "Q2".to_owned(), "Q3".to_owned()],
+                        categories: ChartCategories::flat(["Q1", "Q2", "Q3"]),
                         series: vec![ChartSeries {
                             id: None,
                             name: "Units".to_owned(),
@@ -206,6 +206,7 @@ fn carried(
                             ],
                             family: None,
                             x: None,
+                            categories: None,
                         }],
                         source: ChartSource::Workbook,
                     }),

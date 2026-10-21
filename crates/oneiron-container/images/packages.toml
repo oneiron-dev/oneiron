@@ -16,9 +16,11 @@ schema = 1
 
 [tools]
 # The tools tree: what mkosi runs while it builds the images. mke2fs reads the
-# rootfs tar through libarchive; zstd unpacks a zstd-compressed .deb member.
+# rootfs tar through libarchive; zstd unpacks a zstd-compressed .deb member;
+# b3sum gives the release manifest the BLAKE3 the Firecracker pins compare.
 packages = [
   "apt",
+  "b3sum",
   "bash",
   "coreutils",
   "debian-archive-keyring",

@@ -1,8 +1,8 @@
 //! Transactional spawn, summary mint, merge-header and drill doors.
 
 use super::codec::{
-    ScopeSummaryBody, SummarySourceMessage, decode_scope_summary_body, encode_scope_summary_body,
-    invalid, scope_value,
+    ScopeSummaryBody, SummarySourceMessage, SummarySourceNote, decode_scope_summary_body,
+    encode_scope_summary_body, invalid, scope_value,
 };
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
@@ -19,7 +19,6 @@ use crate::conversation_dag::{
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::memory::{Memory, MemoryError};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
@@ -32,6 +31,9 @@ use crate::{
 };
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
+
+mod note_versions;
+pub(super) use note_versions::summary_stale_in_txn;
 
 /// Result of one merge move. A record is optional; the claim always exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,7 +193,7 @@ fn validate_note_covers_in_txn(
             return Err(invalid("summary cover is not a live NOTE it declared"));
         }
     }
-    Ok(())
+    note_versions::validate_note_pins_in_txn(vault, txn, body)
 }
 
 pub(super) fn validate_landing_in_txn(
@@ -405,6 +407,8 @@ pub(crate) struct SummaryContent<'a> {
     pub(crate) messages: Vec<SummarySourceMessage>,
     /// The composition memo of a Dreamer-composed body.
     pub(crate) memo: Option<[u8; 32]>,
+    /// Each NOTE it covers, at the version read (FIX 6321).
+    pub(crate) notes: Vec<SummarySourceNote>,
 }
 
 #[cfg(test)]
@@ -422,6 +426,7 @@ impl<'a> SummaryContent<'a> {
             covers: scope_sources_in_txn(vault, txn, scope)?.sources,
             messages: Vec::new(),
             memo: None,
+            notes: Vec::new(),
         })
     }
 }
@@ -457,6 +462,7 @@ pub(super) fn mint_in_txn(
         minted_at: now,
         messages: content.messages,
         memo: content.memo,
+        notes: content.notes,
     };
     let encoded = encode_scope_summary_body(&body)?;
     let mut batch = vault
@@ -834,13 +840,12 @@ impl Vault {
     pub fn sub_sessions(&self, turn: &EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
         conversation_of(&self.store, &txn, turn)?;
-        let sessions = edge_ids(
+        let sessions = crate::conversation_dag::counted_edge_ids(
             &self.store,
             &txn,
             turn,
             EdgeKind::SpawnedBy,
             true,
-            MAX_ANCESTOR_DEPTH,
         )?;
         let mut result = Vec::new();
         for id in sessions {

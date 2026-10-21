@@ -71,7 +71,7 @@ mod chart;
 mod table;
 
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/13";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/14";
 
 /// A live-born shape (or a free connector) with no own extent: one inch
 /// square.
