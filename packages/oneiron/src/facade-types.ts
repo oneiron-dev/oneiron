@@ -621,9 +621,9 @@ export type FieldTextReason = { why: "no_text" } | { why: "missing_slot"; slot: 
 /** `oneiron_browser::stop::BatchStopCause` */
 export type BatchStopCause = { cause: "postcondition_unmet" } | { cause: "locator_missing" } | { cause: "incomplete_observation" } | { cause: "decider_asked_up"; reason: AskUpReason } | { cause: "clock"; scope: ClockScope } | { cause: "press_needed" } | { cause: "taken_over" } | { cause: "field_text"; reason: FieldTextReason } | { cause: "no_progress" } | { cause: "browser"; code: string }
 /** `oneiron::task_verb::highway_types::TaskWorkflowHandoff` */
-export type TaskWorkflowHandoff = { program: { stop_cause: BatchStopCause } } | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } }
+export type TaskWorkflowHandoff = { program: { stop_cause: BatchStopCause } } | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } } | "interrupted"
 /** `oneiron::task_verb::highway_types::TaskWorkflowOutcome` */
-export type TaskWorkflowOutcome = "pending" | { done: { receipt_ref: EntityId } } | { handoff: { cause: TaskWorkflowHandoff; receipt_ref: EntityId } }
+export type TaskWorkflowOutcome = "pending" | { started: { at: number } } | { done: { receipt_ref: EntityId } } | { handoff: { cause: TaskWorkflowHandoff; receipt_ref: EntityId } }
 /** `oneiron::task_verb::highway_types::TaskWorkflowStatus` */
 export type TaskWorkflowStatus = { attempt_ref: string; requested: EntityId; resolved?: EntityId | null; brief: BriefStamp; outcome: TaskWorkflowOutcome }
 /** `oneiron::task_verb::highway_types::TaskStatusView` */
@@ -7129,7 +7129,7 @@ export type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: numbe
 /** `oneiron::dreamer_wake::sieve_doors::SievePolicySetRequest` */
 export type SievePolicySetRequest = { policy: SievePolicy }
 /** `oneiron::dreamer_wake::recipes::WakeRecipePolicy` */
-export type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; audit_window_instruction: string }
+export type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; audit_window_instruction: string; follower_enabled: boolean; follower_instruction: string; follower_keyframe_instruction: string; follower_sizing_bytes_per_token: number }
 /** `oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest` */
 export type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy }
 /** `oneiron::dreamer_wake::sieve_doors::SieveLeaseRequest` */

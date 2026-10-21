@@ -1,0 +1,168 @@
+# What each image of the family is made of: requests only. The resolved
+# closure (name, version, arch, .deb sha256) is packages.lock.toml, which the
+# first `build.py fetch --learn` writes; pins for everything outside Debian
+# are in release.toml. Package names come from the existing recipes (the
+# guest Dockerfiles and deploy/firecracker/build.py); nothing here is versioned
+# because the frozen snapshot plus the lock fixes every version.
+#
+# Every variant is [base] plus its overlay: `packages` (runtime, in the image),
+# `build_packages` (only in the build overlay the native build runs in),
+# `native` (cargo bins built inside the image's userspace), `files` (pinned
+# repo files), `payloads` (pinned downloads), `trees`, `links`, `dirs`,
+# `owners` (explicit ownership rules) and `image` (the OCI run config).
+# mkosi always installs Debian's essential set and base-files; a list names
+# only what comes on top.
+schema = 1
+
+[tools]
+# The tools tree: what mkosi runs while it builds the images. mke2fs reads the
+# rootfs tar through libarchive; zstd unpacks a zstd-compressed .deb member.
+packages = [
+  "apt",
+  "bash",
+  "coreutils",
+  "debian-archive-keyring",
+  "e2fsprogs",
+  "libarchive-tools",
+  "libseccomp2",
+  "mount",
+  "python3",
+  "tar",
+  "xz-utils",
+  "zstd",
+]
+
+[base]
+# Common to every variant. The essential set is the runtime base.
+packages = []
+# The compilers the native build uses; absent from the final image.
+build_packages = ["build-essential", "pkg-config"]
+
+# Ownership the exporter writes because no dpkg record carries it: these are
+# set by maintainer scripts, and the pinned base layer ships them so. A rule
+# whose path the image lacks is skipped.
+[[base.owners]]
+path = "/etc/shadow"
+user = "root"
+group = "shadow"
+mode = "0640"
+why = "passwd's shadowconfig, as the pinned base layer ships it"
+
+[[base.owners]]
+path = "/etc/gshadow"
+user = "root"
+group = "shadow"
+mode = "0640"
+why = "passwd's shadowconfig, as the pinned base layer ships it"
+
+[[base.owners]]
+path = "/var/mail"
+user = "root"
+group = "mail"
+mode = "02775"
+why = "base-files, as the pinned base layer ships it"
+
+# Guest plumbing: every variant but the vault carries it.
+[base.plumbing.user]
+# useradd --uid 10001 --user-group --no-create-home --home-dir /tmp guest
+# (every guest Dockerfile). HOME is the run-time /tmp tmpfs, so no path in
+# the image is the guest's: the existing recipes create none.
+name = "guest"
+uid = 10001
+gid = 10001
+home = "/tmp"
+shell = "/bin/sh"
+
+[[base.plumbing.native]]
+package = "oneiron-container"
+bin = "oneiron-fence"
+dest = "/usr/local/bin/oneiron-fence"
+mode = "0555"
+
+[[base.plumbing.native]]
+package = "oneiron-guest"
+bin = "oneiron-guest"
+dest = "/usr/local/bin/oneiron-guest"
+mode = "0555"
+
+[[base.plumbing.links]]
+# /sbin is /usr/sbin in the merged-usr image: Firecracker boots init=/sbin/oneiron-guest.
+path = "/usr/sbin/oneiron-guest"
+target = "/usr/local/bin/oneiron-guest"
+
+[base.plumbing.image]
+user = "10001:10001"
+env = ["HOME=/tmp", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
+entrypoint = ["/usr/local/bin/oneiron-guest", "--container"]
+
+# -- the five variant overlays -------------------------------------------------
+
+[variants.vault]
+# The vault is its own trust domain: no guest plumbing, its own PID 1.
+plumbing = false
+# sh, cat, head and sync come with the essential set; mount and umount here.
+packages = ["mount"]
+unresolved = [
+  "reboot: deploy/firecracker/oneiron-vault-init runs `reboot -f`; no Debian package for it without an init system is chosen yet",
+  "the empty 0644 resolver mountpoint deploy/firecracker/build.py stages",
+]
+files = [{ pin = "vault-init", dest = "/usr/sbin/oneiron-vault-init", mode = "0755" }]
+dirs = [
+  { path = "/vault" },
+  { path = "/config" },
+  { path = "/restore" },
+  { path = "/etc/oneiron" },
+]
+native = [
+  { package = "oneiron-server", bin = "oneiron-server", dest = "/usr/bin/oneiron-server" },
+  { package = "oneiron-server", bin = "oneiron-broker", dest = "/usr/bin/oneiron-broker" },
+  { package = "oneiron-server", bin = "oneiron-vm-init", dest = "/usr/bin/oneiron-vm-init" },
+  { package = "oneiron-server", bin = "oneiron-vm-outbox", dest = "/usr/bin/oneiron-vm-outbox" },
+]
+image = { entrypoint = ["/usr/sbin/oneiron-vault-init"] }
+
+[variants.browser]
+packages = ["busybox", "ca-certificates", "chromium", "curl", "fonts-liberation"]
+native = [
+  { package = "oneiron-container", bin = "oneiron-browser-relay", dest = "/usr/local/bin/oneiron-browser-relay" },
+]
+payloads = [{ pin = "lightpanda", dest = "/usr/local/bin/lightpanda", mode = "0555" }]
+files = [{ pin = "browser-entrypoint", dest = "/usr/local/bin/oneiron-browser-guest", mode = "0555" }]
+image = { env = ["LIGHTPANDA_DISABLE_TELEMETRY=true"], entrypoint = ["/usr/local/bin/oneiron-browser-guest"] }
+
+[variants.desktop-cua]
+packages = [
+  "abiword", "at-spi2-core", "dbus", "dbus-x11", "fonts-liberation", "galculator", "gnumeric",
+  "libatk-adaptor", "libwayland-client0", "libx11-6", "libxext6", "libxi6", "libxkbcommon0",
+  "libxtst6", "mousepad", "openbox", "xauth", "xvfb",
+]
+build_packages = [
+  "libwayland-dev", "libx11-dev", "libxext-dev", "libxi-dev", "libxkbcommon-dev", "libxtst-dev",
+]
+source_builds = [{ pin = "cua-driver", dest = "/usr/local/bin/cua-driver", mode = "0555" }]
+files = [{ pin = "desktop-entrypoint", dest = "/usr/local/bin/oneiron-desktop-guest", mode = "0555" }]
+image = { entrypoint = ["/usr/local/bin/oneiron-desktop-guest"] }
+
+[variants.checker]
+# L11-A owns these rows (guest/checker); they mirror its Dockerfile today.
+packages = [
+  "build-essential", "ca-certificates", "cmake", "curl", "git", "libasound2-dev", "libdbus-1-dev",
+  "libgtk-3-dev", "libjavascriptcoregtk-4.1-dev", "libsoup-3.0-dev", "libwebkit2gtk-4.1-dev",
+  "perl", "pkg-config", "python3",
+]
+files = [{ pin = "checker-helper", dest = "/usr/local/bin/oneiron-queue-check", mode = "0555" }]
+payloads = [{ pin = "checker-rust", dest = "/opt/rust" }]
+trees = [{ kind = "cargo-store", dest = "/opt/queue-check/cargo-home" }]
+image = { env = ["PATH=/opt/rust/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"], entrypoint = ["/usr/local/bin/oneiron-queue-check"] }
+
+[variants.generic-agent]
+# Shell, CA roots, the guest agent and a small starter runtime: Python from
+# the snapshot, Bun and tsrs from their pins (FIX 8254; installs land with
+# the variant's phase).
+packages = ["ca-certificates", "python3"]
+payloads = [
+  { pin = "bun", dest = "/usr/local/bin/bun", mode = "0555" },
+  { pin = "tsrs", dest = "/opt/tsrs/node_modules/tsrs" },
+  { pin = "tsrs-wasm", dest = "/opt/tsrs/node_modules/@tsrs/wasm" },
+  { pin = "tsrs-linux-x64-gnu", dest = "/opt/tsrs/node_modules/@tsrs/linux-x64-gnu" },
+]

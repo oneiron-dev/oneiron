@@ -40,6 +40,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/dreamer/compaction_check.rs` | src | s | 2 crate-vis | — | The host's loan to the Dreamer's check of a self-written compaction (FIX 4465 B): the weaver's narrative… |
 | `src/ai_host/dreamer/free_time.rs` | src | s | 1 crate-vis | — | A resident's free-time items on this server (FIX 4453) |
 | `src/ai_host/dreamer/run_log.rs` | src | s | 1 crate-vis | — | The outcome line of an attempt the server's Dreamer executor ended without completing it (FIX 7271): who it… |
+| `src/ai_host/dreamer/urgent_digest.rs` | src | s | 2 crate-vis | — | The host's half of the digest's urgent breakthrough (OF-194 L3; ARCH-0026: "urgent breakthrough only when… |
 | `src/ai_host/eval_authoring.rs` | src | s | 1 crate-vis | — | The Coach's eval authoring (ARCH-0053 "Eval authoring", OF-578): each night it keeps each seat's test set… |
 | `src/ai_host/failure_signals.rs` | src | s | 3 crate-vis | — | The host's failure-signal sender (OF-380) |
 | `src/ai_host/feedback_report_delivery.rs` | src | s | 3 crate-vis | — | The Coach's publisher delivery on the host (OF-420, FIX 739; ARCH-0056 §9: "reports are background") |
@@ -765,7 +766,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedded/runtime.rs` | src | s | 5 crate-vis | — | The runtime an embedded engine serves on, under the app's advisory CPU share (FIX 2661, OF-237) |
 | `src/embedder/admitted.rs` | src | s | 6 crate-vis | — | An endpoint embedder's requests under run admission (ARCH-0053 `#run-admission`): the primary endpoint's and… |
 | `src/embedder/brokered.rs` | src | s | 8 crate-vis | — | How an endpoint embedder's requests reach their server: a plain client, whose default headers carry an… |
-| `src/embedder/endpoint.rs` | src | L | 22 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
+| `src/embedder/endpoint.rs` | src | L | 23 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
 | `src/embedder/local/attention.rs` | src | s | 4 crate-vis | — | Attention: the fused Metal kernel where it applies, eager matmul elsewhere |
 | `src/embedder/local/batcher.rs` | src | s | 7 crate-vis | — | Tokenisation and packing |
 | `src/embedder/local/bench.rs` | src | s | 4 crate-vis | — | Throughput and query latency of the local provider on synthetic text, the numbers its PR bodies report |
@@ -781,7 +782,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/local/spec.rs` | src | s | 3 crate-vis | — | What a local checkpoint declares about itself, read from its metadata files alone: the body, how it attends… |
 | `src/embedder/local/st_modules.rs` | src | m | 14 crate-vis | — | The sentence-transformers module chain that turns hidden states into one vector per input |
 | `src/embedder/local/tests.rs` | test | L | — | — | Local-provider rows |
-| `src/embedder/mod.rs` | src | m | 30 crate-vis | — | The embedder provider slot |
+| `src/embedder/mod.rs` | src | m | 31 crate-vis | — | The embedder provider slot |
 | `src/embedder/remote.rs` | src | s | 4 crate-vis | — | Builds a remote rung with a nonblocking host egress predicate |
 | `src/embedder/serve.rs` | src | m | 5 crate-vis | — | `oneiron-server embedder serve`: the local provider over an OpenAI-compatible `/v1/embeddings`, for several… |
 | `src/embedder/serve/budget.rs` | src | s | 3 crate-vis | — | How many bytes an answer may hold, and the buffer it is encoded into |

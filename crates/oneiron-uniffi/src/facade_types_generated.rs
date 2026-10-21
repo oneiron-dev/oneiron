@@ -4587,6 +4587,8 @@ pub enum TaskWorkflowHandoff {
         #[serde(rename = "id")]
         id: String,
     },
+    #[serde(rename = "interrupted")]
+    Interrupted,
 }
 
 /// `oneiron::task_verb::highway_types::TaskWorkflowOutcome`.
@@ -4594,6 +4596,11 @@ pub enum TaskWorkflowHandoff {
 pub enum TaskWorkflowOutcome {
     #[serde(rename = "pending")]
     Pending,
+    #[serde(rename = "started")]
+    Started {
+        #[serde(rename = "at")]
+        at: u64,
+    },
     #[serde(rename = "done")]
     Done {
         #[serde(rename = "receipt_ref")]
@@ -56342,6 +56349,14 @@ pub struct WakeRecipePolicy {
     pub arc_child_calls_per_wake: u32,
     #[serde(rename = "audit_window_instruction")]
     pub audit_window_instruction: String,
+    #[serde(rename = "follower_enabled")]
+    pub follower_enabled: bool,
+    #[serde(rename = "follower_instruction")]
+    pub follower_instruction: String,
+    #[serde(rename = "follower_keyframe_instruction")]
+    pub follower_keyframe_instruction: String,
+    #[serde(rename = "follower_sizing_bytes_per_token")]
+    pub follower_sizing_bytes_per_token: u32,
 }
 
 /// `oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest`.
