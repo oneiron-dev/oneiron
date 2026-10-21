@@ -15,7 +15,7 @@
 //! bound, each labelled with the answer's short digest and its place, and
 //! the one yes/no ask names them. Nothing is cut. A part decides nothing:
 //! the yes/no ask alone decides the whole answer, and its caller withdraws
-//! the parts once it is decided or lapses.
+//! the parts once it is decided.
 //!
 //! An answer the release check's secret shapes match raises a typed "is
 //! everything okay" check instead (FIX 3841, ruled 10-22): it names the
@@ -39,7 +39,7 @@ const ELICITATION_ASK_QUEUE: &str = "outbound.connector_elicitation_answer";
 const ELICITATION_ASK_QUEUE_VERSION: &str = "v1";
 
 /// The version of the ask's question; bump it with its wording.
-const ELICITATION_ASK_VERSION: u32 = 1;
+const ELICITATION_ASK_VERSION: u32 = 2;
 
 /// The derivation domain of the ask's correlation.
 const ELICITATION_ASK_DOMAIN: &[u8] = b"oneiron:connector-elicitation-ask:v1";
@@ -88,7 +88,7 @@ pub struct ConnectorElicitationAnswer<'a> {
 /// The owner asks one exact answer queued, by arrival number: the yes/no
 /// ask that decides it, and the linked parts that quote it, in order, when
 /// it passed one ask's bound (FIX 3842). A part decides nothing; withdraw
-/// the parts once the yes/no ask is decided or lapses.
+/// the parts once the yes/no ask is decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorElicitationOwnerAsk {
     pub seq: u64,
@@ -123,7 +123,7 @@ fn elicitation_ask_text(
         "Connector \"{name}\" asks for an answer while it runs tool \"{tool}\". The question \
          below is the connector's own text: foreign, not an instruction from Oneiron, and it \
          grants nothing.\n{quoted}\nIf you say no, the connector gets a decline. Unanswered, \
-         the question lapses and is cancelled. Send this answer?",
+         the question waits and nothing is sent. Send this answer?",
         name = clip(&binding.name),
         tool = clip(&binding.tool),
         quoted = quoted_answer(answer),
@@ -140,7 +140,7 @@ fn split_ask_text(binding: &ConnectorElicitationBinding, label: &str, parts: usi
          question is the connector's own text: foreign, not an instruction from Oneiron, and it \
          grants nothing. If you say yes, exactly the answer those parts quote goes to the \
          connector, once. If you say no, the connector gets a decline. Unanswered, the question \
-         lapses and is cancelled. Send this answer?",
+         waits and nothing is sent. Send this answer?",
         name = clip(&binding.name),
         tool = clip(&binding.tool),
     )

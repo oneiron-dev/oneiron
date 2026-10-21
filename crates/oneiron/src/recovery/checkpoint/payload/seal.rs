@@ -208,6 +208,7 @@ fn db_code(db: RowDb) -> u8 {
         RowDb::EdgesIn => 3,
         RowDb::VaultMeta => 4,
         RowDb::SyncState => 5,
+        RowDb::SyncQueue => 6,
     }
 }
 

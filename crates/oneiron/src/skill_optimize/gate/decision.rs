@@ -266,7 +266,14 @@ fn rule_on_proposal(
     };
     // A project goal's measured axes come from its bound live report, read
     // before any judgment so a missing one retries without spending them.
-    let measured = live::live_axes(vault, proposal, &inputs.basis, &inputs.goal_definition)?;
+    let reported = live::live_axes(
+        vault,
+        proposal,
+        &inputs.basis,
+        &inputs.goal_definition,
+        judge_revision,
+    )?;
+    let primary_unknown = !reported.inconclusive.is_empty();
     // The human picks in the skill's anchor, scored against the judge that
     // answers now, read before any judgment like the outcomes they sit beside.
     let incumbent = crate::skill_optimize::judge_incumbent(vault)?;
@@ -290,7 +297,7 @@ fn rule_on_proposal(
         &current_case,
         &proposed_case,
         &inputs.goal_definition,
-        measured,
+        reported.measured,
     )?;
     if scorer.judge_revision() != judge_revision {
         return Err(retry("candidate judge revision moved during scoring"));
@@ -302,15 +309,20 @@ fn rule_on_proposal(
     let before = headline.before;
     let after = headline.after;
     // A pending tradeoff climbs the preference ladder here, outside any write
-    // transaction, because its judgment rung is a model call.
-    let ladder = tradeoff::plan(
-        vault,
-        proposal,
-        &inputs.basis,
-        &inputs.goal_definition,
-        &goal_axes,
-        scorer,
-    )?;
+    // transaction, because its judgment rung is a model call. A vector with an
+    // unknown primary axis puts nothing to the ladder: the gate defers it.
+    let ladder = if primary_unknown {
+        tradeoff::TradeoffPlan::None
+    } else {
+        tradeoff::plan(
+            vault,
+            proposal,
+            &inputs.basis,
+            &inputs.goal_definition,
+            &goal_axes,
+            scorer,
+        )?
+    };
 
     // The scored set has done its work; what the row keeps of it is the bounded
     // display list, and the basis keeps the rest.
@@ -380,6 +392,7 @@ fn rule_on_proposal(
             cycle,
             &basis,
             &goal_axes,
+            primary_unknown,
         )?;
         let settled = tradeoff::apply_in_txn(vault, wtxn, cycle, &mut verdict, &ladder)?;
         verdict.accepted = verdict.disposition.admits();
@@ -521,7 +534,8 @@ fn race_hook() {
 #[cfg(not(test))]
 const fn race_hook() {}
 
-/// The decision itself, over the committing snapshot.
+/// The decision itself, over the committing snapshot. `primary_unknown`: a
+/// primary axis was measured inconclusive, so non-regression is unknown.
 #[expect(
     clippy::too_many_arguments,
     reason = "the decision names every input it rests on, and hiding them in a struct would only move the list"
@@ -535,6 +549,7 @@ fn decide_in_txn(
     cycle: &SkillEditCycle,
     basis: &ScoredBasis,
     goal_axes: &BTreeMap<String, GoalAxisScore>,
+    primary_unknown: bool,
 ) -> Result<SkillEditDisposition> {
     require_open_optimizer_proposal(staged)?;
     // The predecessor was readable when the basis was taken; if it is not
@@ -604,6 +619,9 @@ fn decide_in_txn(
     if floor_regressed(goal_axes) {
         return Ok(SkillEditDisposition::Rejected);
     }
+    // An unknown primary axis is carried as a tie, so a vector with no gain
+    // on its known axes still rejects; one it would admit or escalate defers
+    // below, after the tier checks (OF-495).
     if !dominates(goal_axes) && !is_tradeoff(goal_axes) {
         return Ok(SkillEditDisposition::Rejected);
     }
@@ -648,6 +666,12 @@ fn decide_in_txn(
         )?
     {
         return Ok(SkillEditDisposition::DeferredJudgeCadence);
+    }
+    // The full vector's non-regression is not established while a primary
+    // axis is unknown: no automatic admission and no ask on a partial vector.
+    // The proposal stays open, and the next pass measures it again.
+    if primary_unknown {
+        return Ok(SkillEditDisposition::DeferredInconclusive);
     }
     // A mixed vector may reach the preference ladder only after both tier
     // checks. Otherwise a protected candidate could remain open indefinitely.
@@ -787,10 +811,11 @@ pub(super) fn approval_deferral_in_txn(
 /// - a tradeoff needing a decision, on the same basis in any cycle, while it
 ///   still waits on its own terms ([`tradeoff::pending_waits_in_txn`]): asking
 ///   the judge again cannot replace the pending preference with another score;
-/// - a standing CAP DEFERRAL over exactly this basis AND this same cycle. The
-///   cycle equality is load-bearing in the other direction: a deferral from
-///   wake X says nothing about wake Y, so a genuine later-cycle pickup still
-///   re-scores and is counted against the cycle that picked it up.
+/// - a standing DEFERRAL (cap, judge cadence or an inconclusive primary) over
+///   exactly this basis AND this same cycle. The cycle equality is
+///   load-bearing in the other direction: a deferral from wake X says nothing
+///   about wake Y, so a genuine later-cycle pickup still re-scores and is
+///   counted against the cycle that picked it up.
 ///
 /// Returning the standing row is what makes delivery idempotent on all arms:
 /// no second replay is paid, no second row is appended, and the cap is neither
@@ -813,6 +838,7 @@ fn standing_ruling_in_txn(
                     verdict.disposition,
                     SkillEditDisposition::DeferredCycleCap
                         | SkillEditDisposition::DeferredJudgeCadence
+                        | SkillEditDisposition::DeferredInconclusive
                 ) && verdict.cycle == cycle.as_str()))
     });
     match standing {
