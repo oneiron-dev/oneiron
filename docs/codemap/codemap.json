@@ -78106,7 +78106,7 @@
      "path": "src/edit/xml.rs",
      "purpose": "Byte-span writing over a parsed part: every edit is a list of splices on the retained bytes, so whatever it…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
      }
     },
     {
@@ -79061,9 +79061,51 @@
      "surface": {
       "const": 2,
       "enum": 5,
-      "fn": 16,
-      "re-export": 2,
+      "fn": 17,
+      "re-export": 4,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/header.rs",
+     "purpose": "Renaming a worksheet table's column through its header cell (FIX 6399)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/insert.rs",
+     "purpose": "What inserted rows and columns take from their neighbours, as Excel's insert gives it by default (FIX 3695)…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/retain.rs",
+     "purpose": "Writing into a stored cell or defined name (FIX 8571, FIX 8572): only what a change names is written, and…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/titles.rs",
+     "purpose": "The worksheet titles a sheet layout leaves in the extended properties (`docProps/app.xml`, FIX 3441)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -79077,7 +79119,7 @@
      "path": "src/xlsx_shift.rs",
      "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 8,
       "struct": 1
@@ -79255,10 +79297,10 @@
      "purpose": "Excel's storage qualifiers for post-2007 worksheet functions"
     },
     "xlsx_body": {
-     "files": 1,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "XL",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")"
     },
     "xlsx_shift": {
@@ -79278,7 +79320,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 111,
+   "source_files": 115,
    "test_files": 14
   },
   "oneiron-driver": {
