@@ -4,7 +4,10 @@ use super::{
     McpCodeModeProvider, PlannedMeter, PlannedModel, PlannedRoute, ReaderMeter, RunCompactionSeat,
 };
 use oneiron::agent_dispatch::SpendScopeId;
-use oneiron::code_run::{CodeRunDeterminism, CompactionHostBinding, GatedActorWrite};
+use oneiron::code_run::{
+    CodeRunDeterminism, CompactionHostBinding, GatedActorWrite, ReaderJob, ScopedChildHosts,
+    ScopedChildPorts,
+};
 use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
 use oneiron::code_sandbox::wasmtime_runtime::{ComponentBudget, WasmtimeComponentRuntime};
 use oneiron::engine_executor::{
@@ -108,6 +111,9 @@ pub struct McpQuickJsProvider {
     /// The runs' browser planner states (CUA E5) this provider's backend
     /// routes each step's call by; none routes every call as before.
     browser_planner: Option<Arc<BrowserPlannerRuns>>,
+    /// The profiles the scoped children a host queues itself run on, by
+    /// task (FIX 7508), and the ports they lend.
+    scoped_hosts: ScopedChildHosts,
 }
 
 /// A reader child's backend over the host-injected model: its calls are
@@ -205,6 +211,7 @@ impl McpQuickJsProvider {
             planned_meter: None,
             pinned_compaction: None,
             browser_planner: None,
+            scoped_hosts: ScopedChildHosts::default(),
         })
     }
 
@@ -446,6 +453,13 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn reader_window_tokens(&self) -> Option<u64> {
         self.reader_window_tokens
+    }
+    fn scoped_child_hosts(&self) -> Option<&ScopedChildHosts> {
+        Some(&self.scoped_hosts)
+    }
+    /// A scoped child its host profiled lends the ports of its profile.
+    fn scoped_child_ports(&self, job: &ReaderJob) -> Option<Arc<dyn ScopedChildPorts>> {
+        self.scoped_hosts.ports(job.task)
     }
     fn executor_config(
         &self,

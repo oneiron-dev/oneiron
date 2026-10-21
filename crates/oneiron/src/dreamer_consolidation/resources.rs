@@ -19,6 +19,7 @@ pub(super) use prior::standing;
 pub(super) mod signals;
 pub(crate) use signals::facet as claim_facet;
 mod slices;
+pub(super) use slices::ExtractionSlice;
 mod write;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;

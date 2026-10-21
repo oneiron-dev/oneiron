@@ -253,6 +253,13 @@ pub trait McpCodeModeProvider: Send + Sync {
     ) -> Option<Arc<dyn oneiron::code_run::ScopedChildPorts>> {
         None
     }
+    /// The per-job profiles a host's own scoped children run on (FIX
+    /// 7508): a host that queues one registers its backend, meter, model and
+    /// ports here by its task before it queues it. The default keeps none,
+    /// and every scoped child runs as before.
+    fn scoped_child_hosts(&self) -> Option<&oneiron::code_run::ScopedChildHosts> {
+        None
+    }
     /// The executor configuration for this run, in the vault it lives in.
     fn executor_config(
         &self,

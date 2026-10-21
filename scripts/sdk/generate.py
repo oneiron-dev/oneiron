@@ -80,11 +80,23 @@ for row in MANIFEST['verbs']:
 # TASK it mints is born there (ARCH-0067 §5).
 # The one exception is a `context: "browser"` row: the run's own browser
 # session answers it, a host resource code mode binds per run, so it states
-# `mcp: "none"` and code mode is its only door.
+# `mcp: "none"` and code mode is its only door. A `context: "scoped_child"`
+# row (FIX 7508, L13 10-22) is the other: a port a host lends a scoped child
+# it queues (`ScopedChildPorts`), which the child's dispatcher runs on the
+# host's adapter. It is in the verb table, the schema table and the code-mode
+# catalogue, and in no facade, HTTP or public MCP door; its `call` is the
+# host-only refusal an embedded handle answers, and it has no host door.
+MCP_NONE_CONTEXTS = ('browser', 'scoped_child')
+for row in MANIFEST['verbs']:
+    if row.get('context') != 'scoped_child': continue
+    if (set(row) - {'description'} != {'name', 'input', 'output', 'call', 'scope', 'context', 'mcp', 'section'}
+            or row['scope'] not in ('Read', 'Write') or row['section']
+            or row['call'] != f'crate::task_verb::sdk::host_only(memory, "{row["name"]}", &input)?'):
+        raise ValueError(f'{row["name"]}: a scoped-child row names its input, output, scope and description, calls the host-only refusal, and nothing else')
 MCP_SCOPES = {'filtered', 'unrestricted', 'addressed', 'born'}
 for row in ROWS:
-    if (row.get('context') == 'browser') != (row.get('mcp', 'tool') == 'none'):
-        raise ValueError(f'{row["name"]}: only a browser row states "mcp": "none", and every browser row does')
+    if (row.get('context') in MCP_NONE_CONTEXTS) != (row.get('mcp', 'tool') == 'none'):
+        raise ValueError(f'{row["name"]}: only a browser or scoped-child row states "mcp": "none", and every such row does')
     row.setdefault('mcp_fields', {'spec': '$'})
     row.setdefault('mcp_scope', 'unrestricted')
     if row['mcp_scope'] not in MCP_SCOPES: raise ValueError(f'{row["name"]}: mcp_scope must be one of {sorted(MCP_SCOPES)}')
