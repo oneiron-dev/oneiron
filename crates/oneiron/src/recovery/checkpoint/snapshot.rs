@@ -199,10 +199,15 @@ impl Vault {
                     // current custody, which a restore takes it from (KS-5,
                     // FIX 5686 part 2).
                     reference
-                } else if entry.name == "job_records" {
-                    rebuild::unlease_attempt(key, value)?
                 } else {
                     value.to_vec()
+                };
+                // Every queue row goes unleased: an agent dispatch's stub
+                // too, whose instance seals the row as it stood (FIX 7115).
+                let value = if entry.name == "job_records" {
+                    rebuild::unlease_attempt(key, &value)?
+                } else {
+                    value
                 };
                 Ok(Some((key.to_vec(), value)))
             };

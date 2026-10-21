@@ -25,7 +25,31 @@ impl Vault {
         reason: &str,
         at: u64,
     ) -> Result<ConnectorKeyRecord> {
+        self.suspend_connector_key_guarded(id, reason, at, |_| Ok(()))
+    }
+    /// [`Self::suspend_connector_key`] as the owner `owner` proves (FIX
+    /// 8197): his proof is revalidated in the suspending transaction, so a
+    /// revoked or lapsed proof changes nothing.
+    pub fn suspend_connector_key_as_owner(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        at: u64,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<ConnectorKeyRecord> {
+        self.suspend_connector_key_guarded(id, reason, at, |txn| {
+            owner.revalidate_in_txn(self, txn).map(drop)
+        })
+    }
+    fn suspend_connector_key_guarded(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        at: u64,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<ConnectorKeyRecord> {
         let mut wtxn = self.store.env.write_txn()?;
+        guard(&wtxn)?;
         let record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
         if record.status != ConnectorKeyStatus::Active {
@@ -62,7 +86,29 @@ impl Vault {
     /// window state is truth — if the window has not rolled, the next send
     /// re-exhausts and re-suspends (correct hard-cap behavior).
     pub fn resume_connector_key(&self, id: &EntityId, at: u64) -> Result<ConnectorKeyRecord> {
+        self.resume_connector_key_guarded(id, at, |_| Ok(()))
+    }
+    /// [`Self::resume_connector_key`] as the owner `owner` proves (FIX
+    /// 8197): his proof is revalidated in the resuming transaction, so a
+    /// revoked or lapsed proof changes nothing.
+    pub fn resume_connector_key_as_owner(
+        &self,
+        id: &EntityId,
+        at: u64,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<ConnectorKeyRecord> {
+        self.resume_connector_key_guarded(id, at, |txn| {
+            owner.revalidate_in_txn(self, txn).map(drop)
+        })
+    }
+    fn resume_connector_key_guarded(
+        &self,
+        id: &EntityId,
+        at: u64,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<ConnectorKeyRecord> {
         let mut wtxn = self.store.env.write_txn()?;
+        guard(&wtxn)?;
         let record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
         if record.status != ConnectorKeyStatus::Suspended {

@@ -64,7 +64,12 @@ pub(super) fn print_report(report: &VectorBenchReport) {
             "\n[delete-churn: delete {} nodes, live={}]",
             delete.churned, delete.live_after
         );
-        print_latency("delete         ", &delete.op_latency, None, delete.live_after);
+        print_latency(
+            "delete         ",
+            &delete.op_latency,
+            None,
+            delete.live_after,
+        );
         print_search_measure(&delete.search, delete.live_after);
     }
     println!();
@@ -96,8 +101,15 @@ fn print_search_measure(measure: &SearchMeasure, documents: usize) {
         documents,
     );
     if !measure.recall.is_finite() {
-        let cause = if measure.recall_k == 0 { "empty_live_set" } else { "no_queries" };
-        println!("  recall@{}: undefined — cause: {cause}; gate FAIL", measure.recall_k);
+        let cause = if measure.recall_k == 0 {
+            "empty_live_set"
+        } else {
+            "no_queries"
+        };
+        println!(
+            "  recall@{}: undefined — cause: {cause}; gate FAIL",
+            measure.recall_k
+        );
         for violation in &measure.violations {
             println!("  [violation] {violation}");
         }

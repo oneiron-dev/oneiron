@@ -30,6 +30,7 @@ pub mod pptx_comments;
 pub mod retained_opc;
 pub mod xlfn;
 pub mod xlsx_body;
+mod xlsx_error;
 mod xlsx_shift;
 mod xlsx_styles;
 
