@@ -43,9 +43,11 @@ use crate::decision_host::DecisionHost;
 use crate::server::SyncServer;
 
 const TICK: Duration = Duration::from_secs(300);
-/// Window parts one pass asks, across every detector, before it starts no
-/// further window: a window begun is asked to its last part, and the next
-/// pass takes the rest.
+/// Window parts one round asks, across every detector, before it starts no
+/// further window: a window begun is asked to its last part. A yield unit,
+/// never a cut: a round that stops here having graded a window is followed
+/// at once by the next, once admission lets it run, so the pass works on
+/// until no window is left, and only then waits for the tick.
 const ROUND: usize = 8;
 /// One question's budget.
 const DECIDE_BUDGET: Duration = Duration::from_secs(20);
@@ -120,7 +122,7 @@ impl Graded<'_> {
     }
 }
 
-/// Starts the pass, or nothing when no detector is configured. Each pass
+/// Starts the pass, or nothing when no detector is configured. Each round
 /// runs on a blocking thread: the ladder's model rungs block on the server's
 /// runtime.
 pub(crate) fn spawn(
@@ -151,8 +153,14 @@ pub(crate) fn spawn(
     Some(tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Whether the last round stopped full with windows left: the next
+        // round then starts without waiting for the tick.
+        let mut more = false;
         loop {
-            tick.tick().await;
+            if !more {
+                tick.tick().await;
+            }
+            more = false;
             let Some(server) = weak.upgrade() else {
                 break;
             };
@@ -171,13 +179,16 @@ pub(crate) fn spawn(
                     tracing::warn!(kind = ?error.kind(), "the self-heal detectors wait for the next pass");
                 }
                 Err(error) => tracing::warn!(%error, "the self-heal detector pass stopped"),
-                Ok(Ok(())) => {}
+                Ok(Ok(full)) => more = full,
             }
         }
     }))
 }
 
-fn round(server: &SyncServer, detectors: &[Detector]) -> oneiron::Result<()> {
+/// One round over every ungraded window, up to [`ROUND`] parts. Returns
+/// whether it stopped there with a window left after grading at least one,
+/// so the next round should start at once.
+fn round(server: &SyncServer, detectors: &[Detector]) -> oneiron::Result<bool> {
     let vault = server.vault();
     // Every run is read: past `limits.maintenance_scan_rows` the pass asks
     // and reads on.
@@ -199,11 +210,12 @@ fn round(server: &SyncServer, detectors: &[Detector]) -> oneiron::Result<()> {
             .filter_map(|seed| registered(vault, seed, now)),
     );
     let mut graded = 0;
+    let mut progressed = false;
     for detector in &pass {
         let seed = detector.seed();
         for window in windows(&runs, seed, now) {
             if graded >= ROUND {
-                return Ok(());
+                return Ok(progressed);
             }
             let key = detector.key(&window);
             if vault.detector_window_graded(&key)? {
@@ -214,6 +226,7 @@ fn round(server: &SyncServer, detectors: &[Detector]) -> oneiron::Result<()> {
             match judge(vault, host, principal, detector, &window) {
                 Ok(raised) => {
                     vault.mark_detector_window_graded(&key, now)?;
+                    progressed = true;
                     tracing::debug!(
                         family = %seed.policy.family,
                         raised = raised.is_some(),
@@ -229,7 +242,7 @@ fn round(server: &SyncServer, detectors: &[Detector]) -> oneiron::Result<()> {
             }
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 /// A detector the owner configured. A `t2` asks with the T2 its family's

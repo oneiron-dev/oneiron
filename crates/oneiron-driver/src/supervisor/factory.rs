@@ -106,6 +106,16 @@ pub trait PassExecutorFactory {
         Ok(None)
     }
 
+    /// The host's pause (FIX 6909), read as each pass starts and before the
+    /// supervisor reads its next tick: `true` asks the pass to stop at its
+    /// next boundary, as a stop does, and no next tick is read while it
+    /// holds. Each call reads the current epoch: an epoch that paused stays
+    /// `true`, and lifting the pause starts a new one, which closes the
+    /// last. The default has none, and nothing pauses.
+    fn pass_pause(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        None
+    }
+
     /// The Coach's skill optimizer for one pass, asked once the pass meter
     /// exists. The default has none, and a skill-optimize attempt parks for
     /// want of a host author.

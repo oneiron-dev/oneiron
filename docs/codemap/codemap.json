@@ -14450,7 +14450,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 3
      }
     },
@@ -22779,7 +22779,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health.rs",
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
-      "const": 12,
+      "const": 15,
       "crate-vis": 5,
       "enum": 6,
       "fn": 12,
@@ -23975,7 +23975,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AbortDreamerBudgetReservation",
@@ -24137,7 +24137,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 3,
-      "fn": 14,
+      "fn": 16,
       "struct": 2
      }
     },
@@ -24150,7 +24150,8 @@
      "path": "src/dreamer_wake/driver.rs",
      "purpose": "The wake loop: admit, warn, dispatch under panic containment, stop conditions",
      "surface": {
-      "const": 4,
+      "const": 5,
+      "crate-vis": 1,
       "fn": 10,
       "struct": 1
      }
@@ -24212,7 +24213,7 @@
      "path": "src/dreamer_wake/driver/park_cause.rs",
      "purpose": "What a non-deadline executor error parks as (FIX 7272)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -24249,7 +24250,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 1,
       "re-export": 15
      }
@@ -27642,7 +27643,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Tier1Observation"
@@ -27650,7 +27651,7 @@
      "path": "src/failure_signals/witness.rs",
      "purpose": "Vault-local, non-serializable producer observations",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1,
       "struct": 1
      }
@@ -49996,6 +49997,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/consent_depth.rs",
+     "purpose": "Whole-tray consent queue depth (ARCH-0066 §4, \"consent-storm queue depth\"; OF-298)",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ConsentDeniedDetector"
      ],
@@ -50182,7 +50194,7 @@
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 8,
       "re-export": 11
      }
@@ -50358,7 +50370,7 @@
      "path": "src/self_heal/tier1_source.rs",
      "purpose": "Producer-owned, vault-local source proofs over the existing base ledgers",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -50411,7 +50423,7 @@
      "purpose": "Closed-form T1 projections",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 8,
       "fn": 10,
       "struct": 6
      }
@@ -68514,7 +68526,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68857,9 +68869,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 183,
+   "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4348,
+   "source_files": 4349,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76036,7 +76048,7 @@
      "path": "src/supervisor/pass.rs",
      "purpose": "Single wake-pass assembly and engine delegation",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -81635,7 +81647,7 @@
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -81758,7 +81770,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "fn": 22,
       "mod": 1,
       "re-export": 1,
@@ -90487,7 +90499,7 @@
      "path": "src/managed/state_serve/admission.rs",
      "purpose": "The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -91850,7 +91862,7 @@
      "path": "src/oneironer/dispatcher/capacity.rs",
      "purpose": "Room in the dispatcher's pending caps, as owned claims (FIX 6755)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -91880,7 +91892,7 @@
      "path": "src/oneironer/dispatcher/mod.rs",
      "purpose": "The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -92070,7 +92082,7 @@
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
