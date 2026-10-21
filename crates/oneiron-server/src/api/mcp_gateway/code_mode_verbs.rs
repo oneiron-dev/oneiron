@@ -212,16 +212,25 @@ impl From<GuestStartFailure> for BrowserError {
     }
 }
 
+/// What a run guest's fixture origin serves: a host directory, mounted
+/// read-only in the guest, or the one upstream the run's relay forwards to,
+/// host-side, with no mount (FIX 8061). A desktop's serves neither.
+#[derive(Clone, Copy, Default)]
+struct RunGuestFixture<'a> {
+    directory: Option<&'a PathBuf>,
+    forward: Option<std::net::SocketAddrV4>,
+}
+
 /// Starts one run's guest from a pinned image through the engine's tier
 /// selector, behind the run's egress proxy, on `command`, and receipts its
-/// manifest.
+/// manifest. The proxy takes `fixture` through its checked builder.
 fn start_run_guest(
     vault: &Arc<oneiron::Vault>,
     run_id: oneiron::EntityId,
     runtime: &Path,
     image: &str,
     limits: GuestLimits,
-    fixture: Option<&PathBuf>,
+    fixture: RunGuestFixture<'_>,
     command: &[std::ffi::OsString],
 ) -> Result<(SessionTransport, Arc<dyn EgressRelay>), GuestStartFailure> {
     use oneiron::code_sandbox::{SandboxGuestTier, microvm::select_backend_for_session};
@@ -241,6 +250,7 @@ fn start_run_guest(
         limits,
         seccomp: GuestSeccomp::EngineFence,
         read_only_mounts: fixture
+            .directory
             .iter()
             .map(|p| ((*p).clone(), PathBuf::from("/srv/fixture")))
             .collect(),
@@ -252,7 +262,9 @@ fn start_run_guest(
             oneiron::code_sandbox::egress::EgressConfig::from_env()
                 .map_err(|e| unavailable(Phase::GuestStartFailed, e.to_string()))?,
         )
-        .with_fixture(fixture.cloned()),
+        .with_fixture(fixture.directory.cloned())
+        .with_fixture_forward(fixture.forward)
+        .map_err(|e| unavailable(Phase::GuestStartFailed, e.to_string()))?,
     );
     let transport = backend
         .start_session(&spec, command, Arc::clone(&relay))
@@ -832,7 +844,7 @@ impl RunDesktop {
                 &self.guest.runtime,
                 &self.guest.image,
                 self.guest.limits,
-                None,
+                RunGuestFixture::default(),
                 &["/usr/local/bin/oneiron-desktop-guest".into()],
             )?;
             *session = Some(DesktopSession::attach(&self.guest, transport)?);

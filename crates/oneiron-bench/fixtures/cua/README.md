@@ -204,6 +204,17 @@ work. It never mounts S1 into the engine's file fixture origin, drives CDP itsel
 or changes engine routing, consent, replay or browser semantics. Chromium's
 fenced-guest proof does not itself provide this missing served transport.
 
+**Served-engine transport (FIX 8061).** The engine side now exists: a served
+engine whose `[browser]` section sets `bench_fixture_forward = "172.30.91.1:8765"`
+(one numeric IPv4 `host:port`, never loopback, so PRIVATE's `127.0.0.1:8766` is
+refused) forwards the virtual origin `http://127.0.0.1:8080` to that address,
+host-side. A run browser opens that origin plus reset's relative `entry`, for
+example `http://127.0.0.1:8080/F4/v0/index.html`; its guest stays
+`--network none`, and a direct request to the bridge address or PRIVATE is still
+refused. The key refuses no external traffic: give the bench's engine process
+`ONEIRON_EGRESS_CONFIG` naming a file that holds `{"allowed_domains": []}`. The
+`run` command above does not use this path yet.
+
 Detailed CLI, runtime pin schema, lifecycle, cash/identity gates and unavailable
 measures are documented in
 `crates/oneiron-bench/CUA.md`.

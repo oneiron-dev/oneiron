@@ -8,6 +8,7 @@ mod receipt;
 
 use crate::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyVerdictCategory};
 use crate::{EntityId, Vault};
+pub use fixture::{FixtureForward, FixtureForwardError};
 use oneiron_container::{
     EgressRelay, HostNetFloor, HostNetPermit, HttpRequest, HttpResponse, UnmeteredFloor,
 };
@@ -15,7 +16,7 @@ use oneiron_sandbox_contract::network::global_address;
 pub use receipt::EgressReceipt;
 use std::collections::HashMap;
 use std::io;
-use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, SocketAddr, SocketAddrV4, TcpStream, ToSocketAddrs, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -77,6 +78,9 @@ pub struct OpenEgressProxy {
     config: EgressConfig,
     resolutions: Mutex<HashMap<IpAddr, Vec<String>>>,
     fixture: Option<std::path::PathBuf>,
+    /// The fixture origin's one upstream (FIX 8061), none unless the host
+    /// set one through [`OpenEgressProxy::with_fixture_forward`].
+    fixture_forward: Option<FixtureForward>,
 }
 impl OpenEgressProxy {
     #[must_use]
@@ -87,12 +91,31 @@ impl OpenEgressProxy {
             config,
             resolutions: Mutex::new(HashMap::new()),
             fixture: None,
+            fixture_forward: None,
         }
     }
     #[must_use]
     pub fn with_fixture(mut self, directory: Option<std::path::PathBuf>) -> Self {
         self.fixture = directory;
         self
+    }
+    /// Has the fixture origin forward to `target` alone (FIX 8061), as
+    /// [`FixtureForward::new`] checks it; `None` sets no forward. An origin
+    /// that serves a directory takes none: the two modes never meet.
+    ///
+    /// # Errors
+    /// The target rule `target` breaks, or
+    /// [`FixtureForwardError::WithDirectory`].
+    pub fn with_fixture_forward(
+        mut self,
+        target: Option<SocketAddrV4>,
+    ) -> Result<Self, FixtureForwardError> {
+        let forward = target.map(FixtureForward::new).transpose()?;
+        if forward.is_some() && self.fixture.is_some() {
+            return Err(FixtureForwardError::WithDirectory);
+        }
+        self.fixture_forward = forward;
+        Ok(self)
     }
     fn domain_allowed(&self, host: &str) -> bool {
         self.config.allowed_domains.as_ref().is_none_or(|domains| {

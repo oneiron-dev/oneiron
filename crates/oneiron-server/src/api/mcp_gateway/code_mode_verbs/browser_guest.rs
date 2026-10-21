@@ -36,7 +36,7 @@ use oneiron_browser::{
 };
 use oneiron_vault_contract::BrowserUnavailableReason;
 
-use super::start_run_guest;
+use super::{RunGuestFixture, start_run_guest};
 use crate::config::browser::BrowserReadinessCell;
 use crate::server::HandleLine;
 
@@ -61,7 +61,10 @@ impl BrowserGuestStarter for RunGuestStarter {
             &self.guest.runtime,
             &self.guest.image,
             self.guest.limits,
-            self.guest.fixture.as_ref(),
+            RunGuestFixture {
+                directory: self.guest.fixture.as_ref(),
+                forward: self.guest.fixture_forward,
+            },
             &command,
         )
         .map_err(|failure| {

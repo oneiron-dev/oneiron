@@ -10,9 +10,16 @@
 //! On a managed node the same guest also renders the web fetch's headless
 //! rung, one guest per render (FIX 7122); absent, that node's fetch keeps
 //! its readability rung only.
+//!
+//! `bench_fixture_forward` (FIX 8061) is an operator's: a run browser's
+//! fixture origin, `http://127.0.0.1:8080`, then forwards to that one
+//! numeric IPv4 `host:port`, host-side; the guest stays on no network and
+//! every other address keeps its refusal. Absent, as by default, no
+//! request answers differently.
 
 use oneiron_browser::{BrowserEngine, BrowserGuest, GuestLimits, ImageRef};
 use serde::Deserialize;
+use std::net::SocketAddrV4;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -46,6 +53,11 @@ pub struct BrowserConfig {
     /// start on when the file names none, or `chromium`.
     #[serde(default = "BrowserEngine::agent_default")]
     pub engine: BrowserEngine,
+    /// The upstream a run browser's fixture origin forwards to, as a
+    /// numeric IPv4 `host:port` off the host's loopback (FIX 8061): a
+    /// bench's state server. None forwards nothing.
+    #[serde(default)]
+    pub bench_fixture_forward: Option<SocketAddrV4>,
 }
 
 const fn default_memory_mib() -> u32 {
@@ -99,6 +111,11 @@ impl BrowserConfig {
                 anyhow::bail!("browser.{key} must be greater than zero");
             }
         }
+        if let Some(target) = self.bench_fixture_forward {
+            oneiron::code_sandbox::egress::FixtureForward::new(target).map_err(|reason| {
+                anyhow::anyhow!("browser.bench_fixture_forward {target}: {reason}")
+            })?;
+        }
         Ok(())
     }
 
@@ -119,6 +136,7 @@ impl BrowserConfig {
             // policy from the vault's standing grants before any call.
             policy: oneiron_browser::SendPolicy::default(),
             fixture: None,
+            fixture_forward: self.bench_fixture_forward,
             engine: self.engine,
         })
     }
