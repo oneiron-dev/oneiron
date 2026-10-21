@@ -151,6 +151,7 @@ impl<'v> ScopedRead<'v> {
             recall_authority: Mutex::new(None),
             room_peer: self.room_peer,
             own_owner_authority: false,
+            records_cover: self.records_cover.clone(),
         })
     }
 }

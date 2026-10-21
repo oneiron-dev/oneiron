@@ -46,7 +46,7 @@ use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::server::SyncServer;
 
 mod read_admission;
-use read_admission::{admitted_born_from, caveat_lane, records_name, version_sources};
+use read_admission::{admitted_born_from, caveat_lane};
 
 /// The largest JSON body these routes take: a file travels base64 inside it.
 const ARTIFACT_BODY_LIMIT: usize = 96 * 1024 * 1024;
@@ -358,16 +358,14 @@ pub(super) async fn view(
         let vault = server.vault();
         let view = match caveat_lane(vault, &auth)? {
             None => vault.blob_artifact_view(&id),
-            // A tree the lane does not admit whole reads as absent; a
+            // A tree the lane does not admit whole reads as absent. A
             // records caveat that names the artifact covers its own version
-            // rows (FIX 8068), so the artifact alone is judged.
-            Some(lane) => vault.blob_artifact_view_admitted(&id, |rows| {
-                if records_name(&auth, &id) {
-                    lane.all_refs_readable(std::slice::from_ref(&id))
-                } else {
-                    lane.all_refs_readable(rows)
-                }
-            }),
+            // rows for the records check alone (FIX 8245): every other check
+            // still judges each of them.
+            Some(lane) => {
+                let lane = lane.with_artifact_records_cover(&[id]);
+                vault.blob_artifact_view_admitted(&id, |rows| lane.all_refs_readable(rows))
+            }
         };
         view.map_err(|error| core_engine_error("artifact read failed", error))
     })
@@ -468,7 +466,8 @@ async fn export(
         // admits (FIX 7645): the artifact, that version's CLAIM and its
         // content's ASSET, judged from its metadata before a byte is read,
         // then that version read and no other. One it withholds reads as
-        // absent.
+        // absent. A records caveat that names the artifact covers that
+        // version's rows for the records check alone (FIX 8245).
         let version = match caveat_lane(vault, &auth)? {
             None => version,
             Some(lane) => {
@@ -478,7 +477,8 @@ async fn export(
                 else {
                     return Ok(None);
                 };
-                let sources = version_sources(&auth, id, rows);
+                let lane = lane.with_artifact_records_cover(&[id]);
+                let sources: Vec<EntityId> = std::iter::once(id).chain(rows).collect();
                 if !lane.all_refs_readable(&sources).map_err(failed)? {
                     return Ok(None);
                 }
@@ -654,9 +654,7 @@ pub(super) async fn born_from(
         let versions = vault.artifacts_born_from(&source).map_err(failed)?;
         match lane {
             None => Ok((born, versions)),
-            Some(lane) => {
-                admitted_born_from(vault, &lane, &auth, &source, born, versions).map_err(failed)
-            }
+            Some(lane) => admitted_born_from(vault, lane, &source, born, versions).map_err(failed),
         }
     })
     .await?;

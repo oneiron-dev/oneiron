@@ -1,5 +1,8 @@
-//! The lanes the artifact family's raw reads admit rows through (FIX 7645,
-//! FIX 8068): a credential's record caveats, honoured row by row.
+//! The lanes the artifact family's raw reads admit rows through (FIX 7645):
+//! a credential's record caveats, honoured row by row. A records caveat that
+//! names an artifact covers its own version rows for the records check alone
+//! (FIX 8245, `ScopedRead::with_artifact_records_cover`); every other check
+//! still judges each of them.
 
 use oneiron::EntityId;
 use oneiron::blob_artifact::{BornFromArtifact, BornFromSource};
@@ -23,40 +26,16 @@ pub(super) fn caveat_lane<'a>(
     crate::api::scoped_read_for_core_auth(vault, auth).map(Some)
 }
 
-/// Whether the credential's records caveat names `artifact` (FIX 8068,
-/// Engine 10-22): such a caveat covers that artifact's own version CLAIM and
-/// ASSET rows, so they count as admitted once its lane admits the artifact.
-/// Every other row, another artifact's versions and a trigger's born rows
-/// among them, is judged by the lane as before.
-pub(super) fn records_name(auth: &CoreAuth, artifact: &EntityId) -> bool {
-    auth.verified_slip()
-        .is_some_and(|proof| proof.claims().records.contains(&artifact.to_hex()))
-}
-
-/// The rows a credential's lane judges for one version of `artifact`: the
-/// artifact alone where its records caveat names it ([`records_name`]),
-/// else the artifact and the version's own `rows`.
-pub(super) fn version_sources(
-    auth: &CoreAuth,
-    artifact: EntityId,
-    rows: Vec<EntityId>,
-) -> Vec<EntityId> {
-    if records_name(auth, &artifact) {
-        return vec![artifact];
-    }
-    std::iter::once(artifact).chain(rows).collect()
-}
-
 /// What a born-from answer keeps for a credential with record caveats (FIX
 /// 7645): nothing when the trigger it names is withheld; else each born row
 /// its lane admits, and each version whose artifact, CLAIM and content ASSET
-/// it admits (the artifact alone where its records caveat names it, FIX
-/// 8068), all judged in one snapshot. A withheld row leaves no trace: no
+/// it admits, all judged in one snapshot. The lane's records check covers
+/// the listed artifacts' own version rows alone (FIX 8245); a version a
+/// check withholds is dropped by itself. A withheld row leaves no trace: no
 /// count, time or ref of it.
 pub(super) fn admitted_born_from(
     vault: &oneiron::Vault,
-    lane: &ScopedRead<'_>,
-    auth: &CoreAuth,
+    lane: ScopedRead<'_>,
     source: &BornFromSource,
     born: Vec<EntityId>,
     versions: Vec<BornFromArtifact>,
@@ -72,10 +51,12 @@ pub(super) fn admitted_born_from(
         if let Some((_, rows)) =
             vault.blob_artifact_version_rows(&found.artifact_id, Some(found.version))?
         {
-            sets.push(version_sources(auth, found.artifact_id, rows));
+            sets.push(std::iter::once(found.artifact_id).chain(rows).collect());
             listed.push(found);
         }
     }
+    let artifacts: Vec<EntityId> = listed.iter().map(|found| found.artifact_id).collect();
+    let lane = lane.with_artifact_records_cover(&artifacts);
     let mut admitted = lane.refs_readable_each(&sets)?.into_iter();
     if matches!(source, BornFromSource::Trigger(_)) && admitted.next() != Some(true) {
         return Ok((Vec::new(), Vec::new()));

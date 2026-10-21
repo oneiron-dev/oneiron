@@ -434,7 +434,7 @@ impl<'v> ScopedRead<'v> {
         if !self.audience_readable_raw_in(rtxn, id, raw, authority)? {
             return Ok(false);
         }
-        if !self.credential_allows_id(id)
+        if !self.credential_allows_row_in(rtxn, id)
             || !self.proof_live_in(rtxn)?
             || !self.facets_allow_in(rtxn, id, raw)?
         {
