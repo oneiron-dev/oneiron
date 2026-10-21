@@ -599,7 +599,7 @@ impl PolicyManifestResolution {
     pub(crate) fn voice_serving_policy(
         &self,
         holder: Option<crate::EntityId>,
-    ) -> Result<crate::gate::voice_serving::VoiceServingPolicyReceipt> {
+    ) -> Result<crate::gate::VoiceServingPolicyReceipt> {
         if self.diagnostics.is_fail_closed() {
             return Err(crate::error::Error::InvalidConfig(
                 "voice serving policy unavailable".into(),

@@ -219,7 +219,7 @@ pub(crate) use self::share::check_share_create_policy;
 pub(crate) use self::share::share_create_effect;
 pub(crate) use self::skill_edit_goal_policy::SkillEditGoalPolicy;
 pub(crate) use self::skill_tradeoff_policy::{SkillTradeoffLimits, skill_tradeoff_limits_in_txn};
-pub(crate) use self::voice_serving::VoiceServingLimits;
+pub(crate) use self::voice_serving::VoiceServingPolicyReceipt;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{
