@@ -620,6 +620,17 @@ pub(super) fn source_map_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.source-map.json")
 }
 
+/// The JavaScript a turn program's pinned TypeScript call ran as, kept by
+/// its first entry for every later one (FIX 8276).
+pub(super) fn pinned_executed_output_path() -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/pinned.executed.js")
+}
+
+/// The preparation record of a turn program's pinned TypeScript call.
+pub(super) fn pinned_source_map_output_path() -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/pinned.source-map.json")
+}
+
 /// The console lines of a step that finished, kept as evidence beside its
 /// answer; the answer stays the step's observation and result.
 pub(super) fn console_output_path(seq: u64) -> String {

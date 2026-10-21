@@ -16,22 +16,25 @@
 //! reads it as unfinished.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use serde_json::json;
 
+use super::cancel::StepCancellation;
 use super::driver::EngineNativeExecutor;
 use super::host::RecordingJsHost;
 use super::record::{
-    StepResultDigests, completed_step_count, parked_wait, previous_state_hash,
-    record_terminal_output, step_state_hash, verify_code_consent_park, wait_key,
+    StepResultDigests, completed_step_count, parked_wait, prepared_step_state_hash,
+    previous_state_hash, record_terminal_output, verify_code_consent_park, wait_key,
 };
 use super::store::{
-    checkpoint_label, load_utf8_output, observation_output_path, record_text_output,
+    checkpoint_label, load_utf8_output, observation_output_path, pinned_executed_output_path,
+    pinned_source_map_output_path, record_output, record_script_output, record_text_output,
     resumed_output_wait,
 };
 use super::types::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus,
-    JsCodeModeHost,
+    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
 };
 use crate::code_run::{
     AgentVerbAnswer, CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord,
@@ -39,6 +42,8 @@ use crate::code_run::{
     ProgramResumeCommit, ProgramResumeWait, SelfCall, SelfDispatchOutcome, SelfDurableWait,
     SelfSkillCall, load_program_checkpoint_tail, program_resume_call,
 };
+use crate::code_sandbox::ProposalSpoolFloor;
+use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
 use crate::entity_id::EntityId;
 use crate::{Error, Vault};
 
@@ -56,6 +61,7 @@ const DIVERGED: &str = "the pinned source made another call where an earlier ent
 const NESTED_CALLABLE: &str = "a callable the pinned entry calls cannot resume inside it";
 const UNREADABLE: &str = "a settled call's row does not decode";
 const UNCONSUMED: &str = "the pinned source ended before every call an earlier entry settled";
+const PREPARATION_CHANGED: &str = "the run's resume checkpoint pins another preparation";
 
 const FINISHED: &str = "the pinned entry finished";
 const WAITING: &str = "the pinned entry waits";
@@ -183,6 +189,76 @@ impl RecordingJsHost<'_, '_> {
     }
 }
 
+/// A preparation kept for a pinned call: the BLAKE3 (lower-case hex) of the
+/// original it was prepared from, and what that original ran as.
+type KeptPreparation = (String, TranspiledSource);
+
+/// The runtime a pinned entry lends its pinned call (FIX 8276): the
+/// program's own, keeping the call's preparation. A first entry keeps what
+/// a TypeScript call ran as; a later one runs the JavaScript the first kept,
+/// when the call's original is the one it was prepared from, never a new
+/// preparation. A callable the call calls runs on a runtime of its own.
+struct PinnedSourceRuntime<'r> {
+    runtime: &'r mut dyn JsCodeModeRuntime,
+    /// What an earlier entry kept.
+    kept: Option<KeptPreparation>,
+    /// What this entry's call ran as, when TypeScript.
+    ran: Option<KeptPreparation>,
+}
+
+impl JsCodeModeRuntime for PinnedSourceRuntime<'_> {
+    fn bind_foreign_egress(
+        &mut self,
+        relay: Arc<dyn oneiron_container::EgressRelay>,
+    ) -> crate::Result<()> {
+        self.runtime.bind_foreign_egress(relay)
+    }
+
+    fn bind_proposal_spool(&mut self, spool: Arc<dyn ProposalSpoolFloor>) {
+        self.runtime.bind_proposal_spool(spool);
+    }
+
+    fn run_step(
+        &mut self,
+        step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+    ) -> crate::Result<JsCodeModeStepOutcome> {
+        self.run_step_cancellable(step, host, &StepCancellation::never())
+    }
+
+    fn run_step_cancellable(
+        &mut self,
+        step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+        cancel: &StepCancellation,
+    ) -> crate::Result<JsCodeModeStepOutcome> {
+        let prepared = prepare_source(step.script);
+        self.run_prepared_step_cancellable(step, &prepared, host, cancel)
+    }
+
+    fn run_prepared_step_cancellable(
+        &mut self,
+        step: JsCodeModeStep<'_>,
+        prepared: &PreparedSource<'_>,
+        host: &mut dyn JsCodeModeHost,
+        cancel: &StepCancellation,
+    ) -> crate::Result<JsCodeModeStepOutcome> {
+        let reused = self
+            .kept
+            .take()
+            .and_then(|(original, kept)| prepared.reusing(&original, &kept));
+        let prepared = reused.as_ref().unwrap_or(prepared);
+        if self.ran.is_none()
+            && let Some(transpiled) = prepared.transpiled()
+        {
+            let original = blake3::hash(prepared.original().as_bytes());
+            self.ran = Some((original.to_hex().to_string(), transpiled.clone()));
+        }
+        self.runtime
+            .run_prepared_step_cancellable(step, prepared, host, cancel)
+    }
+}
+
 /// Where a pinned entry starts: the calls it answers, or why it runs
 /// nothing new.
 enum Settled {
@@ -230,6 +306,7 @@ impl<'a> EngineNativeExecutor<'a> {
             return Ok(PinnedProgramRun::Ran(Box::new(outcome)));
         }
         let tail = load_program_checkpoint_tail(vault, config.run_id)?;
+        let preparation = tail.as_ref().and_then(|tail| tail.head.preparation);
         let settled = match self.settled_calls(entry, &mut record, &mut expected, tail)? {
             Settled::Calls(calls) => calls,
             Settled::Waiting(wait) => {
@@ -238,7 +315,47 @@ impl<'a> EngineNativeExecutor<'a> {
             }
             Settled::Held(why) => return Ok(PinnedProgramRun::Held(why)),
         };
-        self.run_pinned_entry(config, entry, record, expected, settled)
+        let kept = match preparation {
+            Some(identity) => match self.kept_preparation(&record, identity)? {
+                Some(kept) => Some(kept),
+                None => return Ok(PinnedProgramRun::Held(PREPARATION_CHANGED)),
+            },
+            None => None,
+        };
+        self.run_pinned_entry(config, entry, record, expected, settled, kept)
+    }
+
+    /// The preparation the program's first entry kept for its pinned call,
+    /// when it is the one the checkpoint pins (FIX 8276).
+    fn kept_preparation(
+        &self,
+        record: &CodeRunReplayRecord,
+        identity: [u8; 32],
+    ) -> EngineExecutorResult<Option<KeptPreparation>> {
+        let executed = load_utf8_output(&self.storage, record, &pinned_executed_output_path())?;
+        let map = load_utf8_output(&self.storage, record, &pinned_source_map_output_path())?;
+        let (original, kept) = TranspiledSource::from_record(executed, map.as_bytes())?;
+        Ok((kept.identity() == identity).then_some((original, kept)))
+    }
+
+    /// Keeps what a TypeScript pinned call ran as: its executed JavaScript
+    /// and map in the code run's record, once, by the first entry, and their
+    /// identity for the checkpoint and its resume head (FIX 8276).
+    fn keep_preparation(
+        &self,
+        record: &mut CodeRunReplayRecord,
+        ran: Option<KeptPreparation>,
+    ) -> EngineExecutorResult<Option<[u8; 32]>> {
+        let Some((original, transpiled)) = ran else {
+            return Ok(None);
+        };
+        let executed = pinned_executed_output_path();
+        if !record.outputs.iter().any(|output| output.path == executed) {
+            record_script_output(&self.storage, record, executed, transpiled.executed_js())?;
+            let map = transpiled.record_json_for_digest(&original)?;
+            record_output(&self.storage, record, pinned_source_map_output_path(), &map)?;
+        }
+        Ok(Some(transpiled.identity()))
     }
 
     /// The pinned entry's seat, when it has one, is its config's.
@@ -383,6 +500,7 @@ impl<'a> EngineNativeExecutor<'a> {
         mut record: CodeRunReplayRecord,
         expected: Option<CodeRunReplayGeneration>,
         settled: VecDeque<SettledCall>,
+        kept: Option<KeptPreparation>,
     ) -> EngineExecutorResult<PinnedProgramRun> {
         // The entry's root (FIX 600): a hard queue control that committed for
         // the program's try stops it.
@@ -415,7 +533,13 @@ impl<'a> EngineNativeExecutor<'a> {
             skill: entry.skill,
             args: entry.args.clone(),
         });
-        let response = host.dispatch_self_nested_cancellable(pinned, &mut *self.runtime, cancel)?;
+        let mut lent = PinnedSourceRuntime {
+            runtime: &mut *self.runtime,
+            kept,
+            ran: None,
+        };
+        let response = host.dispatch_self_nested_cancellable(pinned, &mut lent, cancel)?;
+        let ran = lent.ran;
         let failure = host.hard_failure.take();
         let answered = match host.injection.take().map(ProgramInjection::settle) {
             Some(Ok(answered)) => answered,
@@ -495,12 +619,14 @@ impl<'a> EngineNativeExecutor<'a> {
             observation,
         )?;
         record_terminal_output(&self.storage, &mut record, seq, &status)?;
+        let preparation = self.keep_preparation(&mut record, ran)?;
         let script = format!("pinned:{}@{}", entry.skill.to_hex(), entry.content_hash);
-        let state_hash = step_state_hash(
+        let state_hash = prepared_step_state_hash(
             previous_state_hash(&record),
             seq,
             &entry_digest(entry)?,
             &script,
+            preparation.as_ref(),
             &StepResultDigests {
                 observation: *blake3::hash(observation.as_bytes()).as_bytes(),
                 done: finished,
@@ -531,6 +657,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 generation: parked.key.generation,
             }),
             at: entry.at,
+            preparation,
         };
         self.storage.put_program_entry_replay_record(
             &record,

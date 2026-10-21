@@ -164,10 +164,19 @@ struct PreparationRecord<'a> {
     language: &'static str,
     oxc_version: &'static str,
     transform_options: &'static str,
-    original_blake3: String,
+    original_blake3: &'a str,
     executed_blake3: String,
     helper_lines: u32,
     mappings: &'a [[u32; 4]],
+}
+
+/// The fields of a kept [`PreparationRecord`] a pinned replay reads back.
+#[derive(Debug, serde::Deserialize)]
+struct KeptRecord {
+    original_blake3: String,
+    executed_blake3: String,
+    helper_lines: u32,
+    mappings: Vec<[u32; 4]>,
 }
 
 /// Prepares `source` for the guest. Never fails and never refuses: a program
@@ -228,6 +237,21 @@ impl<'a> PreparedSource<'a> {
         self.note.as_ref()
     }
 
+    /// This program as a kept preparation ran it, when `kept` was prepared
+    /// from this very original (`original_blake3`, lower-case hex): a pinned
+    /// replay runs the executed JavaScript its first entry ran, never a new
+    /// preparation (FIX 8276). `None` for any other original.
+    #[must_use]
+    pub fn reusing(&self, original_blake3: &str, kept: &TranspiledSource) -> Option<Self> {
+        let original = blake3::hash(self.original.as_bytes());
+        (original.to_hex().as_str() == original_blake3).then(|| Self {
+            original: self.original,
+            transpiled: Some(kept.clone()),
+            note: None,
+            prelude_lines: self.prelude_lines,
+        })
+    }
+
     /// Where a failed TypeScript program threw, in its TypeScript source, as
     /// the suffix its error carries. `None` for a JavaScript program, whose
     /// error stays exactly as it was, and for a throw outside the authored
@@ -276,18 +300,30 @@ impl TranspiledSource {
         *hasher.finalize().as_bytes()
     }
 
-    /// The typed per-program record, as the JSON body the run keeps.
+    /// The typed per-program record of this preparation of `original`, as
+    /// the JSON body the run keeps.
     ///
     /// # Errors
     ///
     /// The record failing to encode.
     pub fn record_json(&self, original: &str) -> Result<Vec<u8>> {
+        let original = blake3::hash(original.as_bytes()).to_hex();
+        self.record_json_for_digest(original.as_str())
+    }
+
+    /// [`Self::record_json`] for the original whose BLAKE3 (lower-case hex)
+    /// is `original_blake3`.
+    ///
+    /// # Errors
+    ///
+    /// The record failing to encode.
+    pub fn record_json_for_digest(&self, original_blake3: &str) -> Result<Vec<u8>> {
         serde_json::to_vec(&PreparationRecord {
             schema_version: RECORD_SCHEMA_VERSION,
             language: SourceLanguage::TypeScript.as_str(),
             oxc_version: OXC_VERSION,
             transform_options: TS_TRANSFORM_OPTIONS,
-            original_blake3: blake3::hash(original.as_bytes()).to_hex().to_string(),
+            original_blake3,
             executed_blake3: blake3::hash(self.executed_js.as_bytes())
                 .to_hex()
                 .to_string(),
@@ -295,6 +331,29 @@ impl TranspiledSource {
             mappings: &self.mappings,
         })
         .map_err(|_| Error::InvalidConfig("typescript preparation record encoding".to_owned()))
+    }
+
+    /// A preparation [`Self::record_json`] kept beside `executed_js`, and the
+    /// BLAKE3 (lower-case hex) of the original it was prepared from.
+    ///
+    /// # Errors
+    ///
+    /// A record that does not decode, or one that names other executed
+    /// JavaScript.
+    pub fn from_record(executed_js: String, record: &[u8]) -> Result<(String, Self)> {
+        let kept: KeptRecord = serde_json::from_slice(record)
+            .map_err(|_| Error::CorruptedIndex("a kept typescript preparation record"))?;
+        if blake3::hash(executed_js.as_bytes()).to_hex().as_str() != kept.executed_blake3 {
+            return Err(Error::CorruptedIndex(
+                "a kept typescript preparation's executed code",
+            ));
+        }
+        let transpiled = Self {
+            executed_js,
+            helper_lines: kept.helper_lines,
+            mappings: kept.mappings,
+        };
+        Ok((kept.original_blake3, transpiled))
     }
 
     /// The one-based line and column in `original` that printed position

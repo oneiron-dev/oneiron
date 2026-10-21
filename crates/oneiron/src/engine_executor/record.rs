@@ -592,6 +592,9 @@ impl StepResultDigests {
     }
 }
 
+/// [`prepared_step_state_hash`] for a JavaScript step, which hashes no
+/// preparation; every caller outside the tests passes its preparation.
+#[cfg(test)]
 pub(super) fn step_state_hash(
     previous: [u8; 32],
     seq: u64,
@@ -613,8 +616,8 @@ pub(super) fn step_state_hash(
     )
 }
 
-/// [`step_state_hash`] for a step whose program may have run as the
-/// JavaScript Oxc printed for it (FIX 8276). `prepared` is that
+/// The checkpoint hash of one step, for a step whose program may have run as
+/// the JavaScript Oxc printed for it (FIX 8276). `prepared` is that
 /// preparation's identity (the executed JavaScript, its map and the Oxc
 /// pin), hashed beside the original program; a JavaScript step has none,
 /// and its hash is the one it always had.
