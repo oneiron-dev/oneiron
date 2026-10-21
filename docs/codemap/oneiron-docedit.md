@@ -54,7 +54,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit/transaction.rs` | src | L | 10 struct · 8 enum · 1 trait · 15 fn · 2 const | AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets +11 | Deck transactions (ARCH-0077, "Transactions and allowed part changes"): the unit the engine proposes and… |
 | `src/edit/wire.rs` | src | m | 3 struct · 5 enum · 2 fn | DeckIdentityAmbiguity, DeckInspection, DeckNativeRefusal, DeckShapeInspection, DeckShapeKind, DeckSlideInspection, DeckStepRefusal, DeckTransactionRefusal | Owned wire forms for the deck edit door (ARCH-0077, "Identities" and "The 23 named refusals"): the native… |
 | `src/edit/xfrm.rs` | src | s | 6 crate-vis | — | `set_xfrm` and `move_in_slide_space`: a shape's own transform, attribute by attribute |
-| `src/edit/xml.rs` | src | s | 18 crate-vis | — | Byte-span writing over a parsed part: every edit is a list of splices on the retained bytes, so whatever it… |
+| `src/edit/xml.rs` | src | s | 21 crate-vis | — | Byte-span writing over a parsed part: every edit is a list of splices on the retained bytes, so whatever it… |
 | `src/emit/check.rs` | src | m | 1 crate-vis | — | The candidate checks, run on the exported bytes and independent of the writer's bookkeeping: the write set… |
 | `src/emit/mod.rs` | src | m | 11 struct · 3 enum · 2 fn · 1 crate-vis | Candidate, CheckFault, ClaimTrace, EmitError, EmitInputs, EmittedSlide, FitTrace, FitUnverified +6 | Emit a checked deck candidate from a `DesignPlan` (ARCH-0077 "Creation result and checks") |
 | `src/emit/slide.rs` | src | s | 7 crate-vis | — | Slide XML for emission: an empty slide whose root binds `p:`, `a:` and `r:`, the shapes placed into its… |
@@ -127,8 +127,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retained_opc/xml/patch.rs` | src | s | 2 crate-vis | — | Private checked edit authority |
 | `src/retained_opc/xml/retained.rs` | src | m | 1 struct · 4 crate-vis | XmlLimits | One authoritative parse |
 | `src/xlfn.rs` | src | s | 2 fn | — | Excel's storage qualifiers for post-2007 worksheet functions |
-| `src/xlsx_body.rs` | src | XL | 10 struct · 5 enum · 16 fn · 2 const · 2 re-export | XlsxArea, XlsxBodyError, XlsxBook, XlsxCell, XlsxChange, XlsxLock, XlsxName, XlsxProjection +7 | The XLSX face of a live office body (ARCH-0075: "XLSX is a map keyed by sheet and address") |
-| `src/xlsx_shift.rs` | src | L | 1 struct · 2 enum · 8 fn · 2 crate-vis | SheetFate, XlsxAxis, XlsxAxisEdit | Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its… |
+| `src/xlsx_body.rs` | src | XL | 10 struct · 5 enum · 17 fn · 2 const · 4 re-export | XlsxArea, XlsxBodyError, XlsxBook, XlsxCell, XlsxChange, XlsxLock, XlsxName, XlsxProjection +7 | The XLSX face of a live office body (ARCH-0075: "XLSX is a map keyed by sheet and address") |
+| `src/xlsx_body/header.rs` | src | s | 1 fn · 1 crate-vis | — | Renaming a worksheet table's column through its header cell (FIX 6399) |
+| `src/xlsx_body/insert.rs` | src | s | 1 fn · 2 crate-vis | — | What inserted rows and columns take from their neighbours, as Excel's insert gives it by default (FIX 3695)… |
+| `src/xlsx_body/retain.rs` | src | s | 4 crate-vis | — | Writing into a stored cell or defined name (FIX 8571, FIX 8572): only what a change names is written, and… |
+| `src/xlsx_body/titles.rs` | src | s | 1 crate-vis | — | The worksheet titles a sheet layout leaves in the extended properties (`docProps/app.xml`, FIX 3441) |
+| `src/xlsx_shift.rs` | src | L | 1 struct · 2 enum · 8 fn · 3 crate-vis | SheetFate, XlsxAxis, XlsxAxisEdit | Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its… |
 | `src/xlsx_styles.rs` | src | L | 7 struct · 2 enum · 1 fn · 1 crate-vis | XlsxAlignment, XlsxBorder, XlsxColor, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat, XlsxNumberFormat +1 | Cell formats a body composes from the workbook's own: an imported cell format with its named cell style… |
 | `tests/adversarial.rs` | test | s | — | — | — |
 | `tests/breaker.rs` | test | s | — | — | — |

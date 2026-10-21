@@ -740,7 +740,7 @@ pub(super) fn attempt_hex(attempt_id: AttemptId) -> String {
 /// and would keep folding a chain that later SUCCEEDED up as `Failed` forever,
 /// and a cancel would rule against a dead source while its live successor
 /// still runs and sends.
-pub(super) fn superseded_attempt_ids(records: &[AttemptRecord]) -> HashSet<AttemptId> {
+pub(crate) fn superseded_attempt_ids(records: &[AttemptRecord]) -> HashSet<AttemptId> {
     records
         .iter()
         .filter_map(|record| record.retry_of)

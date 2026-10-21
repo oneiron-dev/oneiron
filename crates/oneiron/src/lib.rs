@@ -12,6 +12,13 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// FIX 8907: `verbs` (the SDK home, once `task_verb::sdk`) still names these
+// task types as `super::…`; this private import keeps those bytes.
+use crate::task_verb::{
+    AttemptHandle, QueueTaskBrief, TaskAskSpec, TaskAskWord, TaskAssignee, TaskCreateSpec,
+    TaskReportBody, TaskTtl,
+};
+
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
 pub mod config;
@@ -130,6 +137,7 @@ pub mod task_authority;
 pub mod task_type;
 pub mod task_verb;
 pub mod team;
+pub mod verbs;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
 pub mod campaign;
 pub mod comm;
@@ -479,7 +487,7 @@ pub use crate::outbound::{
     unsupported_outbound_connector,
 };
 pub use crate::pipeline::{
-    ActiveWorldSelection, MAX_WORLD_ACCESS_MEMBERS, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+    ActiveWorldSelection, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
     PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, PipelineBuilder, ResolvedWorldAuthority, ScoredEntity,
     Signal, WORLD_ACCESS_SCHEMA_VERSION, WorldAuthoritySet, decode_world_access_claim_value,
     world_access_claim_body,

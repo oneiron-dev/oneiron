@@ -1,3 +1,7 @@
+//! Owner model-trial doors.
+//! Entry: Vault::run_model_trial_as_owner.
+//! Vault is crate::Vault; trial records are owned by llm::model_trials.
+
 use super::*;
 use crate::claim::CallerLocality;
 use crate::llm::decision::questions::{

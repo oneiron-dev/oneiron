@@ -175,6 +175,10 @@ pub struct JudgeRequest<'a> {
     /// The `attribution_unclear_floor` in force. An answer held below it is
     /// `unclear`, and like every `unclear` answer it must say why.
     pub floor: f32,
+    /// The rows the request was read from (FIX 7101): its evidence's
+    /// terminal receipt as the receipt trace cites it, and the floor's.
+    /// `None` while any lacks a witness; a note cites these, never a guess.
+    pub sources: Option<&'a [EntityId]>,
 }
 
 impl JudgeRequest<'_> {
