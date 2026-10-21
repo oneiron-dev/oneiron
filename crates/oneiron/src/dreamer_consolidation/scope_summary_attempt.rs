@@ -32,8 +32,14 @@ use crate::{EntityId, Vault};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod arc_claims;
+mod arc_compose;
+mod arc_evidence;
+mod arc_turns;
 mod chunks;
 mod output;
+
+pub(crate) use arc_evidence::arc_evidence_in_txn;
 
 /// Wraps an executor with the declared-summary arm. Every other attempt is
 /// delegated untouched.
@@ -137,6 +143,12 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             return Err(invalid_consolidation(
                 "an epoch summary is never a scope summary's editor text",
             ));
+        }
+        // An Arc composes from its sittings' lines (FIX 7509 P8).
+        if plan.arc.is_some() {
+            return self
+                .compose_arc(attempt, ctx, &plan, &evidence, instruction)
+                .await;
         }
         // A NOTE review's topic summary the topic's group outgrew completes
         // without composing (Engine 10-21, option A): the larger group's
@@ -465,6 +477,9 @@ pub(crate) struct ScopeSummaryEvidence {
     /// P7b): the text a sitting too big for one call pages. Empty for every
     /// other target.
     turns: Vec<(EntityId, TurnText)>,
+    /// What an Arc's call shows and its labels (FIX 7509 P8); `None` for
+    /// every other target.
+    arc: Option<arc_evidence::ArcView>,
 }
 
 impl ScopeSummaryEvidence {

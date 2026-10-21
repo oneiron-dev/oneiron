@@ -355,7 +355,9 @@ async fn supervise(
             WakePolicyTicks::new(
                 HybridTick::new(
                     TimerTick::new(
-                        AttemptQueueDeadlines::new(&vault, node_id).for_worker(LEASE_OWNER),
+                        AttemptQueueDeadlines::new(&vault, node_id)
+                            .for_worker(LEASE_OWNER)
+                            .with_idle(Arc::clone(&idle)),
                     ),
                     push,
                 ),

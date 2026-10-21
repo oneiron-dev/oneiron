@@ -18112,6 +18112,7 @@ class WakeRecipePolicy(TypedDict):
     novelty_instruction: str
     typing_instruction: str
     narrative_instruction: str
+    arc_min_new_statements: int
     audit_window_instruction: str
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy

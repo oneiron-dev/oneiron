@@ -301,6 +301,13 @@ impl<'a> DreamerWakeDriver<'a> {
                 "free-time cycles did not open this pass"
             );
         }
+        // Due Arcs (FIX 7509 P8) are swept on the same home Timer pass.
+        if !self.consolidation_only
+            && input.trigger == WakeTrigger::Timer
+            && input.scope == DreamerConsolidationScope::Macro
+        {
+            super::arc_backstop::sweep_on_timer(self.vault, now, input.local_node_id);
+        }
 
         Ok(())
     }
