@@ -81,6 +81,11 @@ impl Vault {
             // An erased custody record's known-value history goes, its
             // entries' retirement staged; another record's stays (KS-3).
             self.store.stage_known_history_erase_in_txn(wtxn, id)?;
+            // An erased pad row takes its key's pad out of custody, never
+            // another of its world's (KS-5, FIX 7192): every caller wrote
+            // the row's hard marker in this transaction, which the
+            // finisher reads after the commit.
+            crate::world_keys::stage_pad_row_erase_in_txn(&self.store, wtxn, id)?;
         }
         // Capture before tear: a project's signed history outlives its row.
         self.capture_project_before_tear_in_txn(wtxn, *id)?;

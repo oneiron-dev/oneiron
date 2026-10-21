@@ -276,9 +276,21 @@ pub fn recover_vault_window(
         let txn = vault.store.env.read_txn()?;
         for entity in &snapshot.entity_blobs {
             let id = crate::EntityId::from_bytes(entity.id)?;
-            if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?.as_deref()
-                != Some(entity.blob.as_slice())
-            {
+            // A pad row the artifact names by reference rests with its pad:
+            // it landed when the same key's pad is here (KS-5).
+            let landed =
+                match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)? {
+                    Some(stored) => {
+                        stored == entity.blob
+                            || crate::world_keys::pad_echo_equal(
+                                &vault.store,
+                                &stored,
+                                &entity.blob,
+                            )
+                    }
+                    None => false,
+                };
+            if !landed {
                 return Err(invalid("entity materialization incomplete"));
             }
         }
@@ -314,8 +326,44 @@ pub fn recover_vault_window(
             }
         }
     }
+    carry_window_pads(vault, &prepared.window)?;
     if prepared.tier != RecoveryTier::Healthy {
         prepared.publish(path)?;
     }
     Ok(prepared)
+}
+
+/// Fills each pad row the rebuilt `window` names by bare reference with its
+/// carrier, as the window's live routes and durable state hold it until
+/// windows take references (FIX 7107): from the row just landed and its
+/// current custody, never from the artifact (KS-5). A pad not here stays a
+/// reference.
+#[cfg(feature = "sync")]
+fn carry_window_pads(vault: &crate::Vault, window: &LoroDoc) -> Result<()> {
+    use super::canonical::{binary_rows, id, insert, parse_id};
+    let txn = vault.store.env.read_txn()?;
+    let mut carried = false;
+    for (key, blob) in binary_rows(window, "entities")? {
+        if crate::world_keys::image_pad_row_of(&blob).is_none_or(|row| row.held) {
+            continue;
+        }
+        let Some(stored) = crate::ports::EntityStoreRead::port_entity_raw(
+            &vault.store,
+            &txn,
+            &id(parse_id(&key)?)?,
+        )?
+        else {
+            continue;
+        };
+        if let Some(carrier) = crate::world_keys::live_route_row(&vault.store, stored)
+            && crate::world_keys::image_pad_row_of(&carrier).is_some_and(|row| row.held)
+        {
+            insert(window, "entities", &key, &carrier)?;
+            carried = true;
+        }
+    }
+    if carried {
+        window.commit();
+    }
+    Ok(())
 }

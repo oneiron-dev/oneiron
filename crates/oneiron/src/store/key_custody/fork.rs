@@ -114,6 +114,30 @@ impl CustodyPlan {
         Ok(requirement)
     }
 
+    /// [`Self::require`] for an id a restore may land without (KS-5, FIX
+    /// 5686 part 2): a world key pad an image row names. `None` when no
+    /// custody is there to hold it, or its entry there is missing; its
+    /// subject is planned all the same, and a fork copies nothing it lacks.
+    /// The row's restore decides what a missing one means.
+    pub(crate) fn require_present(&mut self, id: &CustodyId) -> Result<Option<Requirement>> {
+        let (through, committed) = self
+            .subjects
+            .entry(id.subject().clone())
+            .or_insert((id.generation(), None));
+        *through = (*through).max(id.generation());
+        if committed.is_some_and(|newest| id.generation() <= newest) {
+            return Ok(Some(Requirement::Retired));
+        }
+        let Some(source) = self.source.as_ref() else {
+            return Ok(None);
+        };
+        Ok(match LocalCustody::at(source).state(id)? {
+            EntryState::Retired => Some(Requirement::Retired),
+            EntryState::Live => Some(Requirement::Live),
+            EntryState::Missing => None,
+        })
+    }
+
     /// Whether a fork copies `id` while it is live: every generation of a
     /// subject not required by exact id, else only those required.
     fn copies(&self, id: &CustodyId) -> bool {

@@ -27,6 +27,7 @@ mod decisions;
 mod host_holds;
 mod image;
 mod landing;
+mod pad_custody;
 mod payload;
 mod rebuild;
 mod response_rows;
@@ -53,6 +54,7 @@ pub use commitment::CheckpointSigner;
 pub use custody_head::*;
 pub use host_holds::{BackupHolds, HostOrderHolds};
 use image::{CheckpointImage, read_image, read_image_required};
+pub use pad_custody::PadRestoreNote;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -277,6 +279,10 @@ pub struct RestoreReport {
     /// The tables a home move carries that this restore took from the image
     /// because the live vault's rows did not read (FIX 5661 C2b).
     pub home_table_notes: Vec<HomeTableNote>,
+    /// The world key pads its image names that it did not land at rest
+    /// (KS-5, FIX 5686 part 2): erased since the image, or withheld by
+    /// their world's sealed copies setting.
+    pub pad_notes: Vec<PadRestoreNote>,
 }
 /// What a restore over a live vault says about a table a home move carries
 /// (FIX 5661 C2b).
@@ -574,7 +580,7 @@ impl Vault {
         crate::store::admit_existing_vault_root(path)?;
         let live = source.capture()?;
         let archive = Self::open_owned(path, config.clone())?;
-        let dropped_gate_decisions = archive.store.activate_archived(&live)?;
+        let (dropped_gate_decisions, erased_pads) = archive.store.activate_archived(&live)?;
         let restored_at = archive.now_recorded_at();
         drop(archive);
         // Reopened, it reads what it holds under its own custody.
@@ -592,6 +598,7 @@ impl Vault {
             custody_note: vault.activation_custody_note(),
             training_note: vault.training_link_restore_notice(),
             home_table_notes: Vec::new(),
+            pad_notes: erased_pads.iter().map(PadRestoreNote::erased).collect(),
         })
     }
     /// Historical content restore beside a live vault: the image's content

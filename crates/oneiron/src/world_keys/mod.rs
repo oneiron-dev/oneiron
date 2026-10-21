@@ -27,6 +27,8 @@ mod kit;
 mod machine;
 mod owner_work;
 mod pad_custody;
+mod pad_erase;
+mod pad_image;
 mod pads;
 mod page_seal;
 mod reassert;
@@ -72,12 +74,17 @@ pub use self::owner_work::{
     ReassertKeyState, ReassertUnread, RelayObservation,
 };
 pub(crate) use self::pad_custody::{
-    admit_pad_put_in_txn, image_pad_row, live_route_row, pad_row_erased_in_txn,
+    admit_pad_put_in_txn, image_pad_row, live_route_row, pad_row_erased_in_txn, pad_row_of_item,
     stage_pad_row_erase_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::pad_custody::{
     pad_echo_equal, pad_reference_waits_in_txn, pad_row_held_in_txn,
+};
+pub(crate) use self::pad_erase::erase_batch_pad_row_in_txn;
+pub(crate) use self::pad_image::{
+    drop_pad_rows_in_txn, image_pad_form_ok, image_pad_projection, image_pad_row_of,
+    plan_archived_pads, rested_pad_row,
 };
 #[cfg(feature = "sync")]
 pub use self::pads::PromotedWorldPad;

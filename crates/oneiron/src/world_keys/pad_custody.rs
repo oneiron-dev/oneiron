@@ -1,4 +1,4 @@
-//! A world key's pad at rest and on the move (KS-5, FIX 5686, part 1 of 2).
+//! A world key's pad at rest and on the move (KS-5, FIX 5686).
 //!
 //! A `WORLD_KEY_PAD` row's body takes one of three forms:
 //! - the carrier, the form a pad row always had: label ‖ world (16) ‖
@@ -12,8 +12,9 @@
 //!   generation 0) holds the published copy; the namespace is the custody it
 //!   was published into, unsigned. The row's header keeps the time it was
 //!   learned.
-//! - the bare reference, the row at rest without its pad: the form FIX 5686
-//!   part 2's physical images take. No route of this part ships one.
+//! - the bare reference, the row at rest without its pad: the form every
+//!   physical image takes (`pad_image`, FIX 5686 part 2). No live route ships
+//!   one.
 //!
 //! Every put of a pad row passes [`admit_pad_put_in_txn`]: its pad goes into
 //! current custody, synced and its Mint journaled, before the row commits,
@@ -24,8 +25,9 @@
 //! missing, damaged or unreadable. Every route a pad row leaves by ships its
 //! carrier ([`live_route_row`], [`image_pad_row`]). A bare reference lands
 //! only with the pad custody here holds for it; else it waits, pending, for
-//! its carrier. Until PR 2, a checkpoint image carries the carrier as it
-//! always did.
+//! its carrier. A checkpoint image and a Layer-1 artifact carry the bare
+//! reference, and a restore takes the pad from current custody
+//! (`pad_image`).
 
 use std::collections::BTreeSet;
 
@@ -73,7 +75,7 @@ impl PadBody {
 
     /// The pad the body itself holds: a carrier's, or the one a reference
     /// rests beside.
-    fn pad(&self) -> Option<&WorldKeyPad> {
+    pub(super) fn pad(&self) -> Option<&WorldKeyPad> {
         match self {
             Self::Carrier(_, pad) | Self::Reference(_, Some(pad)) => Some(pad),
             Self::Reference(_, None) => None,
@@ -103,8 +105,27 @@ pub(super) fn encode_carrier(key: &WorldKeyId, pad: &[u8; 32]) -> Vec<u8> {
     body
 }
 
+/// The bare reference: `key`'s reference into `namespace`, no pad beside it.
+pub(super) fn encode_reference(key: &WorldKeyId, namespace: &[u8; 16]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(REFERENCE_LEN);
+    body.extend_from_slice(REFERENCE_LABEL);
+    body.extend_from_slice(&pad_item(key));
+    body.extend_from_slice(namespace);
+    body
+}
+
+/// The custody namespace a reference `body` names, unsigned; `None` for a
+/// carrier or a body that does not decode.
+pub(super) fn reference_namespace(body: &[u8]) -> Option<[u8; 16]> {
+    if !matches!(body.len(), REFERENCE_LEN | RESTING_LEN) || !body.starts_with(REFERENCE_LABEL) {
+        return None;
+    }
+    let at = REFERENCE_LABEL.len() + 40;
+    body.get(at..at + 16)?.try_into().ok()
+}
+
 /// The row at rest: `key`'s reference into `namespace`, its `pad` beside it.
-fn encode_resting(key: &WorldKeyId, namespace: &[u8; 16], pad: &[u8; 32]) -> Vec<u8> {
+pub(super) fn encode_resting(key: &WorldKeyId, namespace: &[u8; 16], pad: &[u8; 32]) -> Vec<u8> {
     let mut body = Vec::with_capacity(RESTING_LEN);
     body.extend_from_slice(REFERENCE_LABEL);
     body.extend_from_slice(&pad_item(key));
@@ -294,7 +315,7 @@ enum Shipment {
 }
 
 /// The body of `raw` past its header, when it is a pad row.
-fn pad_row_body(raw: &[u8]) -> Option<&[u8]> {
+pub(super) fn pad_row_body(raw: &[u8]) -> Option<&[u8]> {
     EntityMetadataHeader::parse(raw)
         .filter(|header| header.entity_type == ENTITY_TYPE_WORLD_KEY_PAD)
         .and_then(|_| raw.get(ENTITY_METADATA_HEADER_LEN..))
@@ -339,8 +360,8 @@ pub(crate) fn live_route_row(store: &Store, raw: Vec<u8>) -> Option<Vec<u8>> {
 }
 
 /// The carrier a pad reference row `raw` is shipped as by a door that hands
-/// out every row it admitted (a scoped door, a checkpoint image until FIX
-/// 5686 part 2): `None` keeps the row as stored.
+/// out every row it admitted (a scoped door): `None` keeps the row as
+/// stored. A physical image never takes it (`pad_image`).
 pub(crate) fn image_pad_row(store: &Store, raw: &[u8]) -> Option<Vec<u8>> {
     match shipment(store, raw) {
         Shipment::Carrier(row) => Some(row),
@@ -419,10 +440,12 @@ pub(crate) fn pad_reference_waits_in_txn(
 }
 
 /// Stages the retirement of the custody entry of the pad row `id`, when it
-/// is one here: a peer's hard tombstone of that row alone takes its key's
-/// pad out of custody too, carried out after the commit as a world erase's
-/// are, never another pad of the world. A row that does not decode is
-/// warned by its id and stages nothing.
+/// is one here: a hard erase of that row alone, a peer's tombstone or this
+/// vault's own delete door or batch delete (FIX 7192), takes its key's pad
+/// out of custody too, carried out after the commit as a world erase's are,
+/// never another pad of the world. A soft-erased pad keeps its header only:
+/// the pad custody holds whose key derives the row's id is staged. A row
+/// that does not decode is warned by its id and stages nothing.
 ///
 /// # Errors
 ///
@@ -435,10 +458,12 @@ pub(crate) fn stage_pad_row_erase_in_txn(
     let Some(raw) = store.port_entity_raw(wtxn, id)?.map(Zeroizing::new) else {
         return Ok(());
     };
-    // A soft-erased pad keeps its header only.
-    let Some(body) = pad_row_body(&raw).filter(|body| !body.is_empty()) else {
+    let Some(body) = pad_row_body(&raw) else {
         return Ok(());
     };
+    if body.is_empty() {
+        return store.stage_world_pad_row_erase_in_txn(wtxn, id);
+    }
     match decode_pad_body(body) {
         Ok(body) => store.stage_world_pad_key_erase_in_txn(wtxn, &pad_item(body.key())),
         Err(_) => {
@@ -449,6 +474,16 @@ pub(crate) fn stage_pad_row_erase_in_txn(
             Ok(())
         }
     }
+}
+
+/// The pad row id of the key a custody `item` (its full id) names; `None`
+/// for an item that names no key.
+///
+/// # Errors
+///
+/// An id that does not derive.
+pub(crate) fn pad_row_of_item(item: &[u8]) -> Result<Option<EntityId>> {
+    key_of_id(item).map(|key| pad_row_id(&key)).transpose()
 }
 
 /// Whether the pad row of the key a custody `item` (its full id) names was
@@ -466,12 +501,13 @@ pub(crate) fn pad_row_erased_in_txn(store: &Store, txn: &RoTxn<'_>, item: &[u8])
 }
 
 /// Whether a custody head leaves out the pads [`head_carries`] keeps off
-/// where it goes (CALLS: KS-5 pad head eligibility). Off in this part: a
-/// publication pass seals one head for every member it reaches, so every
-/// pad rides every head, as the images carry them; per-member heads, and
-/// their reseal when a world's setting alone changes, come with FIX 5686
-/// part 2.
-const PAD_HEAD_ELIGIBILITY: bool = false;
+/// where it goes (CALLS: KS-5 pad head eligibility). On since FIX 5686 part
+/// 2 (FIX 7191): a publication pass seals a hosted member's head apart from
+/// a folder's or the residence home's, and a change of a world's setting
+/// alone is journaled as a `PublicationPolicy` frame, so every member's head
+/// is sealed and acknowledged again (`store::key_custody`
+/// `publication_policy`).
+const PAD_HEAD_ELIGIBILITY: bool = true;
 
 /// Whether a custody head carries the pads of a world whose sealed copies
 /// are `sealed` (CALLS: KS-5 pad head eligibility), `hosted` when the head
