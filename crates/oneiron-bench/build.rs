@@ -31,6 +31,7 @@ const ENCODED_SEPARATOR: char = '\u{1f}';
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    producing_source();
     for variable in [
         "OPT_LEVEL",
         "PROFILE",
@@ -145,4 +146,47 @@ fn parse_flag(value: &str) -> Option<bool> {
         "n" | "no" | "off" | "false" => Some(false),
         _ => None,
     }
+}
+
+/// Compile-time source identity is scoped to the tree producing this artifact.
+fn producing_source() {
+    use std::{path::Path, process::Command};
+    let manifest = env::var("CARGO_MANIFEST_DIR").expect("Cargo manifest directory");
+    let source = Path::new(&manifest).join("../..");
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(&source)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+    };
+    // Rerun when the checkout moves or its index changes, never on every
+    // file under the workspace (that would include target/).
+    for name in ["HEAD", "index"] {
+        if let Some(path) = git(&["rev-parse", "--git-path", name])
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+        {
+            let path = Path::new(path.trim());
+            let path = if path.is_absolute() { path.to_path_buf() } else { source.join(path) };
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
+    let revision = git(&["rev-parse", "HEAD"])
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .map(|s| s.trim().to_owned())
+        .filter(|s| s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        .unwrap_or_else(|| "unknown".into());
+    let clean = git(&["status", "--porcelain"])
+        .map(|out| {
+            if out.stdout.is_empty() {
+                "true"
+            } else {
+                "false"
+            }
+        })
+        .unwrap_or("unknown");
+    println!("cargo:rustc-env=ONEIRON_BENCH_SOURCE_REVISION={revision}");
+    println!("cargo:rustc-env=ONEIRON_BENCH_SOURCE_CLEAN={clean}");
 }

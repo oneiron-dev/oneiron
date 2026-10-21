@@ -365,6 +365,7 @@ fn js_safe_integer(number: &serde_json::Number) -> Option<serde_json::Number> {
     Some(u64::try_from(whole).map_or_else(|_| whole.into(), serde_json::Number::from))
 }
 
+#[path = "client/generated/agent_verbs.rs"]
 mod agent_verbs;
 // The engine-backed served client (OF-237), only in an `engine` build.
 #[cfg(feature = "engine")]

@@ -41,7 +41,7 @@ use crate::self_heal::{
     AgentHealthSignal, DiagnosticEventClass, ENTITY_TYPE_DIAGNOSTIC, decode_diagnostic_event_body,
 };
 use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Result, Vault};
 
 /// The call receipt ledger, read in place.
 const CALL_RECEIPTS: SideTable<EntityId, CallReceipt, Named> =
@@ -198,17 +198,17 @@ pub struct HealthTrendRollups {
 }
 
 /// The rollups for each margin over its own two periods before `today`, a
-/// UTC day number, from one read snapshot. It never fails: a failed read
-/// names its source in [`HealthTrendRollups::failed`].
+/// UTC day number, from the caller's one read snapshot. It never fails: a
+/// failed read names its source in [`HealthTrendRollups::failed`].
 #[must_use]
-pub fn health_trend_rollups(vault: &Vault, today: u64) -> HealthTrendRollups {
+pub fn health_trend_rollups(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    today: u64,
+) -> HealthTrendRollups {
     let mut out = HealthTrendRollups::default();
     let failed = &mut out.failed;
-    let opened = vault.store.env.read_txn().map_err(Error::from);
-    let Some(rtxn) = soft(failed, TrendSource::Attempts, opened) else {
-        return out;
-    };
-    let Some(ledger) = soft(failed, TrendSource::Attempts, read_ledger(vault, &rtxn)) else {
+    let Some(ledger) = soft(failed, TrendSource::Attempts, read_ledger(vault, rtxn)) else {
         return out;
     };
     out.unreadable_attempts = ledger.unreadable;
@@ -218,7 +218,7 @@ pub fn health_trend_rollups(vault: &Vault, today: u64) -> HealthTrendRollups {
         .filter(|(record, _)| settled(record.state))
         .filter_map(|(_, dispatch)| dispatch.project)
         .collect();
-    let periods = TrendPeriods::read_in(vault, &rtxn, &projects);
+    let periods = TrendPeriods::read_in(vault, rtxn, &projects);
     let Some(periods) = soft(&mut out.failed, TrendSource::Policy, periods) else {
         return out;
     };
@@ -245,13 +245,13 @@ pub fn health_trend_rollups(vault: &Vault, today: u64) -> HealthTrendRollups {
         .collect();
 
     let failed = &mut out.failed;
-    let calls = read_calls(vault, &rtxn, &ledger.agents, &members, &index, earliest);
+    let calls = read_calls(vault, rtxn, &ledger.agents, &members, &index, earliest);
     if let Some(calls) = soft(failed, TrendSource::Calls, calls) {
         for (facts, calls) in facts.iter_mut().zip(calls) {
             facts.calls = calls;
         }
     }
-    let found = read_findings(vault, &rtxn, &index, members.len());
+    let found = read_findings(vault, rtxn, &index, members.len());
     if let Some(found) = soft(failed, TrendSource::Diagnostics, found) {
         out.withheld_diagnostics = found.withheld;
         out.unjoined_diagnostics = found.unjoined;
@@ -259,13 +259,13 @@ pub fn health_trend_rollups(vault: &Vault, today: u64) -> HealthTrendRollups {
             facts.signals = signals;
         }
     }
-    let spend = read_spend(vault, &rtxn, &ledger.agents, &members, earliest);
+    let spend = read_spend(vault, rtxn, &ledger.agents, &members, earliest);
     if let Some(spend) = soft(&mut out.failed, TrendSource::Spend, spend) {
         for (facts, spend) in facts.iter_mut().zip(spend) {
             facts.spend = spend;
         }
     }
-    let checked = read_checked(vault, &rtxn, &ledger, &members);
+    let checked = read_checked(vault, rtxn, &ledger, &members);
     if let Some(checked) = soft(&mut out.failed, TrendSource::Dials, checked) {
         for (facts, checked) in facts.iter_mut().zip(checked) {
             facts.checked = checked;

@@ -12,11 +12,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `examples/provision-fixture-actor.rs` | src | s | — | — | Provisions the wire fixture's owner actor on a PRE-SERVER vault |
-| `src/agent_verbs.rs` | src | XL | 1134 fn | — | — |
 | `src/caps.rs` | src | s | 1 re-export | — | Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators |
 | `src/embedded.rs` | src | m | 1 fn · 21 crate-vis | — | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
 | `src/embedded/host_root.rs` | src | s | 1 crate-vis | — | The embedded half of [`crate::OneironClient::open_with_host_root`] (FIX 4730): the shared open, then this… |
 | `src/error.rs` | src | s | 5 crate-vis | — | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
+| `src/generated/agent_verbs.rs` | src | generated | 1137 fn | — | — |
 | `src/in_process.rs` | src | s | 3 struct · 1 trait · 1 fn | InProcessReply, InProcessRequest, InProcessStream, InProcessTransport | A served client (OF-237): the remote backend over an `oneiron-server` this process runs, with no socket… |
 | `src/invocation.rs` | src | s | 2 fn · 1 crate-vis | — | Client invocation ids (ARCH-0080 §3, OF-580) |
 | `src/lens_frames.rs` | src | s | 2 struct · 1 enum · 2 fn | CloseLensFrameReply, LensFrameEventReply, LensFrameEventRequest | A host-rendered lens card's events and its close (OF-181), over the server routes `POST… |

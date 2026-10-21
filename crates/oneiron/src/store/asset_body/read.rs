@@ -128,4 +128,45 @@ impl crate::Vault {
         body.finish()?;
         Ok(Some(value))
     }
+
+    /// The body file `manifest` names, open to stream and checked against
+    /// the manifest's length and BLAKE3 as its end is read, as its key row
+    /// in `txn`, the snapshot that found the manifest, names it (FIX 3677).
+    /// It judges no admission: the caller has admitted the row the manifest
+    /// is, as its own door reads it. The caller pins the body before `txn`
+    /// opens ([`Self::pin_all_result_bodies`]) and holds the pin while it
+    /// reads.
+    ///
+    /// # Errors
+    ///
+    /// A missing file, and storage and filesystem errors.
+    pub(crate) fn admitted_asset_file_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        manifest: &AssetFileManifest,
+    ) -> Result<CheckedAssetBody> {
+        let key = crate::store::body_key_row_in_txn(&self.store, txn, &manifest.facts.blake3)?;
+        CheckedAssetBody::open(&self.store.body_dir()?, &manifest.facts, key.as_ref())
+    }
+
+    /// Runs `read` over [`Self::admitted_asset_file_in_txn`]'s file, pinned
+    /// while it is read. Whatever `read` leaves is read too, so the whole
+    /// body is checked whether or not `read` reaches its end, and a failed
+    /// check is the error before `read`'s own.
+    ///
+    /// # Errors
+    ///
+    /// The check's error, then `read`'s, and storage and filesystem errors.
+    pub(crate) fn with_admitted_asset_file_in_txn<T>(
+        &self,
+        txn: &RoTxn<'_>,
+        manifest: &AssetFileManifest,
+        read: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<T> {
+        let _pin = self.pin_result_body(manifest.facts.blake3);
+        let mut body = self.admitted_asset_file_in_txn(txn, manifest)?;
+        let value = read(&mut body);
+        body.finish()?;
+        value
+    }
 }
