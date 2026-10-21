@@ -19,7 +19,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::attempt_queue::{AttemptRecord, AttemptState};
+use crate::attempt_queue::{
+    AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState,
+    BUDGET_HOLD_ACTOR,
+};
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -42,6 +45,11 @@ pub const NOTIFICATION_PRODUCER_FINDING: &str = "dreamer.finding";
 pub const NOTIFICATION_PRODUCER_CONNECTOR: &str = "connector_event";
 /// Producer name of a finished docs import.
 pub const NOTIFICATION_PRODUCER_DOCS_IMPORT: &str = "docs_import";
+/// Producer name of a queue row held at its spend cap (FIX 6148).
+const NOTIFICATION_PRODUCER_BUDGET_HOLD: &str = "attempt_queue.budget_hold";
+/// Why a budget-held row waits, as its notice says it.
+const BUDGET_HOLD_NOTICE_DETAIL: &str =
+    "held at its spend cap; a run-tree resume takes it up from its checkpoint";
 
 /// Queue kinds whose settled rows surface, beside root Dreamer-runner rows
 /// (agent dispatch, workflows, connector wakes, scheduled Dreamer work).
@@ -466,5 +474,60 @@ impl Vault {
                 origin_conversation: None,
             },
         )
+    }
+
+    /// Tells the vault's live Owners that `attempt` is held at its spend cap
+    /// (FIX 6148): one Ask NOTIFICATION in each Owner's inbox, keyed by the
+    /// attempt, its hold's Pause event and the Owner, whose result names the
+    /// attempt a run-tree resume takes up. It reads the committed row again:
+    /// a row the budget does not hold now is told nothing. A replay finds the
+    /// rows it wrote, seen and acknowledged state included, and a deleted
+    /// notice stays deleted. No Admin or Delegate is told.
+    ///
+    /// # Errors
+    /// Storage errors.
+    pub fn notify_attempt_budget_hold(&self, attempt: AttemptId, now: u64) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            let Some(record) = AttemptQueue::new(self).get_in_txn(&*txn, attempt)? else {
+                return Ok(());
+            };
+            if !record.budget_hold() {
+                return Ok(());
+            }
+            let Some(pause) = record.events.iter().rev().find(|event| {
+                event.kind == AttemptInterventionKind::Pause && event.actor == BUDGET_HOLD_ACTOR
+            }) else {
+                return Ok(());
+            };
+            let reference = bytes_to_hex_lower(attempt.as_bytes());
+            let subject_refs: Vec<EntityId> = record
+                .task_ref
+                .as_deref()
+                .and_then(|task| EntityId::from_hex(task).ok())
+                .into_iter()
+                .collect();
+            for owner in crate::policy_model::owners_in_txn(self, &*txn)? {
+                self.record_notification_in_txn(
+                    txn,
+                    &NotificationEvent {
+                        kind: NotificationKind::Ask,
+                        source: NotificationSource {
+                            producer: NOTIFICATION_PRODUCER_BUDGET_HOLD.to_owned(),
+                            event: format!("{reference}:{}:{}", pause.sequence, owner.to_hex()),
+                            job_kind: Some(record.kind.clone()),
+                            attempt: Some(reference.clone()),
+                            run: record.run_id.clone(),
+                            result: Some(reference.clone()),
+                            detail: Some(BUDGET_HOLD_NOTICE_DETAIL.to_owned()),
+                        },
+                        subject_refs: subject_refs.clone(),
+                        recipient: Some(owner),
+                        created_at: now,
+                        origin_conversation: None,
+                    },
+                )?;
+            }
+            Ok(())
+        })
     }
 }
