@@ -87,9 +87,6 @@ pub struct FederationLifecycleAction {
     pub successor_vault_id: Option<AuthorityVaultId>,
     /// Pact nonce feeding the scope commitment and transcript. Never all-zero.
     pub pact_nonce: [u8; 16],
-    /// The party whose narrowing a Rescope-narrow records: the owner the door
-    /// authenticated (FIX 7933). Some ONLY for Rescope-narrow.
-    pub narrowed_by: Option<EntityId>,
 }
 
 /// Fold-derived status of one federation pact.
@@ -146,16 +143,40 @@ pub struct FederationPactState {
     /// Dual-signed ceiling scope pair.
     pub pact_scope: FederationPactScope,
     /// OUR outbound overlay, always ⊑ our half of the ceiling: the ceiling
-    /// met with every party's narrowing below.
+    /// met with every standing narrowing below.
     pub effective_scope: FederationDirectionScope,
-    /// Each party's own narrowing of our outbound half, by the owner who made
-    /// it (FIX 7933): that party widens it back within the ceiling; another
-    /// party's stays until a dual-signed re-pact clears them all.
-    pub narrowings: std::collections::BTreeMap<EntityId, FederationDirectionScope>,
+    /// Each standing narrowing of our outbound half, by the entry that made it
+    /// (FIX 7933). A party's later narrowing supersedes its own earlier ones;
+    /// concurrent ones all stand and meet. Another party's stays until a
+    /// dual-signed re-pact clears them all.
+    pub narrowings: std::collections::BTreeMap<AuthorityEntryHash, FederationNarrowing>,
+    /// Every narrowing a later one by its own party saw: it never stands
+    /// again, whichever branch still carries it.
+    pub superseded_narrowings: std::collections::BTreeSet<AuthorityEntryHash>,
     /// Successor co-owned vault id, set by Promote.
     pub successor_vault_id: Option<AuthorityVaultId>,
     /// Epoch at which the pact went terminal.
     pub terminal_epoch: Option<u64>,
+}
+
+/// One standing narrowing of a pact's outbound half (FIX 7933).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FederationNarrowing {
+    /// Who made it, judged from the entry's signer.
+    pub party: NarrowingParty,
+    /// The outbound scope that party narrowed to.
+    pub scope: FederationDirectionScope,
+}
+
+/// Who made a narrowing (FIX 7933), read from the signed entry's own signer
+/// in its ancestry, never from anything the entry asserts: the owner a live
+/// human binding names for that key, else the key itself.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub enum NarrowingParty {
+    /// The PERSON the signing key is bound to as a human.
+    Owner(EntityId),
+    /// A signing key no live human binding names.
+    Key(AuthorityKey),
 }
 
 /// Activation of a federation grant against the fold-derived pact state.

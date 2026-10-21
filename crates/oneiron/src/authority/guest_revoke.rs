@@ -387,7 +387,6 @@ fn live_pact_disconnects(
             gesture: None,
             successor_vault_id: None,
             pact_nonce: pact_nonce(),
-            narrowed_by: None,
         });
     }
     Ok(disconnects)

@@ -335,10 +335,13 @@ fn peer_roster_authorizes_gesture(
 }
 
 /// Full D5 transition table, evaluated against the merged ancestry state.
+/// `entry` is the signed entry carrying `action` and `signer` its signer: a
+/// narrowing is kept under the party that signer stands for (FIX 7933).
 pub(super) fn apply_federation_lifecycle(
     state: &mut FoldState,
     action: &FederationLifecycleAction,
     context: FoldContext<'_>,
+    (entry, signer): (AuthorityEntryHash, &AuthorityKey),
 ) -> std::result::Result<(), FederationLifecycleRejection> {
     let local_vault_id = state.vault_id;
     let Some(pact) = state.federation_pacts.get(&action.pact_id).cloned() else {
@@ -387,6 +390,7 @@ pub(super) fn apply_federation_lifecycle(
                 pact_scope: scope.clone(),
                 effective_scope,
                 narrowings: std::collections::BTreeMap::new(),
+                superseded_narrowings: std::collections::BTreeSet::new(),
                 successor_vault_id: None,
                 terminal_epoch: None,
             },
@@ -425,14 +429,10 @@ pub(super) fn apply_federation_lifecycle(
                 .effective_scope
                 .as_ref()
                 .ok_or(FederationLifecycleRejection::ScopeInvalid)?;
-            let party = action
-                .narrowed_by
-                .ok_or(FederationLifecycleRejection::ScopeInvalid)?;
-            // FIX 7933: the party restores its own narrowing within the
-            // ceiling; another party's stays until a dual-signed re-pact.
-            if !super::current_scope::NARROWING_WIDENS_BACK_BY_OWN_PARTY_ONLY {
-                pact.narrowings.clear();
-            }
+            // FIX 7933: the party its signer stands for restores its own
+            // narrowing within the ceiling; another party's stays until a
+            // dual-signed re-pact.
+            let party = super::current_scope::narrowing_party(state, signer);
             let bound =
                 super::current_scope::pact_scope_beside(&local_vault_id, &pact, Some(&party));
             if !crate::federation::Ceiling::new(effective.clone())
@@ -440,8 +440,9 @@ pub(super) fn apply_federation_lifecycle(
             {
                 return Err(FederationLifecycleRejection::WidenWithoutGesture);
             }
-            pact.narrowings.insert(party, effective.clone());
-            pact.effective_scope = effective.clone();
+            super::current_scope::record_narrowing(&mut pact, entry, party, effective.clone());
+            pact.effective_scope =
+                super::current_scope::pact_scope_beside(&local_vault_id, &pact, None);
         }
         FederationLifecycleKind::Rescope => {
             // Repact form: dual-signed epoch bump; heals a suspended pact.
@@ -470,6 +471,7 @@ pub(super) fn apply_federation_lifecycle(
             pact.effective_scope =
                 local_outbound_scope(&local_vault_id, &pact.peer_vault_id, scope);
             pact.narrowings.clear();
+            pact.superseded_narrowings.clear();
         }
         FederationLifecycleKind::Promote => {
             if pact.status == FederationPactStatus::Suspended {
@@ -548,6 +550,7 @@ fn pact_merge_tiebreak_side<'a>(
 /// `FoldState::federation_grant_bindings` (union-merged), so no grant that
 /// ever appeared in a pact binding regains `Unpacted` legacy-allow.
 pub(super) fn merge_pact_states(
+    local: &AuthorityVaultId,
     left: &FederationPactState,
     right: &FederationPactState,
 ) -> FederationPactState {
@@ -588,15 +591,9 @@ pub(super) fn merge_pact_states(
     if (left.scope_digest, left.grant_ref) == (right.scope_digest, right.grant_ref) {
         let mut merged = left.clone();
         // Concurrent unilateral narrows are both honored, each kept under the
-        // party that made it (FIX 7933).
-        merged.effective_scope = left.effective_scope.intersect(&right.effective_scope);
-        for (party, narrowing) in &right.narrowings {
-            merged
-                .narrowings
-                .entry(*party)
-                .and_modify(|kept| *kept = kept.intersect(narrowing))
-                .or_insert_with(|| narrowing.clone());
-        }
+        // party that made it; a party's own later narrowing supersedes the
+        // earlier one it saw (FIX 7933).
+        super::current_scope::merge_narrowings(local, &mut merged, right);
         // Concurrent duplicate Connects can pin different verified peer
         // roster keys; the pick is determinism-only.
         merged.peer_owner_key = left

@@ -188,9 +188,6 @@ pub fn op_value(op: &AuthorityOp) -> Value {
                     federation_direction_scope_value(effective),
                 ));
             }
-            if let Some(party) = &action.narrowed_by {
-                fields.push((Value::from("narrowed_by"), Value::from(party.to_hex())));
-            }
             if let Some(digest) = &action.scope_digest {
                 fields.push((Value::from("scope_digest"), binary_value(*digest)));
             }

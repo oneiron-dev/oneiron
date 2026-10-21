@@ -293,7 +293,7 @@ fn decode_federation_lifecycle_op(entries: &[(Value, Value)]) -> Result<Authorit
             // form; otherwise the repact key set applies. A mix (or neither)
             // fails both forms' strict key sets below.
             if optional(entries, "effective_scope").is_some() {
-                expected.extend(["effective_scope", "narrowed_by"]);
+                expected.push("effective_scope");
             } else {
                 expected.extend(["pact_scope", "scope_digest", "gesture"]);
             }
@@ -322,15 +322,6 @@ fn decode_federation_lifecycle_op(entries: &[(Value, Value)]) -> Result<Authorit
     let scope_digest = optional(entries, "scope_digest")
         .map(decode_hash)
         .transpose()?;
-    let narrowed_by = optional(entries, "narrowed_by")
-        .map(|value| {
-            let hex = value.as_str().ok_or_else(invalid_authority)?;
-            let party = EntityId::from_hex(hex).map_err(|_| invalid_authority())?;
-            (party.to_hex() == hex)
-                .then_some(party)
-                .ok_or_else(invalid_authority)
-        })
-        .transpose()?;
     let gesture = optional(entries, "gesture")
         .map(decode_gesture)
         .transpose()?;
@@ -352,7 +343,6 @@ fn decode_federation_lifecycle_op(entries: &[(Value, Value)]) -> Result<Authorit
             gesture,
             successor_vault_id,
             pact_nonce: decode_16(required(entries, "pact_nonce")?)?,
-            narrowed_by,
         },
     ))
 }
