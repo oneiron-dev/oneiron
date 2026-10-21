@@ -31,11 +31,18 @@
 //! the one anchor URL the supervisor bound (FIX 6517, [`anchor`]). A profile
 //! with a `network` has the supervisor's TAP attached as the guest's one NIC
 //! on every boot, before the instance starts (FIX 6808, [`network`]).
+//! Every reap of a VMM reads its exit through the watch first, a dropped
+//! driver's on a thread of its own (FIX 7126, [`reaper`]), and each spawn
+//! first drops what an earlier, reaped generation left queued on the boot
+//! port's and the restore channel's sockets (FIX 7077, [`backlog`]).
 
 mod anchor;
+mod backlog;
+mod credentials;
 mod exit;
 mod network;
 mod provision;
+mod reaper;
 mod restore;
 mod runner;
 
@@ -280,6 +287,8 @@ impl VaultVm {
     }
 
     async fn spawn_vmm(&mut self) -> anyhow::Result<()> {
+        // Before the new VMM exists, and only once the last one is reaped.
+        self.drop_stale_connections()?;
         let api = self.path("api.sock");
         for stale in [&api, &self.path("vsock.sock")] {
             match std::fs::remove_file(stale) {
@@ -679,9 +688,10 @@ impl VaultVm {
 
     /// Asks the vault to stop and kills the VMM when the grace runs out.
     /// The outbox attachment denies new transfers from here on and lets its
-    /// commit in flight finish; the next start opens it again. An exit the
-    /// grace saw is read through the exit watch before it is reaped, so its
-    /// waiters get the status; a killed VMM's waiters may get an error.
+    /// commit in flight finish; the next start opens it again. The VMM's
+    /// exit is read through the exit watch before it is reaped, whether the
+    /// grace saw it or a kill ended it, so its waiters get the status (FIX
+    /// 7126).
     pub async fn stop(&mut self, grace: Duration) -> anyhow::Result<()> {
         if let Some(outbox) = &self.outbox {
             outbox.drain();
@@ -690,19 +700,23 @@ impl VaultVm {
             let _ = self.send(&VmHostFrame::Stop).await;
         }
         let exit = self.exit.as_ref();
-        if let Some(child) = self.child.as_mut() {
-            let exited = async {
-                if let Some(exit) = exit {
-                    let _ = exit.wait().await;
-                }
-                child.wait().await
-            };
-            if tokio::time::timeout(grace, exited).await.is_err() {
-                let _ = child.kill().await;
+        let graceful = match self.child.as_mut() {
+            // The watch reads the exit without reaping it; with none, or
+            // one that fails, the reap is the grace's own.
+            Some(child) => {
+                let exited = async {
+                    if let Some(exit) = exit
+                        && exit.wait().await.is_ok()
+                    {
+                        return true;
+                    }
+                    child.wait().await.is_ok()
+                };
+                matches!(tokio::time::timeout(grace, exited).await, Ok(true))
             }
-        }
-        self.child = None;
-        self.exit = None;
+            None => true,
+        };
+        self.end_vmm(!graceful).await;
         self.lifecycle = None;
         self.source_attached = false;
         self.anchor.end_proxy();
@@ -710,10 +724,7 @@ impl VaultVm {
     }
 
     async fn kill(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill().await;
-        }
-        self.exit = None;
+        self.end_vmm(true).await;
         self.lifecycle = None;
         self.source_attached = false;
         self.anchor.end_proxy();

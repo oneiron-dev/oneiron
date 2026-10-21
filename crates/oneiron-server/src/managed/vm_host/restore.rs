@@ -15,7 +15,9 @@
 //! verified and kept and says ready only after the `verified` frame, as a
 //! node's engine does. A restore's boot never loads a RAM snapshot, and no
 //! snapshot is taken while it runs. The custody anchor's credential follows
-//! C, as on a node (FIX 6517, [`super::anchor`]).
+//! C, as on a node (FIX 6517, [`super::anchor`]). The VMM's exit ends the
+//! restore early, as a SIGTERM to the runner does, and ending it wakes C's
+//! read, which has no deadline of its own (FIX 7078, [`super::credentials`]).
 //!
 //! When W was lost and no generation of the vault serves, the supervisor,
 //! having confirmed every earlier one dead, asks the disk instead
@@ -23,9 +25,9 @@
 //! provisions it, runs no engine, companion or listener, and reads the
 //! commit marker once.
 
-use super::{API_TIMEOUT, STOP_GRACE, VaultVm, VaultVmConfig, provision};
+use super::credentials::read_credential_frame;
+use super::{API_TIMEOUT, STOP_GRACE, VaultVm, VaultVmConfig, VmExitWatch, provision};
 use crate::managed::restore::{adopt, pipe_end};
-use crate::managed::vault_gates::read_managed_credentials;
 use oneiron_vault_contract::restore::ManagedRestoreIdentity;
 use oneiron_vault_contract::vm_provision::VmFscryptKey;
 use oneiron_vault_contract::vm_restore::{
@@ -36,7 +38,7 @@ use oneiron_vault_contract::vm_restore::{
 };
 use oneiron_vault_contract::{Credentials, READY_BYTE};
 use std::io::{Read as _, Write as _};
-use std::os::fd::{FromRawFd as _, IntoRawFd as _, OwnedFd, RawFd};
+use std::os::fd::{FromRawFd as _, OwnedFd, RawFd};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -225,14 +227,14 @@ impl VaultVm {
             }
         };
         let (reader, writer) = channel.into_split();
-        let drain = tokio::spawn(drain(reader, result));
-        let restored = self
-            .restore_stream(input, writer, io.credentials, anchor, timeout)
-            .await;
+        let mut draining = Draining(tokio::spawn(drain(reader, result)));
+        let exit = self.exit_watch();
+        let restoring = self.restore_stream(input, writer, io.credentials, anchor, timeout);
+        let restored = until_exit(restoring, exit).await;
         if restored.is_err() {
             let _ = self.stop(STOP_GRACE).await;
         }
-        let _ = drain.await;
+        let _ = (&mut draining.0).await;
         restored
     }
 
@@ -263,9 +265,7 @@ impl VaultVm {
         timeout: Duration,
     ) -> anyhow::Result<Credentials> {
         feed(input, writer).await?;
-        let fd = credentials.into_raw_fd();
-        let credentials =
-            tokio::task::spawn_blocking(move || read_managed_credentials(fd)).await??;
+        let credentials = read_credential_frame(credentials).await?;
         let mut stream = self.send_credentials(&credentials, timeout).await?;
         // R, then C, then the anchor's credential, as on a node.
         self.deliver_anchor(anchor, timeout).await?;
@@ -332,6 +332,33 @@ impl VaultVm {
     }
 }
 
+/// `restoring`, ended early by the VMM's exit when `exit` watches it: the
+/// exit drops the restore, and with it C's read. With no watch, or one that
+/// fails, the restore runs on as it does with none.
+async fn until_exit(
+    restoring: impl Future<Output = anyhow::Result<Credentials>>,
+    exit: Option<VmExitWatch>,
+) -> anyhow::Result<Credentials> {
+    let mut restoring = std::pin::pin!(restoring);
+    if let Some(exit) = exit {
+        tokio::select! {
+            biased;
+            restored = &mut restoring => return restored,
+            exited = exit.wait() => match exited {
+                Ok(status) => {
+                    anyhow::bail!("the vault VM's VMM exited before its restore ended ({status})")
+                }
+                Err(error) => tracing::warn!(
+                    reason = "vm_exit_unread",
+                    %error,
+                    "the vault VM's exit watch failed; its restore runs on without it"
+                ),
+            },
+        }
+    }
+    restoring.await
+}
+
 /// One control record's body.
 async fn read_control(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Vec<u8>> {
     let mut prefix = [0u8; 4];
@@ -361,6 +388,17 @@ async fn feed(mut input: pipe::Receiver, mut channel: OwnedWriteHalf) -> anyhow:
         .write_all(&VmRestoreRecord::InputEnd.header(0)?)
         .await?;
     Ok(channel.shutdown().await?)
+}
+
+/// The W drainer's task, aborted when this drops: a restore dropped before
+/// its end, by a SIGTERM say, leaves nothing writing W. A restore that ends
+/// awaits it first.
+struct Draining(tokio::task::JoinHandle<()>);
+
+impl Drop for Draining {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// Writes the guest's result records into W until the result's end, or
