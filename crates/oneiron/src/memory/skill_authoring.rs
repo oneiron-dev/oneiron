@@ -268,7 +268,8 @@ impl Memory<'_> {
         skill_id: &str,
         now: u64,
     ) -> MemoryResult<SkillAuthoringReceipt> {
-        let unlinked = crate::skill::forked_skill_prose_links(self, self.vault, &parent)?;
+        let unlinked =
+            crate::skill::forked_skill_prose_links(self, self.vault, &parent, "self.skills.fork")?;
         let receipt = self.with_verified_actor_write_txn(|txn| {
             let actor = WriteActor::new(self.actor, self.actor_class);
             verify_live_actor(self.vault, txn, actor)?;

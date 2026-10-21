@@ -23,8 +23,6 @@ use super::record::SkillRecord;
 
 /// The verb row a saved skill's unlinked links are receipted under.
 const SKILL_SAVE_ROW: &str = "self.skills.save";
-/// The verb row a forked skill's unlinked links are receipted under.
-const SKILL_FORK_ROW: &str = "self.skills.fork";
 /// The extension of a source file whose text is prose; any other file is a
 /// script or data and cites nothing.
 const PROSE_EXTENSION: &str = "md";
@@ -88,10 +86,10 @@ pub(crate) fn saved_skill_prose_links(
     )
 }
 
-/// [`saved_skill_prose_links`] for a fork of `parent`: the fork saves its
-/// parent's description and source under its writer's name, so that text is
-/// read for the forker. A parent this read cannot open yields no facts: the
-/// fork's own transaction answers for it.
+/// [`saved_skill_prose_links`] for a fork of `parent` through the verb row
+/// `row`: the fork saves its parent's description and source under its
+/// writer's name, so that text is read for the forker. A parent this read
+/// cannot open yields no facts: the fork's own transaction answers for it.
 ///
 /// # Errors
 ///
@@ -100,13 +98,14 @@ pub(crate) fn forked_skill_prose_links(
     memory: &Memory<'_>,
     vault: &Vault,
     parent: &EntityId,
+    row: &'static str,
 ) -> MemoryResult<Vec<ReferenceRefusalFacts>> {
     let Ok((record, files)) = parent_text(vault, parent) else {
         return Ok(Vec::new());
     };
     unlinked_prose_links(
         memory,
-        SKILL_FORK_ROW,
+        row,
         &SkillProse::of(&record, &files),
         PROSE_POINTERS,
     )
