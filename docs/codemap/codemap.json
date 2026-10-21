@@ -66225,7 +66225,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 15,
+      "fn": 16,
       "struct": 4,
       "trait": 2
      }
@@ -83406,7 +83406,7 @@
      "path": "src/admission.rs",
      "purpose": "Admission for work a remote caller can start",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -89058,6 +89058,16 @@
      "purpose": "Consume holder proofs at the network door, once per request or upgrade, and stop serving a shared vault its…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/auth/body_credential.rs",
+     "purpose": "A request's credential in the owner's connection-pool pressure check (FIX 7656)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -96148,11 +96158,21 @@
      "path": "src/wire_telemetry.rs",
      "purpose": "RC42 observation-only wire counters",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 11,
       "re-export": 2,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/wire_telemetry/connection_pressure.rs",
+     "purpose": "The shared connection pool's live pressure check (FIX 7656, OF-520)",
+     "surface": {
+      "crate-vis": 16
      }
     },
     {
@@ -96504,7 +96524,7 @@
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -96938,7 +96958,7 @@
      "purpose": "The health check past a threshold (OF-520, ARCH-0044 C5)"
     },
     "wire_telemetry": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -96947,7 +96967,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1056,
+   "source_files": 1058,
    "test_files": 182
   },
   "oneiron-spawn": {
