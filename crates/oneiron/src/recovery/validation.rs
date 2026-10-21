@@ -90,7 +90,12 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     }
     strict(snapshot.entity_blobs.iter().map(|row| row.id))?;
     strict(snapshot.retained_claim_worlds.iter().map(|row| row.id))?;
-    strict(snapshot.custody_transitions.iter().map(|row| row.id))?;
+    strict(
+        snapshot
+            .custody_transitions
+            .iter()
+            .map(|row| (row.id, row.piece)),
+    )?;
     strict(snapshot.room_turns.iter().map(|row| row.id))?;
     strict(snapshot.room_facts.iter().map(|row| row.key.as_str()))?;
     strict(snapshot.document_pins.iter().map(|row| row.key.as_str()))?;

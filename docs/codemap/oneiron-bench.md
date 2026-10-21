@@ -62,6 +62,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/tiers.rs` | src | s | 6 crate-vis | — | Dataset graduation: no-regression at the previous rung, explicit gated cells |
 | `src/beam/util.rs` | src | s | 18 crate-vis | — | Hex, hash, base64, and id-set helpers |
 | `src/beam/validate.rs` | src | m | 9 crate-vis | — | Fixture and manifest validators |
+| `src/cua/args.rs` | src | s | 3 crate-vis | — | Explicit CLI flags and a Linux-only execution guard |
+| `src/cua/check.rs` | src | s | 1 crate-vis | — | One deterministic host-private checker |
+| `src/cua/config.rs` | src | s | 7 crate-vis | — | Deployment supplies exact pins; no marketing-name or backend substitution |
+| `src/cua/fixture.rs` | src | s | 7 crate-vis | — | PRIVATE S1 lifecycle |
+| `src/cua/measures.rs` | src | s | 4 crate-vis | — | Receipt observations, not replacements for the engine's success ledger |
+| `src/cua/mod.rs` | src | s | 5 crate-vis | — | Synthetic browser bench: engine outcomes are not oracle passes |
+| `src/cua/provider_gate.rs` | src | m | 13 crate-vis | — | Pass-through only: exact wire identities and durable campaign cash reservations |
+| `src/cua/report.rs` | src | s | 1 crate-vis | — | Assigned denominators, separate safety axes and descriptive medians only |
+| `src/cua/rows.rs` | src | s | 7 crate-vis | — | Durable terminal rows |
+| `src/cua/run.rs` | src | m | 1 crate-vis | — | One assigned trial, one original deadline and no failure retries |
+| `src/cua/served.rs` | src | m | 10 crate-vis | — | Shipped binary lifecycle and official MCP stdio |
+| `src/cua/taskgen.rs` | src | s | 6 crate-vis | — | Freeze paired seeds, disjoint holdouts and rotated arm assignments |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `src/eval/outcome_ingest.rs` | src | s | 1 crate-vis | — | JSONL terminal retrieval outcome ingest for the explicit eval command |
 | `src/eval/tests.rs` | test | m | — | — | — |
@@ -89,9 +101,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/interface_bench/cli_and_pinned_config.rs` | src | m | 14 crate-vis | — | Subcommand dispatch and pinned-model config parsing |
 | `src/interface_bench/config_types.rs` | src | m | 71 crate-vis | — | Campaign, task, and report DTOs plus RunSettings |
 | `src/interface_bench/eval_run.rs` | src | m | 13 crate-vis | — | Smoke, probe, and full execution plus resume validation |
-| `src/interface_bench/mod.rs` | src | s | 1 crate-vis | — | Campaign #5 interface bench task generation and smoke harness |
+| `src/interface_bench/mod.rs` | src | s | 3 crate-vis | — | Campaign #5 interface bench task generation and smoke harness |
 | `src/interface_bench/reports_and_fixture_helpers.rs` | src | m | 19 crate-vis | — | Row aggregation and report tables |
-| `src/interface_bench/taskgen.rs` | src | m | 4 crate-vis | — | Fixture and task generation plus atomic JSON writers |
+| `src/interface_bench/taskgen.rs` | src | m | 5 crate-vis | — | Fixture and task generation plus atomic JSON writers |
 | `src/interface_bench/tests_a.rs` | src | s | 2 crate-vis | — | Taskgen, config, and memo tests |
 | `src/interface_bench/tests_b.rs` | src | s | — | — | Pinned-model tests |
 | `src/interface_bench/wire_and_scoring.rs` | src | m | 13 crate-vis | — | Request hashing, memo keys, and provider wire calls |
