@@ -12376,7 +12376,7 @@
       "WeaveLinkCorrection"
      ],
      "path": "src/claim/scoped_read/weave_correction.rs",
-     "purpose": "Authenticated wrong labels emitted by the live weave report: one on a link, and one on a claim, project or…",
+     "purpose": "Authenticated wrong labels emitted by the live weave report: one on a link, and one on a claim, project…",
      "surface": {
       "crate-vis": 3,
       "enum": 1,
@@ -12502,10 +12502,20 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_report/sieve_score.rs",
+     "purpose": "A weave report's SieveScore section reads the sampled sieve audits (OF-499, ARCH-0063 §6)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -12533,6 +12543,7 @@
       "WeaveScheduleView",
       "WeaveSectionInput",
       "WeaveSectionView",
+      "WeaveSieveScoreView",
       "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest"
      ],
@@ -12542,7 +12553,7 @@
       "crate-vis": 5,
       "enum": 2,
       "fn": 13,
-      "struct": 13
+      "struct": 14
      }
     },
     {
@@ -24392,7 +24403,7 @@
      "path": "src/dreamer_wake/sieve/recipes.rs",
      "purpose": "Durable model-rung inputs, queue spending and unbiased retained-span samples",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 3,
       "struct": 2
      }
@@ -66824,7 +66835,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 77,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68149,7 +68160,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4291,
+   "source_files": 4292,
    "test_files": 902
   },
   "oneiron-android": {
@@ -97501,6 +97512,7 @@
       "WeaveSectionInput",
       "WeaveSectionKind",
       "WeaveSectionView",
+      "WeaveSieveScoreView",
       "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest",
       "WebCrawlRequest",
@@ -97593,7 +97605,7 @@
      "purpose": "—",
      "surface": {
       "enum": 918,
-      "struct": 2886
+      "struct": 2887
      }
     },
     {
