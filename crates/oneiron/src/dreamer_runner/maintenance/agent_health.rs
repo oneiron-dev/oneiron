@@ -179,8 +179,6 @@ const LOOKBACK_SECS: u64 = 24 * 60 * 60;
 const WAIT_PERSON: &str = "person";
 /// `cost_spike` needs this many settled runs of a task type for its p90.
 const COST_MIN_RUNS: usize = 10;
-/// The newest settled runs of a task type its p90 is taken over.
-const COST_HISTORY: usize = 100;
 const HEALTH_DIGEST_DOMAIN: &[u8] = b"oneiron.coach.agent_health.evidence.v1";
 const CARD_REF_PREFIX: &str = "health:";
 
@@ -994,8 +992,8 @@ fn covered(mut spans: Vec<(u64, u64)>) -> u64 {
 }
 
 /// `cost_spike`: an attempt's own spend over the dial times the p90 of its
-/// task type's settled runs in the same unit, from at least
-/// [`COST_MIN_RUNS`] of them. With fewer, it is held against the plan's
+/// task type's settled runs in the same unit, every retained one read, from
+/// at least [`COST_MIN_RUNS`] of them. With fewer, it is held against the plan's
 /// expected spend, at low confidence. Own spend is the launch scope's spend
 /// less what its settled children spent. Retries share one scope, so a scope
 /// counts once, on its newest attempt.
@@ -1038,7 +1036,7 @@ fn cost_spike_findings(
             .spent_units
             .saturating_sub(children.get(name).copied().unwrap_or(0))
     };
-    let mut history: BTreeMap<(&str, &LeaseUnit), Vec<(u64, &str, u64)>> = BTreeMap::new();
+    let mut history: BTreeMap<(&str, &LeaseUnit), Vec<(&str, u64)>> = BTreeMap::new();
     for (name, (key, scope)) in &scopes {
         if let (Some(record), Some(dispatch)) = (attempts.get(key), dispatched.get(key))
             && settled(record.state)
@@ -1047,13 +1045,7 @@ fn cost_spike_findings(
             history
                 .entry((dispatch.type_node.as_str(), &scope.unit))
                 .or_default()
-                .push((record.updated_at, name.as_str(), own(name, scope)));
-        }
-    }
-    for runs in history.values_mut() {
-        runs.sort_unstable();
-        if runs.len() > COST_HISTORY {
-            runs.drain(..runs.len() - COST_HISTORY);
+                .push((name.as_str(), own(name, scope)));
         }
     }
     let mut out = Vec::new();
@@ -1071,8 +1063,8 @@ fn cost_spike_findings(
             .get(&(dispatch.type_node.as_str(), &scope.unit))
             .into_iter()
             .flatten()
-            .filter(|(_, run, _)| *run != name.as_str())
-            .map(|(_, _, spent)| *spent)
+            .filter(|(run, _)| *run != name.as_str())
+            .map(|(_, spent)| *spent)
             .collect();
         let (baseline, counter) = if runs.len() >= COST_MIN_RUNS {
             (p90(runs), Vec::new())
