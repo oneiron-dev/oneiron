@@ -33,7 +33,10 @@ impl ScopedRead<'_> {
         let rows = match crate::dreamer_wake::sieve::sieve_audits_in_txn(self.vault, txn) {
             Ok(rows) => rows,
             Err(error) => {
-                tracing::warn!(?error, "the sampled sieve audits did not read; none shown");
+                tracing::warn!(
+                    error_kind = ?error.kind(),
+                    "the sampled sieve audits did not read; none shown"
+                );
                 return Vec::new();
             }
         };
@@ -43,7 +46,10 @@ impl ScopedRead<'_> {
             let (attempt, audit) = match row {
                 Ok(row) => row,
                 Err(error) => {
-                    tracing::warn!(?error, "a sieve audit row did not decode; withheld");
+                    tracing::warn!(
+                        error_kind = ?error.kind(),
+                        "a sieve audit row did not decode; withheld"
+                    );
                     continue;
                 }
             };
@@ -58,7 +64,7 @@ impl ScopedRead<'_> {
                         Ok(readable) => readable,
                         Err(error) => {
                             tracing::warn!(
-                                ?error,
+                                error_kind = ?error.kind(),
                                 "the read floor did not answer for a sieve audit's row; withheld"
                             );
                             false
@@ -107,7 +113,7 @@ pub(crate) fn sieve_audit_unchanged_in(
         Ok(current) => current.as_ref() == Some(audit),
         Err(error) => {
             tracing::warn!(
-                ?error,
+                error_kind = ?error.kind(),
                 "a saved sieve audit did not read; its period is withheld"
             );
             false

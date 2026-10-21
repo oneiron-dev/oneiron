@@ -800,9 +800,10 @@ impl<'a> DreamerWakeDriver<'a> {
                 // panicking executor unwinding past the driver would skip
                 // the park/refund bookkeeping below, leaving the attempt leased
                 // and the reservation held until external lease cleanup.
-                // Catch it and route it through the executor-error arm, whose
-                // park cause decides whether the pass goes on past it with
-                // the same executor (FIX 7272).
+                // Catch it and route it through the executor-error arm. It
+                // parks as its cause says, but this executor is not used
+                // again in this pass: the pass ends on the panic and the
+                // next one gets a fresh executor (FIX 7322).
                 let mut execute = pin!(async {
                     if admitted.status.attempt.kind
                         == crate::dreamer_runner::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
@@ -880,14 +881,17 @@ impl<'a> DreamerWakeDriver<'a> {
                         // releases what admission acquired before the error
                         // leaves the pass.
                         let stage = stage.unwrap_or("executor_err");
-                        if self.park_executor_error(
+                        let ends_pass = self.park_executor_error(
                             &admitted,
                             &line,
                             &spend_meter,
                             &error,
                             stage,
                             &input,
-                        )? {
+                        )?;
+                        // A contained panic ends the pass once it parked
+                        // (FIX 7322, Engine 10-21); other errors go on.
+                        if ends_pass || stage == "executor_panic" {
                             return Err(error);
                         }
                         // FIX 7272: parked as a Retry a later pass resumes

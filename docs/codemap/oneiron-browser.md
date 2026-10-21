@@ -15,31 +15,35 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/capture.rs` | src | s | 8 crate-vis | — | Repeat screenshots (AB-004) |
 | `src/cdp.rs` | src | m | 11 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
 | `src/cdp/overrun.rs` | src | s | 3 crate-vis | — | A message the pipe cannot take whole (FIX 6851): one past the 32 MiB bound fails only its own call, or is… |
+| `src/cdp/requests.rs` | src | s | 5 crate-vis | — | Each paused request's custody (FIX 7122), on the routing of both transports |
 | `src/cdp/state.rs` | src | m | 16 crate-vis | — | What the pipe keeps of its pages for an engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the page each… |
-| `src/cdp/storage.rs` | src | s | 5 crate-vis | — | What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the… |
+| `src/cdp/storage.rs` | src | s | 6 crate-vis | — | What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the… |
 | `src/cdp/websocket.rs` | src | m | 1 crate-vis | — | CDP over a WebSocket, for a Lightpanda guest (FIX 6680, BROWSER-SPLIT) |
 | `src/cdp/websocket/gate.rs` | src | s | 2 crate-vis | — | The frame gate between a Lightpanda guest's bytes and its WebSocket (FIX 6851, `oversize_message_policy`)… |
 | `src/desktop.rs` | src | XL | 3 struct · 2 enum · 16 fn | AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover | A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server… |
 | `src/driver.rs` | src | XL | 27 crate-vis | — | The CDP driver: one page in a browser guest, read as an outline and acted on by ref |
 | `src/driver/change.rs` | src | s | 8 crate-vis | — | The change check (FIX 6680, BROWSER-SPLIT) |
+| `src/driver/document.rs` | src | s | 2 crate-vis | — | What the driver reads for a host's rendered document, and its load wait with the host's custody of the… |
 | `src/driver/handles.rs` | src | m | 7 crate-vis | — | Live handles (AB-001): every row the driver reads is minted here, once, as the outline becomes rows |
 | `src/driver/lightpanda.rs` | src | s | 5 crate-vis | — | Where a Lightpanda guest differs from a Chromium one (FIX 6680, BROWSER-SPLIT), on Lightpanda 1.0.0's CDP… |
 | `src/driver/pages.rs` | src | m | 25 crate-vis | — | The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last… |
 | `src/driver/row_metadata.rs` | src | m | 4 crate-vis | — | Where a link row goes, a heading row's level and a row's datetimes, from the outline's own candidates and… |
 | `src/driver/state.rs` | src | m | 17 crate-vis | — | A page's state as an engine switch reads it off the source and writes it into the target (FIX 6680… |
-| `src/driver/storage.rs` | src | m | 12 crate-vis | — | The driver's reads of a page's storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on both… |
+| `src/driver/storage.rs` | src | m | 13 crate-vis | — | The driver's reads of a page's storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on both… |
 | `src/engine.rs` | src | s | 1 enum · 3 fn | BrowserEngine | The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt… |
 | `src/fact.rs` | src | s | 2 struct · 2 enum | ActionFact, ActionTarget, NoEffectReason, ViewportPoint | What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page… |
-| `src/lib.rs` | src | XL | 40 struct · 9 enum · 2 trait · 12 fn · 10 const · 12 re-export | BatchInput, BatchOutput, BatchStep, BrowserDriver, BrowserError, BrowserPersonInput, BrowserTab, ClickInput +43 | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) |
+| `src/lib.rs` | src | XL | 40 struct · 9 enum · 2 trait · 12 fn · 10 const · 14 re-export | BatchInput, BatchOutput, BatchStep, BrowserDriver, BrowserError, BrowserPersonInput, BrowserTab, ClickInput +43 | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) |
 | `src/library.rs` | src | m | 14 struct · 1 enum · 1 trait · 3 fn · 3 const · 2 crate-vis | LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput +8 | The replay library (OF-598; EIRI-ARCH-0002 "The replay library"): a solved browser run, kept as a… |
 | `src/mcp.rs` | src | s | 5 crate-vis | — | MCP over a guest's stdio, as `cua-driver mcp` serves it: JSON-RPC 2.0, one message per line, on one reader… |
 | `src/observation.rs` | src | s | 5 struct · 1 fn · 3 crate-vis | HandleInfo, ObservationBase, Rebound, RowSplice, StepRebound | The observation contract both drivers answer (AB-001, AB-002) |
 | `src/outline.rs` | src | s | 3 crate-vis | — | The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and… |
 | `src/receipt_evidence.rs` | src | s | 1 enum · 1 trait | ReceiptEvidence, ReceiptEvidenceSink | An effect receipt's screenshot kept past its session (FIX 2150) |
+| `src/request.rs` | src | s | 2 struct · 1 trait · 6 crate-vis | BrowserRequestHandler, DestinationRefusal, RenderedDocument | A host's custody of a browser session's requests (FIX 7122) |
 | `src/retention.rs` | src | s | 1 trait | HandleRetention | The host's memory floor, as a browser session's live-handle registry meets it (C013) |
 | `src/row.rs` | src | s | 2 struct · 2 enum | Row, RowFieldGap, RowGapField, RowGapReason | A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX… |
 | `src/session.rs` | src | L | 2 struct · 23 fn · 1 re-export · 5 crate-vis | BrowserGuest, BrowserSession | A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules… |
 | `src/session/guest.rs` | src | s | 1 struct · 1 trait · 2 crate-vis | BrowserGuestStarter, StartedGuest | A session's engine guest (FIX 6680, BROWSER-SPLIT PR3): the browser guest, its lease and manifest, and the… |
-| `src/session/storage.rs` | src | m | 22 crate-vis | — | The session's per-origin storage snapshots (FIX 6680, BROWSER-SPLIT PR3b): what an engine switch carries of… |
+| `src/session/request.rs` | src | s | 2 fn · 2 crate-vis | — | The session's side of the host's custody of its requests (FIX 7122, `crate::request`): the destination… |
+| `src/session/storage.rs` | src | m | 23 crate-vis | — | The session's per-origin storage snapshots (FIX 6680, BROWSER-SPLIT PR3b): what an engine switch carries of… |
 | `src/session/switch.rs` | src | m | 2 crate-vis | — | The engine switch's transaction (FIX 6680, BROWSER-SPLIT PR3, PR3b), under the seat lock the call already… |
 | `src/switch.rs` | src | s | 5 struct · 5 enum | EngineSwitchRecord, StoragePhase, SwitchCarried, SwitchComponent, SwitchEngineInput, SwitchEngineOutput, SwitchLoss, SwitchNotCarried +2 | An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the run's browser to the other engine… |

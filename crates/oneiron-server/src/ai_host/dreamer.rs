@@ -1304,11 +1304,14 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         } else if attempt.status.payload.attempt_type
             == oneiron::dreamer_runner::DREAMER_TASK_REALIZE_ATTEMPT_KIND
         {
+            // An unlent TASK realize, and an unlent weave lens below, wait
+            // on the host's loan, no owner act: each resumes after its retry
+            // delay, as the Dreamer-bound executor's parks do (FIX 7272).
             match self.task {
                 Some(lend) => lend.realize(attempt, ctx).await,
                 None => Ok(DreamerAttemptExecution::Park {
                     reason: TASK_REALIZE_UNLENT_PARK_REASON.to_owned(),
-                    cause: oneiron::dreamer_runner::DreamerParkCause::Other,
+                    cause: oneiron::dreamer_runner::DreamerParkCause::Retry,
                 }),
             }
         } else if attempt.status.payload.attempt_type
@@ -1326,7 +1329,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 Some(lend) => lend.render_lens(attempt, ctx).await,
                 None => Ok(DreamerAttemptExecution::Park {
                     reason: WEAVE_LENS_UNLENT_PARK_REASON.to_owned(),
-                    cause: oneiron::dreamer_runner::DreamerParkCause::Other,
+                    cause: oneiron::dreamer_runner::DreamerParkCause::Retry,
                 }),
             }
         } else {
