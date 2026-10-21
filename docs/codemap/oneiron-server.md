@@ -974,7 +974,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/broker.rs` | src | m | 1 struct · 1 trait · 1 fn · 1 const · 9 crate-vis | KeyDoor, VaultKeyDoor | A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker… |
 | `src/models/broker_context.rs` | src | s | 11 crate-vis | — | One vault's credential-broker context (ARCH-0069 `#broker-design`): the custody door its vault-secret keys… |
 | `src/models/broker_media.rs` | src | m | 1 crate-vis | — | A `key_secret` provider's media leg (OF-131): each exchange a media adapter makes is one credential-broker… |
-| `src/models/cache_usage.rs` | src | s | 4 crate-vis | — | The prompt-cache evidence a house backend's reply carries (FIX 6567, INF 2 step 1), written into its usage… |
+| `src/models/cache_usage.rs` | src | s | 4 crate-vis | — | The inference receipt a house backend's reply carries (FIX 6567, INF 2 step 1; FIX 8314, INFERENCE R1)… |
 | `src/models/catalog.rs` | src | s | 4 crate-vis | — | Config model references to engine catalog rows |
 | `src/models/cooldown.rs` | src | L | 3 struct · 1 enum · 5 fn · 28 crate-vis | OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion | Offers a provider refused for a quota or a limit (OF-305) |
 | `src/models/cooldown/world_hold.rs` | src | s | 1 crate-vis | — | Whether a fallback may take a call's world where the offer it falls back to sends it, and why not (FIX 4938… |
@@ -996,13 +996,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/ladder/shadow_capture.rs` | src | s | 3 crate-vis | — | The route a step replay capsule's answering rung went out on (PR-S1): noted beside the rung itself when a… |
 | `src/models/ladder/step_attempt.rs` | src | s | 1 crate-vis | — | The durable step executor owns retries; this door sends one gated attempt |
 | `src/models/launch_price.rs` | src | s | 2 crate-vis | — | The launch statement's USD quote (OF-532) |
-| `src/models/llama_identity.rs` | src | s | 6 crate-vis | — | What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch… |
+| `src/models/llama_identity.rs` | src | s | 8 crate-vis | — | What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch… |
 | `src/models/media.rs` | src | L | 3 struct · 17 fn · 24 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
 | `src/models/media/jobs.rs` | src | s | 8 crate-vis | — | The `ai.video` jobs a restart keeps (FIX-LIST 465) |
 | `src/models/media/jobs/custody.rs` | src | s | 2 crate-vis | — | A media job's owners and its erased answer (KS-2B2, FIX 5683 part B2) |
 | `src/models/mod.rs` | src | L | 2 struct · 20 fn · 14 re-export · 15 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
 | `src/models/offer.rs` | src | s | 1 struct · 1 enum · 2 fn · 4 crate-vis | OfferEndpoint, ServedOffer | What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays… |
-| `src/models/openai.rs` | src | s | 3 crate-vis | — | The OpenAI-compatible transport: any `/v1/chat/completions` server |
+| `src/models/openai.rs` | src | m | 4 crate-vis | — | The OpenAI-compatible transport: any `/v1/chat/completions` server |
 | `src/models/outbound_wait.rs` | src | s | 2 crate-vis | — | Server policy for shedding during a long journaled model wait |
 | `src/models/output_cap.rs` | src | s | 2 crate-vis | — | A provider's output ceiling on the wire |
 | `src/models/raw.rs` | src | s | 11 crate-vis | — | The raw `/v1/llm` routes' models and their own meter |
