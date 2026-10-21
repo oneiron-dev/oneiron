@@ -265,10 +265,13 @@ impl Vault {
     /// transaction, and the keystore is read only when one waits on it: a
     /// carrier whose name another record here holds stays pending unopened,
     /// and is judged again on the next pass (FIX 5408). The custody pass
-    /// after an authority catch-up and on the served tick runs it. Returns
-    /// how many records it wrote.
+    /// after an authority catch-up and on the served tick runs it, and it
+    /// first seals again each restored credential row still pending (KS-6,
+    /// `CUSTODY_RESEAL_PENDING`), warned, never stopping on one. Returns how
+    /// many records it wrote.
     #[cfg(feature = "sync")]
     pub(crate) fn apply_pending_rebinds(&self) -> Result<usize> {
+        self.reseal_credential_carriers_warned();
         let (rebinds, carriers, vault_id) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;

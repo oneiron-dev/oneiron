@@ -20,7 +20,7 @@
 //!   and the form a checkpoint image carries a row in until part 2 strips it
 //!   ([`image_credential_carrier`]), which a restored row keeps only until
 //!   the restore seals it again (a row it could not seal stays pending, never
-//!   opened from it, [`CUSTODY_RESEAL_PENDING`]).
+//!   opened from it, [`reseal::CUSTODY_RESEAL_PENDING`]).
 //!
 //! A record read from storage comes back stamped as its DTO is, so every
 //! carrier built from it is byte for byte main's.
@@ -45,6 +45,8 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::store::{CredentialLeaf, CustodyKind, Store};
 use crate::vault::Vault;
+
+mod reseal;
 
 use super::codec::{BodyValue, decode_custody_map, encode_custody_map};
 use super::types::{
@@ -260,7 +262,10 @@ fn custody_unavailable(
 }
 
 /// Opens `stored`'s value for record `id` into its record. The caller holds
-/// a writer, or took the custody read guard before its snapshot.
+/// a writer, or took the custody read guard before its snapshot. A row a
+/// restore could not seal again ([`reseal::CUSTODY_RESEAL_PENDING`]) opens only once
+/// this vault's custody takes its key: never from its carrier on a custody
+/// fault.
 fn open_stored(store: &Store, id: &EntityId, stored: StoredCustody) -> Result<SecretCustodyRecord> {
     let StoredCustody { mut record, value } = stored;
     record.value_bytes = match value {
@@ -269,7 +274,11 @@ fn open_stored(store: &Store, id: &EntityId, stored: StoredCustody) -> Result<Se
             let leaf = store.read_credential_value_leaf(id, generation)?;
             open_value(&leaf, id, generation, &bytes)?.to_vec()
         }
-        StoredValue::Carrier(value) => value.to_vec(),
+        StoredValue::Carrier(value) if value.is_empty() => Vec::new(),
+        StoredValue::Carrier(value) => {
+            reseal::retry_pending_key(store, id, record.rotation_generation)?;
+            value.to_vec()
+        }
     };
     Ok(record)
 }
@@ -376,56 +385,6 @@ pub(crate) fn put_stored_custody_in_txn(
         data,
         (at, occurred_at),
     )
-}
-
-impl Vault {
-    /// Seals again, under this vault's custody, each credential row a
-    /// checkpoint image landed in the clear (KS-6 part 1: images carry the
-    /// opened value until part 2), in one writer, each row keeping its own
-    /// times: a restored value rests sealed as every other does. Returns
-    /// how many it sealed.
-    ///
-    /// # Errors
-    /// Custody's, for a key it cannot mint; storage faults.
-    pub(crate) fn reseal_credential_carriers(&self) -> Result<usize> {
-        self.with_write_txn(|wtxn| {
-            let ids = self
-                .store
-                .port_entity_ids_by_type(wtxn, ENTITY_TYPE_SECRET_CUSTODY, None)?
-                .collect::<Result<Vec<_>>>()?;
-            let write = super::doors::CustodyWrite::of(self);
-            let mut resealed = 0_usize;
-            for id in ids {
-                let Some(raw) = self.store.port_entity_raw_wiped(wtxn, &id)? else {
-                    continue;
-                };
-                let header = EntityMetadataHeader::parse(&raw)
-                    .ok_or(Error::CorruptedIndex("secret custody entity header"))?;
-                let stored = decode_stored_custody_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-                let StoredValue::Carrier(value) = stored.value else {
-                    continue;
-                };
-                let mut record = stored.record;
-                record.value_bytes = value.to_vec();
-                let data = sealed_body_in_txn(&self.store, wtxn, &id, &record);
-                zeroize::Zeroize::zeroize(&mut record.value_bytes);
-                let occurred = crate::temporal::TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
-                };
-                super::doors::apply_custody_body_in_txn(
-                    &write,
-                    wtxn,
-                    &id,
-                    &record,
-                    data?,
-                    (occurred, header.learned_at),
-                )?;
-                resealed = resealed.saturating_add(1);
-            }
-            Ok(resealed)
-        })
-    }
 }
 
 /// A checkpoint image's form of entity row `value` under key `key`, when it
