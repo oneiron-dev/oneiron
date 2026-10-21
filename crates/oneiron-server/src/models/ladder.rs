@@ -721,6 +721,35 @@ impl OfferLadder {
             })
     }
 
+    /// The widest route a call this ladder sends may take (FIX 7257): where
+    /// each of its rungs sends it, and each rung of every model the owner may
+    /// name as a parked offer's fallback here, now or later, that could ever
+    /// take its calls: one speaking its wire, and none that leaves the device
+    /// when its role's work stays on it ([`Self::can_serve`]). What a request
+    /// or the time decides counts as reachable. A ladder with no rung proves
+    /// nothing, so it is a third party's. Read-only.
+    #[must_use]
+    pub(crate) fn prompt_locality_bound(&self) -> oneiron::ModelLocality {
+        if self.rungs.is_empty() {
+            return oneiron::ModelLocality::ThirdParty;
+        }
+        let fallbacks = self.rests.fallback_ladders();
+        let eligible = fallbacks.iter().filter(|target| {
+            target.scope.wire == self.scope.wire
+                && !(self.scope.stays_on_device
+                    && target
+                        .rungs
+                        .iter()
+                        .any(|rung| leaves_device(&rung.offer.binding)))
+        });
+        self.rungs
+            .iter()
+            .chain(eligible.flat_map(|target| target.rungs.iter()))
+            .map(|rung| rung.offer.binding.locality)
+            .max()
+            .unwrap_or(oneiron::ModelLocality::ThirdParty)
+    }
+
     /// Keeps the call's work from the rung at `index`, a fallback that would
     /// take it off the device. A held call is never silent: the first time
     /// this call is held from that rung, the run's receipts get a `Denied`

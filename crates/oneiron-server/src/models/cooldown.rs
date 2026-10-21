@@ -769,6 +769,22 @@ impl OfferCooldowns {
             .upgrade()
     }
 
+    /// Every model [`Self::fallback_for`] may answer with, whichever the
+    /// owner names now or later (FIX 7257): each configured one the runtime
+    /// still serves. None while no vault keeps the owner's choice, as that
+    /// finds none then. Read-only.
+    pub(super) fn fallback_ladders(&self) -> Vec<Arc<OfferLadder>> {
+        if self.vault.is_none() {
+            return Vec::new();
+        }
+        self.fallbacks
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter_map(|rung| rung.ladder.upgrade())
+            .collect()
+    }
+
     /// The owner's open quota questions, oldest first. An unreadable row is
     /// skipped.
     #[must_use]
