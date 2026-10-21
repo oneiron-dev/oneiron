@@ -588,12 +588,12 @@ pub(super) fn workflow_status_in(
 
 /// Drops the pins of every try of a TASK among `erased`, an archived try's
 /// included, in the hard erase's transaction: their arguments and goal are
-/// the TASK's. A pin that does not read aborts the erase rather than leave
-/// a partial purge.
+/// the TASK's. A pin that does not read goes too: no reader can use it, it
+/// may hold an erased TASK's arguments, and the erase still lands.
 ///
 /// # Errors
 ///
-/// Storage errors, and a pin that does not read.
+/// Storage errors.
 pub(crate) fn erase_task_workflows_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -603,9 +603,14 @@ pub(crate) fn erase_task_workflows_in_txn(
         return Ok(());
     }
     let mut dropped = Vec::new();
-    for (key, row) in ATTEMPTS.scan(store, txn)? {
-        if erased.contains(&row.task_ref) {
-            dropped.push(key);
+    for row in ATTEMPTS.iter_raw_from(store, txn, &[])? {
+        let (key, value) = row?;
+        let Ok(key) = <[u8; 16]>::try_from(key.as_slice()) else {
+            continue;
+        };
+        match ATTEMPTS.decode_value(&value) {
+            Ok(row) if !erased.contains(&row.task_ref) => {}
+            _ => dropped.push(key),
         }
     }
     for key in dropped {
