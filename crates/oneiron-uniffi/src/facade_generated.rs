@@ -3841,6 +3841,16 @@ export_facade! {
     let output = client.vault_rooms_host_hand(&input)?;
     crate::codec::lift_record("vault.rooms.host.hand", &output)
 };
+"vault.rooms.upkeep.pending" => fn vault_rooms_upkeep_pending(&self, input: RoomUpkeepPendingRequest) -> Vec<RoomUpkeepNudge> = |client| {
+    let input: oneiron::workspace_roster::RoomUpkeepPendingRequest = crate::codec::lower_record("vault.rooms.upkeep.pending", input)?;
+    let output = client.vault_rooms_upkeep_pending(&input)?;
+    crate::codec::lift_record("vault.rooms.upkeep.pending", &output)
+};
+"vault.rooms.upkeep.voice" => fn vault_rooms_upkeep_voice(&self, input: RoomUpkeepVoiceRequest) -> RoomUpkeepVoiceReceipt = |client| {
+    let input: oneiron::workspace_roster::RoomUpkeepVoiceRequest = crate::codec::lower_record("vault.rooms.upkeep.voice", input)?;
+    let output = client.vault_rooms_upkeep_voice(&input)?;
+    crate::codec::lift_record("vault.rooms.upkeep.voice", &output)
+};
 "vault.rooms.sharing" => fn vault_rooms_sharing(&self, input: RoomRefRequest) -> RoomSharingView = |client| {
     let input: oneiron::task_verb::sdk::RoomRefRequest = crate::codec::lower_record("vault.rooms.sharing", input)?;
     let output = client.vault_rooms_sharing(&input)?;

@@ -24103,6 +24103,51 @@ async fn vault_rooms_host_hand(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_rooms_upkeep_pending(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.upkeep.pending",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_rooms_upkeep_voice(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.upkeep.voice",
+        value,
+        &producers,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_rooms_sharing(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -36170,6 +36215,8 @@ pub(crate) async fn call_verb(
         "vault.rooms.host" => vault_rooms_host(server, call, input).await,
         "vault.rooms.host.pin" => vault_rooms_host_pin(server, call, input).await,
         "vault.rooms.host.hand" => vault_rooms_host_hand(server, call, input).await,
+        "vault.rooms.upkeep.pending" => vault_rooms_upkeep_pending(server, call, input).await,
+        "vault.rooms.upkeep.voice" => vault_rooms_upkeep_voice(server, call, input).await,
         "vault.rooms.sharing" => vault_rooms_sharing(server, call, input).await,
         "vault.companions.sharing.get" => vault_companions_sharing_get(server, call, input).await,
         "vault.companions.sharing.set" => vault_companions_sharing_set(server, call, input).await,

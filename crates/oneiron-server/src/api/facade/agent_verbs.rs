@@ -839,6 +839,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.rooms.host", post(facade_route))
         .route("/vault.rooms.host.pin", post(facade_route))
         .route("/vault.rooms.host.hand", post(facade_route))
+        .route("/vault.rooms.upkeep.pending", post(facade_route))
+        .route("/vault.rooms.upkeep.voice", post(facade_route))
         .route("/vault.rooms.sharing", post(facade_route))
         .route("/vault.companions.sharing.get", post(facade_route))
         .route("/vault.companions.sharing.set", post(facade_route))

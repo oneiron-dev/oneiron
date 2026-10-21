@@ -28,9 +28,12 @@ use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
 use crate::side_table::{self, Raw, SideTable};
 use crate::workspace_roster::{
-    RoomUpkeepInput, RoomUpkeepThread, room_upkeep_host, room_upkeep_input, upkeep_rooms,
+    RoomUpkeepInput, RoomUpkeepNudge, RoomUpkeepThread, room_upkeep_host, room_upkeep_input,
+    upkeep_rooms,
 };
-use crate::{EntityId, Error, Result, Vault, WriteActor, WriteEnvelope};
+use crate::{
+    ClaimApprovalStatus, ClaimSubject, EntityId, Error, Result, Vault, WriteActor, WriteEnvelope,
+};
 
 /// How long a thread with open TASKs stays quiet before its host is nudged.
 /// Canon names no interval: one day, as long as an idle room-wide offer
@@ -223,6 +226,90 @@ fn nudge_in_txn(
         envelope,
         now,
     )
+}
+
+/// The value [`nudge_in_txn`] files, read back.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NudgeValue {
+    room: String,
+    thread: String,
+    host: String,
+    last_activity: u64,
+    open_tasks: Vec<String>,
+}
+
+/// One nudge [`nudge_in_txn`] filed, as `read` reads it in `txn`, for the
+/// host it is addressed to (OF-417): still Active, not stale, Proposed or
+/// Approved, its owner confirm settled, and authentic: this predicate, a
+/// Generated source, the Coach as its immutable producer, the host as its
+/// subject and its value's refs typed. `None` for any other row, one `read`
+/// does not read, or a malformed value, which a caller answers as one
+/// unknown finding. It reads in the caller's snapshot, writes nothing and
+/// changes no approval.
+pub(super) fn read_nudge_in_txn(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<RoomUpkeepNudge>> {
+    let vault = read.vault();
+    if vault.get_entity_type_in_txn(txn, &id)? != Some(crate::registry::ENTITY_TYPE_CLAIM)
+        || !read
+            .entities_readable_in_txn(txn, &[id])?
+            .into_iter()
+            .all(|readable| readable)
+    {
+        return Ok(None);
+    }
+    let Some(body) = vault.get_claim_for_effect_in_txn(txn, &id)? else {
+        return Ok(None);
+    };
+    if body.predicate != COACH_ROOM_NUDGE_PREDICATE
+        || body.source != Some(crate::ClaimSource::Generated)
+        || crate::claim::session_claim_producer(&body)
+            != Some(crate::dreamer_runner::authority::coach_actor_id()?)
+        || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
+        || body.stale
+        || !matches!(
+            body.approval,
+            ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Approved
+        )
+    {
+        return Ok(None);
+    }
+    let Some(value) = body
+        .value
+        .as_str()
+        .and_then(|text| serde_json::from_str::<NudgeValue>(text).ok())
+    else {
+        return Ok(None);
+    };
+    let typed = |hex: &str| EntityId::from_hex(hex).ok();
+    let (Some(room), Some(thread), Some(host)) =
+        (typed(&value.room), typed(&value.thread), typed(&value.host))
+    else {
+        return Ok(None);
+    };
+    let Some(open_tasks) = value
+        .open_tasks
+        .iter()
+        .map(|task| typed(task))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Ok(None);
+    };
+    if body.subject != ClaimSubject::Entity(host) {
+        return Ok(None);
+    }
+    Ok(Some(RoomUpkeepNudge {
+        finding: id,
+        room,
+        thread,
+        host,
+        last_activity: value.last_activity,
+        open_tasks,
+        approval: body.approval,
+    }))
 }
 
 /// The room and the turns in the Coach's reach there, as one hash.

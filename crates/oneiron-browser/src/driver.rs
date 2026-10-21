@@ -31,6 +31,7 @@
 //! (`storage`).
 
 mod change;
+mod document;
 mod handles;
 mod lightpanda;
 pub(crate) mod pages;
@@ -245,12 +246,15 @@ impl CdpDriver {
             .iter()
             .find(|tab| tab.target == self.target)
             .and_then(|tab| tab.opener.clone());
-        // A closed tab's page drops what the pipe kept of it (FIX 6767).
+        // A closed tab's page drops what the pipe kept of it (FIX 6767), and
+        // its snapshots once another tab is in front (FIX 6891).
         let pipe = &self.pipe;
+        let mut closed = Vec::new();
         self.tabs.retain(|tab| {
             let kept = open.contains(&tab.target);
             if !kept {
                 pipe.forget_page(&tab.session);
+                closed.push(tab.target.clone());
             }
             kept
         });
@@ -289,6 +293,7 @@ impl CdpDriver {
             None if self.tabs.is_empty() => self.open_tab()?,
             None => {}
         }
+        self.drop_closed(&closed);
         Ok(self
             .tabs
             .iter()
@@ -1263,7 +1268,7 @@ impl BrowserDriver for CdpDriver {
             _ => None,
         };
         if fact.is_none() {
-            if !self.loaded(Instant::now() + LOAD)? {
+            if !self.loaded_or_refused(Instant::now() + LOAD)? {
                 return Err(BrowserError::Timeout(format!("{} to load", input.url)));
             }
             let before = self.fingerprint()?;
