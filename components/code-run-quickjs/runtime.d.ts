@@ -229,9 +229,18 @@ declare function summarize(r: ResultRef, opts?: { effort?: "low" | "medium" | "h
  * ranges they cite, then staged `summarize` groups until one is left, stored
  * as `rf_<key>` with a fold receipt. It runs in phases: call it again with
  * the same arguments until `done`; a parked phase goes on once the run
- * resumes. A refused source answers `{done: true, refused}`. */
+ * resumes. A refused source answers `{done: true, refused}`. A wait reply
+ * stored as a card is read to its end; one withheld, or not a reply, ends
+ * the read refused, never as no finding. */
 declare function readAll(r: ResultRef, opts: { ask: string; by?: ChunkBy; window?: number; until?: number; n_of?: number; effort?: "low" | "medium" | "high"; key?: string }):
   Promise<{ done: true; result: StoredResult; coverage: FoldCoverage | null } | { done: true; refused: string; detail?: unknown } | { done: false; phase: string; waiting?: true; progress: { chunks: number; spawned: number; findings: number; groups: number; level: number } }>;
+/** A reply as its own fields, for code that reads them (an SDK helper, not an
+ * engine verb): an inline reply as it is; one that arrived as a
+ * `StoredResult` card in its place (past 512 KiB of JSON) read with `slice`
+ * to its end and parsed once whole. A withheld page throws `reply_withheld`
+ * and text that is not JSON `invalid_json_reply`: neither is an empty reply.
+ * Call it on a reply before reading its fields; no card is read unasked. */
+declare function readJsonReply(value: unknown): Promise<unknown>;
 /** A diff of two results (an SDK helper, not an engine verb), stated in
  * `algorithm`: by lines, Myers' O(ND) inside lockstep windows of 4096 lines,
  * a hunk a window edge cuts closed there (`edge`), and a window past 512
