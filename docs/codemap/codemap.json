@@ -23651,7 +23651,7 @@
       "crate-vis": 7,
       "enum": 6,
       "fn": 12,
-      "re-export": 10,
+      "re-export": 11,
       "struct": 7
      }
     },
@@ -23682,18 +23682,16 @@
       "AgentHealthCoachRoute",
       "AgentHealthPadRead",
       "CoachHealthBrief",
-      "CoachHealthHost",
-      "ConcernMove",
-      "ConcernMoveOutcome",
-      "ConcernMoveRequest"
+      "CoachHealthHost"
      ],
      "path": "src/dreamer_runner/maintenance/agent_health/ask.rs",
      "purpose": "Ask the Coach (agent-mind §3.5): a card's reader takes its `ask_coach` move, and a `coach.agent_health_ask`…",
      "surface": {
       "const": 1,
-      "enum": 3,
-      "fn": 3,
-      "struct": 6,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -23776,6 +23774,26 @@
      "surface": {
       "crate-vis": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConcernMove",
+      "ConcernMoveBasis",
+      "ConcernMoveLink",
+      "ConcernMoveOutcome",
+      "ConcernMoveReceipt",
+      "ConcernMoveRequest"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/moves.rs",
+     "purpose": "A card's moves (agent-mind §3.5: \"moves, each a proposal that the leader or owner takes\"): `ask_coach`…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -70123,7 +70141,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 126,
+     "files": 127,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71140,7 +71158,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4531,
+   "source_files": 4532,
    "test_files": 902
   },
   "oneiron-android": {
@@ -98758,7 +98776,10 @@
       "ConcernCardRequest",
       "ConcernCardSummary",
       "ConcernMove",
+      "ConcernMoveBasis",
+      "ConcernMoveLink",
       "ConcernMoveOutcome",
+      "ConcernMoveReceipt",
       "ConcernMoveRequest",
       "ConcernOutcome",
       "ConcernOutcomeRequest",
@@ -101907,8 +101928,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 949,
-      "struct": 2968
+      "enum": 951,
+      "struct": 2969
      }
     },
     {
