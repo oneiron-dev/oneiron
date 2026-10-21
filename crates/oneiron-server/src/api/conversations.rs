@@ -653,6 +653,19 @@ fn core_turn_admits(
     })
 }
 
+/// Whether the TURN routes serve the turn `id` to `read`'s caller at all, as
+/// [`get_core_turn`] decides it (FIX 5652, 5938). A route that reads beside a
+/// TURN, its VAD annotation or its sub-sessions, answers one this does not
+/// serve as missing (FIX 5868, 5869).
+pub(crate) fn core_turn_served(
+    vault: &oneiron::Vault,
+    read: &oneiron::claim::ScopedRead<'_>,
+    id: &oneiron::EntityId,
+) -> Result<bool, ApiError> {
+    let owner = core_turn_doors_owner(vault, read)?;
+    core_turn_admits(vault, read, owner, id)
+}
+
 /// The turn `id` as the TURN routes serve it to `read`'s caller: `None` for
 /// the owner's own read, which projects the stored row once the turn's
 /// private threads admit it (FIX 5652); for any other caller, the row its
