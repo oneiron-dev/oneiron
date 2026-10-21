@@ -22876,8 +22876,8 @@
      "path": "src/dreamer_runner/maintenance/coach_diagnostic.rs",
      "purpose": "The Coach's diagnosis of a model finding's issue (OF-418 L3; ARCH-0066 §4, §6)",
      "surface": {
-      "const": 2,
-      "crate-vis": 4,
+      "const": 3,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -22936,6 +22936,16 @@
      "surface": {
       "fn": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/coach_resolution.rs",
+     "purpose": "The Coach's resolution of its model issues (OF-418 L3; ARCH-0066 §6)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -49943,10 +49953,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/self_heal/issue_evidence.rs",
+     "purpose": "What the Coach observes of its model issues after filing them, and when one resolves (OF-418 L3; ARCH-0066 §6)",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/self_heal/issue_work.rs",
      "purpose": "The Coach's Issues work from both of its sources (OF-418 L3; ARCH-0066 §4, §6)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
@@ -49956,7 +49976,7 @@
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 8,
       "re-export": 11
      }
@@ -67589,7 +67609,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 112,
+     "files": 113,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68261,7 +68281,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68606,7 +68626,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4327,
+   "source_files": 4329,
    "test_files": 902
   },
   "oneiron-android": {
