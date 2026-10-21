@@ -71515,6 +71515,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cdp/requests.rs",
+     "purpose": "Each paused request's custody (FIX 7122), on the routing of both transports",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71531,7 +71541,7 @@
      "path": "src/cdp/storage.rs",
      "purpose": "What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -71593,6 +71603,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/document.rs",
+     "purpose": "What the driver reads for a host's rendered document, and its load wait with the host's custody of the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71649,7 +71669,7 @@
      "path": "src/driver/storage.rs",
      "purpose": "The driver's reads of a page's storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on both…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -71743,7 +71763,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 12,
+      "re-export": 14,
       "struct": 40,
       "trait": 2
      }
@@ -71836,6 +71856,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BrowserRequestHandler",
+      "DestinationRefusal",
+      "RenderedDocument"
+     ],
+     "path": "src/request.rs",
+     "purpose": "A host's custody of a browser session's requests (FIX 7122)",
+     "surface": {
+      "crate-vis": 6,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "HandleRetention"
      ],
      "path": "src/retention.rs",
@@ -71892,13 +71928,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session/request.rs",
+     "purpose": "The session's side of the host's custody of its requests (FIX 7122, `crate::request`): the destination…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/session/storage.rs",
      "purpose": "The session's per-origin storage snapshots (FIX 6680, BROWSER-SPLIT PR3b): what an engine switch carries of…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -71950,7 +71997,7 @@
      "purpose": "Repeat screenshots (AB-004)"
     },
     "cdp": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -71964,7 +72011,7 @@
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -72019,6 +72066,13 @@
      "layout": "file",
      "purpose": "An effect receipt's screenshot kept past its session (FIX 2150)"
     },
+    "request": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A host's custody of a browser session's requests (FIX 7122)"
+    },
     "retention": {
      "files": 1,
      "impl_vault": false,
@@ -72034,7 +72088,7 @@
      "purpose": "A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX…"
     },
     "session": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -72050,7 +72104,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 32,
+   "source_files": 36,
    "test_files": 0
   },
   "oneiron-code-check": {
