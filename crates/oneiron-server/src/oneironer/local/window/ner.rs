@@ -11,13 +11,15 @@ use super::{Span, Window, best_probability, decode};
 /// The decode a bundle's `characters.decode_revision` must name. The
 /// refinement constants and the DATE particle tables below are this
 /// revision's; none of them is a bundle field.
-pub(in super::super) const ONEIRONER_DECODE_REVISION: &str = "oneironer-decode-v1";
+pub(in crate::oneironer) const ONEIRONER_DECODE_REVISION: &str = "oneironer-decode-v1";
 
-/// How many characters refinement may move a span edge.
-const CHAR_REFINE_K: usize = 3;
+/// How many characters refinement may move a span edge. A platform worker's
+/// handshake must declare it.
+pub(in crate::oneironer) const CHAR_REFINE_K: usize = 3;
 
-/// The edge probability a moved edge must strictly exceed.
-const CHAR_REFINE_TAU: f32 = 0.5;
+/// The edge probability a moved edge must strictly exceed. A platform
+/// worker's handshake must declare it.
+pub(in crate::oneironer) const CHAR_REFINE_TAU: f32 = 0.5;
 
 /// Whether a call without `EncoderInput.language` runs the DATE snap. The
 /// snap's tables are keyed by language and no language source reaches the

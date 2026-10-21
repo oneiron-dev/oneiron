@@ -2,8 +2,9 @@
 //!
 //! The engine names each pending reach-out whose owner rule routes drafts.
 //! This host reads the reach-out's sources through the representation seam,
-//! asks the generative role once on the Dreamer's budget, and hands the
-//! answer back pre-materialized. The owner's own instruction is the system
+//! asks the generative role once on the Dreamer's budget (once more, over
+//! the newest sources, when that call fails), and hands the answer back
+//! pre-materialized. The owner's own instruction is the system
 //! message; the sources go as data. What lands is a representation proposal
 //! the owner reviews at `/v1/owner/representation` before any send. A draft
 //! the owner's rule moved under while it was written is drafted again at
@@ -26,15 +27,18 @@ use crate::models::ModelRuntime;
 
 /// The purpose a draft's call is metered and routed under.
 const DRAFT_PURPOSE: &str = "stewardship_follow_up";
-/// Reach-outs one round drafts.
-const ROUND: usize = 8;
+/// The newest sources a draft is written from again, once, after its call
+/// over every eligible source failed: a model's window is its provider's
+/// format bound. Used only after the full set failed; never a cap on a
+/// first attempt.
+const FALLBACK_DRAFT_EVIDENCE: usize = 8;
 /// The least time between two rounds: a burst of vault writes wakes one.
 const SETTLE: Duration = Duration::from_secs(60);
 
-/// Drafts each due follow-up, then waits for the vault to change. Runs on
+/// Drafts every due follow-up, then waits for the vault to change. Runs on
 /// the Dreamer's thread and stops with it. A reach-out whose draft failed
-/// after its call is not asked again in this process: one failure costs one
-/// call, not one call per vault write.
+/// after its call is not asked again in this process: one failure costs its
+/// call and at most one fallback call, not one call per vault write.
 pub(super) async fn draft_loop(
     vault: Arc<Vault>,
     runtime: Arc<ModelRuntime>,
@@ -44,9 +48,8 @@ pub(super) async fn draft_loop(
     let mut changes = vault.subscribe_proactivity_changes();
     let mut failed = HashSet::new();
     loop {
-        // A round the host's gate refuses waits for the next change.
-        if let Some(_pass) = super::dreamer::admit(&admission)
-            && let Err(error) = draft_round(&vault, &runtime, budget_units, &mut failed).await
+        if let Err(error) =
+            draft_round(&vault, &runtime, budget_units, &admission, &mut failed).await
         {
             // By kind only: an engine error can quote the vault.
             tracing::warn!(kind = ?error.kind(), "stewardship drafts could not be listed");
@@ -58,58 +61,103 @@ pub(super) async fn draft_loop(
     }
 }
 
+/// Drafts every due follow-up: the reach-out index is read a page at a time,
+/// each page a traversal unit, and its continuation followed to the end.
+/// The host's gate is asked again before each page and each draft, and the
+/// thread yields between drafts. A gate that refuses ends the round; the
+/// rest stay pending, undrafted, for the next change.
 async fn draft_round(
     vault: &Vault,
     runtime: &ModelRuntime,
     budget_units: u64,
+    admission: &super::dreamer::PassAdmission,
     failed: &mut HashSet<EntityId>,
 ) -> oneiron::Result<()> {
-    let mut drafted = 0;
-    for mut draft in vault.stewardship_draft_requests(ROUND.saturating_add(failed.len()))? {
-        if drafted == ROUND {
-            break;
-        }
-        if failed.contains(&draft.proposal) {
-            continue;
-        }
-        drafted += 1;
-        // A draft the owner's rule moved under is drafted again at once
-        // against the current rule (FIX 6079): a fresh request and a fresh
-        // call, each counted, none against the round, with no cap. A request
-        // read again that did not move is not drafted again.
-        let mut redrafts: u64 = 0;
-        loop {
-            match draft_one(vault, runtime, budget_units, &draft).await {
-                Ok(StewardshipDraftOutcome::Scheduled(_)) => break,
-                Ok(StewardshipDraftOutcome::Stale) => {
-                    redrafts += 1;
-                    tracing::info!(
-                        proposal = %draft.proposal.to_hex(),
-                        redrafts,
-                        "a stewardship draft went stale against the owner's current rule"
-                    );
-                    let Some(current) = vault.stewardship_draft_request(draft.proposal)? else {
-                        break;
-                    };
-                    if !current.moved_from(&draft) {
-                        failed.insert(draft.proposal);
-                        tracing::warn!(
+    let mut after = None;
+    loop {
+        let page = {
+            let Some(_pass) = super::dreamer::admit(admission) else {
+                return Ok(());
+            };
+            vault.stewardship_draft_page(after)?
+        };
+        for mut draft in page.drafts {
+            if failed.contains(&draft.proposal) {
+                continue;
+            }
+            tokio::task::yield_now().await;
+            let Some(_pass) = super::dreamer::admit(admission) else {
+                return Ok(());
+            };
+            // A draft the owner's rule moved under is drafted again at once
+            // against the current rule (FIX 6079): a fresh request and a
+            // fresh call, each counted, with no cap. A request read again
+            // that did not move is not drafted again.
+            let mut redrafts: u64 = 0;
+            loop {
+                match draft_with_fallback(vault, runtime, budget_units, &draft).await {
+                    Ok(StewardshipDraftOutcome::Scheduled(_)) => break,
+                    Ok(StewardshipDraftOutcome::Stale) => {
+                        redrafts += 1;
+                        tracing::info!(
                             proposal = %draft.proposal.to_hex(),
-                            "a stale stewardship draft's rule did not move; it is not drafted again"
+                            redrafts,
+                            "a stewardship draft went stale against the owner's current rule"
                         );
+                        let Some(current) = vault.stewardship_draft_request(draft.proposal)? else {
+                            break;
+                        };
+                        if !current.moved_from(&draft) {
+                            failed.insert(draft.proposal);
+                            tracing::warn!(
+                                proposal = %draft.proposal.to_hex(),
+                                "a stale stewardship draft's rule did not move; it is not drafted again"
+                            );
+                            break;
+                        }
+                        draft = current;
+                    }
+                    Err(error) => {
+                        failed.insert(draft.proposal);
+                        tracing::warn!(kind = ?error.kind(), "a stewardship follow-up was not drafted");
                         break;
                     }
-                    draft = current;
-                }
-                Err(error) => {
-                    failed.insert(draft.proposal);
-                    tracing::warn!(kind = ?error.kind(), "a stewardship follow-up was not drafted");
-                    break;
                 }
             }
         }
+        let Some(next) = page.next else {
+            return Ok(());
+        };
+        after = Some(next);
     }
-    Ok(())
+}
+
+/// [`draft_one`] over every eligible source and, when that fails and the
+/// request cites more than [`FALLBACK_DRAFT_EVIDENCE`] sources, once more
+/// over the newest of them, so a draft that was written before every source
+/// was fed is still written.
+async fn draft_with_fallback(
+    vault: &Vault,
+    runtime: &ModelRuntime,
+    budget_units: u64,
+    draft: &StewardshipDraftRequest,
+) -> oneiron::Result<StewardshipDraftOutcome> {
+    match draft_one(vault, runtime, budget_units, draft).await {
+        Err(error) if draft.request.evidence.len() > FALLBACK_DRAFT_EVIDENCE => {
+            // By kind only: an engine error can quote the vault.
+            tracing::info!(
+                proposal = %draft.proposal.to_hex(),
+                kind = ?error.kind(),
+                sources = draft.request.evidence.len(),
+                "a stewardship draft over every source failed; drafting over the newest"
+            );
+            // The request's evidence is newest first.
+            let mut newest = draft.clone();
+            newest.request.evidence.truncate(FALLBACK_DRAFT_EVIDENCE);
+            draft_one(vault, runtime, budget_units, &newest).await
+        }
+        outcome => outcome,
+    }
 }
 
 fn message(role: LlmMessageRole, text: String) -> LlmMessage {

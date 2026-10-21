@@ -119,7 +119,6 @@ pub use self::tripwire::{
     run_vault_cleanup, scan_cleanup_candidates, set_cleanup_posture, zero_live_members,
 };
 
-pub(crate) use self::cleanup_types::MAX_CLEANUP_SCAN_ROWS;
 pub(crate) use self::codec_receipts::{cleanup_digests_in_txn, cleanup_receipts};
 pub(crate) use self::proposals_archive::cleanup_proposals_in_txn;
 pub(crate) use self::tripwire::zero_live_members_in_txn;
