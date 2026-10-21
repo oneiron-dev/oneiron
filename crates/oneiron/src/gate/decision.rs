@@ -8,7 +8,7 @@ use crate::counterparty_contact::CounterpartyFirstTouch;
 use super::input::ExternalEffectGateContext;
 
 pub(super) const GATE_METRIC_OUTCOME_COUNT: usize = 3;
-pub(super) const GATE_METRIC_REASON_CLASS_COUNT: usize = 17;
+pub(super) const GATE_METRIC_REASON_CLASS_COUNT: usize = 18;
 
 /// One vault's gate outcome x reason-class counters.
 ///
@@ -118,6 +118,8 @@ pub(super) enum GateMetricReasonClass {
     /// ONE-1686 (RT-04): the witness MESSAGE ceiling door refused an envelope
     /// at the shared witness write boundary.
     WitnessMessageCeiling,
+    /// OF-063 (FIX 1220): a claim named a record its writer cannot read.
+    UnresolvedRecordReference,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -141,6 +143,7 @@ impl GateMetricReasonClass {
             Self::CampaignCompliance => 14,
             Self::DreamerPrecommit => 15,
             Self::WitnessMessageCeiling => 16,
+            Self::UnresolvedRecordReference => 17,
         }
     }
 
@@ -163,6 +166,7 @@ impl GateMetricReasonClass {
             Self::CampaignCompliance,
             Self::DreamerPrecommit,
             Self::WitnessMessageCeiling,
+            Self::UnresolvedRecordReference,
         ]
     }
 }
@@ -260,6 +264,12 @@ pub(crate) enum GateReasonCode {
     PendingCheckerUnavailable,
     /// A forward claim lacks the confidence for its subtype (care is stricter).
     PendingCarryForwardConfidence,
+    /// OF-063 (FIX 1218/1220): a typed record ref the claim names does not
+    /// resolve under its writer's own scoped read in the final write's
+    /// snapshot. Invented, missing and unreadable are this one refusal. A
+    /// deny, never an owner-review row: no approval makes a named record
+    /// exist, so it is never retried as Proposed.
+    DenyUnresolvedRecordReference,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -308,6 +318,7 @@ impl GateReasonCode {
             Self::PendingChecker => "gate.pending.checker",
             Self::PendingCheckerUnavailable => "gate.pending.checker.unavailable",
             Self::PendingCarryForwardConfidence => "gate.pending.carry_forward_confidence",
+            Self::DenyUnresolvedRecordReference => "gate.deny.unresolved_record_reference",
         }
     }
 
@@ -369,6 +380,7 @@ impl GateReasonCode {
                 GateMetricReasonClass::SourceTrust
             }
             Self::PendingCarryForwardConfidence => GateMetricReasonClass::CriticalityFloor,
+            Self::DenyUnresolvedRecordReference => GateMetricReasonClass::UnresolvedRecordReference,
         }
     }
 }

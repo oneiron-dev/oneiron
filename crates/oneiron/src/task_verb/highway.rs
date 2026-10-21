@@ -344,7 +344,7 @@ pub(super) fn not_found() -> MemoryError {
     MemoryError::from(Error::EntityNotFound)
 }
 
-pub(super) fn forbidden(message: &str, suggestion: &str) -> MemoryError {
+pub(crate) fn forbidden(message: &str, suggestion: &str) -> MemoryError {
     consult_refusal(MEMORY_CODE_FORBIDDEN, message, suggestion)
 }
 
