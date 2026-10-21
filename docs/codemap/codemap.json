@@ -2895,7 +2895,7 @@
      "path": "src/authority/conversation_training_vault.rs",
      "purpose": "Folds the vault's signed \"Learn from my conversations\" setting (FIX 5502 owner rulings, OF-420), and the…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "fn": 3,
       "struct": 1
      }
@@ -2949,7 +2949,7 @@
      "path": "src/authority/first_seen_clock.rs",
      "purpose": "First-seen sidecar keys and the per-vault logical observation clock",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -3718,13 +3718,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/principal_standing.rs",
      "purpose": "FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 16
      }
     },
     {
@@ -12151,7 +12151,7 @@
      "path": "src/claim/scoped_read/agent_grants.rs",
      "purpose": "FIX 7462: an agent's ordinary read also admits what one of its own live owner-minted Grants covers (owner…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -12271,6 +12271,16 @@
      "purpose": "Actor and class checks for private NOTE bodies in scoped reads",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/owner_authority.rs",
+     "purpose": "FIX 7461: a question's own locally built reader also reads what its own live owner authority admits (owner…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -12512,6 +12522,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/loop_decisions.rs",
+     "purpose": "A saved weave period's loop-decision rows (OF-499 A2): their saved carrier, the erase index over their refs…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -12559,6 +12579,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_lens/loop_decisions.rs",
+     "purpose": "A loop decision's weave lens row (OF-499 A2): its decision, time, family, kind, exact outcome and redacted…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -12572,10 +12602,20 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 3,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_report/admissions.rs",
+     "purpose": "A weave report's Admissions section reads the loop decisions (OF-499 A2): the gate decisions a Dreamer or…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -17626,7 +17666,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 26,
       "struct": 2
      }
@@ -21497,13 +21537,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/call_labels.rs",
      "purpose": "Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/call_labels/decision_rungs.rs",
+     "purpose": "The host ladder's model rungs through one call's labels (FIX 7506 P2)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -21571,7 +21621,7 @@
      "path": "src/dreamer_consolidation/executor/decisions.rs",
      "purpose": "The consolidation's typed questions through the host's ladder: how a conflict set resolves and which…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 1
      }
@@ -21581,9 +21631,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction.rs",
-     "purpose": "Extraction request/response projection for one admitted branch, and the typed pack that decides which listed…",
+     "purpose": "Extraction request/response projection for one admitted branch; the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 7
      }
     },
     {
@@ -21592,6 +21642,16 @@
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction/cited.rs",
      "purpose": "The extraction step's citation check (FIX 7274): a citation that verification would refuse the whole…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/extraction/corrections.rs",
+     "purpose": "The typed pack that decides which listed claim each extracted candidate corrects: one question per candidate…",
      "surface": {
       "crate-vis": 3
      }
@@ -22219,6 +22279,16 @@
       "enum": 2,
       "fn": 4,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/settle/decision_projection.rs",
+     "purpose": "A parked conflict's settlement ask as the ladder reads it (FIX 7506 P2): each stored member and retained…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -27055,7 +27125,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 3,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -27071,11 +27141,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "EnteredRun"
+     ],
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 25,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -28101,7 +28175,7 @@
      "path": "src/federation/agent_grant.rs",
      "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -28371,7 +28445,7 @@
      "path": "src/federation/membership_gate.rs",
      "purpose": "Transaction-bound shared-vault membership write authorization",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 1
      }
@@ -28391,7 +28465,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 33,
       "mod": 2,
       "re-export": 19
      }
@@ -28680,7 +28754,7 @@
      "purpose": "Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never…",
      "surface": {
       "const": 3,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 11,
       "re-export": 2,
@@ -28698,9 +28772,27 @@
      "path": "src/federation/shared_creation.rs",
      "purpose": "Creation-time membership defaults, materialized once as explicit grant/policy rows",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 3,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SharedTrainingSetup",
+      "SharedTrainingSetupAnswer",
+      "SharedTrainingSetupQuestion"
+     ],
+     "path": "src/federation/shared_creation/training_setup.rs",
+     "purpose": "A shared vault's one training question, asked once at setup (OF-420 T3)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -34946,7 +35038,21 @@
      "surface": {
       "enum": 3,
       "fn": 2,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DecisionWireLabels"
+     ],
+     "path": "src/llm/decision/generated/wire.rs",
+     "purpose": "A generated read's wire names (FIX 7506): what the request shows in place of each question's id and each…",
+     "surface": {
+      "crate-vis": 3,
+      "trait": 1
      }
     },
     {
@@ -35217,7 +35323,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 13
      }
     },
@@ -35230,6 +35336,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/reader_authority.rs",
+     "purpose": "FIX 7461: a question's reader keeps its own live authority (owner principle 2)",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -35350,7 +35466,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/decision/questions/windows.rs",
@@ -35880,7 +35996,7 @@
       "const": 1,
       "crate-vis": 9,
       "enum": 1,
-      "fn": 24,
+      "fn": 25,
       "re-export": 1,
       "struct": 3
      }
@@ -44913,7 +45029,7 @@
      "path": "src/policy_model/owner_rows/authority.rs",
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 3
      }
     },
@@ -68638,7 +68754,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 82,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68918,7 +69034,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 93,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69058,7 +69174,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69261,7 +69377,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 116,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69963,7 +70079,7 @@
    },
    "over_bar": 182,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4437,
+   "source_files": 4447,
    "test_files": 902
   },
   "oneiron-android": {
@@ -84559,7 +84675,7 @@
      "path": "src/api/facade/browser_doors.rs",
      "purpose": "Typed browser calls on the caller's own attached run and existing guest door",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -87218,6 +87334,16 @@
      "notable": [],
      "path": "src/api/owner_routes/secret_use_routes.rs",
      "purpose": "`POST /v1/owner/secrets/bind`: the owner binds a secret to an effector, so an agent's `self.use` can hand it…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/shared_training_setup_routes.rs",
+     "purpose": "`/v1/owner/conversation-learning/setup`: a shared vault's one training question, asked once at setup (OF-420…",
      "surface": {
       "crate-vis": 1
      }
@@ -91788,7 +91914,7 @@
      "path": "src/managed/vm_host/anchor.rs",
      "purpose": "The host's half of a vault VM's custody anchor channels (FIX 6517, [`oneiron_vault_contract::vm_anchor`])",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 10,
       "fn": 1,
       "struct": 1
      }
@@ -92198,17 +92324,18 @@
       "McpCodeExecutionHost",
       "McpCodeExecutionRequest",
       "McpCodeModeProvider",
-      "McpEngineNativeCodeHost"
+      "McpEngineNativeCodeHost",
+      "PlannedModel"
      ],
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 7,
-      "struct": 3,
+      "struct": 4,
       "trait": 2,
-      "type": 2
+      "type": 4
      }
     },
     {
@@ -92300,7 +92427,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 7,
       "struct": 1
      }
@@ -92804,7 +92931,7 @@
      "path": "src/models/raw.rs",
      "purpose": "The raw `/v1/llm` routes' models and their own meter",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -94514,7 +94641,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/server/resident_pump.rs",
@@ -95503,7 +95630,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 496,
+     "files": 497,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -95883,7 +96010,7 @@
     "server": {
      "files": 57,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Sync server state and maintenance jobs, split by concern"
     },
@@ -95953,7 +96080,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1047,
+   "source_files": 1048,
    "test_files": 182
   },
   "oneiron-spawn": {
