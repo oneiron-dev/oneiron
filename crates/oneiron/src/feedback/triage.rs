@@ -15,9 +15,10 @@
 //! result identity, never a second queue. A revision is acknowledged only
 //! when its triage commits a typed result, an empty one included, in the
 //! write that files its findings. A triage that fails leaves it
-//! unacknowledged, and the next sweep queues it again. Nothing here closes,
-//! moderates or deletes a note, and no finding restricts anyone: findings
-//! land Proposed in the owner's run tray.
+//! unacknowledged, and the next sweep queues it again; one whose evidence
+//! ASSET the owner erased is settled erased instead (the `erased` child).
+//! Nothing here closes, moderates or deletes a note, and no finding
+//! restricts anyone: findings land Proposed in the owner's run tray.
 //!
 //! Beside the inbox, a sweep walks each GitHub repository the deployment
 //! bound (the `github` child): the host reads each page of its listing and
@@ -28,6 +29,7 @@
 //! completes doing nothing: it reads no source, retains and queues nothing,
 //! keeps every continuation and writes no error, and the status shows the
 //! `skill_unbound` hold.
+mod erased;
 mod github;
 mod owner;
 mod source;
@@ -37,8 +39,8 @@ pub use self::github::{
     GithubSweepContinuation,
 };
 pub use self::owner::{
-    FeedbackTriageBindingRequest, FeedbackTriageChild, FeedbackTriageHold, FeedbackTriageRun,
-    FeedbackTriageRunRequest, FeedbackTriageStatus, FeedbackTriageStatusRequest,
+    FeedbackTriageBindingRequest, FeedbackTriageChild, FeedbackTriageErased, FeedbackTriageHold,
+    FeedbackTriageRun, FeedbackTriageRunRequest, FeedbackTriageStatus, FeedbackTriageStatusRequest,
 };
 pub use self::source::{
     FeedbackTriageSourceError, FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault,
@@ -195,6 +197,9 @@ pub struct FeedbackTriageHandoff {
     pub handed_off_at: u64,
     /// The committed result; `None` while the revision is unacknowledged.
     pub result: Option<FeedbackTriageResult>,
+    /// Vault seconds a sweep found its evidence ASSET erased by the owner:
+    /// settled with no result, it is never queued again.
+    pub erased_at: Option<u64>,
 }
 
 /// One revision's committed triage result. An empty `findings` is a result:
@@ -267,6 +272,8 @@ pub struct FeedbackTriageInput {
 pub enum FeedbackTriageJob {
     /// The revision is acknowledged already: its stored result.
     Acknowledged(FeedbackTriageResult),
+    /// The owner erased the revision's evidence ASSET: nothing is triaged.
+    Erased,
     /// The revision waits on this job.
     Pending(Box<FeedbackTriageInput>),
 }
@@ -400,7 +407,8 @@ pub(crate) fn job_handoff_in_txn(
 
 /// Acknowledges `handoff`'s revision with `result`, in the write that files
 /// the result's findings. A revision acknowledged already, or one whose
-/// current job is not the result's, is refused.
+/// current job is not the result's, is refused, and so is one whose
+/// evidence the owner erased, so the write rolls back (`Error::Refused`).
 pub(crate) fn acknowledge_feedback_triage_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -413,6 +421,7 @@ pub(crate) fn acknowledge_feedback_triage_in_txn(
     if row.result.is_some() || row.attempt != result.attempt {
         return Err(invalid_job());
     }
+    erased::refuse_erased_in_txn(vault, txn, &row)?;
     row.result = Some(result);
     HANDOFFS.put(&vault.store, txn, &key, &row)
 }
@@ -478,6 +487,7 @@ fn hand_off_revision_in_txn(
         attempt,
         handed_off_at: now,
         result: None,
+        erased_at: None,
     };
     HANDOFFS.put(
         &vault.store,
@@ -578,7 +588,8 @@ fn enqueue_triage_in_txn(
 }
 
 /// Queues again each unacknowledged revision whose job settled without a
-/// result or is gone, under `sweep`. A live job keeps its revision.
+/// result or is gone, under `sweep`. A live job keeps its revision, and one
+/// whose evidence the owner erased is settled erased instead.
 fn requeue_unacknowledged(
     vault: &Vault,
     sweep: AttemptId,
@@ -593,7 +604,7 @@ fn requeue_unacknowledged(
     let queue = AttemptQueue::new(vault);
     let mut requeued = 0;
     for (key, read) in handoffs {
-        if read.result.is_some() {
+        if read.result.is_some() || read.erased_at.is_some() {
             continue;
         }
         // Read again under the writer: the job may have acknowledged since.
@@ -601,13 +612,16 @@ fn requeue_unacknowledged(
             let Some(mut handoff) = HANDOFFS.get(&vault.store, txn, &key)? else {
                 return Ok(false);
             };
-            if handoff.result.is_some() {
+            if handoff.result.is_some() || handoff.erased_at.is_some() {
                 return Ok(false);
             }
             if queue
                 .get_in_txn(txn, attempt_id(&handoff.attempt)?)?
                 .is_some_and(|record| !record.state.is_terminal())
             {
+                return Ok(false);
+            }
+            if erased::settle_erased_in_txn(vault, txn, &key, &mut handoff, now)? {
                 return Ok(false);
             }
             handoff.attempt = enqueue_triage_in_txn(
@@ -681,10 +695,11 @@ impl Vault {
     /// handed off in its own write. The inbox's row then records the walk
     /// that reached its end, or that an engine error stopped it. Each
     /// unacknowledged revision of any source whose job settled without a
-    /// result is then queued again. With no skill bound it completes doing
-    /// nothing: it reads, retains, queues and writes nothing, and every
-    /// continuation stays. The host walks each bound GitHub source beside
-    /// it ([`Self::feedback_triage_source`]).
+    /// result is then queued again, or settled erased once the owner erased
+    /// its evidence. With no skill bound it completes doing nothing: it
+    /// reads, retains, queues and writes nothing, and every continuation
+    /// stays. The host walks each bound GitHub source beside it
+    /// ([`Self::feedback_triage_source`]).
     ///
     /// # Errors
     ///
@@ -737,8 +752,8 @@ impl Vault {
     /// What a leased `coach.feedback_triage` job triages: the item its
     /// revision names, an inbox note read back from the inbox or a GitHub
     /// item read back from its evidence, checked against that revision, with
-    /// its evidence and the skill bound now; or the result committed for it
-    /// already.
+    /// its evidence and the skill bound now; the result committed for it
+    /// already; or, once the owner erased its evidence, nothing to triage.
     ///
     /// # Errors
     ///
@@ -750,16 +765,20 @@ impl Vault {
         attempt: &DreamerAdmittedAttempt,
     ) -> Result<FeedbackTriageJob> {
         self.require_coach_attempt(attempt, COACH_FEEDBACK_TRIAGE_FACET)?;
-        let (handoff, skill) = {
+        let (handoff, skill, erased) = {
             let txn = self.store.env.read_txn()?;
             let handoff = job_handoff_in_txn(self, &txn, attempt)?;
-            (handoff, binding_in_txn(self, &txn)?.skill)
+            let erased = erased::evidence_erased_in_txn(self, &txn, &handoff)?;
+            (handoff, binding_in_txn(self, &txn)?.skill, erased)
         };
         if let Some(result) = handoff.result {
             return Ok(FeedbackTriageJob::Acknowledged(result));
         }
         if handoff.attempt != attempt_ref(attempt.status.attempt.id)? {
             return Err(invalid_job());
+        }
+        if erased {
+            return Ok(FeedbackTriageJob::Erased);
         }
         let skill = skill.ok_or_else(skill_unbound)?;
         let item = if handoff.source_ref.source == FEEDBACK_TRIAGE_INBOX_SOURCE {

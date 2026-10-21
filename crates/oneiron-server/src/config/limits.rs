@@ -361,6 +361,7 @@ impl LimitsConfig {
             deadline_jobs_per_caller,
             backup_handoff_pending_backups,
             backup_handoff_pending_bytes,
+            authority_record_items,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -568,6 +569,7 @@ impl LimitsConfig {
                 EngineLimit::BackupHandoffPendingBytes,
                 backup_handoff_pending_bytes,
             ),
+            (EngineLimit::AuthorityRecordItems, authority_record_items),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -795,4 +797,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) deadline_jobs_per_caller: Option<u64>,
     pub(super) backup_handoff_pending_backups: Option<u64>,
     pub(super) backup_handoff_pending_bytes: Option<u64>,
+    pub(super) authority_record_items: Option<u64>,
 }
