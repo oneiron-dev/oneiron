@@ -15,10 +15,11 @@ use crate::error::HostError;
 use crate::spec::{OrganSpec, OrganTier};
 
 /// Writes a pinned organ binary under `dir`, in a folder named by its hash,
-/// executable and read-only, and returns the first-party spec that starts
-/// it with the pin set. Bytes that are not the pinned binary are refused
-/// before anything is written; a file already there under the pin is
-/// checked and reused.
+/// executable and read-only, and returns the spec that starts it with the
+/// pin set, at `tier`. The pin proves the bytes, not who built them: the
+/// caller vouches for a [`OrganTier::FirstParty`] tier (FIX 7644). Bytes
+/// that are not the pinned binary are refused before anything is written;
+/// a file already there under the pin is checked and reused.
 ///
 /// # Errors
 /// The bytes do not match the pin, the name is not a plain file name, or
@@ -28,6 +29,7 @@ pub fn install_pinned_binary(
     name: &str,
     bytes: &[u8],
     pinned: Hash32,
+    tier: OrganTier,
 ) -> Result<OrganSpec, HostError> {
     if Hash32::of(bytes) != pinned {
         return Err(HostError::Handshake(
@@ -56,6 +58,7 @@ pub fn install_pinned_binary(
         fs::rename(&staging, &program)?;
     }
     let mut spec = OrganSpec::first_party(name, program);
+    spec.tier = tier;
     spec.program_hash = Some(pinned);
     Ok(spec)
 }
@@ -63,7 +66,8 @@ pub fn install_pinned_binary(
 /// An organ from a pack's build for this host: the build written under
 /// `dir` by its blake3, and the install grant its `ORGAN.json` names (its
 /// verbs, media types, threads and memory), pinned to that binary and to
-/// the version the pack names. The seal sets its own grant
+/// the version the pack names, at `tier`, which the caller classifies from
+/// the build's verified provenance (FIX 7644). The seal sets its own grant
 /// ([`crate::seal::seal_spec_from_pack`]).
 ///
 /// # Errors

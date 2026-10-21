@@ -16,7 +16,6 @@ use super::check_store::{
 use super::plan::RepoCheckPlan;
 use super::{BatchState, CheckPhase, MergeBatch, MergeQueue, SpeculativePath};
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::contract_oracle::{CommandOutput, ContractOracle, ContractVerdict, invalid};
 use crate::error::{Error, Result};
 use crate::git_wire::lock_repository;
@@ -538,13 +537,25 @@ impl Vault {
         host: &mut dyn QueueCheckHost,
         stop: &dyn Fn() -> bool,
     ) -> Result<QueueCheckWork> {
-        let ran = RepoRef::parse(&work.repo_ref)
-            .and_then(|repo_ref| MergeQueue::open(self, repo_ref))
-            .and_then(|queue| match &work.request {
-                QueueCheckRequest::Initialize { .. } => queue.initialize_checked(work, host, stop),
-                QueueCheckRequest::Check { .. } => queue.check_with_inputs(work, host, stop),
-                QueueCheckRequest::Diagnose { .. } => queue.diagnose_checked(work, host, stop),
-            });
+        // A served import's work opens its bound source, a missing one put
+        // back or held by name (FIX 6869); a native work its own root.
+        let ran =
+            self.open_queue_check_source(work)
+                .and_then(|opened| match (opened, &work.request) {
+                    (Err(hold), _) => self.finish_queue_check(
+                        work,
+                        WorkUpdate::ending(QueueCheckStatus::Held(hold), Vec::new()),
+                    ),
+                    (Ok(queue), QueueCheckRequest::Initialize { .. }) => {
+                        queue.initialize_checked(work, host, stop)
+                    }
+                    (Ok(queue), QueueCheckRequest::Check { .. }) => {
+                        queue.check_with_inputs(work, host, stop)
+                    }
+                    (Ok(queue), QueueCheckRequest::Diagnose { .. }) => {
+                        queue.diagnose_checked(work, host, stop)
+                    }
+                });
         match ran {
             Ok(done) => Ok(done),
             Err(error) => self.finish_queue_check(
