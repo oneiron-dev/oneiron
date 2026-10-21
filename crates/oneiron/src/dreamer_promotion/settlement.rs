@@ -14,6 +14,7 @@
 
 use rmpv::Value;
 
+use super::imported_keep::KeptConflictLink;
 use super::{
     DreamerRunContext, PromotionCandidate, evidence_ref_refusal_in_txn, promotion_provenance,
     public_evidence_refs, public_evidence_value, scope_with_taint,
@@ -39,13 +40,15 @@ pub(crate) enum KeptLanding {
 /// its evidence as bound in this same transaction. Refuses when its id is
 /// already a record, its evidence is no longer admissible, or the Gate does
 /// not grant Auto. Evidence that meets at `Imported` is staged in its
-/// import's review instead.
+/// import's review instead, linked by `link` to the conflict it was kept for
+/// (FIX 6152).
 pub(crate) fn land_kept_alternative_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     run: &DreamerRunContext,
     candidate: PromotionCandidate,
     verified: &VerifiedEvidenceSet,
+    link: KeptConflictLink,
 ) -> Result<KeptLanding> {
     if run.run_id.trim().is_empty() {
         return Err(Error::InvalidClaimBody("promotion run id is blank"));
@@ -82,7 +85,10 @@ pub(crate) fn land_kept_alternative_in_txn(
             run,
             candidate,
             verified,
-            import.review.as_deref(),
+            super::imported_keep::StagedIn {
+                review: import.review.as_deref(),
+                link,
+            },
             &public_refs,
         )?;
         return Ok(KeptLanding::ImportReview(import.review));

@@ -6,7 +6,6 @@ use super::{
     ArmedLane, CommitmentDeadline, DeadlineSource, PushTick, SessionHintCarrier, Tick, TickSource,
     TimerTick, sleep_until_due,
 };
-use crate::session::SessionHint;
 
 // ---------------------------------------------------------------------------
 // HybridTick — biased select over timer + push, deadline priority

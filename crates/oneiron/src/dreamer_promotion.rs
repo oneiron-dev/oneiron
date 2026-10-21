@@ -55,6 +55,7 @@ mod settlement;
 /// `Vault::dreamer_weave_reach` and the owner's `Vault::grant_dreamer_weave`).
 pub use crate::gate::DreamerWeaveReach;
 pub use attempt_sink::AttemptPromotionSink;
+pub(crate) use imported_keep::KeptConflictLink;
 pub use scoped::promote_scoped_consolidation;
 pub(crate) use settlement::{KeptLanding, land_kept_alternative_in_txn};
 

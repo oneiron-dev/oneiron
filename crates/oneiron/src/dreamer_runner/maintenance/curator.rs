@@ -120,7 +120,7 @@ impl Vault {
 impl DreamerRunnerStore<'_> {
     /// [`Vault::schedule_curator`] in a caller-owned write: the nightly wake
     /// registers the pass in the commit that takes its input.
-    pub(super) fn enqueue_curator_in_txn(
+    pub(crate) fn enqueue_curator_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         trigger: CuratorTrigger,
