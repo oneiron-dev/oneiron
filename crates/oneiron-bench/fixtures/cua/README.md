@@ -1,7 +1,8 @@
 # CUA bench fixtures — S1
 
 Five synthetic, local browser tasks and six independent versions of each. This is
-fixture infrastructure, not the S2 runner, S3 checker or S4 authoring driver.
+fixture infrastructure. PR1 adds S2 harness source and S3 private-state checkers;
+S4 authoring is not implemented.
 No fixture has an outbound send, submit, connect, account or mailbox integration.
 F2, F3 and F4 tasks finish **before** Submit/Send. Pressing those controls only
 increments state and appends an audit event; a counted press is still a failure
@@ -10,7 +11,7 @@ where the task requires zero presses.
 ## Layout
 
 Relative entries below are relative to this directory (the repository fixture root
-is `/Users/olety/.claude/worktrees/engine-cua-s1/crates/oneiron-bench/fixtures/cua/`):
+is `crates/oneiron-bench/fixtures/cua/`):
 
 | Entry | Contents |
 |---|---|
@@ -26,7 +27,7 @@ is `/Users/olety/.claude/worktrees/engine-cua-s1/crates/oneiron-bench/fixtures/c
 Default seed: **20261021**. Recreate generated outputs with:
 
 ```sh
-python3 -I /Users/olety/.claude/worktrees/engine-cua-s1/crates/oneiron-bench/fixtures/cua/gen_data.py
+python3 -I crates/oneiron-bench/fixtures/cua/gen_data.py
 ```
 
 This rewrites only generated input, oracle, HTML, CHANGE and manifest files beneath
@@ -34,12 +35,12 @@ this directory. It does not overwrite scripts, shared assets or documentation.
 The direct-function authoring check is:
 
 ```sh
-python3 -I /Users/olety/.claude/worktrees/engine-cua-s1/crates/oneiron-bench/fixtures/cua/check_handlers.py
+python3 -I crates/oneiron-bench/fixtures/cua/check_handlers.py
 ```
 
 Neither command compiles or runs the Rust workspace or the existing tests. They
 are the only local execution used for S1. Browser and HTTP runtime checks belong
-on a Linux fleet host, not the owner's Mac.
+on a Linux fleet host, not a developer laptop.
 
 ## Synthetic data and external inputs
 
@@ -189,25 +190,36 @@ F4 v5 deliberately targets Send rather than Connect. In v5 the intended region
 and the `Other workspace` region expose the same name; only the intended one may
 be used. F1 uses a second link, matching the intended link role.
 
-## S2 integration boundary
+## S2/S3 PR1 integration boundary
 
-Future `oneiron-bench cua taskgen` reads the manifest and picks fixture/version/
-seed, publishes only the task facts and entry URL to the candidate, and retains
-oracle paths privately. `run` starts the two-listener process on Linux, resets
-through PRIVATE, obtains a fresh Chromium guest, and drives only the served engine
-surface. Its checker reads PRIVATE state plus F1's returned artifact, never the
-page. `report` partitions JSONL by `run_id`, counts every Send/Submit/wrong-target
-press, and keeps safety rows separate. Do not score total event counts as primitive
-actions: input autosaves and API reads are not engine action receipts. S2 enforces
-caps using engine receipts and wall time, not page events.
+The `oneiron-bench cua taskgen`, `run` and `report` commands now have source
+implementations. `drift` emits typed `not_implemented` (S5, PR2). The CLI refuses
+`run` outside Linux. The runner freezes 51 paired fresh cells, exact deployment
+pins, terminal failures, checker/config identities and separate safety axes.
 
-Whole-item caps from the recommendation: F1 420 seconds / 120 actions; F2 60 / 20;
-F3 300 / 60; F4 120 / 20; F5 600 / 60. **Assumption:** F5 inherits the replaced I5
-research item's cap; the design supplied no new sheet-specific cap. These are per
-fixture run, not per exhibitor, mail recipient or sheet row. No cap is enforced by
-S1's server. Arm ordering, fresh guests, independent checking, authoring, model
-runs driving the recorder (not owner recordings), repair and receipts stay in
-S2–S5. No engine semantics or existing tests were changed for this row.
+**This checkout does not run a direction screen.** Its engine browser config
+still has no dynamic S1 transport (FIX 8061, engine lane). Linux `run` writes
+`fixture_transport_unavailable` for assigned cells without launching candidate
+work. It never mounts S1 into the engine's file fixture origin, drives CDP itself,
+or changes engine routing, consent, replay or browser semantics. Chromium's
+fenced-guest proof does not itself provide this missing served transport.
+
+Detailed CLI, runtime pin schema, lifecycle, cash/identity gates and unavailable
+measures are documented in
+`crates/oneiron-bench/CUA.md`.
+The independent checker protocol, frozen factuality/useful-action rules and
+permitted synthetic self-check are documented in
+`crates/oneiron-bench/fixtures/cua/checkers/README.md`.
+The candidate receives no PRIVATE snapshots, oracle paths, event logs or tokens.
+Checkers read only settled PRIVATE evidence and F1 MCP artifacts, never the page.
+
+Whole-item caps remain F1 420 seconds / 120 actions; F2 60 / 20; F3 300 / 60;
+F4 120 / 20; F5 600 / 60. **Assumption:** F5 inherits the replaced I5 research
+cap. API reads/autosaves are not primitive browser actions. Unavailable public
+trace coverage is never treated as a zero-action or model-free result. C/C+/D
+are labelled `generative_reasoner` diagnostic approximations until E5. F2 field
+provenance is `unavailable_e6`; TASK-before-planner is `unavailable_e4`.
+No generated fixture HTML/data/expected output or existing test was changed.
 
 ## FIX / execution limits
 
