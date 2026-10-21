@@ -21278,7 +21278,17 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch, and the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/extraction/cited.rs",
+     "purpose": "The extraction step's citation check (FIX 7274): a TURN byte range that verification would refuse the whole…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -21569,8 +21579,18 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 39,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resources/pins.rs",
+     "purpose": "What reading an extraction candidate needs from its branch: the pinned sources, the prior heads and the…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -23896,9 +23916,10 @@
      "path": "src/dreamer_runner/types.rs",
      "purpose": "Dreamer runner request/outcome vocabulary and its pure impls",
      "surface": {
+      "const": 1,
       "crate-vis": 4,
       "enum": 13,
-      "fn": 19,
+      "fn": 20,
       "struct": 26
      }
     },
@@ -23911,7 +23932,7 @@
      "path": "src/dreamer_runner/wake_park.rs",
      "purpose": "The runner side of the normal Checkpoint resume (DOOR-144): the parks it reads, and the projection the…",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -24033,10 +24054,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_wake/driver/attribution.rs",
+     "purpose": "One structured line per admitted attempt the pass did not complete (FIX 7271): who it was, where it ended…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_wake/driver/concurrent.rs",
      "purpose": "Poll disjoint MACRO buckets together, with one wake snapshot and meter",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/driver/executor_error.rs",
+     "purpose": "The executor-error arm (H-S5/R2, ONE-1683; FIX 7272): what a non-deadline error settles and parks before it…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -24057,6 +24098,16 @@
      "purpose": "The wake observation's seams in the pass (DOOR-144): its header and end, the attempt generations it admits…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/driver/park_cause.rs",
+     "purpose": "What a non-deadline executor error parks as (FIX 7272)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -64073,10 +64124,20 @@
       "const": 2,
       "enum": 6,
       "fn": 22,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 13,
       "trait": 2,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_fetch/client.rs",
+     "purpose": "The readability rung's HTTP client as a host builds it (FIX 7123)",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -64105,7 +64166,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -67479,7 +67540,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 76,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67521,7 +67582,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 40,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68487,7 +68548,7 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)"
     },
     "web_fetch": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -68524,7 +68585,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4319,
+   "source_files": 4325,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81258,6 +81319,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/dreamer/run_log.rs",
+     "purpose": "The outcome line of an attempt the server's Dreamer executor ended without completing it (FIX 7271): who it…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/eval_authoring.rs",
      "purpose": "The Coach's eval authoring (ARCH-0053 \"Eval authoring\", OF-578): each night it keeps each seat's test set…",
      "surface": {
@@ -93664,7 +93735,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 66,
+     "files": 67,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94121,7 +94192,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1015,
+   "source_files": 1016,
    "test_files": 182
   },
   "oneiron-spawn": {

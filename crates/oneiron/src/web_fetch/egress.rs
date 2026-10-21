@@ -10,9 +10,12 @@
 //! asked for, each crawl page included, before any rung runs; it hands each
 //! rung the guard ([`Renderer::render_guarded`]) for the hops and addresses
 //! the rung reaches, and checks the navigation-final URL every rung hands
-//! back. The host's transport checks every address it connects to, a
-//! redirect's included, through [`HostedEgressGuard::refuses_any`], and fails
-//! that connection with [`HostedInfrastructureRefusal`]. Every one of these
+//! back. The host's transport (the client
+//! [`build_web_fetch_client`](super::build_web_fetch_client) builds) checks
+//! every address it connects to, a redirect's included, through
+//! [`HostedEgressGuard::refuses_any`], and fails that connection with
+//! [`HostedInfrastructureRefusal`]; a host browser checks each request it
+//! sends with [`HostedEgressGuard::check_request`]. Every one of these
 //! refusals ends the ladder typed ([`WebFetchError::HostedInfrastructure`]).
 
 use std::collections::BTreeSet;
@@ -91,6 +94,27 @@ impl HostedEgressGuard {
                     .get_or_insert_with(|| (self.node)().into_iter().map(unwrapped).collect())
                     .contains(&ip)
         })
+    }
+
+    /// Refuses one request a host is about to send to `resolved_ip`, the
+    /// address it connects to for `request_url`, when that address is hosted
+    /// infrastructure ([`Self::refuses`]). A managed
+    /// [`HeadlessRenderer`](super::HeadlessRenderer) adapter calls it before
+    /// its browser connects or sends each request, every redirect hop and
+    /// subresource included (FIX 7122). `request_url` only names the request
+    /// in the refusal, its credentials redacted.
+    ///
+    /// # Errors
+    /// Returns a [`RendererErrorKind::HostedInfrastructure`] error when
+    /// `resolved_ip` is refused; returned from the rung, it ends the ladder.
+    pub fn check_request(&self, request_url: &str, resolved_ip: IpAddr) -> RendererResult<()> {
+        if self.refuses(resolved_ip) {
+            return Err(RendererError::hosted_infrastructure(format!(
+                "the request for {} goes to the hosting infrastructure: {HostedInfrastructureRefusal}",
+                redact_url_credentials(request_url)
+            )));
+        }
+        Ok(())
     }
 
     /// Whether any address `url`'s host resolves to now is hosted
