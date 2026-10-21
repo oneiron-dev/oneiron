@@ -375,7 +375,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/git_lfs/handlers.rs` | src | m | 4 crate-vis | — | LFS batch, upload, download, and verify handlers |
 | `src/api/git_lfs/mod.rs` | src | s | 3 crate-vis | — | Git-LFS routes (ARCH-0068 Phase A, ONE-1909) |
 | `src/api/git_lfs/streaming.rs` | src | m | 7 crate-vis | — | Async HTTP bodies bridged to blocking vault IO with bounded backpressure |
-| `src/api/git_lfs/support.rs` | src | s | 13 crate-vis | — | LFS size, href, time, and JSON helpers |
+| `src/api/git_lfs/support.rs` | src | s | 17 crate-vis | — | LFS size, href, time, and JSON helpers |
 | `src/api/git_lfs/tests.rs` | test | XL | 2 crate-vis | — | LFS handler tests |
 | `src/api/git_lfs/wire.rs` | src | s | 10 crate-vis | — | Git-LFS wire DTOs and batch types |
 | `src/api/host_action.rs` | src | s | 4 crate-vis | — | Who a host credential acts as at a server door (FIX 2222 = A, slice B; owner ruling "A + support", 2026-10-18) |

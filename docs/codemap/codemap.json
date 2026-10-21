@@ -42953,7 +42953,7 @@
      "path": "src/origin/lfs/lift.rs",
      "purpose": "LFS objects the historical lift sweep reads again (OF-067, Engine ruling D = a)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -43071,7 +43071,7 @@
      "purpose": "Bounded streaming ingress: validate before publishing, then commit small chunk transactions",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -51841,6 +51841,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/file/lfs.rs",
+     "purpose": "An agent's sight of a lift-marked LFS object (FIX 2897; ARCH-0069: \"granted agent: real bytes with a reason…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -58513,19 +58523,22 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ChunkPage",
+      "ChunkPageCursor",
       "ChunkSyncRequest",
       "ChunkSyncResponse",
-      "LfsHold"
+      "LfsHold",
+      "ManifestPage"
      ],
      "path": "src/sync/chunks.rs",
      "purpose": "Authenticated manifest-scoped have/want exchange",
      "surface": {
-      "const": 3,
-      "crate-vis": 2,
+      "const": 4,
+      "crate-vis": 3,
       "enum": 2,
-      "fn": 11,
-      "re-export": 1,
-      "struct": 1
+      "fn": 16,
+      "re-export": 2,
+      "struct": 4
      }
     },
     {
@@ -58537,8 +58550,36 @@
      "path": "src/sync/chunks/download.rs",
      "purpose": "One bounded in-flight have/want transfer, driven by real socket replies",
      "surface": {
+      "crate-vis": 3,
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/chunks/page.rs",
+     "purpose": "One page of a chunk exchange (FIX 8860, 8183): a manifest's canonical bytes from an offset, or a WANT's…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChunkMark",
+      "ChunkRead",
+      "LfsReadAuthority"
+     ],
+     "path": "src/sync/chunks/read.rs",
+     "purpose": "Who reads a lift-marked LFS object's real bytes over a chunk exchange (FIX 2897; ARCH-0069: \"the owner gets…",
+     "surface": {
+      "enum": 2,
+      "fn": 4,
+      "struct": 1,
+      "type": 1
      }
     },
     {
@@ -58635,8 +58676,8 @@
      "path": "src/sync/client/lfs.rs",
      "purpose": "Object-scoped have/want state on the existing owner-authenticated sync client",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3
+      "crate-vis": 2,
+      "fn": 4
      }
     },
     {
@@ -71162,7 +71203,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 45,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71344,7 +71385,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 223,
+     "files": 225,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71542,7 +71583,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4564,
+   "source_files": 4567,
    "test_files": 902
   },
   "oneiron-android": {
@@ -88312,7 +88353,7 @@
      "path": "src/api/git_lfs/support.rs",
      "purpose": "LFS size, href, time, and JSON helpers",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 17
      }
     },
     {
