@@ -55,26 +55,18 @@ impl Vault {
             || critique.provenance.critic_ref != critic.to_hex()
             || critique.candidate_ref != id.to_hex()
             || critique.out_of_scope
-            || row.critiques.len() >= 64
             || !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &critic)?
         {
             return Err(invalid(
                 "critic is unbound, self-reviewing, or proposal is closed",
             ));
         }
-        if let Some(existing) = row.critiques.iter().find(|c| {
-            c.provenance.critic_ref == critique.provenance.critic_ref
-                && c.lens_id == critique.lens_id
-                && c.domain == critique.domain
-        }) {
-            return if existing == &critique {
-                Ok(row)
-            } else {
-                Err(invalid("critic vote is immutable"))
-            };
+        // Its own catalog's lens as before; else the vault policy's, read in
+        // this writer and bound to the catalog it judges (FIX 8268).
+        let policy = self.queue_review_policy_in_txn(&txn)?;
+        if !row.record_critique(critique, &policy)? {
+            return Ok(row);
         }
-        row.critiques.push(critique);
-        row.triage()?;
         store(self, &mut txn, &row)?;
         txn.commit()?;
         Ok(row)
