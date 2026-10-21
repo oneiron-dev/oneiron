@@ -134,9 +134,16 @@ impl Vault {
     /// root (the kit keeps only its seed), and its data key's custody
     /// subkey while the key is held. Neither is a reason to refuse: a pass
     /// with neither stays pending. `hosted`: the head goes to a hosted
-    /// member, which the pads of some worlds stay off (KS-5).
+    /// member, which the pads of some worlds stay off (KS-5); a lookup of
+    /// those worlds that faults is warned and leaves every pad in the head.
     pub(crate) fn custody_recipients(&self, hosted: bool) -> Result<CustodyRecipients> {
-        let pad_worlds_kept_local = self.pad_worlds_kept_local(hosted)?;
+        let pad_worlds_kept_local = self.pad_worlds_kept_local(hosted).unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a custody head's pad eligibility could not be read; every pad rides it"
+            );
+            Default::default()
+        });
         let data_key = self
             .unlock_vault_key()
             .and_then(|()| self.vault_subkey(CUSTODY_HEAD_WRAP_CONTEXT))

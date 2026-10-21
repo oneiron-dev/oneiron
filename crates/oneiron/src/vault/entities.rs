@@ -341,8 +341,9 @@ impl Vault {
     /// would turn one custody carrier into a wedged window. `get_raw_in` is
     /// unsealed for the same reason. Everything outside those passes uses the
     /// sealed public [`Vault::get_raw`]. A world key's pad row reads as the
-    /// carrier its live routes ship, its pad from current custody, and as
-    /// absent while its pad is not here (KS-5, `world_keys::pad_custody`).
+    /// carrier its live routes ship, its pad the row's own or else current
+    /// custody's, and as absent while neither is here (KS-5,
+    /// `world_keys::pad_custody`).
     /// Reads the mirror body and its source revision in one LMDB snapshot.
     #[cfg(feature = "sync")]
     pub(crate) fn get_raw_and_revision_unsealed(

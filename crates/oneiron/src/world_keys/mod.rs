@@ -71,9 +71,14 @@ pub use self::owner_work::{
     PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics, ReassertKey,
     ReassertKeyState, ReassertUnread, RelayObservation,
 };
-pub(crate) use self::pad_custody::{admit_pad_put_in_txn, image_pad_row, live_route_row};
+pub(crate) use self::pad_custody::{
+    admit_pad_put_in_txn, image_pad_row, live_route_row, pad_row_erased_in_txn,
+    stage_pad_row_erase_in_txn,
+};
 #[cfg(feature = "sync")]
-pub(crate) use self::pad_custody::{pad_echo_equal, pad_row_held_in_txn};
+pub(crate) use self::pad_custody::{
+    pad_echo_equal, pad_reference_waits_in_txn, pad_row_held_in_txn,
+};
 #[cfg(feature = "sync")]
 pub use self::pads::PromotedWorldPad;
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};

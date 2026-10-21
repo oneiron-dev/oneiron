@@ -13,12 +13,13 @@
 //! the world's windows (`PROMOTED_WORLD_PAD_SET`). A pad alone is noise, and
 //! so is an opened wrap without it.
 //!
-//! At rest the pad lives in exterior key custody (KS-5, FIX 346 and FIX
-//! 5686: `crate::store` world pad custody), and its row names it: every put
-//! of a pad row takes the pad into custody before the row commits, and the
-//! row stores a reference; each route the row leaves by carries the pad
-//! again, from custody (`pad_custody`). A store whose custody cannot take a
-//! pad keeps the row carrying it, as before.
+//! The pad is also published into exterior key custody (KS-5, FIX 346 and
+//! FIX 5686: `crate::store` world pad custody): every put of a pad row takes
+//! the pad into custody before the row commits, and the row rests as a
+//! reference to it with its own pad beside it. Every read takes the row's
+//! pad first and custody's second, and each route the row leaves by carries
+//! the pad (`pad_custody`). A store whose custody cannot take a pad keeps
+//! the row carrying it, as before.
 //!
 //! Erasing a world (a hard purge, a batch delete, or a peer's hard tombstone)
 //! purges every pad of the world on each replica that applies the erase, and
@@ -329,11 +330,18 @@ fn world_pad_rows_in_txn(
         if raw.len() == ENTITY_METADATA_HEADER_LEN {
             continue;
         }
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("world key pad header"))?;
-        let key = *decode_pad_body(&raw[ENTITY_METADATA_HEADER_LEN..])?.key();
+        let decoded = EntityMetadataHeader::parse(&raw).and_then(|header| {
+            let body = decode_pad_body(raw.get(ENTITY_METADATA_HEADER_LEN..)?).ok()?;
+            Some((*body.key(), header.learned_at))
+        });
+        // A row that does not decode names no world: skipped, warned by its
+        // id alone, never its bytes.
+        let Some((key, learned_at)) = decoded else {
+            tracing::warn!(row = %id.to_hex(), "a world key pad row that does not decode is skipped");
+            continue;
+        };
         if key.world == world {
-            out.push((id, key, header.learned_at));
+            out.push((id, key, learned_at));
         }
     }
     Ok(out)
@@ -457,8 +465,15 @@ pub(crate) fn held_pad_world_in_txn(
     if raw.len() == ENTITY_METADATA_HEADER_LEN {
         return Ok(false);
     }
-    let Some(world) = pad_body_world(raw).transpose()? else {
-        return Ok(false);
+    // A body that does not decode names no world: it reads unheld, warned
+    // with no byte of it, so the walk drops it.
+    let world = match pad_body_world(raw) {
+        None => return Ok(false),
+        Some(Ok(world)) => world,
+        Some(Err(_)) => {
+            tracing::warn!("a world key pad row that does not decode reads as unheld");
+            return Ok(false);
+        }
     };
     if world_keys_destroyed_fact_in_txn(store, txn, world)? {
         return Ok(false);
@@ -640,8 +655,9 @@ impl Vault {
     /// transaction: a fresh pad beside the key's first wraps, or a kit-restored
     /// one at the time its row was first learned (FIX 3790). The put door
     /// takes the pad into custody first, synced and journaled before the row
-    /// commits, and the row stores its reference (`pad_custody`); a custody
-    /// fault is warned and the row lands carrying its pad, as before.
+    /// commits, and the row stores its reference with the pad beside it
+    /// (`pad_custody`); a custody fault is warned and the row lands carrying
+    /// its pad, as before.
     pub(super) fn put_pad_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

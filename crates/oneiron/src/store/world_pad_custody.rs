@@ -7,8 +7,9 @@
 //! pad's 32 bytes its secret. Every put of a pad row publishes its pad here
 //! (KS-5, `world_keys::pad_custody`), the binding pinned in the same
 //! transaction, synced and its Mint journaled before the row commits; the
-//! row then rests as a reference to its entry. The pad sits in the custody
-//! head's host-readable compartment (CALLS WORLD_PAD_HEAD_SCOPE).
+//! row then rests as a reference to its entry with its own pad beside it,
+//! which every read takes first. The pad sits in the custody head's
+//! host-readable compartment (CALLS WORLD_PAD_HEAD_SCOPE).
 //!
 //! A world erase stages one erase intent for every pad of the world custody
 //! holds here, a row or none, in the purge's own transaction, and the
@@ -167,9 +168,10 @@ impl Store {
             .map(|custody| *custody.binding().namespace().as_bytes())
     }
 
-    /// Every pad of `world` custody holds here with its state, one no row
-    /// names included. None when no custody is bound.
-    fn world_pad_subjects(&self, world: &EntityId) -> Result<Vec<(CustodySubject, EntryState)>> {
+    /// Every pad custody holds here under `prefix` (a world's id, or one
+    /// key's full item) with its state, one no row names included. None when
+    /// no custody is bound.
+    fn world_pad_subjects(&self, prefix: &[u8]) -> Result<Vec<(CustodySubject, EntryState)>> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(Vec::new());
         };
@@ -177,7 +179,7 @@ impl Store {
             return Ok(Vec::new());
         }
         custody
-            .subjects_with_prefix(CustodyKind::WorldPad, world.as_bytes())?
+            .subjects_with_prefix(CustodyKind::WorldPad, prefix)?
             .into_iter()
             .map(|subject| {
                 let state = custody.state(&subject.at(0))?;
@@ -195,7 +197,7 @@ impl Store {
     /// Custody faults.
     pub(crate) fn world_pad_custody_held(&self, world: &EntityId) -> Result<bool> {
         Ok(self
-            .world_pad_subjects(world)?
+            .world_pad_subjects(world.as_bytes())?
             .iter()
             .any(|(_, state)| *state != EntryState::Retired))
     }
@@ -218,7 +220,7 @@ impl Store {
         if self.core.gate_custody_archived() {
             return Ok(());
         }
-        for (subject, state) in self.world_pad_subjects(world)? {
+        for (subject, state) in self.world_pad_subjects(world.as_bytes())? {
             if state == EntryState::Retired {
                 continue;
             }
@@ -232,11 +234,39 @@ impl Store {
         Ok(())
     }
 
+    /// [`Self::stage_world_pad_erase_in_txn`] for one key's pad alone,
+    /// `item`: a peer's hard tombstone of that key's pad row (KS-5). The
+    /// world's other pads stay.
+    ///
+    /// # Errors
+    ///
+    /// Custody and storage faults.
+    pub(crate) fn stage_world_pad_key_erase_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        item: &WorldPadItem,
+    ) -> Result<()> {
+        if self.core.gate_custody_archived() {
+            return Ok(());
+        }
+        for (subject, state) in self.world_pad_subjects(item)? {
+            if state != EntryState::Retired {
+                let intent = RetirementIntent {
+                    subject,
+                    through: 0,
+                    cause: RetireCause::Erase,
+                };
+                stage_retirement_in_txn(self, wtxn, &intent)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Carries out every staged world pad retirement, an interrupted
     /// process's included, in the custody finisher's order (marker, unlink,
     /// directory sync), then hands each to the custody journal. Only an
-    /// erase's intent runs, for a world whose keys were destroyed here;
-    /// anything else is refused by name.
+    /// erase's intent runs, for a world whose keys were destroyed here or a
+    /// pad row hard-erased here; anything else is refused by name.
     ///
     /// # Errors
     ///
@@ -262,7 +292,10 @@ fn world_pad_retirement_ready(
         ));
     }
     let world = item_world(intent.subject.item())?;
-    if !crate::world_keys::world_keys_destroyed_in_txn(store, txn, world)? {
+    // A world's erase, or a hard erase of the one pad row (KS-5).
+    if !crate::world_keys::world_keys_destroyed_in_txn(store, txn, world)?
+        && !crate::world_keys::pad_row_erased_in_txn(store, txn, intent.subject.item())?
+    {
         return Err(Error::CorruptedIndex(
             "retiring world key pads have no erase",
         ));

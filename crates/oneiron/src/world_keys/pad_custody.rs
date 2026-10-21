@@ -1,25 +1,31 @@
 //! A world key's pad at rest and on the move (KS-5, FIX 5686, part 1 of 2).
 //!
-//! A `WORLD_KEY_PAD` row's body takes one of two forms:
-//! - the reference, the row at rest: label ‖ world (16) ‖ generation (8,
-//!   big-endian) ‖ mint (16) ‖ custody namespace (16). It holds no pad: the
-//!   row's header keeps the time it was learned, and the key's custody entry
-//!   (kind `WorldPad`, item the key's full id, generation 0) holds the pad.
-//!   The namespace is the custody the pad was published into, unsigned; a
-//!   reader resolves the pad through this store's own custody.
-//! - the carrier, the form a pad row always had: label ‖ world ‖ generation
-//!   ‖ mint ‖ pad (32). It is how a pad travels its live routes (its
-//!   world's window of the month it was learned, a promotion's pad set, a
-//!   scoped door), and how it rests where custody cannot take it.
+//! A `WORLD_KEY_PAD` row's body takes one of three forms:
+//! - the carrier, the form a pad row always had: label ‖ world (16) ‖
+//!   generation (8, big-endian) ‖ mint (16) ‖ pad (32). It is how a pad
+//!   travels its live routes (its world's window of the month it was
+//!   learned, a promotion's pad set, a scoped door), and how it rests where
+//!   custody cannot take it.
+//! - the row at rest: the reference, label ‖ world ‖ generation ‖ mint ‖
+//!   custody namespace (16), with the row's own pad (32) beside it. The
+//!   key's custody entry (kind `WorldPad`, item the key's full id,
+//!   generation 0) holds the published copy; the namespace is the custody it
+//!   was published into, unsigned. The row's header keeps the time it was
+//!   learned.
+//! - the bare reference, the row at rest without its pad: the form FIX 5686
+//!   part 2's physical images take. No route of this part ships one.
 //!
-//! Every put of a pad row passes [`admit_pad_put_in_txn`]: a carrier's pad
-//! goes into current custody, synced and its Mint journaled, before the row
-//! commits, and the row then stores its reference; a store whose custody is
-//! closed (an archived vault) or faults keeps the carrier, as before. Every
-//! route a pad row leaves by takes its carrier back from current custody
-//! ([`live_route_row`], [`image_pad_row`]); a reference whose pad custody
-//! does not hold here does not travel a live route. Until PR 2 (FIX 5686
-//! part 2), a checkpoint image carries the carrier as it always did.
+//! Every put of a pad row passes [`admit_pad_put_in_txn`]: its pad goes into
+//! current custody, synced and its Mint journaled, before the row commits,
+//! and the row then rests as the reference with its pad beside it; a store
+//! whose custody is closed (an archived vault) or faults keeps the carrier,
+//! as before. Every read takes the row's own pad first and custody's second,
+//! so no read, route, restore or fork loses a pad to a custody entry that is
+//! missing, damaged or unreadable. Every route a pad row leaves by ships its
+//! carrier ([`live_route_row`], [`image_pad_row`]). A bare reference lands
+//! only with the pad custody here holds for it; else it waits, pending, for
+//! its carrier. Until PR 2, a checkpoint image carries the carrier as it
+//! always did.
 
 use std::collections::BTreeSet;
 
@@ -33,7 +39,7 @@ use crate::authority::SealedCopies;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::EntityStoreRead;
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_WORLD_KEY_PAD;
 use crate::store::{Store, WorldPadCustody};
 
@@ -44,21 +50,40 @@ const CARRIER_LEN: usize = CARRIER_LABEL.len() + 16 + 8 + 16 + 32;
 /// The reference form's label (CALLS: KS-5 pad reference form).
 const REFERENCE_LABEL: &[u8] = b"oneiron/world-key-pad-ref/v1\0";
 /// label ‖ world (16) ‖ generation (8, big-endian) ‖ mint (16) ‖ custody
-/// namespace (16).
+/// namespace (16): the bare reference.
 const REFERENCE_LEN: usize = REFERENCE_LABEL.len() + 16 + 8 + 16 + 16;
+/// The reference ‖ the row's own pad (32): the row at rest.
+const RESTING_LEN: usize = REFERENCE_LEN + 32;
 
 /// One pad row's body, decoded.
 pub(crate) enum PadBody {
     /// The pad itself, as it travels.
     Carrier(WorldKeyId, WorldKeyPad),
-    /// The key whose pad current custody holds.
-    Reference(WorldKeyId),
+    /// The key whose pad current custody holds, with the row's own pad
+    /// beside it at rest; `None` for a bare reference.
+    Reference(WorldKeyId, Option<WorldKeyPad>),
 }
 
 impl PadBody {
     pub(crate) fn key(&self) -> &WorldKeyId {
         match self {
-            Self::Carrier(key, _) | Self::Reference(key) => key,
+            Self::Carrier(key, _) | Self::Reference(key, _) => key,
+        }
+    }
+
+    /// The pad the body itself holds: a carrier's, or the one a reference
+    /// rests beside.
+    fn pad(&self) -> Option<&WorldKeyPad> {
+        match self {
+            Self::Carrier(_, pad) | Self::Reference(_, Some(pad)) => Some(pad),
+            Self::Reference(_, None) => None,
+        }
+    }
+
+    fn into_pad(self) -> Option<WorldKeyPad> {
+        match self {
+            Self::Carrier(_, pad) | Self::Reference(_, Some(pad)) => Some(pad),
+            Self::Reference(_, None) => None,
         }
     }
 }
@@ -78,73 +103,97 @@ pub(super) fn encode_carrier(key: &WorldKeyId, pad: &[u8; 32]) -> Vec<u8> {
     body
 }
 
-fn encode_reference(key: &WorldKeyId, namespace: &[u8; 16]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(REFERENCE_LEN);
+/// The row at rest: `key`'s reference into `namespace`, its `pad` beside it.
+fn encode_resting(key: &WorldKeyId, namespace: &[u8; 16], pad: &[u8; 32]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(RESTING_LEN);
     body.extend_from_slice(REFERENCE_LABEL);
     body.extend_from_slice(&pad_item(key));
     body.extend_from_slice(namespace);
+    body.extend_from_slice(pad);
     body
 }
 
-/// A pad row's body in either form; anything else is malformed.
+/// The key a full id names: world (16) ‖ generation (8, big-endian) ‖ mint
+/// (16).
+fn key_of_id(id: &[u8]) -> Option<WorldKeyId> {
+    Some(WorldKeyId {
+        world: EntityId::from_bytes(id.get(..16)?.try_into().ok()?).ok()?,
+        generation: u64::from_be_bytes(id.get(16..24)?.try_into().ok()?),
+        mint: id.get(24..40)?.try_into().ok()?,
+    })
+}
+
+/// A pad row's body in any of its forms; anything else is malformed.
 pub(crate) fn decode_pad_body(body: &[u8]) -> Result<PadBody> {
     let malformed = || Error::CorruptedIndex("world key pad body");
     let (rest, carrier) = if body.len() == CARRIER_LEN && body.starts_with(CARRIER_LABEL) {
         (&body[CARRIER_LABEL.len()..], true)
-    } else if body.len() == REFERENCE_LEN && body.starts_with(REFERENCE_LABEL) {
+    } else if matches!(body.len(), REFERENCE_LEN | RESTING_LEN) && body.starts_with(REFERENCE_LABEL)
+    {
         (&body[REFERENCE_LABEL.len()..], false)
     } else {
         return Err(malformed());
     };
-    let world = EntityId::from_bytes(rest[..16].try_into().map_err(|_| malformed())?)
-        .map_err(|_| malformed())?;
-    let generation = u64::from_be_bytes(rest[16..24].try_into().map_err(|_| malformed())?);
-    let mint: [u8; 16] = rest[24..40].try_into().map_err(|_| malformed())?;
-    let key = WorldKeyId {
-        world,
-        generation,
-        mint,
-    };
-    if !carrier {
-        return Ok(PadBody::Reference(key));
-    }
-    let mut pad = Zeroizing::new([0u8; 32]);
-    pad.copy_from_slice(&rest[40..72]);
-    Ok(PadBody::Carrier(key, WorldKeyPad::from_bytes(pad)))
+    let key = key_of_id(rest).ok_or_else(malformed)?;
+    // A carrier's pad follows its key; a reference at rest's, its namespace.
+    let pad = rest
+        .get(if carrier { 40 } else { 56 }..)
+        .filter(|raw| raw.len() == 32)
+        .map(|raw| {
+            let mut pad = Zeroizing::new([0u8; 32]);
+            pad.copy_from_slice(raw);
+            WorldKeyPad::from_bytes(pad)
+        });
+    Ok(match pad {
+        Some(pad) if carrier => PadBody::Carrier(key, pad),
+        pad => PadBody::Reference(key, pad),
+    })
 }
 
-/// The pad `body` resolves to here: a carrier's own, a reference's from
-/// current custody. Custody's is never read for a world whose keys were
-/// destroyed here: its retirement may still be finishing.
+/// The pad `body` resolves to here: its own first, a carrier's or the one a
+/// reference rests beside, and current custody's only for a bare reference.
+/// Custody's is never read for a world whose keys were destroyed here: its
+/// retirement may still be finishing.
 pub(super) fn pad_of_body_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     body: PadBody,
 ) -> Result<Option<WorldKeyPad>> {
-    match body {
-        PadBody::Carrier(_, pad) => Ok(Some(pad)),
-        PadBody::Reference(key) => {
-            if world_keys_destroyed_in_txn(store, txn, key.world)? {
-                return Ok(None);
-            }
-            Ok(store
-                .world_pad_in_custody(&pad_item(&key))?
-                .map(WorldKeyPad::from_bytes))
-        }
+    let key = *body.key();
+    if let Some(pad) = body.into_pad() {
+        return Ok(Some(pad));
     }
+    if world_keys_destroyed_in_txn(store, txn, key.world)? {
+        return Ok(None);
+    }
+    Ok(store
+        .world_pad_in_custody(&pad_item(&key))?
+        .map(WorldKeyPad::from_bytes))
 }
 
 fn changed() -> Error {
     refused("a world key's pad never changes")
 }
 
+/// The one refusal of a pad custody holds (Engine 10-21): custody read it,
+/// and it is another than the pad the row brings.
+fn custody_disagrees() -> Error {
+    refused("pad_custody_disagrees: key custody holds another pad for this world key")
+}
+
+/// A bare reference whose pad is not here: it waits for its carrier.
+fn pad_not_here() -> Error {
+    refused("the key's pad has not reached this machine")
+}
+
 /// The put door's admission of a pad row, on every path, local or
-/// replicated: the body is one pad in either form, the row id is the one
-/// its key derives, no pad lands for a world whose keys were destroyed, and
-/// a pad never changes, whether its row or custody holds it. A carrier's pad
-/// goes into current custody first ([`take_into_custody`]). Returns the body
-/// to store in place of `data`, when it is not `data`: a reference, or the
-/// carrier a reference may not replace.
+/// replicated: the body is one pad in any form, the row id is the one its
+/// key derives, no pad lands for a world whose keys were destroyed, and a
+/// pad never changes, whether its row or custody holds it. Its pad goes
+/// into current custody first ([`take_into_custody`]). A bare reference
+/// never takes the place of a row that holds its pad, and lands only with
+/// the pad custody here holds for it; else it is refused as not here yet.
+/// Returns the body to store in place of `data`.
 ///
 /// # Errors
 ///
@@ -173,83 +222,98 @@ pub(crate) fn admit_pad_put_in_txn(
             }
         }
     };
-    match body {
-        // A reference never takes the place of a carrier's pad.
-        PadBody::Reference(_) => Ok(match stored {
-            Some((PadBody::Carrier(..), held)) => Some(held),
-            _ => None,
-        }),
-        PadBody::Carrier(_, pad) => {
-            if let Some((PadBody::Carrier(_, held), _)) = &stored
-                && held.bytes() != pad.bytes()
-            {
-                return Err(changed());
-            }
-            take_into_custody(store, wtxn, &key, &pad)
-        }
+    let held = stored.as_ref().and_then(|(stored, _)| stored.pad());
+    let pad = match body.into_pad() {
+        Some(pad) => pad,
+        // A bare reference never takes the place of a held pad.
+        None if held.is_some() => return Ok(stored.as_ref().map(|(_, raw)| raw.clone())),
+        None => match store.world_pad_in_custody(&pad_item(&key)) {
+            Ok(Some(pad)) => WorldKeyPad::from_bytes(pad),
+            Ok(None) | Err(_) => return Err(pad_not_here()),
+        },
+    };
+    if held.is_some_and(|held| held.bytes() != pad.bytes()) {
+        return Err(changed());
     }
+    take_into_custody(store, wtxn, &key, &pad).map(Some)
 }
 
-/// Publishes `key`'s `pad` into current custody in `wtxn`'s writer, synced
-/// and its Mint journaled before the row commits, and returns the reference
-/// the row stores. A pad custody holds already must be the same; a retired
-/// entry is the world's erase. A closed custody (an archived vault) or a
-/// custody fault leaves the carrier, warned: the row carries its pad as
-/// before.
+/// Publishes `key`'s `pad` into current custody in `wtxn`'s writer, its
+/// binding pinned in the same transaction, synced and its Mint journaled
+/// before the row commits, and returns the body the row stores: the
+/// reference with the pad beside it. A pad custody holds already goes
+/// through the same door and, when custody reads it, must be the same; a
+/// retired entry is the world's erase. A closed custody (an archived vault)
+/// or a custody fault, an entry custody cannot read included, leaves the
+/// carrier, warned: the row carries its pad as before.
 fn take_into_custody(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     key: &WorldKeyId,
     pad: &WorldKeyPad,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<Vec<u8>> {
     let item = pad_item(key);
     let taken = match store.world_pad_custody_entry(&item) {
-        Ok(WorldPadCustody::Live(held)) if *held == *pad.bytes() => Ok(()),
-        Ok(WorldPadCustody::Live(_)) => return Err(changed()),
+        Ok(WorldPadCustody::Live(held)) if *held != *pad.bytes() => {
+            return Err(custody_disagrees());
+        }
         Ok(WorldPadCustody::Retired) => {
             return Err(refused("the world's keys were destroyed with the world"));
         }
-        Ok(WorldPadCustody::Closed) => return Ok(None),
-        Ok(WorldPadCustody::Missing) => store.publish_world_pad_in_txn(wtxn, &item, pad.bytes()),
+        Ok(WorldPadCustody::Closed) => return Ok(encode_carrier(key, pad.bytes())),
+        Ok(WorldPadCustody::Live(_) | WorldPadCustody::Missing) => {
+            store.publish_world_pad_in_txn(wtxn, &item, pad.bytes())
+        }
         Err(error) => Err(error),
     };
-    match taken {
-        Ok(()) => Ok(store
-            .world_pad_namespace()
-            .map(|namespace| encode_reference(key, &namespace))),
+    let namespace = match taken {
+        Ok(()) => store.world_pad_namespace(),
         Err(error) => {
             tracing::warn!(
                 kind = ?error.kind(),
                 "a world key's pad was not taken into key custody; its row carries it"
             );
-            Ok(None)
+            None
         }
-    }
+    };
+    Ok(match namespace {
+        Some(namespace) => encode_resting(key, &namespace, pad.bytes()),
+        None => encode_carrier(key, pad.bytes()),
+    })
 }
 
 /// What a route that ships the stored row `raw` ships.
 enum Shipment {
     /// Not a pad reference: the row as stored.
     AsStored,
-    /// A pad reference as its carrier, its pad from current custody.
+    /// A pad reference as its carrier: the row's own pad, or else current
+    /// custody's.
     Carrier(Vec<u8>),
-    /// A pad reference whose pad custody does not hold here.
+    /// A bare pad reference whose pad custody does not hold here.
     PadAbsent,
 }
 
+/// The body of `raw` past its header, when it is a pad row.
+fn pad_row_body(raw: &[u8]) -> Option<&[u8]> {
+    EntityMetadataHeader::parse(raw)
+        .filter(|header| header.entity_type == ENTITY_TYPE_WORLD_KEY_PAD)
+        .and_then(|_| raw.get(ENTITY_METADATA_HEADER_LEN..))
+}
+
 fn shipment(store: &Store, raw: &[u8]) -> Shipment {
-    let pad_row = EntityMetadataHeader::parse(raw)
-        .is_some_and(|header| header.entity_type == ENTITY_TYPE_WORLD_KEY_PAD);
-    let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..).filter(|_| pad_row) else {
+    let Some(Ok(PadBody::Reference(key, own))) = pad_row_body(raw).map(decode_pad_body) else {
         return Shipment::AsStored;
     };
-    let Ok(PadBody::Reference(key)) = decode_pad_body(body) else {
-        return Shipment::AsStored;
+    let pad = match own {
+        Some(pad) => Ok(Some(pad)),
+        None => store
+            .world_pad_in_custody(&pad_item(&key))
+            .map(|pad| pad.map(WorldKeyPad::from_bytes)),
     };
-    match store.world_pad_in_custody(&pad_item(&key)) {
+    match pad {
         Ok(Some(pad)) => {
             let mut row = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
-            row.extend_from_slice(&encode_carrier(&key, &pad));
+            row.extend_from_slice(&encode_carrier(&key, pad.bytes()));
             Shipment::Carrier(row)
         }
         Ok(None) => Shipment::PadAbsent,
@@ -265,7 +329,7 @@ fn shipment(store: &Store, raw: &[u8]) -> Shipment {
 
 /// The stored row `raw` as a live route ships it (the sync window passes'
 /// unsealed reads): a pad reference as its carrier, any other row as it is,
-/// and `None` for a reference whose pad custody does not hold here.
+/// and `None` for a bare reference whose pad custody does not hold here.
 pub(crate) fn live_route_row(store: &Store, raw: Vec<u8>) -> Option<Vec<u8>> {
     match shipment(store, &raw) {
         Shipment::AsStored => Some(raw),
@@ -284,8 +348,8 @@ pub(crate) fn image_pad_row(store: &Store, raw: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
-/// Whether a row is stored at `id` whose pad is here, or that is no pad
-/// reference: a promotion's pad row lands only where it is not.
+/// Whether a row is stored at `id` whose pad is here, or that is no bare
+/// pad reference: a promotion's pad row lands only where it is not.
 ///
 /// # Errors
 ///
@@ -298,36 +362,116 @@ pub(crate) fn pad_row_held_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId)
 }
 
 /// Whether the stored pad row `stored` already holds what `carried`, a pad
-/// row a live route brings, does: the same header and key, and a carrier's
-/// pad the one current custody holds for the stored reference. A stored
-/// carrier holds what any reference to its key names. A custody fault reads
-/// as not equal: the put door judges the row.
+/// row a live route brings, does: the same header and key, and the same
+/// pad, the stored row's own or else the one current custody holds for it.
+/// A held pad holds what any reference to its key names; a bare reference
+/// whose pad is not here holds nothing yet. A custody fault reads as not
+/// equal: the put door judges the row.
 #[cfg(feature = "sync")]
 pub(crate) fn pad_echo_equal(store: &Store, stored: &[u8], carried: &[u8]) -> bool {
-    if !EntityMetadataHeader::parse(stored)
-        .is_some_and(|header| header.entity_type == ENTITY_TYPE_WORLD_KEY_PAD)
-        || stored.get(..ENTITY_METADATA_HEADER_LEN) != carried.get(..ENTITY_METADATA_HEADER_LEN)
-    {
+    if stored.get(..ENTITY_METADATA_HEADER_LEN) != carried.get(..ENTITY_METADATA_HEADER_LEN) {
         return false;
     }
-    let (Ok(held), Ok(brought)) = (
-        decode_pad_body(&stored[ENTITY_METADATA_HEADER_LEN..]),
-        decode_pad_body(&carried[ENTITY_METADATA_HEADER_LEN..]),
+    let (Some(Ok(held)), Some(Ok(brought))) = (
+        pad_row_body(stored).map(decode_pad_body),
+        pad_row_body(carried).map(decode_pad_body),
     ) else {
         return false;
     };
-    if held.key() != brought.key() {
+    let key = *held.key();
+    if key != *brought.key() {
         return false;
     }
-    match (held, brought) {
-        (_, PadBody::Reference(_)) => true,
-        (PadBody::Reference(key), PadBody::Carrier(_, pad)) => matches!(
-            store.world_pad_in_custody(&pad_item(&key)),
-            Ok(Some(custody)) if *custody == *pad.bytes()
-        ),
-        (PadBody::Carrier(..), PadBody::Carrier(..)) => false,
+    let held = match held.into_pad() {
+        Some(pad) => pad,
+        None => match store.world_pad_in_custody(&pad_item(&key)) {
+            Ok(Some(pad)) => WorldKeyPad::from_bytes(pad),
+            Ok(None) | Err(_) => return false,
+        },
+    };
+    brought.pad().is_none_or(|pad| pad.bytes() == held.bytes())
+}
+
+/// The refusal a pad row `blob` a live route brings for `id` waits under,
+/// when it is a bare reference whose pad is not here: no row here holds it
+/// and current custody does not. It is no landed pad: it stays pending, its
+/// marker kept, until the carrier its live routes ship lands.
+///
+/// # Errors
+///
+/// Storage faults.
+#[cfg(feature = "sync")]
+pub(crate) fn pad_reference_waits_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    blob: &[u8],
+) -> Result<Option<Error>> {
+    let Some(Ok(PadBody::Reference(key, None))) = pad_row_body(blob).map(decode_pad_body) else {
+        return Ok(None);
+    };
+    if pad_row_held_in_txn(store, txn, id)?
+        || matches!(store.world_pad_in_custody(&pad_item(&key)), Ok(Some(_)))
+    {
+        return Ok(None);
+    }
+    Ok(Some(pad_not_here()))
+}
+
+/// Stages the retirement of the custody entry of the pad row `id`, when it
+/// is one here: a peer's hard tombstone of that row alone takes its key's
+/// pad out of custody too, carried out after the commit as a world erase's
+/// are, never another pad of the world. A row that does not decode is
+/// warned by its id and stages nothing.
+///
+/// # Errors
+///
+/// Custody and storage faults.
+pub(crate) fn stage_pad_row_erase_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(raw) = store.port_entity_raw(wtxn, id)?.map(Zeroizing::new) else {
+        return Ok(());
+    };
+    // A soft-erased pad keeps its header only.
+    let Some(body) = pad_row_body(&raw).filter(|body| !body.is_empty()) else {
+        return Ok(());
+    };
+    match decode_pad_body(body) {
+        Ok(body) => store.stage_world_pad_key_erase_in_txn(wtxn, &pad_item(body.key())),
+        Err(_) => {
+            tracing::warn!(
+                row = %id.to_hex(),
+                "a world key pad row that does not decode stages no custody retirement"
+            );
+            Ok(())
+        }
     }
 }
+
+/// Whether the pad row of the key a custody `item` (its full id) names was
+/// hard-erased here: the custody finisher's check for a retirement
+/// [`stage_pad_row_erase_in_txn`] staged.
+///
+/// # Errors
+///
+/// Storage faults.
+pub(crate) fn pad_row_erased_in_txn(store: &Store, txn: &RoTxn<'_>, item: &[u8]) -> Result<bool> {
+    let Some(key) = key_of_id(item) else {
+        return Ok(false);
+    };
+    store.port_deletion_marked(txn, DeletionMarker::HardDelete, &pad_row_id(&key)?)
+}
+
+/// Whether a custody head leaves out the pads [`head_carries`] keeps off
+/// where it goes (CALLS: KS-5 pad head eligibility). Off in this part: a
+/// publication pass seals one head for every member it reaches, so every
+/// pad rides every head, as the images carry them; per-member heads, and
+/// their reseal when a world's setting alone changes, come with FIX 5686
+/// part 2.
+const PAD_HEAD_ELIGIBILITY: bool = false;
 
 /// Whether a custody head carries the pads of a world whose sealed copies
 /// are `sealed` (CALLS: KS-5 pad head eligibility), `hosted` when the head
@@ -345,12 +489,16 @@ fn head_carries(sealed: SealedCopies, hosted: bool) -> bool {
 impl Vault {
     /// The worlds whose pads a custody head sealed now leaves out
     /// ([`head_carries`]), by their settings folded here; a world not folded
-    /// here rides with its head (unknown is not ineligible, FIX 4211).
+    /// here rides with its head (unknown is not ineligible, FIX 4211). None
+    /// while [`PAD_HEAD_ELIGIBILITY`] is off.
     ///
     /// # Errors
     ///
     /// Storage faults.
     pub(crate) fn pad_worlds_kept_local(&self, hosted: bool) -> Result<BTreeSet<[u8; 16]>> {
+        if !PAD_HEAD_ELIGIBILITY {
+            return Ok(BTreeSet::new());
+        }
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         Ok(fold
