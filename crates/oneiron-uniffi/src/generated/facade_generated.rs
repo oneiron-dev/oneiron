@@ -2191,6 +2191,16 @@ export_facade! {
     let output = client.vault_cleanup_run(&input)?;
     crate::codec::lift_record("vault.cleanup.run", &output)
 };
+"vault.archive.delete.preview" => fn vault_archive_delete_preview(&self, input: ArchiveDeletePreviewRequest) -> ArchiveDeletePreviewView = |client| {
+    let input: oneiron::memory::ArchiveDeletePreviewRequest = crate::codec::lower_record("vault.archive.delete.preview", input)?;
+    let output = client.vault_archive_delete_preview(&input)?;
+    crate::codec::lift_record("vault.archive.delete.preview", &output)
+};
+"vault.archive.delete.confirm" => fn vault_archive_delete_confirm(&self, input: ArchiveDeleteConfirmRequest) -> ArchiveDeleteBatchResult = |client| {
+    let input: oneiron::memory::ArchiveDeleteConfirmRequest = crate::codec::lower_record("vault.archive.delete.confirm", input)?;
+    let output = client.vault_archive_delete_confirm(&input)?;
+    crate::codec::lift_record("vault.archive.delete.confirm", &output)
+};
 "vault.usage.events.undecodable" => fn vault_usage_events_undecodable(&self) -> UndecodableUsageList = |client| {
     let input: oneiron::memory::usage_repair::UsageRepairListRequest = crate::codec::lower_empty("vault.usage.events.undecodable")?;
     let output = client.vault_usage_events_undecodable(&input)?;
@@ -5495,6 +5505,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::IdentityPairRequest = crate::codec::lower_record("vault.identity.proposals.for_pair", input)?;
     let output = client.vault_identity_proposals_for_pair(&input)?;
     crate::codec::lift_record("vault.identity.proposals.for_pair", &output)
+};
+"connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
+    let output = client.connector_answer(&input)?;
+    crate::codec::lift_record("connector.answer", &output)
 };
 "self.browser.open" => fn self_browser_open(&self, input: LiveRunRequestOpenInput) -> BrowserAnswerObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserOpenInput> = crate::codec::lower_record("self.browser.open", input)?;

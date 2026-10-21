@@ -63,7 +63,7 @@ pub use types::{
     AttemptQueueRetryReasonCount, AttemptRecord, AttemptResultRef, AttemptState, ClaimAttempt,
     ClaimOutcome, CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
     EnqueueOutcome, FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, ManifestEntry,
-    ManifestKind, RetryAttempt, RetryOutcome, SetAttemptResult,
+    ManifestKind, PlannedBinding, PlannedExactness, RetryAttempt, RetryOutcome, SetAttemptResult,
 };
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};

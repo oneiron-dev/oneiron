@@ -1,5 +1,5 @@
 //! Imported reliability history is inert data, not a local posterior or synced base.
-use super::{PREDICATE_SKILL_RELIABILITY, SKILL_RELIABILITY_MAX_CITED_RECEIPTS, codec::invalid};
+use super::{PREDICATE_SKILL_RELIABILITY, codec::invalid};
 use crate::{
     Vault,
     claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject},
@@ -33,9 +33,7 @@ pub(crate) fn imported_reliability_body(body: &ClaimBody) -> Result<ClaimBody> {
     let Some(Value::Array(refs)) = body.evidence.as_ref() else {
         return Err(invalid("reliability archive needs its citations"));
     };
-    if refs.len() > SKILL_RELIABILITY_MAX_CITED_RECEIPTS
-        || refs.iter().any(|r| r.as_str().is_none_or(str::is_empty))
-    {
+    if refs.iter().any(|r| r.as_str().is_none_or(str::is_empty)) {
         return Err(invalid("invalid reliability archive citations"));
     }
     let mut out = body.clone();

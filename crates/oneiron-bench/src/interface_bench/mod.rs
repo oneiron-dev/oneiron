@@ -3,6 +3,7 @@
 mod cli_and_pinned_config;
 mod config_types;
 mod eval_run;
+mod provider;
 mod reports_and_fixture_helpers;
 mod taskgen;
 #[cfg(test)]
