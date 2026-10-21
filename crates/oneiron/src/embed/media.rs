@@ -22,7 +22,7 @@ use super::space::{
     put_media_refusal_in_txn, put_media_vector_in_txn, text_hash,
 };
 use super::space_move::space_fill_kinds_in_txn;
-use super::{EgressDecision, EgressPredicate, EmbedderLocality};
+use super::{EgressDecision, EgressPredicate, EmbedderLocality, EmbeddingProvenance};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
@@ -62,6 +62,11 @@ pub struct MediaEmbeddingInput<'a> {
     pub source_rows: Option<&'a [EntityId]>,
 }
 
+/// One document's answer from a media model: its vector with the device and runtime that
+/// computed it, stored beside the vector outside the space identity (FIX 7796), or why the
+/// model refused that document by its content.
+pub type MediaOutcome = std::result::Result<(Vec<f32>, EmbeddingProvenance), String>;
+
 /// A host model that embeds image and audio documents, and on the one-space preset text
 /// documents, into one declared space.
 pub trait MediaEmbedder: Send + Sync {
@@ -74,15 +79,17 @@ pub trait MediaEmbedder: Send + Sync {
     fn locality(&self) -> EmbedderLocality;
     /// One vector per input, in input order.
     fn embed_media(&self, inputs: &[MediaEmbeddingInput<'_>]) -> Result<Vec<Vec<f32>>>;
-    /// One outcome per input, in input order: its vector, or why the model refused that
-    /// document by its content (a format it cannot read, a content filter), so the backfill
-    /// skips it until its bytes change. An error refuses the whole call. The default refuses
-    /// no single document.
-    fn embed_each(
-        &self,
-        inputs: &[MediaEmbeddingInput<'_>],
-    ) -> Result<Vec<std::result::Result<Vec<f32>, String>>> {
-        Ok(self.embed_media(inputs)?.into_iter().map(Ok).collect())
+    /// One outcome per input, in input order: its vector with the device and runtime its
+    /// answer names, or why the model refused that document by its content (a format it
+    /// cannot read, a content filter), so the backfill skips it until its bytes change. An
+    /// error refuses the whole call. The default refuses no single document and marks each
+    /// vector unknown; a model whose answers name their device overrides it.
+    fn embed_each(&self, inputs: &[MediaEmbeddingInput<'_>]) -> Result<Vec<MediaOutcome>> {
+        Ok(self
+            .embed_media(inputs)?
+            .into_iter()
+            .map(|vector| Ok((vector, EmbeddingProvenance::unknown())))
+            .collect())
     }
 
     /// [`Self::embed_each`] for a model at a third party: `release` judges the documents of
@@ -93,7 +100,7 @@ pub trait MediaEmbedder: Send + Sync {
         &self,
         inputs: &[MediaEmbeddingInput<'_>],
         release: &dyn Fn(&[EntityId]) -> Result<()>,
-    ) -> Result<Vec<std::result::Result<Vec<f32>, String>>> {
+    ) -> Result<Vec<MediaOutcome>> {
         let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
         release(&rows)?;
         self.embed_each(inputs)
@@ -307,8 +314,8 @@ impl Vault {
                 report.vanished += 1;
                 continue;
             }
-            let vector = match outcome {
-                Ok(vector) => vector,
+            let (vector, provenance) = match outcome {
+                Ok(answer) => answer,
                 Err(reason) => {
                     put_media_refusal_in_txn(
                         &self.store,
@@ -332,6 +339,7 @@ impl Vault {
                 item.kind,
                 item.text_hash,
                 &vector,
+                Some(&provenance),
             )?;
             clear_media_refusal_in_txn(&self.store, &mut wtxn, &space, &item.id)?;
             report.embedded += 1;
@@ -396,12 +404,13 @@ impl Vault {
     /// transaction. A model at a third party is sent each request only once the vault
     /// releases its documents, as `session`'s room reads them or base with none: none is one
     /// a device-local world keeps (DEC-0005). A refusal sends nothing more and fails the call.
+    /// Each vector keeps the mark of the answer that carried it (FIX 7796).
     pub(super) fn embed_documents(
         &self,
         embedder: &dyn MediaEmbedder,
         pending: &[PendingMedia],
         session: Option<&OffRecordSession<'_>>,
-    ) -> Result<Vec<std::result::Result<Vec<f32>, String>>> {
+    ) -> Result<Vec<MediaOutcome>> {
         let inputs: Vec<MediaEmbeddingInput<'_>> =
             pending.iter().map(PendingMedia::input).collect();
         let outcomes = if embedder.locality() == EmbedderLocality::ThirdParty {
@@ -425,7 +434,7 @@ impl Vault {
                 pending.len()
             )));
         }
-        for vector in outcomes.iter().flatten() {
+        for (vector, _) in outcomes.iter().flatten() {
             if let Some(error) = Error::invalid_vector_component(vector) {
                 return Err(error);
             }

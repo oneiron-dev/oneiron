@@ -1,6 +1,7 @@
 //! Account-local working views and immutable build results (ARCH-0050 / RC7).
 use crate::EntityId;
 use crate::code_view::VisibleFilePolicy;
+use crate::memory::codebase_doors::RepoFileProjectionView;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -59,6 +60,10 @@ pub struct CodeViewFileBytes {
     pub path: String,
     pub bytes: Vec<u8>,
     pub sha256: String,
+    /// How these bytes differ from the stored file a masked reader reads
+    /// them for (FIX 7608): absent for the stored bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection: Option<RepoFileProjectionView>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]

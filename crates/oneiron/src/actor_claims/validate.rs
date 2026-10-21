@@ -44,13 +44,15 @@ pub fn is_actor_claim_predicate(predicate: &str) -> bool {
 /// The one approved shape is the owner's verdict on a craft candidate, below,
 /// and a federated copy of it is refused.
 ///
-/// The source pin mirrors `actor.confidence_prior`'s trust boundary exactly.
+/// The source pin mirrors `actor.confidence_prior`'s trust boundary.
 /// Same-owner multi-device sync preserves `src`, so a user's own rows replicate
 /// and materialize; the cross-vault federation door restamps foreign claims
 /// `src → Imported`. Imported rows can exist only as inert Proposed/Rejected
 /// data with an Imported evidence floor. Routing and projector head reads still
-/// require Observed/Auto (the writer's own head read also takes the owner's
-/// Approved craft verdict); a peer's opinion never becomes local learned truth.
+/// require a native source and Auto (the writer's own head read also takes the
+/// owner's Approved craft verdict); a peer's opinion never becomes local
+/// learned truth. A native source is the honest one ([`native_actor_source`]):
+/// Observed for a receipt-measured row, Generated for model-written prose.
 /// The one native Proposed shape is a resident's dreaming candidate, which no
 /// head read takes as truth either, and the one native Approved or Rejected
 /// shape is the owner's verdict on one ([`super::candidate`]).
@@ -69,8 +71,7 @@ pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
     if !archived
         && !is_resident_craft_candidate(body)
         && !is_resident_craft_verdict(body)
-        && (body.approval != ClaimApprovalStatus::Auto
-            || body.source != Some(ClaimSource::Observed))
+        && (body.approval != ClaimApprovalStatus::Auto || !native_actor_source(body.source))
     {
         return Err(invalid(
             "actor.* needs a native observation or inert imported proposal",
@@ -143,6 +144,13 @@ pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
         ));
     }
     Ok(())
+}
+/// Whether `source` is a `src` this ledger writes itself (FIX 8641): Observed
+/// on a row the engine measured from receipts it holds, Generated on
+/// model-written prose (a distilled note, a dreaming candidate and the owner's
+/// verdict on one). Imported is a peer's word and never one of them.
+pub(super) const fn native_actor_source(source: Option<ClaimSource>) -> bool {
+    matches!(source, Some(ClaimSource::Observed | ClaimSource::Generated))
 }
 /// Whether a row's scope is EXACTLY the writer's keys: the lineage meet, plus
 /// `pair_key` on a pair-scoped row, each once.
