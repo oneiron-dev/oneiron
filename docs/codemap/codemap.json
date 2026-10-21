@@ -23473,7 +23473,7 @@
       "crate-vis": 6,
       "enum": 6,
       "fn": 12,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 7
      }
     },
@@ -23571,6 +23571,19 @@
      "purpose": "`duplicate_work` on action digests (agent-mind §3.4, OF-568): two attempts ran the same action on the same…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HealthCauseSource"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/environment.rs",
+     "purpose": "What the attribution judge settled on a finding's exact attempt (OF-568 L10, agent-mind §3.5: \"An…",
+     "surface": {
+      "crate-vis": 6,
+      "struct": 1
      }
     },
     {
@@ -53207,6 +53220,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttributionCauseRecord"
+     ],
+     "path": "src/skill_attribution/causes.rs",
+     "purpose": "The labels the attribution judge settled on each attempt's terminal outcome, kept whatever their subject…",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -53271,7 +53297,7 @@
      "path": "src/skill_attribution/judge_supersession.rs",
      "purpose": "Judge-revision provenance for routed receipts, and non-destructive displacement",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -53298,8 +53324,8 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 10,
-      "re-export": 14
+      "crate-vis": 11,
+      "re-export": 15
      }
     },
     {
@@ -53332,7 +53358,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_attribution/projector.rs",
@@ -69572,7 +69598,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 120,
+     "files": 121,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70307,7 +70333,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -70589,7 +70615,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4489,
+   "source_files": 4491,
    "test_files": 902
   },
   "oneiron-android": {
@@ -98515,6 +98541,7 @@
       "HandoverInput",
       "HandoverOutput",
       "HealthBriefPin",
+      "HealthCauseSource",
       "HealthReviewReceipt",
       "HeapDropReport",
       "HeldAttempt",
@@ -100885,7 +100912,7 @@
      "purpose": "—",
      "surface": {
       "enum": 940,
-      "struct": 2949
+      "struct": 2950
      }
     },
     {
