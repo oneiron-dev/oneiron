@@ -34,8 +34,8 @@ use rmpv::Value;
 
 use crate::authority::{
     ActAuthority, ActBy, ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey,
-    ExternalActStanding, GrantStanding, OwnerAct, OwnerActKind, grant_standing_in_txn,
-    owner_act_signer_admits,
+    ExternalActStanding, FrontierSigner, GrantStanding, OwnerAct, OwnerActKind,
+    grant_standing_in_txn, owner_act_signer_admits,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
@@ -355,10 +355,12 @@ fn seal_refused(reason: &'static str) -> Error {
 /// takes [`OWNER_DECISION_WITHOUT_CARRIER`]); the owner revalidates as a live
 /// owner of this vault, or the agent's Grant still names `topology_seal`. A
 /// decision captures its causal point from the same snapshot, before any
-/// effect: the main-log heads and the carrier's standing rows.
+/// effect: the main-log heads and the carrier's standing rows. Heads wider
+/// than one point signs beside those rows are first joined in `txn` under
+/// the carrier's install key (FIX 7908), and the point names the join tips.
 pub(super) fn resolve_seal_in_txn(
     vault: &Vault,
-    txn: &heed::RoTxn<'_>,
+    txn: &mut heed::RwTxn<'_>,
     seal: &TopologySeal,
     ruled: Option<EntityId>,
 ) -> Result<ResolvedSeal> {
@@ -406,6 +408,16 @@ pub(super) fn resolve_seal_in_txn(
                 (false, ..) => return Err(seal_refused(NO_CARRIER)),
             }
             heads = crate::authority::act_heads(&fold, carrier);
+            if heads.len() > crate::authority::MAX_PARENTS {
+                let standing = crate::authority::standing_rows(&fold, carrier).len();
+                let room = crate::authority::MAX_PARENTS.saturating_sub(standing);
+                let signer = FrontierSigner::Install(carrier, &key);
+                if let Some(joined) =
+                    vault.prepare_authority_frontier_in_txn(txn, &fold, signer, room)?
+                {
+                    heads = crate::authority::act_heads(&joined, carrier);
+                }
+            }
             if heads.len() > crate::authority::MAX_PARENTS {
                 return Err(seal_refused(HEADS_BOUND));
             }

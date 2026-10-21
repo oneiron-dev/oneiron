@@ -14,6 +14,11 @@
 //! [`AgentHealthCounter::OtherSessionActive`] and in its `silence`, and never
 //! hides the silence.
 //!
+//! When this vault runs the attempt, its runtime witness joins them
+//! (`code_run::activity`): an open tool call or model call means it is not
+//! quiet, and its last streamed frame and last finished call join the clock.
+//! The witness is in memory only; with none, the evidence above decides.
+//!
 //! A read that fails for one attempt (its capsules, its park row, its
 //! blocked reports) makes no claim for that attempt, with a warning, and the
 //! pass goes on with the others: a failed read is never quiet.
@@ -26,6 +31,7 @@ use super::{
     task_of,
 };
 use crate::attempt_queue::{AttemptId, AttemptState};
+use crate::code_run::activity::AttemptActivity;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::receipt::CallAttemptRef;
 use crate::self_heal::AgentHealthSignal;
@@ -48,6 +54,13 @@ pub struct HealthSilenceActivity {
     /// the dial. It cannot be attributed, so it counts for every leased
     /// attempt of the actor.
     pub actor_only_at: Option<u64>,
+    /// The runtime's last streamed output frame for this lease, in Unix
+    /// seconds, while this vault runs it. In memory only: a restart, or the
+    /// end of its last run's binding, drops it.
+    pub stream_at: Option<u64>,
+    /// The runtime's last finished tool call for this lease (answered,
+    /// refused or failed), in Unix seconds; in memory only, as `stream_at`.
+    pub tool_finished_at: Option<u64>,
     /// Its actor's newest call that names another attempt, or another
     /// generation of this one: counter-evidence only.
     pub other_session: Option<HealthOtherSession>,
@@ -157,6 +170,21 @@ pub(super) fn silent_findings(
             }
         };
         let active = heard.max(stepped.unwrap_or(0));
+        if now.saturating_sub(active) < dials.silent_secs {
+            continue;
+        }
+        // The runtime's witness of this lease, when this vault runs it: an
+        // open tool or model call is not quiet, and its last frame and
+        // finished call join the clock. With none, the reads above decide.
+        let runtime = vault.attempt_activity.snapshot(record.id, generation);
+        if runtime.is_some_and(AttemptActivity::running) {
+            continue;
+        }
+        let stream_at = runtime.and_then(|seen| seen.last_stream_at);
+        let tool_finished_at = runtime.and_then(|seen| seen.last_call_finished_at);
+        let active = active
+            .max(stream_at.unwrap_or(0))
+            .max(tool_finished_at.unwrap_or(0));
         let quiet = now.saturating_sub(active);
         if quiet < dials.silent_secs {
             continue;
@@ -205,6 +233,8 @@ pub(super) fn silent_findings(
                 own_call_at: called.own,
                 own_step_at: stepped,
                 actor_only_at: called.actor_only,
+                stream_at,
+                tool_finished_at,
                 other_session,
             }),
         });
