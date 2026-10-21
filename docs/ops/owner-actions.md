@@ -1158,6 +1158,16 @@ vault's owner on this install, once the configured auth secret (`auth_secret` or
 would. With no auth secret configured, init says the setting stays off and how to turn it on
 later. A rerun over an existing vault never asks.
 
+A shared vault asks its admin once, at setup. Sharing a vault keeps one question for it, and
+creating the vault never waits on the answer. `GET /v1/owner/conversation-learning/setup` (admins
+only) returns it as `pending` with its `question_ref`, as `answered` (with the counted choice that
+answered it), or as `unshared`, always with the setting's current `seen`. Reading it never uses it
+up. `PUT` on the same path with `{"question_ref": "…", "on": true|false, "seen": "<revision>"}`
+answers it: a yes turns training on with no opt-outs, and a no writes it off. The same answer again
+returns the stored one. A choice the admin already made with `PUT /v1/owner/conversation-learning`
+counts as the answer, so nobody is asked twice; a different answer to an answered question is
+refused (409) and points at that door, which stays the way to change it later.
+
 While it is on, everything in the vault counts: every live conversation, offered once, with the
 turns of people, agents and guests alike. A turn counts when its writer is a live actor of this
 vault; imports, system and tool rows, attachments, results, any metadata and deleted rows never
