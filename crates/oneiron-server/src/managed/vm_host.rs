@@ -34,8 +34,8 @@
 //! Every reap of a VMM reads its exit through the watch first, a dropped
 //! driver's on a thread of its own (FIX 7126, [`reaper`]), and each spawn
 //! first drops what an earlier, reaped generation left queued on the boot
-//! port's, the restore channel's and the custody anchor exchange's sockets
-//! (FIX 7077, FIX 7480, [`backlog`]).
+//! port's, the restore channel's and the custody anchor's two sockets (FIX
+//! 7077, FIX 7480, FIX 7182, [`backlog`]).
 
 mod anchor;
 mod backlog;
@@ -647,8 +647,12 @@ impl VaultVm {
         for file in [&mem_tmp, &snap_tmp] {
             std::fs::File::open(file)?.sync_all()?;
         }
-        // The state file last: its presence is what publishes the snapshot.
+        // Beside the RAM, the anchor URL its guest was handed (FIX 7183).
+        self.keep_snapshot_anchor()?;
         std::fs::rename(&mem_tmp, self.path("vm.mem"))?;
+        // The state file last, once the files beside it are durable: its
+        // presence is what publishes the snapshot.
+        std::fs::File::open(&self.config.state_dir)?.sync_all()?;
         std::fs::rename(&snap_tmp, self.path("vm.snap"))?;
         std::fs::File::open(&self.config.state_dir)?.sync_all()?;
         self.kill().await;
@@ -661,6 +665,7 @@ impl VaultVm {
         let (snap, mem) = (self.path("vm.snap.taken"), self.path("vm.mem.taken"));
         std::fs::rename(self.path("vm.snap"), &snap)?;
         std::fs::rename(self.path("vm.mem"), &mem)?;
+        let anchor = self.take_snapshot_anchor()?;
         self.spawn_vmm().await?;
         let loaded = self
             .api(
@@ -675,8 +680,9 @@ impl VaultVm {
             .await;
         let _ = std::fs::remove_file(&snap);
         loaded?;
-        // The guest's anchor is the one its cold boot was handed.
-        self.serve_anchor_proxy();
+        // The guest's anchor is the one its cold boot was handed, kept with
+        // its snapshot whatever was attached since (FIX 7183).
+        self.resume_anchor_proxy(anchor);
         self.accept_join(timeout).await?;
         self.send(&VmHostFrame::Resumed).await?;
         // The memory file backs guest RAM until the VMM exits; unlinking it

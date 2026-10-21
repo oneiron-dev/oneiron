@@ -13,6 +13,7 @@ use std::fmt;
 use std::io::Read as _;
 use std::os::fd::{FromRawFd as _, RawFd};
 use std::os::unix::fs::FileTypeExt as _;
+#[cfg(target_os = "linux")]
 use std::path::Path;
 use std::sync::Arc;
 
@@ -143,6 +144,7 @@ impl CustodyAnchorCredentials {
     /// The credential a vault VM's engine was handed, routed through
     /// `socket`, its bootstrap's socket that reaches `url` and nothing else
     /// (FIX 6517): the door's client takes it for exactly that URL.
+    #[cfg(target_os = "linux")]
     pub(crate) fn routed(mut self, url: &str, socket: &Path) -> Self {
         self.route = Some(AnchorRoute::new(url, socket));
         self

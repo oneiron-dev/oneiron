@@ -118,6 +118,7 @@ fi
 # The engine has drained and flushed, and oneiron-vm-init removed the
 # vault's key. Ending PID 1 ends the VM.
 sync
+umount /restore 2>/dev/null || true
 umount /config 2>/dev/null || true
 umount /vault || true
 reboot -f

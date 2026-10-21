@@ -79,6 +79,7 @@ impl fmt::Debug for VmAnchorHandoff {
 impl VmAnchorHandoff {
     /// The URL the host bound, exactly as configured, and the bootstrap's
     /// socket that reaches it.
+    #[cfg(target_os = "linux")]
     pub(crate) fn route(&self) -> Option<(&str, &Path)> {
         self.route
             .as_ref()
