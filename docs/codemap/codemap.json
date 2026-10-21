@@ -551,7 +551,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 7,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -13839,6 +13839,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/dispatcher/routed_entry.rs",
+     "purpose": "What a host reads and binds on a run's own route as it enters the run (FIX 2594, FIX 7507): the seat its…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/dispatcher/session_verbs.rs",
      "purpose": "The reads a run bound to an off-record session serves through the room's view (WILL L11-01, S01-1)",
      "surface": {
@@ -14500,6 +14510,16 @@
      "surface": {
       "crate-vis": 21,
       "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/model_seat.rs",
+     "purpose": "A run's model-seat pin on the route its run captured (FIX 2594): the read and the write the seat birth makes…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -36023,7 +36043,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "TaskSeatReceipt"
@@ -36031,7 +36051,7 @@
      "path": "src/llm/seat/run.rs",
      "purpose": "A run's immutable seat pin: born once per run, loaded again on resume",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 1
      }
@@ -68497,7 +68517,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 128,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69780,7 +69800,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4422,
+   "source_files": 4424,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92010,7 +92030,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 7,
       "struct": 3,
@@ -92019,7 +92039,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/mcp/exec_host/off_record_run.rs",
