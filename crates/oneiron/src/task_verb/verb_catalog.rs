@@ -442,6 +442,8 @@ pub enum AgentVerb {
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultRootsRequestsCancel,
     VaultCleanupRun,
+    VaultArchiveDeletePreview,
+    VaultArchiveDeleteConfirm,
     VaultUsageEventsUndecodable,
     VaultUsageEventsRemoveUndecodable,
     VaultEntitiesMention,
@@ -1600,6 +1602,8 @@ impl AgentVerb {
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultRootsRequestsCancel,
         Self::VaultCleanupRun,
+        Self::VaultArchiveDeletePreview,
+        Self::VaultArchiveDeleteConfirm,
         Self::VaultUsageEventsUndecodable,
         Self::VaultUsageEventsRemoveUndecodable,
         Self::VaultEntitiesMention,
@@ -2773,6 +2777,8 @@ impl AgentVerb {
             }
             Self::VaultRootsRequestsCancel => "vault.roots.requests.cancel",
             Self::VaultCleanupRun => "vault.cleanup.run",
+            Self::VaultArchiveDeletePreview => "vault.archive.delete.preview",
+            Self::VaultArchiveDeleteConfirm => "vault.archive.delete.confirm",
             Self::VaultUsageEventsUndecodable => "vault.usage.events.undecodable",
             Self::VaultUsageEventsRemoveUndecodable => "vault.usage.events.remove_undecodable",
             Self::VaultEntitiesMention => "vault.entities.mention",
@@ -3949,6 +3955,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultArchiveDeletePreview
+                | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
@@ -5133,6 +5141,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultArchiveDeletePreview
+                | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
@@ -6445,6 +6455,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultArchiveDeletePreview
+                | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
@@ -7369,6 +7381,7 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
@@ -8268,6 +8281,8 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultRootsRequestsCancel => &["spec"],
             Self::VaultCleanupRun => &["spec"],
+            Self::VaultArchiveDeletePreview => &["spec"],
+            Self::VaultArchiveDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
             Self::VaultUsageEventsRemoveUndecodable => &["spec"],
             Self::VaultEntitiesMention => &["spec"],
@@ -9427,6 +9442,8 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultRootsRequestsCancel => &["spec"],
             Self::VaultCleanupRun => &["spec"],
+            Self::VaultArchiveDeletePreview => &["spec"],
+            Self::VaultArchiveDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
             Self::VaultUsageEventsRemoveUndecodable => &["spec"],
             Self::VaultEntitiesMention => &["spec"],
@@ -11440,6 +11457,12 @@ impl AgentVerb {
             }
             Self::VaultCleanupRun => {
                 "The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."
+            }
+            Self::VaultArchiveDeletePreview => {
+                "Previews explicit archived records under the caller's delete authority."
+            }
+            Self::VaultArchiveDeleteConfirm => {
+                "Deletes explicit archived records under the caller's current delete authority and returns each receipt."
             }
             Self::VaultUsageEventsUndecodable => {
                 "Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb."
