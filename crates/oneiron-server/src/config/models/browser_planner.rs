@@ -10,10 +10,11 @@
 //!
 //! In code mode (`ai_host/browser_planner.rs`) a batch or library run that
 //! ends `NEEDS_AGENT` makes its subgoal active and sends that subgoal's
-//! next step here. From its [`NEEDS_AGENT_BEFORE_CHAT`]th miss, or while no
-//! rung serves the role, the step takes `generative_reasoner`, which keeps
-//! the subgoal until it ends. That is an escalation, never a refusal: no
-//! count refuses or caps a run, and both roles spend on the run's own meter.
+//! next step here. From its [`NEEDS_AGENT_BEFORE_CHAT`]th miss, at once on a
+//! `no_progress` stop, or while no rung serves the role, the step takes
+//! `generative_reasoner`, which keeps the subgoal until it ends. That is an
+//! escalation, never a refusal: no count refuses or caps a run, and both
+//! roles spend on the run's own meter.
 use oneiron::llm::manifest::ModelRole;
 
 /// The browser planner's role.
