@@ -6,15 +6,16 @@
 //! same protocol).
 //!
 //! Versioning: crate SemVer and wire compatibility are separate things. The
-//! wire is governed by [`CONTRACT_VERSION`]; any incompatible wire change
-//! (new required field, new enum variant a peer must understand) bumps it.
-//! An additive extension rides the current version with a build floor
-//! instead: a new ctl request a vault built before it answers as unknown, or
-//! an optional `Ping` field such a vault sends none of, read as unknown and
-//! never as support. A new argv flag goes only to an installed engine at or
-//! after its floor, since an older one refuses a flag it does not parse.
-//! Consumers pin this crate at an exact revision and run cross-repo
-//! conformance before moving the pin.
+//! wire is governed by [`CONTRACT_VERSION`], which stays 3: each change
+//! rides it with a build floor at the engine revision it merged in, named in
+//! [`CONTRACT_VERSION`]'s docs. A new field is required, with no default and
+//! no reader of a record without it kept, so a supervisor reads it only with
+//! installed engines at or after its floor. A new ctl request a vault built
+//! before it answers as unknown, and an older optional `Ping` field such a
+//! vault sends none of reads as unknown, never as support. A new argv flag
+//! goes only to an installed engine at or after its floor, since an older one
+//! refuses a flag it does not parse. Consumers pin this crate at an exact
+//! revision and run cross-repo conformance before moving the pin.
 
 pub mod artifact_origin;
 /// The backup handoff: a label's retention pin and the supervisor's
