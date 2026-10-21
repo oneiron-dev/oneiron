@@ -530,9 +530,10 @@ pub(crate) fn plan_archived_credentials(
 
 /// The credentials whose value and carrier keys a custody head may carry
 /// (CALLS `KS-6 entry eligibility`, CUSTODY_ENTRY_RECOVERY): each record
-/// custody-portable, not "this device only" and not revoked. A device-bound,
-/// cross-vault (K30) or device-only (K29) one stays local. Read without
-/// custody.
+/// custody-portable, not "this device only" and active. A suspended or
+/// revoked one, and a device-bound, cross-vault (K30) or device-only (K29)
+/// one, stays local. Read without custody; the caller keeps every
+/// credential local when this faults.
 pub(crate) fn credentials_eligible_for_heads(vault: &Vault) -> Result<BTreeSet<[u8; 16]>> {
     match CUSTODY_ENTRY_RECOVERY {
         CustodyEntryRecovery::LocalOnlyUnlessCurrentlyPermittedPortable => {}
@@ -547,7 +548,7 @@ pub(crate) fn credentials_eligible_for_heads(vault: &Vault) -> Result<BTreeSet<[
         if let Some(record) = read_secret_custody_meta_in_txn(&vault.store, &txn, &id)?
             && record.class == CustodyClass::CustodyPortable
             && !record.device_only
-            && record.status != SecretCustodyStatus::Revoked
+            && record.status == SecretCustodyStatus::Active
         {
             eligible.insert(*id.as_bytes());
         }
@@ -558,10 +559,12 @@ pub(crate) fn credentials_eligible_for_heads(vault: &Vault) -> Result<BTreeSet<[
 /// Which custody entries a head may carry (CALLS `KS-6 entry eligibility`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CustodyEntryRecovery {
-    /// A portable credential's keys ride the head's owner-only compartment,
-    /// wrapped to the recovery root alone; every other credential's stay in
-    /// this machine's custody: a same-install restore takes them, a new
-    /// host re-enters them or imports the owner's archive.
+    /// An active portable credential's keys ride the head's owner-only
+    /// compartment, wrapped to the recovery root alone; every other
+    /// credential's (suspended, revoked, device-bound, device-only,
+    /// cross-vault) stay in this machine's custody: a same-install restore
+    /// takes them, a new host re-enters them or imports the owner's
+    /// archive.
     LocalOnlyUnlessCurrentlyPermittedPortable,
 }
 
