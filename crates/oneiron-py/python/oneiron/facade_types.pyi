@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1125 facade rows, 3877 declarations.
-Inputs: 1060 of 1125 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1012 of 1125 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1127 facade rows, 3884 declarations.
+Inputs: 1062 of 1127 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1014 of 1127 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -10586,10 +10586,30 @@ class CodeForkView(TypedDict):
     revision_refs: list[EntityId]
     task_refs: list[EntityId]
     ingress: NotRequired[CodeIngressRef | None]
-class CodePushIngressGetRequest(TypedDict):
-    repo: EntityId
-    provenance: EntityId
-    ref_name: str
+class ExternalImportSource(TypedDict):
+    host: str
+    repository: str
+    source_ref: str
+    pull_request: NotRequired[int | None]
+    base_commit: str
+    head_commit: str
+class ExternalImportDoorCheckoutBody(TypedDict):
+    checkout: str
+    epoch: int
+class ExternalImportDoorCheckout(TypedDict):
+    checkout: ExternalImportDoorCheckoutBody
+ExternalImportDoor = Literal["raw"] | ExternalImportDoorCheckout
+class ExternalImportRequest(TypedDict):
+    repo: str
+    code_repo: EntityId
+    base_revision: EntityId
+    imported_ref: NotRequired[str | None]
+    source: ExternalImportSource
+    source_binding: NotRequired[str | None]
+    door: ExternalImportDoor
+ExternalImportReceipt = TypedDict("ExternalImportReceipt", {"import": EntityId, "repo": str, "code_repo": EntityId, "source": ExternalImportSource, "imported_ref": str, "base_revision": EntityId, "importer": NotRequired[EntityId | None], "seed_publication": NotRequired[EntityId | None], "receive_provenance": NotRequired[EntityId | None], "publication": NotRequired[EntityId | None]})
+ExternalImportLookup = TypedDict("ExternalImportLookup", {"repo": str, "code_repo": EntityId, "import": EntityId, "door": ExternalImportDoor})
+ExternalImportPhase = Literal["pending", "fetch_refused", "source_moved", "held_base", "door_refused", "transport_unknown", "received"]
 class ReceivedFileOperation(TypedDict):
     operation_id: str
     actor_id: str
@@ -10623,6 +10643,38 @@ class CodePushIngressView(TypedDict):
     publication: NotRequired[EntityId | None]
     operations: list[ReceivedFileOperation]
     candidate: NotRequired[CodePushCandidateView | None]
+MergeQueueCheckWorkKind = Literal["init", "check", "diagnose"]
+MergeQueueCheckState = Literal["queued", "running", "needs_configuration", "held", "passed", "failed", "settled"]
+QueueCheckHoldReason = Literal["interrupted", "executor_unavailable", "missing_offline_input", "unstable_inputs", "authority", "tree_unavailable", "refused"]
+class Quarantine(TypedDict):
+    proposal_ids: list[str]
+    failing_mask: int
+    verdict: str
+class MergeQueueCheckWorkView(TypedDict):
+    repo: EntityId
+    work_ref: str
+    kind: MergeQueueCheckWorkKind
+    status: MergeQueueCheckState
+    configuration_keys: list[str]
+    reason: NotRequired[str | None]
+    hold: NotRequired[QueueCheckHoldReason | None]
+    generation: int
+    baseline_commit: NotRequired[str | None]
+    plan_digest: NotRequired[str | None]
+    receipt_refs: list[str]
+    verdict_refs: list[str]
+    pointers: NotRequired[MergeQueuePointersView | None]
+    quarantine: NotRequired[Quarantine | None]
+class ExternalImportStatus(TypedDict):
+    receipt: ExternalImportReceipt
+    phase: ExternalImportPhase
+    reason: NotRequired[str | None]
+    ingress: NotRequired[CodePushIngressView | None]
+    checks: list[MergeQueueCheckWorkView]
+class CodePushIngressGetRequest(TypedDict):
+    repo: EntityId
+    provenance: EntityId
+    ref_name: str
 class OriginRegisterRequest(TypedDict):
     repo: str
     default_branch: str
@@ -11039,10 +11091,6 @@ class MergeQueuePathView(TypedDict):
     commit: str
     tree: str
     verdict_ref: NotRequired[str | None]
-class Quarantine(TypedDict):
-    proposal_ids: list[str]
-    failing_mask: int
-    verdict: str
 class AffectedTests(TypedDict):
     packages: list[str]
     targets: dict[str, list[str]]
@@ -11136,24 +11184,6 @@ class MergeQueueInitializeRequest(TypedDict):
     repo: EntityId
     baseline_commit: str
     contract_baseline_ref: NotRequired[str | None]
-MergeQueueCheckWorkKind = Literal["init", "check", "diagnose"]
-MergeQueueCheckState = Literal["queued", "running", "needs_configuration", "held", "passed", "failed", "settled"]
-QueueCheckHoldReason = Literal["interrupted", "executor_unavailable", "missing_offline_input", "unstable_inputs", "authority", "tree_unavailable", "refused"]
-class MergeQueueCheckWorkView(TypedDict):
-    repo: EntityId
-    work_ref: str
-    kind: MergeQueueCheckWorkKind
-    status: MergeQueueCheckState
-    configuration_keys: list[str]
-    reason: NotRequired[str | None]
-    hold: NotRequired[QueueCheckHoldReason | None]
-    generation: int
-    baseline_commit: NotRequired[str | None]
-    plan_digest: NotRequired[str | None]
-    receipt_refs: list[str]
-    verdict_refs: list[str]
-    pointers: NotRequired[MergeQueuePointersView | None]
-    quarantine: NotRequired[Quarantine | None]
 QueueCheckPhase = Literal["fast", "slow"]
 class MergeQueueCheckRequest(TypedDict):
     repo: EntityId
