@@ -1634,6 +1634,13 @@ impl From<MemoryError> for FacadeApiError {
             // OF-123: the person the effect names is not settled yet; the
             // same request succeeds once `self.identity.settle` settles it.
             oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => StatusCode::CONFLICT,
+            // FIX 7463a: the owner's world read setting keeps a row the call
+            // reads from where its answer goes, or its placement cannot be
+            // verified. The row's state refuses, named, never a row not found.
+            oneiron_contracts::memory::MEMORY_CODE_WORLD_RECIPIENT_LIMIT
+            | oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE => {
+                StatusCode::CONFLICT
+            }
             // A paid call its line cannot cover, as a chat turn's is.
             MEMORY_CODE_BUDGET_SPENT => StatusCode::PAYMENT_REQUIRED,
             // A verb hook asked first: accepted, not run, and the body names

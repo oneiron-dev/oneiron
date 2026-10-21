@@ -9310,6 +9310,48 @@
       "openapi": true
     },
     {
+      "name": "vault.code.repos.get",
+      "description": "Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work.",
+      "input": "crate::memory::origin_doors::CodeRepoGetRequest",
+      "output": "Option<crate::memory::origin_doors::CodeRepoView>",
+      "call": "memory.code_repo_get_as(&memory.embedded_owner(\"vault.code.repos.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.forks.get",
+      "description": "Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork.",
+      "input": "crate::memory::origin_doors::CodeForkGetRequest",
+      "output": "Option<crate::memory::origin_doors::CodeForkView>",
+      "call": "memory.code_fork_get_as(&memory.embedded_owner(\"vault.code.forks.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.ingress.get",
+      "description": "Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance.",
+      "input": "crate::memory::origin_doors::CodePushIngressGetRequest",
+      "output": "Option<crate::memory::origin_doors::CodePushIngressView>",
+      "call": "memory.code_push_ingress_get_as(&memory.embedded_owner(\"vault.code.ingress.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
       "name": "vault.code.origin.register",
       "description": "Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused.",
       "input": "crate::memory::origin_doors::OriginRegisterRequest",
@@ -9980,6 +10022,20 @@
       "input": "crate::memory::merge_queue_doors::MergeQueueCheckStatusRequest",
       "output": "crate::memory::merge_queue_doors::MergeQueueCheckWorkView",
       "call": "memory.merge_queue_check_status_as(&memory.embedded_owner(\"vault.code.merge_queue.check_status\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.checks.get",
+      "description": "Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass.",
+      "input": "crate::memory::merge_queue_doors::CodeCheckReceiptRequest",
+      "output": "Option<crate::memory::merge_queue_doors::CodeCheckReceiptView>",
+      "call": "memory.merge_queue_check_receipt_as(&memory.embedded_owner(\"vault.code.checks.get\")?, input)?",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -11313,6 +11369,7 @@
         "/what/context_refs/*/claim",
         "/what/context_refs/*/turn"
       ],
+      "refs_check": "crate::task_verb::ask_world_hold::admit_ask_references",
       "input": "crate::task_verb::sdk::TaskAskRequest",
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input.into_spec()?)?",
@@ -11360,6 +11417,7 @@
         "/word/provenance_refs/*/claim",
         "/word/provenance_refs/*/turn"
       ],
+      "refs_check": "crate::task_verb::ask_world_hold::admit_ask_references",
       "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
       "mcp_served": "[input.handle.group_ref]",

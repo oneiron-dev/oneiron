@@ -3,6 +3,7 @@
 //! Checks never mutate the live repository. Landing needs a host gate adapter and
 //! a queue-issued permit under the existing repository single-writer lock. The
 //! queue verifies the durable mutation receipt and the complete landed tree.
+mod candidate_intake;
 mod check_execute;
 mod check_inputs;
 mod check_requests;
@@ -13,6 +14,7 @@ mod driver;
 mod driver_materialize;
 mod driver_store;
 mod driver_types;
+mod file_metadata;
 mod initialize;
 mod landing;
 mod mirror_green;
@@ -23,6 +25,7 @@ mod staging;
 mod storage;
 mod tested;
 mod tested_export;
+mod tested_received;
 mod tested_store;
 mod tested_types;
 #[cfg(test)]
@@ -59,9 +62,9 @@ pub use run::{RepoQueueOrder, RepoQueuePredecessor};
 // The tested-revision seal at green (FIX 6868, G2 PR3).
 pub(crate) use tested_types::QueueRevisionSeal;
 pub use tested_types::{
-    GreenQueueRevision, QueueAppliedSource, QueueExportHold, QueueExportHoldReason,
-    QueueGreenExportView, QueueReceiptLink, QueueRevisionIntent, QueueRevisionLink,
-    QueueSealTarget, QueueTestedRevision, QueueTestedTarget,
+    CodePushSourceLink, GreenQueueRevision, QueueAppliedSource, QueueExportHold,
+    QueueExportHoldReason, QueueGreenExportView, QueueReceiptLink, QueueRevisionIntent,
+    QueueRevisionLink, QueueSealTarget, QueueTestedRevision, QueueTestedTarget,
 };
 pub use types::{
     BatchState, CheckInvocation, CheckPhase, CheckReport, LandingPermit, MergeBatch, MergeFile,

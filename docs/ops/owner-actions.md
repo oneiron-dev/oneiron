@@ -1234,6 +1234,22 @@ The notes stay out of recall, views and the Dreamer. `GET /v1/owner/feedback/inb
 &limit=<n>` returns them oldest first (100 unless `limit` says fewer, at most 1,000). Each
 carries its arrival number `seq`; a sweep keeps the last one it read and passes it as `after`.
 
+## Triage the feedback inbox
+
+The Coach reads the open inbox with a triage skill you bind, and files what it finds as
+proposals in your run tray. It never closes, moderates or deletes a note. Bind the skill first:
+`GET /v1/owner/feedback/triage/binding` returns `{skill, revision}`, and `PUT` with
+`{"skill": "<SKILL id>", "seen": <revision>}` binds it (`"skill": null` unbinds; a stale `seen`
+is refused). The repo's `skills/feedback-triage/SKILL.md` is a starting skill.
+
+`POST /v1/owner/feedback/triage/run` with `{}` starts a sweep and returns `{attempt}`; a run
+already going is joined. The sweep reads every note past its cursor, keeps each note revision as
+evidence and triages it as its own job. A note's findings land as Proposed
+`coach.feedback_triage.finding` claims citing that note; an empty answer counts as done. A job
+that fails (no skill bound, no Coach seat, a bad answer) leaves the note open, and the next sweep
+tries it again. `GET /v1/owner/feedback/triage/status?attempt=<id>` shows the sweep, its cursor,
+each note's job and result, and the holds: `skill_unbound`, and every note still open.
+
 ## Share failure signals
 
 A participating deployment sends its publisher two things, and nothing else: the content-free

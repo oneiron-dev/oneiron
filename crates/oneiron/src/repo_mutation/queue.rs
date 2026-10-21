@@ -9,8 +9,8 @@ use crate::git_wire::{GitWire, lock_repository};
 use super::conflict::{record_repo_conflict, resolve_repo_conflict_file, tree_hash_for_ref};
 use super::git::{
     admitted_repo_ref, git_commit_object_available, git_common_dir, require_pinned_head,
-    resolve_mutable_repo_root, validate_base_ref, validate_commit_message, validate_git_ref_label,
-    validate_relative_repo_path, validate_worktree_path,
+    resolve_mutable_repo_root, validate_base_ref, validate_relative_repo_path,
+    validate_worktree_path,
 };
 use super::oplog::{
     OPLOG, REPO_MUTATION_OPLOG_SCHEMA_VERSION, SEQ, SNAPSHOT, StoredPreparedCommit,
@@ -21,7 +21,7 @@ use super::snapshot::{
     SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntryKind, capture_repo_snapshot,
     decode_snapshot, encode_snapshot, restore_repo_snapshot,
 };
-use super::support::{hex_bytes, now_millis, truncate_failure};
+use super::support::{now_millis, truncate_failure};
 use super::trailer::{commit_message_with_provenance_trailer, validate_repo_provenance_request};
 use super::types::{
     RepoForkHash, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome,
@@ -32,6 +32,10 @@ use super::worktree::{
     prune_queue_owned_worktrees, remove_queue_worktree,
 };
 use crate::error::CodeError;
+
+mod operation;
+pub(super) use operation::validate_operation;
+use operation::{operation_subject, writes_file};
 
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -70,6 +74,11 @@ pub(super) enum PreparedRepoMutationExecution {
         commit: PreparedCommitFile,
         recovery: PreparedConflictResolution,
     },
+    /// A received bundle's ONE staged commit and its exact tree change.
+    ReceivedFiles {
+        commit: PreparedCommitFile,
+        edits: Vec<super::received_file::tree::ReceivedTreeEdit>,
+    },
 }
 
 #[derive(Debug)]
@@ -93,7 +102,9 @@ impl PreparedRepoMutationExecution {
     pub(super) fn commit_file(&self) -> Result<&PreparedCommitFile> {
         match self {
             Self::CommitFile(prepared) => Ok(prepared),
-            Self::ResolveConflictFile { commit, .. } => Ok(commit),
+            Self::ResolveConflictFile { commit, .. } | Self::ReceivedFiles { commit, .. } => {
+                Ok(commit)
+            }
             Self::Direct => Err(Error::InvariantViolation(
                 "commit-producing repo mutation missing prepared commit",
             )),
@@ -113,7 +124,7 @@ impl PreparedRepoMutationExecution {
         match self {
             Self::Direct => Ok(()),
             Self::CommitFile(prepared) => remove_queue_worktree(repo_root, &prepared.worktree_path),
-            Self::ResolveConflictFile { commit, .. } => {
+            Self::ResolveConflictFile { commit, .. } | Self::ReceivedFiles { commit, .. } => {
                 remove_queue_worktree(repo_root, &commit.worktree_path)
             }
         }
@@ -288,8 +299,13 @@ impl Vault {
         if proposal.is_none() && writes_file(&request.operation) {
             require_pinned_head(repo_ref, pre_action_snapshot.head.as_deref())?;
         }
-        let execution = match prepare_repo_mutation_execution(&self.store.clock, repo_root, request)
-        {
+        let prepared_execution = match &request.operation {
+            RepoMutationOperation::ReceivedFiles { .. } => {
+                self.prepare_received_files_execution(repo_root, request, proposal)
+            }
+            _ => prepare_repo_mutation_execution(&self.store.clock, repo_root, request),
+        };
+        let execution = match prepared_execution {
             Ok(execution) => execution,
             Err(error) => {
                 self.record_failed_repo_mutation_preparation(
@@ -344,7 +360,8 @@ impl Vault {
                         Some(StoredPreparedConflictResolution::from(recovery))
                     }
                     PreparedRepoMutationExecution::Direct
-                    | PreparedRepoMutationExecution::CommitFile(_) => None,
+                    | PreparedRepoMutationExecution::CommitFile(_)
+                    | PreparedRepoMutationExecution::ReceivedFiles { .. } => None,
                 },
                 status: RepoMutationStatus::Prepared.as_str().to_owned(),
                 failure: None,
@@ -370,6 +387,28 @@ impl Vault {
                 Err(error)
             }
         }
+    }
+
+    /// A received bundle's ONE staged commit: its stored files' exact tree
+    /// change under its own message, prepared on the checkout's HEAD.
+    fn prepare_received_files_execution(
+        &self,
+        repo_root: &Path,
+        request: &RepoMutationRequest,
+        proposal: Option<EntityId>,
+    ) -> Result<PreparedRepoMutationExecution> {
+        let RepoMutationOperation::ReceivedFiles { message, .. } = &request.operation else {
+            return Err(Error::InvariantViolation("not a received push bundle"));
+        };
+        let row = self
+            .repo_proposal(proposal.ok_or(Error::InvariantViolation(
+                "a received bundle lands under its proposal",
+            ))?)?
+            .ok_or(Error::EntityNotFound)?;
+        let edits = super::received_file::tree::received_tree_edits(&row.files)?;
+        let commit =
+            super::received_file::tree::prepare_received_files_commit(repo_root, &edits, message)?;
+        Ok(PreparedRepoMutationExecution::ReceivedFiles { commit, edits })
     }
 
     fn record_failed_repo_mutation_preparation(
@@ -536,6 +575,24 @@ pub(super) fn expected_post_action_fork_hash(
         | RepoMutationOperation::ResolveConflictFile { path, content, .. } => {
             (path.as_str(), content.as_slice())
         }
+        RepoMutationOperation::ReceivedFiles { .. } => {
+            let PreparedRepoMutationExecution::ReceivedFiles { commit, edits } = execution else {
+                return Err(Error::InvariantViolation(
+                    "a received bundle is missing its prepared tree change",
+                ));
+            };
+            if pre_action_snapshot.head.as_deref() != Some(commit.base_head.as_str()) {
+                return Err(Error::ConcurrentWrite(
+                    "repo HEAD changed while preparing write-ahead intent",
+                ));
+            }
+            return super::received_file::tree::received_post_snapshot(
+                custody,
+                pre_action_snapshot,
+                edits,
+                &commit.new_head,
+            );
+        }
         RepoMutationOperation::RecoverSnapshot { fork_hash } => return Ok(*fork_hash),
         RepoMutationOperation::CreateWorktree { .. }
         | RepoMutationOperation::RecordConflict { .. }
@@ -664,45 +721,12 @@ pub(super) fn execute_repo_mutation(
             )?;
             Ok(Some(claim_id))
         }
-    }
-}
-
-pub(super) fn validate_operation(operation: &RepoMutationOperation) -> Result<()> {
-    match operation {
-        RepoMutationOperation::CommitFile { path, message, .. } => {
-            validate_relative_repo_path(path)?;
-            validate_commit_message(message)
-        }
-        RepoMutationOperation::CreateWorktree {
-            worktree_path,
-            base_ref,
-        } => {
-            validate_worktree_path(worktree_path)?;
-            validate_base_ref(base_ref)
-        }
-        RepoMutationOperation::RecordConflict {
-            branch_name,
-            ours_ref,
-            theirs_ref,
-            ..
-        } => {
-            validate_git_ref_label(branch_name)?;
-            validate_base_ref(ours_ref)?;
-            validate_base_ref(theirs_ref)
-        }
-        RepoMutationOperation::RemoveWorktree { worktree_path } => {
-            validate_worktree_path(worktree_path)
-        }
-        RepoMutationOperation::RecoverSnapshot { .. } => Ok(()),
-        RepoMutationOperation::ResolveConflictFile {
-            branch_name,
-            path,
-            message,
-            ..
-        } => {
-            validate_git_ref_label(branch_name)?;
-            validate_relative_repo_path(path)?;
-            validate_commit_message(message)
+        RepoMutationOperation::ReceivedFiles { .. } => {
+            super::received_file::tree::apply_prepared_received_files(
+                repo_root,
+                execution.commit_file()?,
+            )?;
+            Ok(None)
         }
     }
 }
@@ -733,30 +757,4 @@ fn allocate_next_repo_mutation_seq(
         .ok_or(Error::ArithmeticOverflow("repo_mutation_seq"))?;
     SEQ.put(&vault.store, wtxn, &key, &next)?;
     Ok(next)
-}
-
-fn writes_file(operation: &RepoMutationOperation) -> bool {
-    matches!(
-        operation,
-        RepoMutationOperation::CommitFile { .. }
-            | RepoMutationOperation::ResolveConflictFile { .. }
-    )
-}
-
-fn operation_subject(operation: &RepoMutationOperation) -> String {
-    match operation {
-        RepoMutationOperation::CommitFile { path, .. } => path.clone(),
-        RepoMutationOperation::CreateWorktree { worktree_path, .. }
-        | RepoMutationOperation::RemoveWorktree { worktree_path } => {
-            worktree_path.to_string_lossy().into_owned()
-        }
-        RepoMutationOperation::RecordConflict {
-            branch_name,
-            ours_ref,
-            theirs_ref,
-            ..
-        } => format!("{branch_name}:{ours_ref}..{theirs_ref}"),
-        RepoMutationOperation::RecoverSnapshot { fork_hash } => hex_bytes(fork_hash),
-        RepoMutationOperation::ResolveConflictFile { path, .. } => path.clone(),
-    }
 }
