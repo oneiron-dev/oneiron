@@ -402,6 +402,11 @@ pub struct ByoaAttemptPayload {
     /// endpoint or MCP attempt, and on a row dispatched before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_binding: Option<super::repo_binding::ByoaRepoBinding>,
+    /// The bound runner work this attempt carries (OF-137), by reference
+    /// only, so a spent seat of any connector shape hands it on; `None` for
+    /// unbound work, and on a row dispatched before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<super::work_binding::RunnerWorkBinding>,
 }
 
 /// Encodes a connector payload in its canonical form.

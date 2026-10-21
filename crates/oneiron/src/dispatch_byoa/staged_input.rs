@@ -92,15 +92,15 @@ fn pinned_version(pin: &StagedInputPin) -> ByoaResult<(EntityId, u64)> {
     Ok((artifact_id, version))
 }
 
-/// `connector` carrying `ran`'s pinned job, when it is a CLI run: a runner
-/// seat that takes over spent work runs the same task, and the task points at
-/// that job.
+/// `connector` carrying the pinned job `pin` names (the spent run's, or the
+/// bound work's), when it is a CLI run: a runner seat that takes over spent
+/// work runs the same task, and the task points at that job.
 pub(super) fn carry_staged_input(
     mut connector: ByoaConnectorSpec,
-    ran: &CliSandboxSpec,
+    pin: Option<&StagedInputPin>,
 ) -> ByoaConnectorSpec {
     if let ByoaConnectorSpec::CliSandbox(spec) = &mut connector {
-        spec.staged_input.clone_from(&ran.staged_input);
+        spec.staged_input = pin.cloned();
     }
     connector
 }

@@ -98,7 +98,7 @@ pub(super) const ERR_LEASE_ID_ZERO: &str = "egress lease carries no lease id";
 
 pub(super) const ERR_LEASE_TAINT: &str = "egress lease taint refs are malformed";
 
-pub(super) const ERR_SEAT_COUNT: &str = "runner seat policy must order one to eight seats";
+pub(super) const ERR_SEAT_EMPTY: &str = "runner seat policy must order at least one seat";
 
 pub(super) const ERR_SEAT_INDEX: &str = "runner seat index is past the policy's order";
 
@@ -118,6 +118,8 @@ pub(super) const ERR_STAGED_INPUT_PIN: &str =
 
 pub(super) const ERR_STAGED_INPUT_COLLISION: &str =
     "byoa staged input artifact is not owned by its job";
+
+pub(super) const ERR_RUNNER_RECORD: &str = "byoa runner seat record failed to encode or decode";
 
 /// Every way a foreign-agent door can refuse.
 #[derive(Debug, thiserror::Error)]
