@@ -26,7 +26,11 @@ mod merge;
 mod table;
 mod table_ops;
 
-pub use chart::{ChartEdit, ChartKind, ChartSeries, ChartSource, SeriesBinding, SeriesField};
+pub(crate) use chart::draws_categories;
+pub use chart::{
+    CategoryField, ChartCategories, ChartCategory, ChartEdit, ChartKind, ChartSeries, ChartSource,
+    SeriesBinding, SeriesField, effective_categories,
+};
 pub use merge::{diff, preflight, preflight_merged};
 pub use table::{MergeFault, TableBinding, TableBody, TableEdit, TableMerge};
 pub(crate) use table::{UNBOUND_GRID, positions};
@@ -152,12 +156,12 @@ pub enum NodePayload {
     /// A native table: rows and columns by stable identity, cells by row and
     /// column, and merge rectangles by corner identity ([`TableBody`]).
     Table(TableBody),
-    /// A classic chart: one category per point, each series one value per
-    /// category (`None` is a missing point), or a scatter series one value
-    /// per x value.
+    /// A classic chart: its categories, by identity, each series one value
+    /// per category of the set it draws (the chart's, or its own; `None` is
+    /// a missing point), or a scatter series one value per x value.
     Chart {
         family: ChartKind,
-        categories: Vec<String>,
+        categories: ChartCategories,
         series: Vec<ChartSeries>,
         /// Where the data lives; a live-born chart's is its own workbook.
         #[serde(default)]
@@ -246,36 +250,9 @@ impl NodePayload {
         )
     }
 
-    /// A chart's series fit its categories: a category series holds no
-    /// more values than there are categories (a shorter one ends in missing
-    /// points; no categories is points by index), and only a scatter series
-    /// carries x values, at least one per value.
+    /// A chart's series fit the categories each draws ([`chart::check`]).
     pub fn check(&self) -> Result<(), LiveError> {
-        let Self::Chart {
-            family,
-            categories,
-            series,
-            ..
-        } = self
-        else {
-            return Ok(());
-        };
-        for line in series {
-            if line.family.unwrap_or(*family) == ChartKind::Scatter {
-                if line.x.as_ref().is_some_and(|x| x.len() < line.values.len()) {
-                    return Err(LiveError::Invalid(
-                        "a scatter series holds more values than x values",
-                    ));
-                }
-            } else if line.x.is_some() {
-                return Err(LiveError::Invalid("only a scatter series has x values"));
-            } else if !categories.is_empty() && line.values.len() > categories.len() {
-                return Err(LiveError::Invalid(
-                    "a chart series holds more values than there are categories",
-                ));
-            }
-        }
-        Ok(())
+        chart::check(self)
     }
 
     /// The payload a node takes when this one is written to it, and what
@@ -586,7 +563,7 @@ impl LiveDeck {
                     None => (
                         held::payload(package, &slide.part, &tree, shape, |at| {
                             native.get(&at).copied()
-                        }),
+                        })?,
                         None,
                     ),
                 };
@@ -1127,16 +1104,20 @@ impl LiveDeck {
             DeckOp::SetPayload { node, payload } => {
                 let mut payload = payload.clone();
                 payload.name_series(&mut || self.mint());
-                let found = self.nodes.get_mut(node).ok_or(LiveError::UnknownNode)?;
+                let found = self.nodes.get(node).ok_or(LiveError::UnknownNode)?;
                 if payload.kind() != found.kind {
                     return Err(LiveError::Invalid(
                         "the payload does not belong to the node kind",
                     ));
                 }
                 let bound = found.binding.is_some();
-                let (settled, mut done) =
+                let (mut settled, mut done) =
                     payload.settle(found.payload.as_ref(), bound, &self.opaque_parts)?;
+                // The category points the settlement adds take the deck's
+                // next identities.
+                settled.name_categories(&mut || self.mint());
                 settled.check()?;
+                let found = self.nodes.get_mut(node).ok_or(LiveError::UnknownNode)?;
                 // Edit Points draws the shape's own outline: its preset goes,
                 // and a preset shape becomes a freeform.
                 if matches!(settled, NodePayload::CustomGeometry { .. }) {
@@ -1394,6 +1375,15 @@ pub enum Conflict {
         node: NodeId,
         series: NodeId,
         field: SeriesField,
+    },
+    /// Both sides relabelled one category point of a chart's set (`owner`
+    /// `None`) or of one series' own differently, moved it to different
+    /// places, or one deleted it and the other wrote it.
+    CategoryVsCategory {
+        node: NodeId,
+        owner: Option<NodeId>,
+        category: NodeId,
+        field: CategoryField,
     },
 }
 

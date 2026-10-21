@@ -29,6 +29,13 @@
 //! it Erased, and once no membership of the wait keeps the reply, its
 //! settled row takes its erased form. A settle after that erase lands
 //! erased.
+//!
+//! Each delivery and settled reply is a row-held response in checkpoint
+//! images (`response`, FIX 6588): a settled row's erased form is its final
+//! holder's release, which stages the retirement an earlier holder's erase
+//! owes the copies older images carry.
+
+mod response;
 
 use std::collections::BTreeSet;
 
@@ -40,8 +47,13 @@ use super::replay_capsule::actor_gone_in_txn;
 use super::response_owners::response_owner_in_txn;
 use super::wait_delivery::{DELIVERIES, SETTLED, SETTLED_TAG, WaitDelivery, WaitKey};
 use crate::side_table::{self, Erased, Named, SideKey, SideTable};
-use crate::store::Store;
+use crate::store::{ResponseDb, Store, response_carrier, settle_shared_response_in_txn};
 use crate::{EntityId, Result, Vault};
+
+pub(crate) use self::response::{
+    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_stub,
+    wait_settled_owners,
+};
 
 /// The rows. Key: id16(wait) + id16(run) + be64(generation).
 const HOLDERS: SideTable<(EntityId, EntityId, u64), WaitHolder, Named> =
@@ -386,7 +398,12 @@ fn erase_settled_in_txn(
         return Ok(());
     }
     let erased = Erased::of(settled.unwrap_or_else(unreadable_delivery))?;
-    SETTLED.put_erased(store, wtxn, &key, erased)
+    SETTLED.put_erased(store, wtxn, &key, erased)?;
+    // Its reply's final holder released it: a retirement an earlier
+    // holder's erase owes the copies older images carry is staged now (FIX
+    // 6588).
+    let carrier = response_carrier(ResponseDb::VaultMeta, &SETTLED.key_bytes(&key));
+    settle_shared_response_in_txn(store, wtxn, &carrier)
 }
 
 /// What an erase leaves of a delivery row that does not decode: a delivery

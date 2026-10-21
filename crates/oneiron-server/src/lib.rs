@@ -69,10 +69,6 @@ pub mod logging;
 mod machine;
 pub mod managed;
 pub mod mcp;
-#[expect(
-    dead_code,
-    reason = "engine fns until the worker supervisor calls them"
-)]
 mod model_artifacts;
 pub mod models;
 mod oauth_relay;

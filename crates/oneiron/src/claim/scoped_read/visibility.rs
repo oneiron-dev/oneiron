@@ -482,6 +482,7 @@ impl<'v> ScopedRead<'v> {
         }
         if !self.credential_allows_row_in(rtxn, id)
             || !self.proof_live_in(rtxn)?
+            || !self.guest_bound_admits_in(rtxn, id, raw)
             || !self.facets_allow_in(rtxn, id, raw)?
         {
             return Ok(false);

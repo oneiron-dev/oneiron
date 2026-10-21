@@ -2,6 +2,8 @@
 //! and a writer that rebuilds only the rows it touches. Every write refuses
 //! a workbook holding formulas, since a dependent formula's cached value
 //! would go stale.
+mod cells;
+
 use super::{CellWrite, NativeRefusal, REL, WorkbookReport};
 use crate::design_plan::{Cell, Column, ColumnKind, Dataset, calendar_date};
 use crate::ooxml::{SPREADSHEET_MAIN as SML, XmlTree, escape_text};
@@ -39,6 +41,18 @@ pub(super) struct Range {
 impl Range {
     /// Parse a chart `c:f`: `Sheet1!$B$2:$B$5`, `'My sheet'!B1`.
     pub(super) fn parse(formula: &str) -> Result<Self, NativeRefusal> {
+        let range = Self::parse_block(formula)?;
+        if range.first.0 != range.last.0 && range.first.1 != range.last.1 {
+            return Err(NativeRefusal::AmbiguousChartData(
+                "series range is not one row or one column",
+            ));
+        }
+        Ok(range)
+    }
+
+    /// Parse a multi-level category reference: a rectangle, one line of
+    /// cells per level (FIX 3493). Every other sequence is one line.
+    pub(super) fn parse_block(formula: &str) -> Result<Self, NativeRefusal> {
         let direct =
             NativeRefusal::AmbiguousChartData("series reference is not a direct cell range");
         if formula.contains('[') {
@@ -59,17 +73,16 @@ impl Range {
         let (Some(first), Some(last)) = (cell_ref(first), cell_ref(last)) else {
             return Err(direct);
         };
-        let range = Self {
+        Ok(Self {
             sheet,
             first: (first.0.min(last.0), first.1.min(last.1)),
             last: (first.0.max(last.0), first.1.max(last.1)),
-        };
-        if range.first.0 != range.last.0 && range.first.1 != range.last.1 {
-            return Err(NativeRefusal::AmbiguousChartData(
-                "series range is not one row or one column",
-            ));
-        }
-        Ok(range)
+        })
+    }
+
+    /// Its first and last cells, (column, row).
+    pub(super) fn corners(&self) -> ((u32, u32), (u32, u32)) {
+        (self.first, self.last)
     }
 
     pub(super) fn column(sheet: &str, col: u32, rows: (u32, u32)) -> Self {
@@ -392,8 +405,8 @@ impl Workbook {
         Ok(out)
     }
 
-    /// Rebuild `sheetData` with the touched rows rewritten in column order
-    /// and new rows inserted in row order; untouched rows keep their bytes.
+    /// The worksheet with each written cell in place: only the written
+    /// cells' values and value types change ([`cells::rewrite`], FIX 7987).
     fn rewrite_sheet(
         &self,
         part: &str,
@@ -406,84 +419,7 @@ impl Workbook {
             .map_err(NativeRefusal::Workbook)?
             .ok_or(NativeRefusal::AmbiguousChartData("worksheet part missing"))?;
         let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
-        let (data, data_node) =
-            tree.child(0, SML, "sheetData")?
-                .ok_or(NativeRefusal::AmbiguousChartData(
-                    "worksheet has no sheetData",
-                ))?;
-        let mut rows: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
-        let mut touched: BTreeMap<u32, BTreeMap<u32, &Cell>> = BTreeMap::new();
-        for (key, value) in writes {
-            touched.entry(key.row).or_default().insert(key.col, value);
-        }
-        let row_name = data_node.child_name("row");
-        for (index, row) in tree.children(data).filter(|(_, node)| node.is(SML, "row")) {
-            let number = row.attr("r").and_then(|r| r.parse::<u32>().ok()).ok_or(
-                NativeRefusal::AmbiguousChartData("a worksheet row has no number"),
-            )?;
-            let Some(cells) = touched.remove(&number) else {
-                rows.insert(number, bytes[row.span.clone()].to_vec());
-                continue;
-            };
-            let mut line: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
-            for (_, cell) in tree.children(index).filter(|(_, node)| node.is(SML, "c")) {
-                let col = cell
-                    .attr("r")
-                    .and_then(cell_ref)
-                    .ok_or(NativeRefusal::AmbiguousChartData(
-                        "a worksheet cell has no reference",
-                    ))?
-                    .0;
-                line.insert(col, bytes[cell.span.clone()].to_vec());
-            }
-            let cell_name = row.child_name("c");
-            for (col, value) in cells {
-                let key = CellKey {
-                    sheet: String::new(),
-                    col,
-                    row: number,
-                };
-                let style = styles.get(&(col, number)).and_then(|s| s.style.as_deref());
-                line.insert(col, cell_xml(&cell_name, &key, style, value)?.into_bytes());
-            }
-            let open = &bytes[row.span.start..row.open_end];
-            let open = if row.empty {
-                open.strip_suffix(b"/>").unwrap_or(open)
-            } else {
-                open.strip_suffix(b">").unwrap_or(open)
-            };
-            let mut out = open.to_vec();
-            out.push(b'>');
-            line.into_values().for_each(|cell| out.extend(cell));
-            out.extend_from_slice(format!("</{}>", row.qualified).as_bytes());
-            rows.insert(number, out);
-        }
-        for (number, cells) in touched {
-            let cell_name = data_node.child_name("c");
-            let mut out = format!("<{row_name} r=\"{number}\">");
-            for (col, value) in cells {
-                let key = CellKey {
-                    sheet: String::new(),
-                    col,
-                    row: number,
-                };
-                out.push_str(&cell_xml(&cell_name, &key, None, value)?);
-            }
-            out.push_str(&format!("</{row_name}>"));
-            rows.insert(number, out.into_bytes());
-        }
-        let open = &bytes[data_node.span.start..data_node.open_end];
-        let open = open
-            .strip_suffix(b"/>")
-            .or_else(|| open.strip_suffix(b">"))
-            .unwrap_or(open);
-        let mut out = bytes[..data_node.span.start].to_vec();
-        out.extend_from_slice(open);
-        out.push(b'>');
-        rows.into_values().for_each(|row| out.extend(row));
-        out.extend_from_slice(format!("</{}>", data_node.qualified).as_bytes());
-        out.extend_from_slice(&bytes[data_node.span.end..]);
-        Ok(out)
+        cells::rewrite(&bytes, &tree, writes, styles)
     }
 }
 
