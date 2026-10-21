@@ -8,6 +8,7 @@ use oneiron_llm_openai::{
 };
 use serde_json::Value as JsonValue;
 
+use super::cache_usage::carry_chat_evidence;
 use super::http::{HttpFailure, ProviderHttp, SseItem};
 use super::output_cap::OutputCap;
 use super::served::record_served_model;
@@ -52,6 +53,7 @@ impl OpenAiCompatTransport for OpenAiHttp {
                 .await?;
             carry_served_model(reply.status, &mut reply.body);
             carry_timings(&mut reply.body);
+            carry_chat_evidence(&mut reply.body);
             Ok(OpenAiCompatHttpResponse {
                 status: reply.status,
                 headers: reply.headers,
@@ -192,6 +194,7 @@ where
                             .any(|choice| !choice["finish_reason"].is_null())
                     });
                 carry_timings(&mut chunk);
+                carry_chat_evidence(&mut chunk);
                 record_served_model(chunk.get_mut("usage"), self.served.clone());
                 Ok(OpenAiCompatStreamFrame::Chunk(chunk))
             }

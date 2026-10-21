@@ -64,7 +64,7 @@ use oneiron::code_run::{
     SelfAgentVerbCall, SelfEffect,
 };
 use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
-use oneiron::llm::decision::{AnswerContract, DecisionRung, RoutineOutcome};
+use oneiron::llm::decision::{AnswerContract, DecisionRung, HumanAskReason, RoutineOutcome};
 use oneiron::memory::{HostWriteOrigin, Memory};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::runtime_hooks::InvocationId;
@@ -73,10 +73,10 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron_browser::{
     Admitted, BrowserDriver, BrowserEngine, BrowserError, BrowserGuest, BrowserRequestHandler,
-    BrowserSession, DesktopGuest, DesktopSession, EFFECT_CLASSES, FreshGuest, GuestLimits,
-    HandleRetention, LibraryCard, PressMode, RetiredCard, RoutineAnswer, RoutineAsk,
-    RoutineDecider, RoutineReply, SendPolicy, SupersedeRefusal, WorkflowLibrary, WorkflowProgram,
-    WorkflowProof,
+    BrowserSession, DesktopGuest, DesktopSession, EFFECT_CLASSES, FiledWorkflow, FreshGuest,
+    GuestLimits, HandleRetention, LibraryCard, PressMode, RetiredCard, RoutineAnswer, RoutineAsk,
+    RoutineDecider, RoutineReply, RunOutcome, SendPolicy, StrictDenial, StrictDenied,
+    SupersedeRefusal, WorkflowLibrary, WorkflowProgram, WorkflowProof,
 };
 use oneiron_container::{EgressRelay, SessionManifest, SessionTransport};
 use serde_json::Value;
@@ -338,8 +338,27 @@ pub(crate) enum VerdictAsker {
     ),
 }
 
+/// A strict run's step no rung answered, with no model asked (CUA E2
+/// strict denial, CALLS row): it goes up at zero tokens, its decision a
+/// [`StrictDenied`] record, and the subgoal's clock as it was.
+fn strict_denied(denial: StrictDenial, question: &str, until_ms: Option<u64>) -> RoutineReply {
+    RoutineReply {
+        answer: RoutineAnswer::Denied { denial },
+        screenshot: false,
+        until_ms,
+        decision: StrictDenied::decision(denial, question),
+    }
+}
+
 impl RoutineDecider for LadderDecider {
     fn decide(&mut self, ask: RoutineAsk<'_>) -> Result<RoutineReply, BrowserError> {
+        let (strict, until_ms) = (ask.no_model, ask.until_ms);
+        // Strict: a screenshot is read only from the Local-vision rung up,
+        // so the step goes up before any rung is asked or admitted.
+        if strict && ask.image.is_some() {
+            return Ok(strict_denied(StrictDenial::Image, ask.question, until_ms));
+        }
+        let question = ask.question.to_owned();
         // A step with no candidates finds its target in the screenshot.
         let contract = if ask.options.is_empty() {
             AnswerContract::Box
@@ -349,7 +368,7 @@ impl RoutineDecider for LadderDecider {
             }
         };
         let request = AiVerdictRequest {
-            question: ask.question.to_owned(),
+            question: question.clone(),
             contract,
             evidence: Vec::new(),
             state: Some(ask.state),
@@ -412,10 +431,21 @@ impl RoutineDecider for LadderDecider {
                 });
             }
         }
-        let (output, _) = receiver
+        let answered = receiver
             .recv()
-            .map_err(|_| BrowserError::Decider("the ladder did not answer".to_owned()))?
-            .map_err(|error| BrowserError::Decider(format!("{}: {}", error.kind, error.message)))?;
+            .map_err(|_| BrowserError::Decider("the ladder did not answer".to_owned()))?;
+        let (output, _) = match answered {
+            // Strict: no rung up to the rule ceiling takes the question, as
+            // the ladder finds before it runs any.
+            Err(error) if strict && error.kind == "model_unavailable" => {
+                return Ok(strict_denied(StrictDenial::NoRule, &question, until_ms));
+            }
+            Err(error) => {
+                let detail = format!("{}: {}", error.kind, error.message);
+                return Err(BrowserError::Decider(detail));
+            }
+            Ok(answered) => answered,
+        };
         let verdict: AiVerdict = serde_json::from_value(output.clone())
             .map_err(|e| BrowserError::Decider(e.to_string()))?;
         let answer = match verdict.outcome {
@@ -423,6 +453,15 @@ impl RoutineDecider for LadderDecider {
             Some(RoutineOutcome::Point { x, y, .. }) => RoutineAnswer::Point { x, y },
             Some(RoutineOutcome::None) => RoutineAnswer::None,
             Some(RoutineOutcome::Reobserve) => RoutineAnswer::Reobserve,
+            // The subgoal's clock cut the call: the step stops on it.
+            Some(RoutineOutcome::AskUp {
+                reason: Some(HumanAskReason::Deadline),
+            }) => RoutineAnswer::Deadline,
+            // Strict: the rule rung ran and gave no answer; its receipt
+            // stands as the decision.
+            Some(RoutineOutcome::AskUp { reason: Some(_) }) if strict => RoutineAnswer::Denied {
+                denial: StrictDenial::RuleAbstained,
+            },
             Some(RoutineOutcome::AskUp { reason }) => RoutineAnswer::AskUp {
                 reason: reason
                     .and_then(|reason| serde_json::to_value(reason).ok())
@@ -467,13 +506,16 @@ impl WorkflowLibrary for VaultLibrary {
             .collect())
     }
 
-    fn program(&mut self, workflow: &str) -> Result<Option<WorkflowProgram>, BrowserError> {
+    fn program(&mut self, workflow: &str) -> Result<Option<FiledWorkflow>, BrowserError> {
         let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
             return Ok(None);
         };
         Ok(oneiron::browser_library::workflow(&self.server.vault, id)
             .map_err(library_failed)?
-            .map(|record| record.program))
+            .map(|record| FiledWorkflow {
+                program: record.program,
+                proof: record.proof,
+            }))
     }
 
     fn admit(
@@ -511,14 +553,15 @@ impl WorkflowLibrary for VaultLibrary {
         })
     }
 
-    fn record_run(&mut self, workflow: &str, met: bool) -> Result<(), BrowserError> {
+    fn record_run(&mut self, workflow: &str, outcome: &RunOutcome) -> Result<(), BrowserError> {
         let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
             return Ok(());
         };
         record_workflow_run(
             &self.server.vault,
             id,
-            met,
+            outcome,
+            self.by,
             self.server.vault.now_recorded_at(),
         )
         .map_err(library_failed)
