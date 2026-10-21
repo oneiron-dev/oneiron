@@ -1,8 +1,10 @@
 //! Repository conflicts mint one linked reconciliation TASK and realizing attempt.
+//! The merge queue's overlap handoff mints it under its real creator's
+//! authority (`queue`, FIX 6868 G2 PR2).
+mod queue;
+
 use super::create_spec::TaskCreateRateLimit;
-use super::create_validation::ValidatedTaskCreate;
 use super::rate_limit::{record_task_create, task_actor_ceiling};
-use super::verb_kind::{TaskAssignee, TaskKind};
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -10,7 +12,6 @@ use crate::error::{CodeError, Error, Result};
 use crate::gate::PolicyApprovalCeiling;
 use crate::repo_mutation::RepoConflictClaim;
 use crate::side_table::{self, Raw, SideTable};
-use rmpv::Value;
 
 /// Repo-conflict claim to its reconciliation TASK. Key: id16 (claim id).
 const RECONCILIATION_TASKS: SideTable<EntityId, EntityId, Raw> =
@@ -53,7 +54,6 @@ impl Vault {
         )? {
             return Err(Error::EntityNotFound);
         }
-        let memory = self.memory(owner, EdgeActorClass::Human);
         if task_actor_ceiling(self, txn, owner, EdgeActorClass::Human).map_err(map_error)?
             != PolicyApprovalCeiling::Auto
         {
@@ -68,86 +68,13 @@ impl Vault {
             self.now_recorded_at(),
             TaskCreateRateLimit::default(),
         )?;
-        let spec = Value::Map(vec![
-            (
-                Value::from("proposals"),
-                Value::Array(
-                    conflict
-                        .proposals
-                        .iter()
-                        .map(|id| Value::from(id.to_hex()))
-                        .collect(),
-                ),
-            ),
-            (
-                Value::from("open_conflict_claim_id"),
-                Value::from(conflict.claim_id.to_hex()),
-            ),
-            (
-                Value::from("branch_subject"),
-                Value::from(conflict.subject.to_hex()),
-            ),
-            (
-                Value::from("repo_ref"),
-                Value::from(conflict.repo_ref.canonical()),
-            ),
-            (Value::from("branch"), Value::from(conflict.branch.clone())),
-            (
-                Value::from("conflicted_paths"),
-                Value::Array(
-                    conflict
-                        .conflicted_paths
-                        .iter()
-                        .cloned()
-                        .map(Value::from)
-                        .collect(),
-                ),
-            ),
-            (
-                Value::from("base_tree"),
-                Value::from(conflict.base_tree.clone()),
-            ),
-            (
-                Value::from("ours_tree"),
-                Value::from(conflict.ours_tree.clone()),
-            ),
-            (
-                Value::from("theirs_tree"),
-                Value::from(conflict.theirs_tree.clone()),
-            ),
-        ]);
-        let validated = ValidatedTaskCreate {
-            kind: TaskKind::Reconciliation,
-            assignee: Some(TaskAssignee::Dreamer),
-            consult: None,
-            ttl: None,
-            spec,
-            type_ref: crate::task_type::TaskTypeRef::seed(
-                crate::task_type::SeedTaskType::Solve,
-                crate::task_type::SEEDED_TREE_VERSION,
-            ),
-        };
-        let provenance = Value::Map(vec![
-            (Value::from("source"), Value::from("repo.conflict")),
-            (
-                Value::from("claim_id"),
-                Value::from(conflict.claim_id.to_hex()),
-            ),
-        ]);
-        let task = memory
-            .mint_task_in_txn(
-                txn,
-                &validated,
-                Some(format!("reconcile:{}", conflict.branch)),
-                owner,
-                &provenance,
-                now,
-            )
-            .map_err(map_error)?;
-        memory
-            .route_created_task_in_txn(txn, task, &validated, now)
-            .map_err(map_error)?;
-        RECONCILIATION_TASKS.put(&self.store, txn, &conflict.claim_id, &task)?;
-        Ok(task)
+        queue::mint_reconciliation_task_in_txn(
+            self,
+            txn,
+            conflict,
+            owner,
+            EdgeActorClass::Human,
+            now,
+        )
     }
 }
