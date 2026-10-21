@@ -55,20 +55,27 @@ impl Memory<'_> {
                         input_hash: hash_input(&input),
                         output: None,
                         failure: Some(error.code),
+                        execution: None,
                         input,
                     },
                 });
             }
         };
         let input_hash = hash_input(&input);
+        // The caller waits on the witnessed turn's answer: a live call.
         let served = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let model = encoder.model_id().as_str().to_owned();
-            let result = infer_encoder(&input, encoder);
-            (model, result)
+            let attempt = infer_encoder(&input, ExtractionWork::Live, encoder);
+            (model, attempt)
         }));
-        let (model, result) =
-            served.unwrap_or_else(|_| ("unavailable".into(), Err("encoder_panicked".into())));
-        let (output, failure) = match result {
+        let (model, attempt) = served.unwrap_or_else(|_| {
+            let attempt = EncoderAttempt {
+                execution: None,
+                result: Err("encoder_panicked".to_owned()),
+            };
+            ("unavailable".to_owned(), attempt)
+        });
+        let (output, failure) = match attempt.result {
             Ok(output) => (Some(output), None),
             Err(error) => (None, Some(error)),
         };
@@ -79,26 +86,39 @@ impl Memory<'_> {
                 input_hash,
                 output,
                 failure,
+                execution: attempt.execution,
                 input,
             },
         })
     }
 }
-/// Write-free execution through the same locality and output guards as
-/// witness shadowing. A network tagger still needs an egress-aware serving
-/// door; this helper never turns a caller's route into that authority.
+/// Write-free execution in `work`'s class through the same locality and
+/// output guards as witness shadowing, with the facts of the worker that ran
+/// the call. A network tagger still needs an egress-aware serving door; this
+/// helper never turns a caller's route into that authority.
 pub fn infer_encoder(
     input: &EncoderInput,
+    work: ExtractionWork,
     encoder: &dyn ExtractionEncoder,
-) -> Result<EncoderOutput, String> {
+) -> EncoderAttempt<String> {
     if encoder.locality() != EmbedderLocality::OnDevice {
-        return Err("off_device_shadow_denied".into());
+        return EncoderAttempt {
+            execution: None,
+            result: Err("off_device_shadow_denied".into()),
+        };
     }
-    let output = encoder
-        .infer(input)
-        .map_err(|error| format!("{:?}", error.kind()))?;
-    validate(input, &output).map_err(str::to_owned)?;
-    Ok(output)
+    let attempt = encoder.infer(input, work);
+    let result = attempt
+        .result
+        .map_err(|error| format!("{:?}", error.kind()))
+        .and_then(|output| {
+            validate(input, &output).map_err(str::to_owned)?;
+            Ok(output)
+        });
+    EncoderAttempt {
+        execution: attempt.execution,
+        result,
+    }
 }
 
 /// The input digest: the turn, then each message's id, length and text. A
