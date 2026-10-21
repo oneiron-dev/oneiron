@@ -375,14 +375,14 @@ fn with_evaluator<T>(
             owner,
         )
     };
-    let run = server
+    let judge_run = server
         .ai
         .undeclared_run(run_id.clone(), line(run_id.clone())?);
     // Each judge call on the run is sourced from the rows its own request
     // is read from (FIX 7001), never from another candidate's.
     let backend_for = |rows: Option<Vec<EntityId>>| {
         Box::new(AdmittedBackend {
-            inner: RunBackend::new(Arc::clone(&ladder), run.sourced(rows)),
+            inner: RunBackend::new(Arc::clone(&ladder), judge_run.sourced(rows)),
             vault,
             model: model.clone(),
             locality,

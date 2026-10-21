@@ -393,9 +393,9 @@ pub(super) fn apply_recency_blend(
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
-        let half_life_days = f64::from(
-            crate::pipeline::retrieval_recency_half_life_days_for_type(header.entity_type),
-        );
+        let half_life_days = f64::from(crate::pipeline::retrieval_recency_half_life_days_for_type(
+            header.entity_type,
+        ));
         let seconds_per_half_life = half_life_days * 86_400.0;
         if seconds_per_half_life <= 0.0 {
             continue;

@@ -193,11 +193,14 @@ pub(super) fn delete_from_known_phonetic_codes(
     Ok(())
 }
 
+/// The length of every physical `phonetic_index` key ([`phonetic_posting_key`]).
+pub(crate) const PHONETIC_POSTING_KEY_LEN: usize = blake3::OUT_LEN;
+
 /// The physical `phonetic_index` key of `code` (FIX 5340): a BLAKE3 digest
 /// of the whole code. Every put, get and delete of a code's posting keys by
 /// it, so a code of any length fits LMDB's key bound and still matches only
 /// itself; the forward and source rows keep the code itself, uncut.
-pub(crate) fn phonetic_posting_key(code: &str) -> [u8; 32] {
+pub(crate) fn phonetic_posting_key(code: &str) -> [u8; PHONETIC_POSTING_KEY_LEN] {
     *blake3::hash(code.as_bytes()).as_bytes()
 }
 

@@ -283,13 +283,13 @@ impl MultilingualAnalyzer {
         out: &mut Vec<Token>,
     ) -> u32 {
         let mut japanese = Vec::new();
-        let japanese_end = self
-            .japanese
-            .analyze(slice, offset_base, position_base, query_mode, &mut japanese);
+        let japanese_end =
+            self.japanese
+                .analyze(slice, offset_base, position_base, query_mode, &mut japanese);
         let mut chinese = Vec::new();
-        let chinese_end = self
-            .chinese
-            .analyze(slice, offset_base, position_base, query_mode, &mut chinese);
+        let chinese_end =
+            self.chinese
+                .analyze(slice, offset_base, position_base, query_mode, &mut chinese);
         let emitted: HashSet<_> = japanese.iter().map(span_key).collect();
         chinese.retain(|token| !emitted.contains(&span_key(token)));
         out.extend(japanese);
@@ -371,7 +371,12 @@ impl MultilingualAnalyzer {
 
 /// A token's channel, term and span: what makes two analyses' tokens one.
 fn span_key(token: &Token) -> (AnalyzerChannel, &str, u32, u32) {
-    (token.channel, &*token.term, token.byte_start, token.byte_end)
+    (
+        token.channel,
+        &*token.term,
+        token.byte_start,
+        token.byte_end,
+    )
 }
 
 fn whichlang_eligible(class: ScriptClass) -> bool {

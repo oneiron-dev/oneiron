@@ -60,7 +60,10 @@ pub fn analyze(text: &str, offset_base: u32, position_base: u32, out: &mut Vec<T
 fn words(text: &str) -> Vec<(usize, &str)> {
     let mut words = Vec::new();
     let mut start = None;
-    for (idx, c) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+    for (idx, c) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
         match (start, c.is_whitespace()) {
             (None, false) => start = Some(idx),
             (Some(begin), true) => {
