@@ -3437,7 +3437,7 @@ declare namespace Sdk {
   type BlobContent = { content_base64: string };
   type ConsolidationEnqueueRequest = { scope: string; input: unknown; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
   type ConsolidationStatusRequest = { job_ref: string };
-  type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "cancelled" | "signal" | "other";
+  type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "retry" | "cancelled" | "signal" | "other";
   type DreamerParkedAttemptView = { job_ref: string; cause: DreamerParkCauseView; parked_at: number };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number; parked?: DreamerParkedAttemptView | null };
   type ConsolidationWakeStatusRequest = { job_ref?: string | null; wake_ref?: string | null; limit?: number | null; cursor?: string | null };

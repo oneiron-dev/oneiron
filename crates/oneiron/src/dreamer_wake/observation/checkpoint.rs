@@ -12,8 +12,7 @@ use super::{
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::dreamer_runner::{
-    DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DreamerParkCause, DreamerParkedAttemptRecord,
-    DreamerRunnerStore,
+    DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DreamerParkedAttemptRecord, DreamerRunnerStore,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -34,7 +33,7 @@ pub(crate) fn record_checkpoint_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     park: &DreamerParkedAttemptRecord,
 ) {
-    if park.cause != DreamerParkCause::Checkpoint {
+    if park.cause.later_pass_resume_delay().is_none() {
         return;
     }
     let planned = match plan_checkpoint_in_txn(vault, wtxn, park) {
@@ -130,7 +129,7 @@ pub(crate) fn checkpoint_resumable_in_txn(
     park: &DreamerParkedAttemptRecord,
     record: &AttemptRecord,
 ) -> Result<Option<CheckpointCut>> {
-    if park.cause != DreamerParkCause::Checkpoint || record.id != park.attempt_id {
+    if park.cause.later_pass_resume_delay().is_none() || record.id != park.attempt_id {
         return Ok(None);
     }
     let Some(latest) = LATEST.get(&vault.store, txn, &latest_key(park.attempt_id))? else {
@@ -203,9 +202,10 @@ pub(crate) fn resume_checkpoints_for_wake(vault: &Vault, later: &LaterWake<'_>) 
         }
     };
     let mut changed = false;
+    // A Retry park waits out its delay at this site too (Engine 10-21).
     for park in due
         .iter()
-        .filter(|park| park.attempt.accepts_worker(later.worker))
+        .filter(|park| park.due_at <= later.now && park.attempt.accepts_worker(later.worker))
     {
         let resumed = vault.with_write_txn_grouped(|wtxn| {
             resume_checkpoint_in_txn(vault, wtxn, &store, park.attempt.id, later)
@@ -233,6 +233,11 @@ fn resume_checkpoint_in_txn(
     let Some((status, Some(park))) = store.status_with_park_in_txn(wtxn, attempt)? else {
         return Ok(false);
     };
+    // A Retry park resumes only once its delay passed, on the clock it
+    // parked by.
+    if park.later_pass_due_at().is_none_or(|due| due > later.now) {
+        return Ok(false);
+    }
     let record = &status.attempt;
     let Some(cut) = checkpoint_resumable_in_txn(vault, wtxn, &park, record)? else {
         return Ok(false);

@@ -81,6 +81,16 @@ impl ConsolidationSink for AttemptPromotionSink {
         if outcome.rejected.is_empty() {
             Ok(())
         } else {
+            // Each rejected candidate's code was logged where the door
+            // rejected it (FIX 7271); the write's one error stays as it was.
+            tracing::warn!(
+                attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
+                rejected = outcome.rejected.len(),
+                landed = outcome.landed.len(),
+                pended = outcome.pended.len(),
+                held = outcome.held.len(),
+                "scoped consolidation write refused"
+            );
             Err(Error::InvalidClaimBody(
                 "scoped consolidation write refused",
             ))
