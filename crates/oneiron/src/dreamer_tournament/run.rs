@@ -136,10 +136,12 @@ pub fn run_dreamer_claim_tournament(
             ));
         }
 
+        // Every branch was discarded: the run fails here, and what it
+        // collected is still persisted below with no winner claim.
         if synthesized.is_empty() {
-            return Err(invalid_tournament(
-                "tournament round discarded all candidates before judging",
-            ));
+            rounds_executed = round_number;
+            stop_reason = DreamerTournamentStopReason::AllDiscarded;
+            break;
         }
 
         latest_blind_contexts = blind_contexts(&synthesized);
@@ -171,10 +173,16 @@ pub fn run_dreamer_claim_tournament(
         }
     }
 
-    let winner =
-        latest_winner.ok_or_else(|| invalid_tournament("tournament did not execute any rounds"))?;
-    let winner_candidate = latest_winner_candidate
-        .ok_or_else(|| invalid_tournament("tournament winner candidate was not retained"))?;
+    // A failed run claims no winner, even one an earlier round ranked.
+    let claimed = if stop_reason == DreamerTournamentStopReason::AllDiscarded {
+        None
+    } else {
+        let winner = latest_winner
+            .ok_or_else(|| invalid_tournament("tournament did not execute any rounds"))?;
+        let winner_candidate = latest_winner_candidate
+            .ok_or_else(|| invalid_tournament("tournament winner candidate was not retained"))?;
+        Some((winner, winner_candidate))
+    };
 
     let mut wtxn = vault.store.env.write_txn()?;
     for critique in &critique_artifacts {
@@ -183,20 +191,22 @@ pub fn run_dreamer_claim_tournament(
     for evidence in &branch_evidence {
         evidence_store.put_in_txn(&mut wtxn, evidence)?;
     }
-    vault
-        .batch_in()
-        .claim_candidate(
-            &winner_candidate.claim_id,
-            winner_candidate.claim.clone(),
-            &input.envelope,
-            input.occurred,
-            input.learned_at,
-        )
-        .apply(&mut wtxn)?;
+    if let Some((_, winner_candidate)) = &claimed {
+        vault
+            .batch_in()
+            .claim_candidate(
+                &winner_candidate.claim_id,
+                winner_candidate.claim.clone(),
+                &input.envelope,
+                input.occurred,
+                input.learned_at,
+            )
+            .apply(&mut wtxn)?;
+    }
     wtxn.commit()?;
 
     Ok(DreamerTournamentRunResult {
-        winner,
+        winner: claimed.map(|(winner, _)| winner),
         rounds_executed,
         stop_reason,
         branch_evidence,

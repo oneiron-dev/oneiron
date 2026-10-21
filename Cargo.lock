@@ -8172,6 +8172,7 @@ dependencies = [
  "crc32fast",
  "expat-sys",
  "flate2",
+ "oneiron-contracts",
  "proptest",
  "quick-xml 0.42.0",
  "roxmltree",
