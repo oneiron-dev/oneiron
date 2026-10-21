@@ -1,15 +1,14 @@
 //! The world key pad's custody client (KS-5, FIX 346; KEY STORE = A): the
 //! exterior custody a world key's erasable half moves into.
 //!
-//! A pad is one subject per key: kind `WorldPad`, item `world (16) | the
-//! key's mint id (16)`, generation 0, the pad's 32 bytes its secret. Until
-//! the owner's other machines can take a pad from custody (an L03 pad
-//! hydration channel), a pad row still carries its pad and replicates as
-//! before, and custody holds a mirror: the writer that mints a key publishes
-//! its pad here, the binding pinned in the same transaction, synced and its
-//! Mint journaled before the row commits. A reader prefers the row's pad and
-//! falls back to custody. The mirror sits in the custody head's
-//! host-readable compartment (CALLS WORLD_PAD_HEAD_SCOPE).
+//! A pad is one subject per key: kind `WorldPad`, item the key's full id
+//! (`WorldKeyId::envelope_key_id`: world (16) | generation (8, big-endian) |
+//! mint (16); CALLS `FIX 5686 pad custody item codec`), generation 0, the
+//! pad's 32 bytes its secret. Every put of a pad row publishes its pad here
+//! (KS-5, `world_keys::pad_custody`), the binding pinned in the same
+//! transaction, synced and its Mint journaled before the row commits; the
+//! row then rests as a reference to its entry. The pad sits in the custody
+//! head's host-readable compartment (CALLS WORLD_PAD_HEAD_SCOPE).
 //!
 //! A world erase stages one erase intent for every pad of the world custody
 //! holds here, a row or none, in the purge's own transaction, and the
@@ -27,8 +26,23 @@ use crate::store::key_custody::{
     RetirementIntent, custody_present, stage_retirement_in_txn,
 };
 
-/// A pad's custody item: its world (16) then its key's mint id (16).
-pub(crate) type WorldPadItem = [u8; 32];
+/// A pad's custody item: its key's full id, world (16) | generation (8,
+/// big-endian) | mint (16).
+pub(crate) type WorldPadItem = [u8; 40];
+
+/// What current custody holds for one pad item, as the pad client's put door
+/// reads it (KS-5, FIX 5686).
+pub(crate) enum WorldPadCustody {
+    /// No pad may be published here: an archived vault, whose custody is its
+    /// replacement's.
+    Closed,
+    /// No entry yet: a publication takes it.
+    Missing,
+    /// The live entry's pad.
+    Live(Zeroizing<[u8; 32]>),
+    /// A retirement reached it: it is never published again.
+    Retired,
+}
 
 fn pad_subject(binding: &CustodyBinding, item: &WorldPadItem) -> Result<CustodySubject> {
     binding.subject(CustodyKind::WorldPad, item)
@@ -110,6 +124,47 @@ impl Store {
             Err(_) if custody.state(&id)? != EntryState::Live => Ok(None),
             Err(error) => Err(error),
         }
+    }
+
+    /// [`WorldPadCustody`] for `item`. It takes no custody guard, as
+    /// [`Self::world_pad_in_custody`] does not.
+    ///
+    /// # Errors
+    ///
+    /// Custody faults.
+    pub(crate) fn world_pad_custody_entry(&self, item: &WorldPadItem) -> Result<WorldPadCustody> {
+        if self.core.gate_custody_archived() {
+            return Ok(WorldPadCustody::Closed);
+        }
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(WorldPadCustody::Missing);
+        };
+        if !custody_present(custody.binding().root())? {
+            return Ok(WorldPadCustody::Missing);
+        }
+        let id = pad_subject(custody.binding(), item)?.at(0);
+        Ok(match custody.state(&id)? {
+            EntryState::Missing => WorldPadCustody::Missing,
+            EntryState::Retired => WorldPadCustody::Retired,
+            EntryState::Live => match custody.read(&id) {
+                Ok(secret) => WorldPadCustody::Live(copy_pad(secret.expose())?),
+                Err(_) if custody.state(&id)? == EntryState::Retired => WorldPadCustody::Retired,
+                Err(error) => return Err(error),
+            },
+        })
+    }
+
+    /// The namespace this store's pads are published under, once a binding
+    /// is held and the vault is not archived: what a pad row's reference
+    /// names.
+    pub(crate) fn world_pad_namespace(&self) -> Option<[u8; 16]> {
+        if self.core.gate_custody_archived() {
+            return None;
+        }
+        self.core
+            .key_custody
+            .local()
+            .map(|custody| *custody.binding().namespace().as_bytes())
     }
 
     /// Every pad of `world` custody holds here with its state, one no row

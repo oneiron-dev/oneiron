@@ -453,6 +453,8 @@ fn admit(
         if *local == *blob
             || pack_sync::pack_echo_equal(&local, blob)
             || crate::sync::asset_body::file_echo_equal(&vault.store, wtxn, &id, &local, blob)?
+            // A pad row rests as a reference to the pad custody holds (KS-5).
+            || crate::world_keys::pad_echo_equal(&vault.store, &local, blob)
         {
             // FIX 5500: the replay stays a skip, but a row already here with these bytes still
             // records the origin its window carries for them, as the write below does.

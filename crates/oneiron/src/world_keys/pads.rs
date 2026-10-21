@@ -13,11 +13,12 @@
 //! the world's windows (`PROMOTED_WORLD_PAD_SET`). A pad alone is noise, and
 //! so is an opened wrap without it.
 //!
-//! The pad is also published into exterior key custody when its key is minted
-//! here (KS-5, FIX 346: `crate::store` world pad custody), and a reader falls
-//! back to that custody when the row is not here. The row keeps its pad until
-//! the owner's other machines can take a pad from custody (an L03 pad
-//! hydration channel); then the row names its custody entry alone.
+//! At rest the pad lives in exterior key custody (KS-5, FIX 346 and FIX
+//! 5686: `crate::store` world pad custody), and its row names it: every put
+//! of a pad row takes the pad into custody before the row commits, and the
+//! row stores a reference; each route the row leaves by carries the pad
+//! again, from custody (`pad_custody`). A store whose custody cannot take a
+//! pad keeps the row carrying it, as before.
 //!
 //! Erasing a world (a hard purge, a batch delete, or a peer's hard tombstone)
 //! purges every pad of the world on each replica that applies the erase, and
@@ -43,6 +44,7 @@
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use super::pad_custody::{self, decode_pad_body, pad_item};
 use super::{SEALED_BUNDLE_KEEP, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, WorldKeyId, os_fill, refused};
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
@@ -58,10 +60,7 @@ use crate::side_table::{self, HexId, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
-const PAD_LABEL: &[u8] = b"oneiron/world-key-pad/v1\0";
 const PAD_ROW_DOMAIN: &[u8] = b"oneiron/world-key-pad-row/v1";
-/// label ‖ world (16) ‖ generation (8, big-endian) ‖ mint (16) ‖ pad (32).
-const PAD_BODY_LEN: usize = PAD_LABEL.len() + 16 + 8 + 16 + 32;
 
 const DESTROYED: SideTable<HexId, WorldKeyDestruction, Named> =
     SideTable::new(&side_table::WORLD_KEY_DESTROYED);
@@ -160,47 +159,6 @@ pub(crate) fn pad_row_id(key: &WorldKeyId) -> Result<EntityId> {
     )
 }
 
-/// The custody item `key`'s pad rests under: its world, then its mint id
-/// (KS-5, FIX 346).
-fn pad_item(key: &WorldKeyId) -> [u8; 32] {
-    let mut item = [0u8; 32];
-    item[..16].copy_from_slice(key.world.as_bytes());
-    item[16..].copy_from_slice(&key.mint);
-    item
-}
-
-fn encode_pad_body(key: &WorldKeyId, pad: &WorldKeyPad) -> Vec<u8> {
-    let mut body = Vec::with_capacity(PAD_BODY_LEN);
-    body.extend_from_slice(PAD_LABEL);
-    body.extend_from_slice(key.world.as_bytes());
-    body.extend_from_slice(&key.generation.to_be_bytes());
-    body.extend_from_slice(&key.mint);
-    body.extend_from_slice(&pad.0[..]);
-    body
-}
-
-fn decode_pad_body(body: &[u8]) -> Result<(WorldKeyId, WorldKeyPad)> {
-    let malformed = || Error::CorruptedIndex("world key pad body");
-    if body.len() != PAD_BODY_LEN || !body.starts_with(PAD_LABEL) {
-        return Err(malformed());
-    }
-    let rest = &body[PAD_LABEL.len()..];
-    let world = EntityId::from_bytes(rest[..16].try_into().map_err(|_| malformed())?)
-        .map_err(|_| malformed())?;
-    let generation = u64::from_be_bytes(rest[16..24].try_into().map_err(|_| malformed())?);
-    let mint: [u8; 16] = rest[24..40].try_into().map_err(|_| malformed())?;
-    let mut pad = Zeroizing::new([0u8; 32]);
-    pad.copy_from_slice(&rest[40..72]);
-    Ok((
-        WorldKeyId {
-            world,
-            generation,
-            mint,
-        },
-        WorldKeyPad(pad),
-    ))
-}
-
 /// Whether `world`'s keys were destroyed here, or the world was erased here: a
 /// hard-delete marker. A soft delete keeps the keys, so a soft-deleted world
 /// still takes its own pads. Absence of the WORLD row alone is not
@@ -273,7 +231,7 @@ pub(crate) fn pad_body_world(raw: &[u8]) -> Option<Result<EntityId>> {
 /// The world a pad row's `body`, with no header, names; an error for a body
 /// that does not decode.
 pub(crate) fn pad_world_in_body(body: &[u8]) -> Result<EntityId> {
-    decode_pad_body(body).map(|(key, _)| key.world)
+    decode_pad_body(body).map(|body| body.key().world)
 }
 
 /// The window a pad of `world` learned at `learned_at` rides: the world's
@@ -297,9 +255,10 @@ pub(crate) fn late_pad_in_txn(store: &Store, txn: &heed::RoTxn<'_>, raw: &[u8]) 
     }
 }
 
-/// `key`'s pad on this replica: its row's, or else the one current custody
-/// holds for it (FIX 346). Custody's is never read for a world whose keys
-/// were destroyed here: its retirement may still be finishing.
+/// `key`'s pad on this replica: the one its row carries or names in current
+/// custody, or else the one custody holds with no row (FIX 346). Custody's
+/// is never read for a world whose keys were destroyed here: its retirement
+/// may still be finishing.
 pub(crate) fn pad_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -316,6 +275,7 @@ pub(crate) fn pad_in_txn(
 
 /// [`pad_in_txn`] with the time its row was learned, which files it in its
 /// world's window of that month: a sealed pad object carries it (FIX 3790).
+/// `None` when no row is here, or its reference's pad is not.
 pub(super) fn pad_row_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -330,11 +290,11 @@ pub(super) fn pad_row_in_txn(
     if header.entity_type != ENTITY_TYPE_WORLD_KEY_PAD {
         return Err(Error::CorruptedIndex("world key pad row of another kind"));
     }
-    let (named, pad) = decode_pad_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-    if named != *key {
+    let body = decode_pad_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    if body.key() != key {
         return Err(Error::CorruptedIndex("world key pad names another key"));
     }
-    Ok(Some((pad, header.learned_at)))
+    Ok(pad_custody::pad_of_body_in_txn(store, txn, body)?.map(|pad| (pad, header.learned_at)))
 }
 
 /// `key`'s pad, or the typed refusal: destroyed with its world, or not here yet.
@@ -350,30 +310,6 @@ pub(crate) fn require_pad_in_txn(
         return Err(refused("the world's keys were destroyed with the world"));
     }
     Err(refused("the key's pad has not reached this machine"))
-}
-
-/// The put door's check for a pad row, on every path, local or replicated: the
-/// body is one well-formed pad, the row id is the one its key derives, a pad
-/// row never changes, and no pad lands for a world whose keys were destroyed.
-pub(crate) fn validate_pad_put_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    data: &[u8],
-) -> Result<()> {
-    let (key, _pad) = decode_pad_body(data)?;
-    if pad_row_id(&key)? != *id {
-        return Err(refused("a pad row's id is not the one its key derives"));
-    }
-    if world_keys_destroyed_in_txn(store, txn, key.world)? {
-        return Err(refused("the world's keys were destroyed with the world"));
-    }
-    if let Some(raw) = store.port_entity_raw(txn, id)?.map(Zeroizing::new)
-        && raw.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
-    {
-        return Err(refused("a world key's pad never changes"));
-    }
-    Ok(())
 }
 
 /// Every pad row of `world` on this replica.
@@ -395,7 +331,7 @@ fn world_pad_rows_in_txn(
         }
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("world key pad header"))?;
-        let (key, _) = decode_pad_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let key = *decode_pad_body(&raw[ENTITY_METADATA_HEADER_LEN..])?.key();
         if key.world == world {
             out.push((id, key, header.learned_at));
         }
@@ -664,7 +600,13 @@ impl Vault {
         };
         let mut pads = Vec::with_capacity(rows.len());
         for (id, _, learned_at) in rows {
-            if let Some(row) = self.store.port_entity_raw(&txn, &id)?.map(Zeroizing::new) {
+            // Each row as the route carries it, its pad from current custody.
+            if let Some(row) = self
+                .store
+                .port_entity_raw(&txn, &id)?
+                .and_then(|raw| pad_custody::live_route_row(&self.store, raw))
+                .map(Zeroizing::new)
+            {
                 pads.push(PromotedWorldPad {
                     id,
                     window: pad_window(world, learned_at),
@@ -696,10 +638,10 @@ impl Vault {
 impl Vault {
     /// Stages `key`'s pad row, learned at `learned_at`, in the caller's
     /// transaction: a fresh pad beside the key's first wraps, or a kit-restored
-    /// one at the time its row was first learned (FIX 3790). The pad is
-    /// published into custody first, synced and journaled before the row
-    /// commits (FIX 346); while the row still carries its pad, a custody
-    /// fault is warned and the row lands as before.
+    /// one at the time its row was first learned (FIX 3790). The put door
+    /// takes the pad into custody first, synced and journaled before the row
+    /// commits, and the row stores its reference (`pad_custody`); a custody
+    /// fault is warned and the row lands carrying its pad, as before.
     pub(super) fn put_pad_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -707,15 +649,6 @@ impl Vault {
         pad: &WorldKeyPad,
         learned_at: u64,
     ) -> Result<()> {
-        if let Err(error) = self
-            .store
-            .publish_world_pad_in_txn(txn, &pad_item(key), pad.bytes())
-        {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "a world key's pad was not mirrored into key custody; its row carries it"
-            );
-        }
         let ops = vec![BatchOp::Put {
             id: pad_row_id(key)?,
             entity_type: ENTITY_TYPE_WORLD_KEY_PAD,
@@ -724,7 +657,7 @@ impl Vault {
                 end: learned_at,
             },
             learned_at,
-            data: encode_pad_body(key, pad),
+            data: pad_custody::encode_carrier(key, pad.bytes()),
             allow_maintenance: true,
             allow_reserved_predicate: false,
             hub_sync_imported: false,
