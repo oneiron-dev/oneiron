@@ -18,9 +18,9 @@
 //! A connector may ask for input mid-call (elicitation). `initialize`
 //! declares the capability only when the governing key's elicitation setting,
 //! read before the exchange starts, is not `never allow`, the engine bound
-//! the call's caller and grant, the call names no custody record, and the
-//! pinned revision has an elicitation shape: 2025-06-18 declares `{}`,
-//! 2025-11-25 and 2026-07-28 form mode alone. A question is a form-mode
+//! the call's caller and grant, and the pinned revision has an elicitation
+//! shape: 2025-06-18 declares `{}`, 2025-11-25 and 2026-07-28 form mode
+//! alone. A question is a form-mode
 //! `elicitation/create` request on the reply stream (2025-06-18,
 //! 2025-11-25), or a 2026-07-28 `tools/call` result that asks for input,
 //! each of its requests a form `elicitation/create`. Either way the call
@@ -37,7 +37,9 @@
 //! effector; the door rechecks the record's binding at each send. A call under
 //! a secret grant (FIX 4313) redeems the grant at its door at each send.
 //! Whatever selected it, everything the connector says is cleared of the
-//! value a send presented inside its door, with those bytes (`presenting`).
+//! value a send presented inside its door, with those bytes (`presenting`):
+//! a `self.use` send declares elicitation as any other does, and its
+//! questions and every later reply are cleared the same way (FIX 3843).
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
@@ -221,18 +223,17 @@ impl ServedConnectorCallHost {
         presenting.send(&self.vault, &exchange, presented)
     }
 
-    /// The elicitation this send declares, or `None`: a call that names a
-    /// custody record, one the engine bound no caller to, a revision with
-    /// no elicitation shape, an unreadable key ref or setting, and a key set
-    /// to `never allow` all declare none.
+    /// The elicitation this send declares, or `None`: a call the engine
+    /// bound no caller to, a revision with no elicitation shape, an
+    /// unreadable key ref or setting, and a key set to `never allow` all
+    /// declare none. A call that names a custody record declares it too: its
+    /// door clears the presented value from each question and every later
+    /// reply (FIX 3843).
     fn declared(
         &self,
         call: &FrozenOutboundCall,
         view: &FrozenToolCallView,
     ) -> Option<Declared<'_>> {
-        if self.credential.is_some() {
-            return None;
-        }
         let caller = self.caller.as_ref()?;
         let revision = view.protocol_revision()?;
         let capability = elicitation_capability(revision)?;
@@ -262,10 +263,26 @@ impl ServedConnectorCallHost {
     }
 }
 
+impl ServedConnectorCallHost {
+    /// Ends the questions the last send kept that nobody took: no caller
+    /// holds their handle, so their worker cancels them now (FIX 3844).
+    fn abandon_untaken(&mut self) {
+        if let Some(left) = self.awaiting.take() {
+            self.elicitations.finish(&left.handle);
+        }
+    }
+}
+
+impl Drop for ServedConnectorCallHost {
+    fn drop(&mut self) {
+        self.abandon_untaken();
+    }
+}
+
 impl OutboundResultSender for ServedConnectorCallHost {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundTransportResult {
         self.reply = None;
-        self.awaiting = None;
+        self.abandon_untaken();
         let mut presented = None;
         let sent = self.send_call(call, &mut presented);
         self.presented = presented.map(|presented| presented.custody);
@@ -318,6 +335,10 @@ impl ConnectorCallHost for ServedConnectorCallHost {
 
     fn take_awaiting_input(&mut self) -> Option<ConnectorAwaitingInput> {
         self.awaiting.take()
+    }
+
+    fn abandon_awaiting_input(&mut self, handle: &str) {
+        self.elicitations.finish(handle);
     }
 }
 
