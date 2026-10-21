@@ -2523,8 +2523,8 @@ class TaggingMarkerView(TypedDict):
     created_at: int
     updated_at: int
 TaggingFailureView = TypedDict("TaggingFailureView", {"class": str, "code": NotRequired[str | None], "refusal": NotRequired[str | None]})
-ExecutionRuntime = Literal["candle", "endpoint"]
-ExecutionCompute = Literal["cpu", "metal", "cuda", "opaque"]
+ExecutionRuntime = Literal["candle", "endpoint", "mlx", "coreml"]
+ExecutionCompute = Literal["cpu", "metal", "cuda", "cpu_and_ne", "opaque"]
 ExecutionPick = Literal["calibrated", "free", "shorter_queue", "fallback", "pinned"]
 class EncoderExecution(TypedDict):
     runtime: ExecutionRuntime
