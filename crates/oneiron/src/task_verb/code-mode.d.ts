@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1168 code-mode rows (1128 host rows, 40 run rows), 3893 declarations.
-// Replies: 1048 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1170 code-mode rows (1130 host rows, 40 run rows), 3897 declarations.
+// Replies: 1050 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2710,6 +2710,10 @@ declare namespace Sdk {
   type RoomStanding = { hosting: RoomHosting; role?: RoomSpeakingRole | null };
   type RoomHostPin = { room: EntityId; agent?: EntityId | null };
   type RoomHostHand = { room: EntityId; to: EntityId; session?: EntityId | null };
+  type RoomUpkeepPendingRequest = { room?: EntityId | null };
+  type RoomUpkeepNudge = { finding: EntityId; room: EntityId; thread: EntityId; host: EntityId; last_activity: number; open_tasks: EntityId[]; approval: ClaimApprovalStatus };
+  type RoomUpkeepVoiceRequest = { finding: EntityId; content: string };
+  type RoomUpkeepVoiceReceipt = { finding: EntityId; turn?: RecordRef | null; message?: RecordRef | null; receipt_ref: string; replayed: boolean };
   type RoomSharingClamp = { clamp: "worlds" } | { clamp: "facets" } | { clamp: "contact_clearance"; members: number } | { clamp: "unknown"; members: number };
   type RoomSharingView = { room: EntityId; effective: Scope; clamps: RoomSharingClamp[] };
   type CompanionSharingRequest = { companion_ref: string; contact_ref: string };
@@ -6274,6 +6278,12 @@ declare const vault: Sdk.VaultHost & {
     };
     /** One trunk turn of a room, with the completed TASK result headers that hang under it. */
     trunk(input: Sdk.RoomTurnRequest): Promise<Sdk.RoomTrunk | StoredResult>;
+    upkeep: {
+      /** The room upkeep nudges addressed to the caller for rooms it hosts now, that its lane reads and no voice has used yet. */
+      pending(input: Sdk.RoomUpkeepPendingRequest): Promise<Sdk.RoomUpkeepNudge[] | StoredResult>;
+      /** The room's current host voices one upkeep nudge addressed to it as its own reply to the newest turn of the nudge's thread. */
+      voice(input: Sdk.RoomUpkeepVoiceRequest): Promise<Sdk.RoomUpkeepVoiceReceipt | StoredResult>;
+    };
   };
   roots: {
     requests: {

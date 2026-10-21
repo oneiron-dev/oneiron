@@ -4149,6 +4149,9 @@ class Oneiron:
         @property
         def host(self) -> "Oneiron._VaultRoomsHostVerbs":
             return Oneiron._VaultRoomsHostVerbs(self._client)
+        @property
+        def upkeep(self) -> "Oneiron._VaultRoomsUpkeepVerbs":
+            return Oneiron._VaultRoomsUpkeepVerbs(self._client)
         def sharing(self, spec):
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
             return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
@@ -4206,6 +4209,15 @@ class Oneiron:
         def hand(self, spec):
             """The room's current host hands the hosting duty to another agent that may host."""
             return json.loads(_translate(lambda: self._client.vault_rooms_host_hand(json.dumps(spec))))
+    class _VaultRoomsUpkeepVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def pending(self, spec):
+            """The room upkeep nudges addressed to the caller for rooms it hosts now, that its lane reads and no voice has used yet."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_upkeep_pending(json.dumps(spec))))
+        def voice(self, spec):
+            """The room's current host voices one upkeep nudge addressed to it as its own reply to the newest turn of the nudge's thread."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_upkeep_voice(json.dumps(spec))))
     class _VaultConversationsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

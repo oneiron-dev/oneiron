@@ -11,6 +11,7 @@ use crate::{EntityId, Vault};
 
 mod live_audience;
 mod thread_readers;
+mod upkeep_posture;
 
 pub(crate) use thread_readers::{
     off_room_reader_clearance_in, thread_ceiling_in, thread_reader_in,

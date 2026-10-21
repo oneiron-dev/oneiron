@@ -6818,6 +6818,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_rooms_upkeep_pending(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.upkeep.pending", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_upkeep_voice(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.upkeep.voice", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_rooms_sharing(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.sharing", js_json(input))

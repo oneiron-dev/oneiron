@@ -34,6 +34,8 @@ mod thread_join;
 mod thread_projection;
 mod thread_reads;
 mod upkeep;
+mod upkeep_voice;
+mod upkeep_voice_guard;
 mod witness;
 use super::ProjectRoom;
 use crate::error::{Error, Result};
@@ -137,6 +139,9 @@ pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub(crate) use thread_reads::turn_held_back_for_in;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use upkeep::{room_upkeep_host, upkeep_rooms};
+pub use upkeep_voice::{
+    RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
+};
 pub(crate) use witness::{RoomRegenerationPermit, admit_witness, erase_turn_actor_in_txn};
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16

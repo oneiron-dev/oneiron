@@ -32,6 +32,8 @@ const ROOM_TURN_VERBS: &[&str] = &[
     "vault.rooms.offer",
     "vault.rooms.host",
     "vault.rooms.host.hand",
+    "vault.rooms.upkeep.pending",
+    "vault.rooms.upkeep.voice",
     "vault.rooms.sharing",
     "vault.rooms.participants",
 ];
