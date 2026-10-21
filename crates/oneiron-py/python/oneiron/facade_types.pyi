@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1131 facade rows, 3938 declarations.
+Census: 1131 facade rows, 3942 declarations.
 Inputs: 1066 of 1131 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1018 of 1131 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -1623,7 +1623,7 @@ class TaskAskStatusSettled(TypedDict):
 class TaskAskStatusWorldPrivacy(TypedDict):
     WorldPrivacy: WorldPrivacyWaitResult
 TaskAskStatus = TaskAskStatusPending | TaskAskStatusChanged | TaskAskStatusSettled | TaskAskStatusWorldPrivacy
-StrictDenial = Literal["rule_abstained", "no_rule", "image"]
+StrictDenial = Literal["rule_abstained", "no_rule", "image", "field_generation_requires_model"]
 class AskUpReasonAsked(TypedDict):
     why: Literal["asked"]
     ladder: NotRequired[str | None]
@@ -1636,8 +1636,38 @@ class AskUpReasonWrongAnswer(TypedDict):
 class AskUpReasonStrict(TypedDict):
     why: Literal["strict"]
     denied: StrictDenial
-AskUpReason = AskUpReasonAsked | AskUpReasonLooks | AskUpReasonNoAnswer | AskUpReasonWrongAnswer | AskUpReasonStrict
+class AskUpReasonReobserve(TypedDict):
+    why: Literal["reobserve"]
+AskUpReason = AskUpReasonAsked | AskUpReasonLooks | AskUpReasonNoAnswer | AskUpReasonWrongAnswer | AskUpReasonStrict | AskUpReasonReobserve
 ClockScope = Literal["wait", "navigation", "decision"]
+TextSource = Literal["supplied", "reference", "template", "generated"]
+class FieldTextReasonNoText(TypedDict):
+    why: Literal["no_text"]
+class FieldTextReasonMissingSlot(TypedDict):
+    why: Literal["missing_slot"]
+    slot: str
+class FieldTextReasonUnclosedSlot(TypedDict):
+    why: Literal["unclosed_slot"]
+class FieldTextReasonNotAnOption(TypedDict):
+    why: Literal["not_an_option"]
+    source: TextSource
+class FieldTextReasonSecretField(TypedDict):
+    why: Literal["secret_field"]
+class FieldTextReasonWriterUnavailable(TypedDict):
+    why: Literal["writer_unavailable"]
+class FieldTextReasonWriterRefused(TypedDict):
+    why: Literal["writer_refused"]
+class FieldTextReasonWriterFailed(TypedDict):
+    why: Literal["writer_failed"]
+class FieldTextReasonCheckedNo(TypedDict):
+    why: Literal["checked_no"]
+class FieldTextReasonCheckAbstained(TypedDict):
+    why: Literal["check_abstained"]
+class FieldTextReasonCheckFailed(TypedDict):
+    why: Literal["check_failed"]
+class FieldTextReasonPageRejected(TypedDict):
+    why: Literal["page_rejected"]
+FieldTextReason = FieldTextReasonNoText | FieldTextReasonMissingSlot | FieldTextReasonUnclosedSlot | FieldTextReasonNotAnOption | FieldTextReasonSecretField | FieldTextReasonWriterUnavailable | FieldTextReasonWriterRefused | FieldTextReasonWriterFailed | FieldTextReasonCheckedNo | FieldTextReasonCheckAbstained | FieldTextReasonCheckFailed | FieldTextReasonPageRejected
 class BatchStopCausePostconditionUnmet(TypedDict):
     cause: Literal["postcondition_unmet"]
 class BatchStopCauseLocatorMissing(TypedDict):
@@ -1656,6 +1686,7 @@ class BatchStopCauseTakenOver(TypedDict):
     cause: Literal["taken_over"]
 class BatchStopCauseFieldText(TypedDict):
     cause: Literal["field_text"]
+    reason: FieldTextReason
 class BatchStopCauseNoProgress(TypedDict):
     cause: Literal["no_progress"]
 class BatchStopCauseBrowser(TypedDict):
@@ -19667,6 +19698,8 @@ class EffectReceipt(TypedDict):
     engine: NotRequired[BrowserEngine | None]
     fact: NotRequired[ActionFact | None]
     engine_switch: NotRequired[EngineSwitchRecord | None]
+    text_source: NotRequired[TextSource | None]
+    text_ref: NotRequired[str | None]
     duration_ms: int
 class SecretParam(TypedDict):
     name: str
@@ -19825,6 +19858,16 @@ class DecideStep(TypedDict):
     secret: NotRequired[str | None]
     clear: NotRequired[bool]
     option: NotRequired[str | None]
+class TextReference(TypedDict):
+    id: str
+    text: str
+class FieldSpec(TypedDict):
+    supplied: NotRequired[str | None]
+    references: NotRequired[list[TextReference]]
+    template: NotRequired[str | None]
+    generate: NotRequired[bool]
+    instruction: NotRequired[str | None]
+    enum_values: NotRequired[list[str] | None]
 class BatchStepOpen(TypedDict):
     step: Literal["open"]
     url: str
@@ -19873,7 +19916,11 @@ class BatchStepScroll(TypedDict):
     ref: NotRequired[str | None]
 class BatchStepDecide(DecideStep):
     step: Literal["decide"]
-BatchStep = BatchStepOpen | BatchStepClick | BatchStepType | BatchStepSelect | BatchStepWaitFor | BatchStepExpect | BatchStepScreenshot | BatchStepKey | BatchStepHotkey | BatchStepScroll | BatchStepDecide
+class BatchStepFill(TypedDict):
+    step: Literal["fill"]
+    ref: str
+    field: FieldSpec
+BatchStep = BatchStepOpen | BatchStepClick | BatchStepType | BatchStepSelect | BatchStepWaitFor | BatchStepExpect | BatchStepScreenshot | BatchStepKey | BatchStepHotkey | BatchStepScroll | BatchStepDecide | BatchStepFill
 class BatchInput(TypedDict):
     subgoal: NotRequired[str | None]
     steps: list[BatchStep]
