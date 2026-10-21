@@ -297,7 +297,8 @@ impl Vault {
     /// names this owner's digest settings, the step applies, attributed to
     /// the Coach and the Grant, with the owner's notice and its undo in the
     /// same commit; with no such Grant, or any error reading it, it lands as
-    /// a proposal. `true`: a change applied.
+    /// a proposal, which names a Grant passed over on its lapsed pact
+    /// membership alone (FIX 7548). `true`: a change applied.
     fn file_coach_step_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -321,7 +322,7 @@ impl Vault {
                     error_kind = ?error.kind(),
                     "the Coach's digest settings Grant was not read"
                 );
-                None
+                Err(crate::authority::NoStanding::NotStanding)
             });
         let id = change_id(owner, generation, step, now)?;
         let mut change = WeaveDigestSettingChange {
@@ -337,11 +338,17 @@ impl Vault {
             undone_generation: None,
             created_at: now,
             settled_at: None,
+            grant_omitted: None,
         };
-        let Some(grant) = grant else {
-            CHANGES.put(&self.store, txn, &(owner, id), &change)?;
-            self.notify_setting_change_in_txn(txn, owner, &change, NotificationKind::Ask, now)?;
-            return Ok(false);
+        let grant = match grant {
+            Ok(grant) => grant,
+            Err(no_standing) => {
+                change.grant_omitted =
+                    crate::authority::grant_omission(no_standing).map(str::to_owned);
+                CHANGES.put(&self.store, txn, &(owner, id), &change)?;
+                self.notify_setting_change_in_txn(txn, owner, &change, NotificationKind::Ask, now)?;
+                return Ok(false);
+            }
         };
         let bytes = serde_json::to_vec(&after_wire).map_err(|_| invalid())?;
         let after = self.put_owner_weave_digest_schedule_in_txn(
