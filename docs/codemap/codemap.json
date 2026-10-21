@@ -91788,7 +91788,7 @@
      "path": "src/managed/vm_host/anchor.rs",
      "purpose": "The host's half of a vault VM's custody anchor channels (FIX 6517, [`oneiron_vault_contract::vm_anchor`])",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 10,
       "fn": 1,
       "struct": 1
      }
