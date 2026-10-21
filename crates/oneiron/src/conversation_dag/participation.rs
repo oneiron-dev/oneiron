@@ -5,8 +5,7 @@ use super::AppendRecord;
 use super::graph;
 use super::topology::RecordKind;
 use crate::edge::EdgeKind;
-use crate::error::{Error, Result};
-use crate::limits::MAX_ANCESTOR_DEPTH;
+use crate::error::{Error, RegistryError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::store::Store;
@@ -159,7 +158,7 @@ pub(crate) fn offer_turns_in_txn(
     let mut turns = Vec::with_capacity(records.len());
     for (id, (thread, at, actor)) in records {
         let (reply_to, thread_of) = if thread {
-            let Some((_, trunk)) = branch_in_txn(store, txn, id, &mut branches)? else {
+            let Some((_, trunk)) = branch_in_txn(store, txn, &room, id, &mut branches)? else {
                 continue;
             };
             (graph::parent(store, txn, &id)?, Some(trunk))
@@ -184,18 +183,19 @@ pub(crate) fn offer_turns_in_txn(
 }
 
 /// The root and trunk anchor of thread record `record`'s branch: walked up
-/// `Parent` through thread records to the first record that is none, at the
-/// shared ancestor cap. `None` when the walk meets no trunk record or an
-/// ancestor no row or pin still knows. `known` holds each thread record's
-/// answer already walked.
+/// `Parent` through thread records to the first record that is none, however
+/// far, counted as one walk of `room` (rule 5); a cycle is refused. `None`
+/// when the walk meets no trunk record or an ancestor no row or pin still
+/// knows. `known` holds each thread record's answer already walked.
 fn branch_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
+    room: &EntityId,
     record: EntityId,
     known: &mut BTreeMap<EntityId, Option<(EntityId, EntityId)>>,
 ) -> Result<Option<(EntityId, EntityId)>> {
     let mut root = record;
-    let mut path = vec![record];
+    let mut path = BTreeSet::from([record]);
     let mut cursor = graph::parent(store, txn, &record)?;
     let found = loop {
         let Some(parent) = cursor else {
@@ -210,13 +210,15 @@ fn branch_in_txn(
             Err(Error::EntityNotFound) => break None,
             Err(err) => return Err(err),
         }
-        if path.len() > MAX_ANCESTOR_DEPTH {
-            return Err(Error::IndexOverflow("conversation_dag_walk"));
+        if !path.insert(parent) {
+            return Err(RegistryError::CycleDetected.into());
         }
         root = parent;
-        path.push(parent);
         cursor = graph::parent(store, txn, &parent)?;
     };
+    let mut walk = graph::walk_count(store, txn, room)?;
+    walk.rows(path.len());
+    walk.defer(store);
     for id in path {
         known.insert(id, found);
     }

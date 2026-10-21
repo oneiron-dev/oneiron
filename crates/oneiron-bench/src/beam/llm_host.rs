@@ -74,8 +74,13 @@ impl OpenAiCompatTransport for HttpTransport {
                 .json()
                 .await
                 .map_err(|_| OpenAiCompatTransportError::Server)?;
+            // A house llama.cpp launch alias stands for the pinned model it
+            // was sent as (FIX 7895); the body keeps it as it came.
+            let returned = body["model"]
+                .as_str()
+                .map(|returned| oneiron::llm::returned_model_wire_id(returned, pinned));
             if (200..300).contains(&status)
-                && (body["model"].as_str() != Some(pinned.as_str()) || !body["usage"].is_object())
+                && (returned != Some(pinned.as_str()) || !body["usage"].is_object())
             {
                 return Err(OpenAiCompatTransportError::Server);
             }

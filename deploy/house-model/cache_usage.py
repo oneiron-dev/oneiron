@@ -24,9 +24,11 @@ not the tensors a kernel saw. Its times are per-Job intervals, which hold
 other jobs' work when several run at once.
 
 The identity is fixed when the Generator is built: an epoch minted then, and
-SHA-256 digests of what the server loaded and runs with. It never reads the
-model a request body names. No weights digest is supplied, so the record names
-no model. Nothing here holds prompt text.
+SHA-256 digests of what the server loaded and runs with. Its `model` is the
+digest of the target's weights manifest, given only when the installed shards
+matched it before they loaded (`weights_manifest.py`, FIX 7895); without one
+the record names no model. It never reads the model a request body names.
+Nothing here holds prompt text.
 """
 import hashlib
 import json
@@ -95,11 +97,14 @@ def runtime_digest():
 
 class BackendIdentity:
     """What answers every request of this server's life: built once, beside
-    the Generator, whose incarnation `epoch` names. Each digest that cannot be
+    the Generator, whose incarnation `epoch` names. `model_digest` is the
+    verified weights manifest's digest, or None. Each digest that cannot be
     taken is left out."""
 
-    def __init__(self, target_dir, template_source, cache_settings, server_settings):
+    def __init__(self, target_dir, template_source, cache_settings, server_settings,
+                 model_digest=None):
         self.epoch = uuid.uuid4().hex
+        self.model = model_digest
         self.template = sha256_hex(template_source.encode("utf-8"))
         self.tokenizer = tokenizer_digest(target_dir)
         self.runtime = runtime_digest()
@@ -115,6 +120,7 @@ class BackendIdentity:
 
     def record(self, execution_mode):
         identity = {
+            "model": self.model,
             "tokenizer": self.tokenizer,
             "runtime": self.runtime,
             "template": self.template,

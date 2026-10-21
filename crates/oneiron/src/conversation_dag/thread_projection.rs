@@ -2,10 +2,9 @@
 //! A thread continues on Parent edges; a reply's RepliesTo target is its
 //! semantic answer and may lie on the trunk.
 
-use super::graph::{conversation_of, edge_ids, invalid, require_member};
+use super::graph::{all_edge_ids, conversation_of, invalid, require_member, walk_count};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::ports::EntityStoreRead;
 use crate::vault::live_entity_row_in_txn;
 use crate::{EntityId, Vault};
@@ -32,17 +31,17 @@ pub(super) fn chain_in_txn(
     let mut current = anchor;
     let mut seen = HashSet::from([anchor]);
     let mut replies = Vec::new();
-    let mut examined = 0;
+    // Rule 5: the thread is read whole, however long, and counted.
+    let mut walk = walk_count(&vault.store, txn, &conversation)?;
     loop {
-        let mut children = edge_ids(
+        let mut children = all_edge_ids(
             &vault.store,
             txn,
             &current,
             EdgeKind::Parent,
             true,
-            MAX_ANCESTOR_DEPTH.saturating_sub(examined),
+            &mut walk,
         )?;
-        examined += children.len();
         children.sort_unstable();
         let mut selected = None;
         for child in children {
@@ -74,6 +73,7 @@ pub(super) fn chain_in_txn(
         replies.push(next);
         current = next;
     }
+    walk.defer(&vault.store);
     Ok(replies)
 }
 
