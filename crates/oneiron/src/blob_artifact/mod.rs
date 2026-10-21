@@ -14,10 +14,15 @@
 //! * each version is an append-only `vault_meta` record carrying the content
 //!   hash, per-version provenance (user upload | agent-run ref), and the id
 //!   of its `blob.version` claim — the LEDGER event for that version;
-//! * history is append-only: a version is only ever added at head+1, with
-//!   an optional parent/fork pointer to any earlier version. Existing records
-//!   are never rewritten or deleted while the artifact lives. Re-appending
-//!   the current head bytes normally dedupes; explicit forks always append.
+//! * history is append-only: a version is only ever added above the highest
+//!   number ever issued (its high-water mark), with an optional parent/fork
+//!   pointer to any earlier version. Existing records are never rewritten.
+//!   While the artifact lives a version is deleted only when the last step
+//!   claim pinning it as its response lets go of it (FIX 6225): only that
+//!   version goes, its number is never issued again, the head falls back to
+//!   the greatest version that stays, and the chain keeps the gap.
+//!   Re-appending the current head bytes normally dedupes; explicit forks
+//!   always append.
 //!
 //! Content-hash dedupe is vault-scoped ONLY. A vault is one tenant's sealed
 //! store (OF-307): a content hash computed from one tenant's bytes never
@@ -63,6 +68,10 @@ pub(crate) use self::holders::{
     held_content_hashes_in_txn,
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
+// FIX 6225: a step response's exact version, released by its last pin.
+pub(crate) use self::lifecycle::{
+    release_response_version_in_txn, response_version_stands_in_txn,
+};
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::archive_version_claim_tables;
 pub(crate) use self::references::{
