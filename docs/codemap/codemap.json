@@ -22428,23 +22428,43 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_claims.rs",
-     "purpose": "The claims an Arc's call reads (FIX 7509 P8): for every subject the Arc's TURNs name (their `mentions` and…",
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_children.rs",
+     "purpose": "An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): its input does not fit one call on its model…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_chunks.rs",
+     "purpose": "An Arc's sources as members and parts (FIX 7509 PR3, Rule 5): each member's words as its calls show them…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_claims.rs",
+     "purpose": "The claims an Arc's call reads (FIX 7509 P8): for every subject the Arc's TURNs name (their `mentions` and…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/scope_summary_attempt/arc_compose.rs",
      "purpose": "An Arc's composition (FIX 7509 P8, SUMMARY-SOURCE = A)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -22461,10 +22481,40 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_output.rs",
+     "purpose": "An Arc call's reply (FIX 7509 P8, its parts in PR3): `{lines: [{text, turn_refs}], keep, open_turns}`, each…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_reduce.rs",
+     "purpose": "The Arc assembled from its parts (FIX 7509 PR3): no model call, an ordered and lossless assembly",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_review.rs",
+     "purpose": "The calls of an Arc composed in parts (FIX 7509 PR3): one input shape for all of them, so one frame counts…",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/scope_summary_attempt/arc_turns.rs",
      "purpose": "The turns an Arc's reply names to open (FIX 7509 P8): when a line and the claims disagree, the model names…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -22474,7 +22524,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt/chunks.rs",
      "purpose": "A sitting too big for one call on its model (FIX 7509 P7b, Rule 5)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 1
      }
     },
     {
@@ -22485,6 +22535,16 @@
      "purpose": "A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came from by the labels the engine…",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/window.rs",
+     "purpose": "What one summary call may hold on its model (FIX 7509 P7b, shared with the Arc's parts in PR3): the window…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -50780,17 +50840,27 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/arc_completion.rs",
+     "purpose": "An Arc never lands in part (FIX 7509 PR3)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/scope_summary/arc_gate.rs",
      "purpose": "An Arc's surprise gate and owed state (FIX 7509 P8, ARCH-0026 #gate): \"It compares the new material against…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/scope_summary/arc_sources.rs",
@@ -50807,6 +50877,26 @@
      "purpose": "An Arc's landing check (FIX 7509 P8), read in the landing writer before its body is minted: no Arc lands…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/arc_work.rs",
+     "purpose": "An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): an Arc whose input does not fit one call on its…",
+     "surface": {
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/arc_work_store.rs",
+     "purpose": "The rows of an Arc's work generations (FIX 7509 PR3): one typed side table, keyed by the generation's id and…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -50863,7 +50953,7 @@
      "path": "src/scope_summary/mod.rs",
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 7
      }
     },
@@ -69893,7 +69983,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 110,
+     "files": 116,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70551,7 +70641,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 17,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70938,7 +71028,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4513,
+   "source_files": 4522,
    "test_files": 902
   },
   "oneiron-android": {
