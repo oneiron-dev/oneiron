@@ -29770,7 +29770,7 @@ pub fn ask(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::TaskAskRequest,
 ) -> MemoryResult<crate::task_verb::TaskAskReceipt> {
-    crate::gate::record_references::admit_row_references(
+    crate::task_verb::ask_world_hold::admit_ask_references(
         memory,
         "ask",
         &input,
@@ -29793,7 +29793,7 @@ pub fn tasks_answer(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::TaskAnswerRequest,
 ) -> MemoryResult<crate::task_verb::TaskAskAnswer> {
-    crate::gate::record_references::admit_row_references(
+    crate::task_verb::ask_world_hold::admit_ask_references(
         memory,
         "tasks.answer",
         &input,
