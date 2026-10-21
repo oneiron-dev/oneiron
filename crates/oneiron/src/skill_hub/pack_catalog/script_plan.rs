@@ -89,8 +89,13 @@ impl ScriptExecutionPlan {
         &self.files
     }
     pub(crate) fn assemble_program(&self, grants: &BTreeMap<String, Value>) -> Result<String> {
-        let script = std::str::from_utf8(&self.files[self.script_index].content)
+        let authored = std::str::from_utf8(&self.files[self.script_index].content)
             .map_err(|_| invalid("adapter script is not UTF-8"))?;
+        // The authored script is prepared before the grants prelude joins it
+        // (FIX 8276): TypeScript runs as the JavaScript Oxc prints for it,
+        // JavaScript as written. The pack's source tree stays as admitted.
+        let prepared = crate::code_sandbox::source::prepare_source(authored);
+        let script = prepared.executed();
         let prelude = GrantPrelude::encode(grants)?;
         shape(self.program.assemble(script.len(), prelude.0.len()))?;
         Ok(format!("{}{script}", prelude.0))
