@@ -42,3 +42,12 @@ pub(crate) async fn session_read_set<'a>(
         state.session_reads(scope, session)
     })))
 }
+
+/// Closes the board session kept under `key` as its lifecycle ends it (FIX
+/// 8143): a pumped run's, when its board connection's door goes. A session a
+/// caller names by a free label has no close of its own, so it stays, as the
+/// shared scope's does, with the process; nothing closes one by count, age or
+/// memory pressure.
+pub(crate) async fn close_board_session(server: &SyncServer, key: &str) {
+    server.memories_cursors.lock().await.close(key);
+}

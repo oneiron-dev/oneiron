@@ -170,6 +170,10 @@ pub(super) struct BoardParts {
     pub(super) named: Vec<EntityId>,
     /// The hook blocks whose task rows TASKS tagged.
     pub(super) hook_blocks: std::collections::BTreeSet<EntityId>,
+    /// The rows each INBOX row kept rests on (FIX 8145): every identity of
+    /// the caller's that admitted it, and each row it names that the read
+    /// read. A keyed replay re-admits each; none is a board document.
+    pub(super) inbox: Vec<EntityId>,
 }
 
 /// Assembles every section the board renders for this caller.
@@ -347,6 +351,7 @@ pub(super) fn board_parts(
 
     // INBOX: the caller's own slice of the inbox lens, kept to rows that
     // reach it through an identity its read admits. Hidden when empty.
+    let mut inbox_sources = Vec::new();
     let inbox = match targets.actor() {
         Some(actor) => {
             let mut rows = Vec::new();
@@ -354,17 +359,22 @@ pub(super) fn board_parts(
                 .agent_inbox_slice(actor, BOARD_INBOX_CAP, None)
                 .map_err(|error| core_engine_error("board inbox failed", error))?;
             for item in slice {
-                let mut readable = false;
+                let mut admitting = Vec::new();
                 for participant in item
                     .participants
                     .iter()
                     .filter(|row| row.actor_ref == actor)
                 {
-                    readable |= read
+                    if read
                         .is_ref_readable(&participant.identity_ref)
-                        .map_err(|error| core_engine_error("board inbox failed", error))?;
+                        .map_err(|error| core_engine_error("board inbox failed", error))?
+                    {
+                        admitting.push(participant.identity_ref);
+                    }
                 }
-                if readable {
+                if !admitting.is_empty() {
+                    inbox_sources.extend(admitting);
+                    inbox_sources.extend(inbox_named_sources(read, &item, actor)?);
                     rows.push(item);
                 }
             }
@@ -396,7 +406,43 @@ pub(super) fn board_parts(
         skills: std::iter::once(skills.loaded).chain(skills.found).collect(),
         named,
         hook_blocks,
+        inbox: inbox_sources,
     })
+}
+
+/// The rows INBOX row `item` names beside the identity that admitted it,
+/// each kept only while `read` reads it, in one snapshot: its concern's
+/// subject, its review's reader and every other participant (FIX 8145). A
+/// keyed replay of the board re-admits each, so a row one of them no longer
+/// reaches is not released again.
+fn inbox_named_sources(
+    read: &oneiron::claim::ScopedRead<'_>,
+    item: &oneiron::agent_inbox_lens::AgentInboxLensItem,
+    actor: EntityId,
+) -> Result<Vec<EntityId>, ApiError> {
+    let mut named: Vec<EntityId> = item
+        .concern
+        .iter()
+        .map(|concern| concern.subject)
+        .chain(item.diary_review.iter().map(|review| review.reader))
+        .chain(
+            item.participants
+                .iter()
+                .map(|participant| participant.actor_ref)
+                .filter(|other| *other != actor),
+        )
+        .collect();
+    named.sort_unstable();
+    named.dedup();
+    let sets: Vec<_> = named.iter().map(|id| vec![*id]).collect();
+    let readable = read
+        .refs_readable_each(&sets)
+        .map_err(|error| core_engine_error("board inbox failed", error))?;
+    Ok(named
+        .into_iter()
+        .zip(readable)
+        .filter_map(|(id, readable)| readable.then_some(id))
+        .collect())
 }
 
 /// The caller's TASKS rows, kept as its read reads them: an intent row only

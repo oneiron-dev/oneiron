@@ -1,11 +1,10 @@
 //! Server-owned MEMORIES cursors and session read sets, keyed by principal and session.
+//! Each lives until its session closes or its run ends; a shared scope's lives with the
+//! process. None is evicted by count (FIX 8143, CALLS P2-a).
 
 use std::collections::BTreeMap;
-use std::collections::VecDeque;
 
 use super::super::CoreContextPackEvidence;
-
-pub(crate) const MEMORIES_CURSOR_MAX_ENTRIES: usize = 1024;
 
 pub(crate) const MEMORIES_CURSOR_SESSION_ID_MAX_BYTES: usize = 256;
 
@@ -19,7 +18,6 @@ pub(crate) struct MemoriesCursorStore {
     pub(crate) entries: BTreeMap<String, oneiron::MemoriesCursor>,
     pub(crate) read_sets: BTreeMap<String, oneiron::context_board::SessionReadSet>,
     active_sessions: BTreeMap<String, String>,
-    insertion_order: VecDeque<String>,
 }
 
 impl MemoriesCursorStore {
@@ -55,10 +53,8 @@ impl MemoriesCursorStore {
             return state.clone();
         }
 
-        self.evict_if_full();
         let state = oneiron::MemoriesCursor::new(session_id);
-        self.entries.insert(key.clone(), state.clone());
-        self.insertion_order.push_back(key);
+        self.entries.insert(key, state.clone());
         state
     }
 
@@ -87,10 +83,8 @@ impl MemoriesCursorStore {
         evidence: &CoreContextPackEvidence,
     ) -> oneiron::MemoriesCursor {
         if !self.entries.contains_key(&key) {
-            self.evict_if_full();
             self.entries
                 .insert(key.clone(), oneiron::MemoriesCursor::new(session_id));
-            self.insertion_order.push_back(key.clone());
         }
 
         let state = self
@@ -111,21 +105,15 @@ impl MemoriesCursorStore {
         state
     }
 
-    fn evict_if_full(&mut self) {
-        while self.entries.len() >= MEMORIES_CURSOR_MAX_ENTRIES {
-            let Some(key) = self.insertion_order.pop_front() else {
-                self.entries.clear();
-                self.read_sets.clear();
-                self.active_sessions.clear();
-                break;
-            };
-            if self.entries.remove(&key).is_some() {
-                self.read_sets.remove(&key);
-                self.active_sessions
-                    .retain(|_, active_key| active_key != &key);
-                break;
-            }
-        }
+    /// Closes the session kept under `key`, as its lifecycle ends it: its
+    /// cursor, its read set (riders, loaded skills and explanations with it)
+    /// and any scope's pointer to it as the active session. No other
+    /// session's state is touched.
+    pub(crate) fn close(&mut self, key: &str) {
+        self.entries.remove(key);
+        self.read_sets.remove(key);
+        self.active_sessions
+            .retain(|_, active_key| active_key != key);
     }
 }
 
