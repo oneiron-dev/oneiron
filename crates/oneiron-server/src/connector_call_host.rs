@@ -29,7 +29,7 @@
 //! the open exchange, registered in the server's
 //! [`ConnectorElicitationRegistry`]. It sends the caller's checked answer,
 //! reads what the connector says next, and ends the session when the call
-//! ends or its questions lapse. Any other server request is refused as
+//! ends or its exchange does. Any other server request is refused as
 //! before, and any other result is the tool's.
 //!
 //! A `self.use` call (OF-560) presents the custody record its handle names
@@ -340,6 +340,10 @@ impl ConnectorCallHost for ServedConnectorCallHost {
 
     fn abandon_awaiting_input(&mut self, handle: &str) {
         self.elicitations.finish(handle);
+    }
+
+    fn bind_awaiting_call(&mut self, handle: &str, call_ref: EntityId) {
+        self.elicitations.bind_call(&self.vault, handle, call_ref);
     }
 }
 

@@ -80,6 +80,7 @@ pub struct SyncQueue {
     vault: Arc<Vault>,
 }
 
+pub(super) mod checkpoint;
 mod codec;
 mod core;
 mod scrub;

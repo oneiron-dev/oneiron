@@ -18,7 +18,7 @@
 //! [`room_session_key`], so a name taken in one room says nothing about
 //! another room, nor about the owner's own 1:1s.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::Vault;
 use crate::authority::VerifiedSlip;
@@ -40,6 +40,8 @@ use super::types::{
     OffRecordBackendClass, OffRecordNotice, OffRecordNoticeAct, OffRecordSaveSuggestion,
     OffRecordSessionRecord, OffRecordTalk, OffRecordTalkMessage, OffRecordTalkTurn,
 };
+
+mod export_roots;
 
 /// The most notices a room's timeline holds, and the most save suggestions
 /// that wait in it; past it the oldest drop, so a member repeating an act
@@ -306,18 +308,16 @@ impl OffRecordSession<'_> {
         let mut state = self.recording_state()?;
         let gathered = self.gather_talk(&state)?;
         // Who hears the export is read with the sight that admits it, and so
-        // is whether its taker owns this vault (FIX 6427).
-        let (windows, hearing, owner) = {
+        // is whether its taker owns this vault (FIX 6427), and each thread
+        // the copy carries, while the stretch is held (FIX 6681).
+        let (turns, thread_roots, hearing, owner) = {
             let txn = self.vault.store.env.read_txn()?;
             let windows = self.sight_in_txn(&txn, room, person, credential)?;
             let owner = crate::memory::owner_copy_in_txn(self.vault, &txn, person);
-            (
-                windows,
-                Hearing::in_txn(self.vault, &txn, Some(room)),
-                owner,
-            )
+            let (turns, roots) = gathered.finish_with_roots(Some(windows.as_slice()), self, &txn);
+            let hearing = Hearing::in_txn(self.vault, &txn, Some(room));
+            (turns, roots, hearing, owner)
         };
-        let (turns, thread_roots) = gathered.finish_with_roots(Some(windows.as_slice()));
         let talk = OffRecordTalk {
             session_ref: self.session_ref.clone(),
             room: state.record.room,
@@ -530,29 +530,6 @@ impl Talk {
         if let Some(turn) = self.turns.get_mut(&turn) {
             turn.speaker.get_or_insert(*speaker.as_bytes());
         }
-    }
-
-    /// Notes the root of the thread `turn` is of, read from its stored
-    /// `body`, as the turn is first gathered.
-    fn thread_root(&mut self, turn: EntityId, entity_type: u8, body: &[u8]) {
-        if let Some(root) = crate::memory::turn_thread_root(entity_type, body) {
-            self.roots.entry(*turn.as_bytes()).or_insert(root);
-        }
-    }
-
-    /// [`Self::finish`], beside the root of each thread a turn it keeps is
-    /// of: the threads the copy carries (FIX 6427).
-    fn finish_with_roots(
-        mut self,
-        windows: Option<&[MembershipWindow]>,
-    ) -> (Vec<OffRecordTalkTurn>, BTreeSet<EntityId>) {
-        let roots = std::mem::take(&mut self.roots);
-        let turns = self.finish(windows);
-        let carried = turns
-            .iter()
-            .filter_map(|turn| roots.get(&turn.turn).copied())
-            .collect();
-        (turns, carried)
     }
 
     /// The turns holding a visible message the reader's membership shows at

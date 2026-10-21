@@ -20025,7 +20025,7 @@
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -25414,7 +25414,7 @@
      "purpose": "Tournament wire types, their validating constructors, and the pinned bounds",
      "surface": {
       "const": 4,
-      "crate-vis": 10,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 12,
       "struct": 14
@@ -42533,6 +42533,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/room/export_roots.rs",
+     "purpose": "The threads an off-record room's copy carries, for its export's audit and notices (FIX 6427, 6681), split…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -45005,6 +45015,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ConnectorCallInput"
+     ],
+     "path": "src/outbound_consent/connector_call_input.rs",
+     "purpose": "A connector call whose connector asked for input, kept on the call's own row (ONE-2510, FIX 3837; canon…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/outbound_consent/connector_call_output.rs",
      "purpose": "A connector call's reply after its send (FIX 7646, FIX 7647): the host that sent it cleared it of the…",
@@ -45089,7 +45113,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -49471,7 +49495,7 @@
      "path": "src/recovery/checkpoint/payload/mod.rs",
      "purpose": "The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -49481,7 +49505,7 @@
      "path": "src/recovery/checkpoint/payload/rows.rs",
      "purpose": "The payload registry (KS7-2b): one class for every declared side-table family, by its declaration's…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -49492,6 +49516,16 @@
      "purpose": "Sealing the payload's bundles (KS7-2b): one bundle per compartment and role, split into pieces of at most…",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/payload/sync.rs",
+     "purpose": "KS7-3's port (FIX 5688 KS7-3a): each mixed sync carrier row split by the sync families' own codecs…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -51514,17 +51548,31 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "EngineScan",
       "ScanCheck"
      ],
      "path": "src/scan_check.rs",
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
      "surface": {
-      "const": 4,
+      "const": 2,
       "crate-vis": 9,
-      "enum": 1,
-      "fn": 4,
+      "fn": 3,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EngineScan"
+     ],
+     "path": "src/scan_check/engine_scan.rs",
+     "purpose": "The engine scans whose tables grow with use (rule 5), each with its closed code, the threshold it asks past…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -56091,6 +56139,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/deferred_approval.rs",
+     "purpose": "An approved tradeoff that cannot admit yet (FIX 8848)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -56106,6 +56164,16 @@
       "enum": 1,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/judge_binding.rs",
+     "purpose": "The judge a kept score was measured by (FIX 8846)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -56126,7 +56194,7 @@
      "path": "src/skill_optimize/gate/live.rs",
      "purpose": "Live goal-axis measurement of a proposal (ARCH-0053: \"Primary axes are measured online.\" \"Offline axes run…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -56197,6 +56265,16 @@
       "crate-vis": 10,
       "fn": 11,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/tradeoff_capacity.rs",
+     "purpose": "Tradeoff rule counts against the resolved policy limits (FIX 8771, 8847)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -58866,6 +58944,46 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/sync/checkpoint_payload/mod.rs",
+     "purpose": "The mixed sync carriers in a checkpoint (KS-7, FIX 5688 KS7-3a, Engine design (d)): the type boundary…",
+     "surface": {
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/checkpoint_payload/owners.rs",
+     "purpose": "Where each window root map's values go (KS7-3a): the typed owner, dependency and actor dispatch KS7-3b's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/checkpoint_payload/parts.rs",
+     "purpose": "Which holders each part of a parted window value has (KS7-3a)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/checkpoint_payload/rows.rs",
+     "purpose": "The non-Loro sync rows (KS7-3a), each placed with its family's own codec: a thin-residence item's cached…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ChunkPage",
       "ChunkPageCursor",
@@ -59411,7 +59529,17 @@
      "path": "src/sync/custody.rs",
      "purpose": "OF-422: custody transitions on the window plane (ARCH-0069 `#custody-seal-planned`), each enacting an…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/custody/checkpoint.rs",
+     "purpose": "A custody carrier in a checkpoint (KS7-3a): a custody transition and a protected input are secret custody's…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -59421,7 +59549,17 @@
      "path": "src/sync/document_pins.rs",
      "purpose": "FIX 853 (OF-460): document quote pins on the window plane",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/document_pins/checkpoint.rs",
+     "purpose": "A document pin in a checkpoint (KS7-3a), read with the pin codec and filed under its own key: a whole pin is…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -60004,7 +60142,17 @@
      "path": "src/sync/message_docs.rs",
      "purpose": "FIX 853 (OF-460): a MESSAGE's document on the window plane",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/message_docs/checkpoint.rs",
+     "purpose": "A MESSAGE document in a checkpoint (KS7-3a), read with the head codec and filed under its message: the head…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -60014,7 +60162,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 24,
       "re-export": 16
      }
@@ -60026,7 +60174,17 @@
      "path": "src/sync/note.rs",
      "purpose": "Native NOTE carriers for ordinary window sync, distinct from history-free recovery",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/note/checkpoint.rs",
+     "purpose": "The native NOTE carriers' values in a checkpoint (KS7-3a), read with the NOTE sync codecs: a proposal…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -60189,6 +60347,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/queue/checkpoint.rs",
+     "purpose": "The sync queue's rows in a checkpoint (KS7-3a), read with the queue's own key and value codecs",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/queue/codec.rs",
      "purpose": "Key/value encode/decode plus metadata codecs",
      "surface": {
@@ -60217,7 +60385,7 @@
      "path": "src/sync/queue/mod.rs",
      "purpose": "Persistent offline queue backed by LMDB",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "struct": 3
      }
     },
@@ -60600,7 +60768,17 @@
      "path": "src/sync/room_facts.rs",
      "purpose": "FIX 1794 (OF-522): a room's side rows on the window plane",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/room_facts/checkpoint.rs",
+     "purpose": "A room side row in a checkpoint (KS7-3a), read with the side row codec and filed under its own key",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -60630,7 +60808,17 @@
      "path": "src/sync/room_turns.rs",
      "purpose": "OF-522: a room's turn rows on the window plane",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/room_turns/checkpoint.rs",
+     "purpose": "A room turn row in a checkpoint (KS7-3a), read with the turn codec: the row rides with its TURN, held only…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -65355,7 +65543,7 @@
      "path": "src/verbs/connector_call.rs",
      "purpose": "`connector.call` and `connector.schema` (ONE-2510): one tool of one catalogued connector, called by name…",
      "surface": {
-      "const": 1,
+      "const": 2,
       "enum": 3,
       "fn": 9,
       "struct": 6
@@ -68680,7 +68868,7 @@
      "path": "src/workspace_roster/rooms/audience_notices.rs",
      "purpose": "What a private thread's members are told, and the audience its own view shows them (owner ruling 2026-10-20…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1
      }
     },
@@ -71487,7 +71675,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71522,7 +71710,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71669,7 +71857,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 80,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -71746,7 +71934,7 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
     "scan_check": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -71879,7 +72067,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 47,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71942,7 +72130,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 225,
+     "files": 236,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72147,7 +72335,7 @@
    },
    "over_bar": 171,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4615,
+   "source_files": 4633,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76119,6 +76307,107 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ImageReleaseFact",
+      "ImageReleaseObservation",
+      "ImageSignaturePolicy",
+      "ManifestObservation",
+      "ReleaseAdmission",
+      "ReleaseDocuments"
+     ],
+     "path": "src/image_release.rs",
+     "purpose": "Signed guest-image releases (FIX 8253, OS-IMAGE phase 1c): the release manifest, ONE signature-verifier…",
+     "surface": {
+      "const": 15,
+      "enum": 4,
+      "fn": 7,
+      "re-export": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BinaryHash",
+      "ContractRevisions",
+      "DigestError",
+      "DocumentRef",
+      "EngineRelease",
+      "FileArtifact",
+      "GuestBinaries",
+      "HostRequirements",
+      "ImageArch",
+      "ImageReleaseManifest",
+      "ImageVariant",
+      "KernelRef",
+      "KernelVersion",
+      "ManifestError",
+      "ManifestFact",
+      "OciArtifacts",
+      "ReleaseArtifacts",
+      "SnapshotCompatibility",
+      "SourcePin",
+      "StorageAbi",
+      "UnversionedContracts",
+      "VaultContractRevisions"
+     ],
+     "path": "src/image_release/manifest.rs",
+     "purpose": "The release manifest payload, `image-release.json`: closed, typed, and read only through…",
+     "surface": {
+      "const": 2,
+      "enum": 4,
+      "fn": 6,
+      "struct": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NoVerifierConfigured",
+      "ReleaseSignatureVerifier",
+      "SignatureEnvelope",
+      "SignatureOutcome",
+      "SignatureProvider",
+      "SignatureRefusal",
+      "SignerIdentity"
+     ],
+     "path": "src/image_release/signature.rs",
+     "purpose": "The detached signature envelope and the ONE verifier seam",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 2,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactCheck",
+      "ArtifactRole",
+      "CheckOutcome",
+      "HostCapabilities",
+      "HostCheck",
+      "HostOutcome",
+      "HostRequirement",
+      "ObservedArtifacts",
+      "ReleaseVerification"
+     ],
+     "path": "src/image_release/verify.rs",
+     "purpose": "`verify_release`: parse, bind to the observed bytes, check the host, read the signature",
+     "surface": {
+      "enum": 4,
+      "fn": 4,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -76158,6 +76447,7 @@
      "surface": {
       "enum": 2,
       "fn": 12,
+      "mod": 1,
       "re-export": 7,
       "struct": 8,
       "type": 1
@@ -76300,6 +76590,13 @@
      "layout": "file",
      "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)"
     },
+    "image_release": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Signed guest-image releases (FIX 8253, OS-IMAGE phase 1c): the release manifest, ONE signature-verifier…"
+    },
     "launcher": {
      "files": 2,
      "impl_vault": false,
@@ -76352,7 +76649,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 18,
+   "source_files": 22,
    "test_files": 0
   },
   "oneiron-contracts": {
@@ -91209,7 +91506,7 @@
      "path": "src/auth/binding_admission.rs",
      "purpose": "Consume holder proofs at the network door, once per request or upgrade, and stop serving a shared vault its…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -92999,7 +93296,7 @@
      "path": "src/connector_elicitation.rs",
      "purpose": "The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -93958,7 +94255,17 @@
      "path": "src/http_listener.rs",
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/http_listener/owner_admission.rs",
+     "purpose": "The owner's reserve on the shared connection pool (FIX 8274)",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -98500,7 +98807,7 @@
      "path": "src/wire_telemetry/connection_pressure.rs",
      "purpose": "The shared connection pool's live pressure check (FIX 7656, OF-520)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -99076,7 +99383,7 @@
      "purpose": "`ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through…"
     },
     "http_listener": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -99302,7 +99609,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1087,
+   "source_files": 1088,
    "test_files": 182
   },
   "oneiron-spawn": {

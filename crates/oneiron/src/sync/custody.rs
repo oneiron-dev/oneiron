@@ -45,6 +45,8 @@
 //!   CUSTODY_ROSTER_REWRAP); any other linked machine only from a rewrap the
 //!   owner records (CALLS CUSTODY_PERMITS).
 
+pub(super) mod checkpoint;
+
 use std::collections::BTreeMap;
 
 use loro::event::MapDelta;

@@ -17,6 +17,8 @@
 //!   vault's as the witness door's append does (the room's own row merge),
 //!   which indexes the room's history from it.
 
+pub(super) mod checkpoint;
+
 use loro::event::MapDelta;
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
