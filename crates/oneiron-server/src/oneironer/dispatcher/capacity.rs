@@ -65,7 +65,9 @@ impl DispatchClaim {
         let unqueued = match counted {
             Ok(_) => {
                 let queued = self.shared.lock().queue(job);
-                queued.err().map(|job| (job, failure(DISPATCH_TOOL, NO_WORKER)))
+                queued
+                    .err()
+                    .map(|job| (job, failure(DISPATCH_TOOL, NO_WORKER)))
             }
             Err(error) => Some((job, error)),
         };
