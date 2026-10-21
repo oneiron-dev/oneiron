@@ -29,8 +29,9 @@ use super::{BindingProof, parse_signature};
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::server::SyncServer;
 
-/// The header that carries the revoked slip.
-const LEFT_SLIP_HEADER: &str = "x-oneiron-left-slip";
+/// The header that carries the revoked slip; managed ingress forwards the
+/// holder proof beside it (FIX 5452).
+pub(super) const LEFT_SLIP_HEADER: &str = "x-oneiron-left-slip";
 
 pub(crate) fn left_notice_routes() -> Router<Arc<SyncServer>> {
     Router::new()
