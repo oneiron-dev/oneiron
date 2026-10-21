@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1127 facade rows, 3891 declarations.
+Census: 1127 facade rows, 3895 declarations.
 Inputs: 1062 of 1127 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1014 of 1127 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -1529,6 +1529,36 @@ class TaskAskStatusSettled(TypedDict):
 class TaskAskStatusWorldPrivacy(TypedDict):
     WorldPrivacy: WorldPrivacyWaitResult
 TaskAskStatus = TaskAskStatusPending | TaskAskStatusChanged | TaskAskStatusSettled | TaskAskStatusWorldPrivacy
+class TaskWorkflowHandoffRetiredBody(TypedDict):
+    id: EntityId
+    reason: NotRequired[str | None]
+class TaskWorkflowHandoffRetired(TypedDict):
+    retired: TaskWorkflowHandoffRetiredBody
+class TaskWorkflowHandoffMissingBody(TypedDict):
+    id: EntityId
+class TaskWorkflowHandoffMissing(TypedDict):
+    missing: TaskWorkflowHandoffMissingBody
+class TaskWorkflowHandoffUnreadableBody(TypedDict):
+    id: EntityId
+class TaskWorkflowHandoffUnreadable(TypedDict):
+    unreadable: TaskWorkflowHandoffUnreadableBody
+TaskWorkflowHandoff = Literal["program", "goal_unmet"] | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+class TaskWorkflowOutcomeDoneBody(TypedDict):
+    receipt_ref: EntityId
+class TaskWorkflowOutcomeDone(TypedDict):
+    done: TaskWorkflowOutcomeDoneBody
+class TaskWorkflowOutcomeHandoffBody(TypedDict):
+    cause: TaskWorkflowHandoff
+    receipt_ref: EntityId
+class TaskWorkflowOutcomeHandoff(TypedDict):
+    handoff: TaskWorkflowOutcomeHandoffBody
+TaskWorkflowOutcome = Literal["pending"] | TaskWorkflowOutcomeDone | TaskWorkflowOutcomeHandoff
+class TaskWorkflowStatus(TypedDict):
+    attempt_ref: str
+    requested: EntityId
+    resolved: NotRequired[EntityId | None]
+    brief: BriefStamp
+    outcome: TaskWorkflowOutcome
 class TaskStatusView(TypedDict):
     handle: TaskHandle
     task_ref: NotRequired[EntityId | None]
@@ -1539,6 +1569,7 @@ class TaskStatusView(TypedDict):
     pending: bool
     asks: list[tuple[TaskAskHandle, TaskAskStatus]]
     last_receipt: NotRequired[str | None]
+    workflow: NotRequired[TaskWorkflowStatus | None]
     observed: str
 class TaskOutcomeProposed(TypedDict):
     kind: Literal["proposed"]
@@ -1627,17 +1658,28 @@ class PinnedRef(TypedDict):
     target: EntityId
     frontier: NotRequired[list[int] | None]
     digest: str
+class WorkflowBinding(TypedDict):
+    handle: str
+    args: NotRequired[dict[str, str]]
 class BriefContext(TypedDict):
     pack: NotRequired[PinnedPack | None]
     read_first: NotRequired[list[PinnedRef]]
+    workflow: NotRequired[WorkflowBinding | None]
 class Criterion(TypedDict):
     text: str
     evidence_ref: NotRequired[EntityId | None]
+class ExpectInput(TypedDict):
+    ref: NotRequired[str | None]
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    value: NotRequired[str | None]
+    absent: NotRequired[bool]
 class DoneMeans(TypedDict):
     question: str
     yes_if_all: NotRequired[list[Criterion]]
     no_if_any: NotRequired[list[Criterion]]
     outcome_binding: NotRequired[OutcomeBinding | None]
+    browser_checks: NotRequired[list[ExpectInput]]
 EscalationTrigger = Literal["blocked", "criteria_unmet", "scope_widen", "spend_over", "deadline", "brief_revised", "retry_requested"]
 Reversibility = Literal["reversible_read", "outbound_effect"]
 class EscalationRule(TypedDict):
@@ -19435,12 +19477,6 @@ class WaitForOutput(TypedDict):
     walk_next: NotRequired[str | None]
     rebindings: NotRequired[list[Rebound]]
 BrowserWaitForOutput = BrowserAnswer[WaitForOutput]
-class ExpectInput(TypedDict):
-    ref: NotRequired[str | None]
-    role: NotRequired[str | None]
-    name: NotRequired[str | None]
-    value: NotRequired[str | None]
-    absent: NotRequired[bool]
 class ExpectOutput(TypedDict):
     met: bool
     row: NotRequired[Row | None]

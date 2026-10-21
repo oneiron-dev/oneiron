@@ -5508,13 +5508,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def create(self, spec):
-            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""
+            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway, and may bind an agent TASK to a library program (`context.workflow`)."""
             return json.loads(_translate(lambda: self._client.tasks_create(json.dumps(spec))))
         def wave(self, spec):
             """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
             return json.loads(_translate(lambda: self._client.tasks_wave(json.dumps(spec))))
         def update(self, spec):
-            """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."""
+            """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries."""
             return json.loads(_translate(lambda: self._client.tasks_update(json.dumps(spec))))
         def accept(self, spec):
             """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""

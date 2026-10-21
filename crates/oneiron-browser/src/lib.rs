@@ -424,7 +424,7 @@ pub struct WaitForOutput {
 /// else the first row `role` and `name` match, is present (or absent) and,
 /// when `value` is given, holds exactly that value. Its answer holds at
 /// most that one row, which is always one page.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExpectInput {
     #[serde(default, rename = "ref")]

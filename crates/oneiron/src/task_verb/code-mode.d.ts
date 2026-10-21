@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3944 declarations.
+// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3948 declarations.
 // Replies: 1057 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -311,7 +311,10 @@ declare namespace Sdk {
   type WorldPrivacyWaitStatus = { state: "pending" } | { state: "applied"; receipt_id: string } | { state: "declined" };
   type WorldPrivacyWaitResult = { request_id: string; world: string; status: WorldPrivacyWaitStatus };
   type TaskAskStatus = { Pending: { hold?: TaskAskHoldReason | null } } | { Changed: { voided: EntityId[]; generation: number } } | { Settled: TaskAskResult } | { WorldPrivacy: WorldPrivacyWaitResult };
-  type TaskStatusView = { handle: TaskHandle; task_ref?: EntityId | null; phase: TaskPhase; brief_current?: BriefStamp | null; brief_running?: BriefStamp | null; attempt?: AttemptView | null; pending: boolean; asks: [TaskAskHandle, TaskAskStatus][]; last_receipt?: string | null; observed: string };
+  type TaskWorkflowHandoff = "program" | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } };
+  type TaskWorkflowOutcome = "pending" | { done: { receipt_ref: EntityId } } | { handoff: { cause: TaskWorkflowHandoff; receipt_ref: EntityId } };
+  type TaskWorkflowStatus = { attempt_ref: string; requested: EntityId; resolved?: EntityId | null; brief: BriefStamp; outcome: TaskWorkflowOutcome };
+  type TaskStatusView = { handle: TaskHandle; task_ref?: EntityId | null; phase: TaskPhase; brief_current?: BriefStamp | null; brief_running?: BriefStamp | null; attempt?: AttemptView | null; pending: boolean; asks: [TaskAskHandle, TaskAskStatus][]; last_receipt?: string | null; workflow?: TaskWorkflowStatus | null; observed: string };
   type TaskOutcome = { kind: "proposed"; decision_ref?: string | null; reason_codes: string[] } | { kind: "created"; route?: TaskRouteOutcome | null } | { kind: "accepted"; attempt?: AttemptHandle | null } | { kind: "held_by_other"; since: number } | { kind: "asked_up"; ask: TaskAskHandle } | { kind: "reported"; phase: TaskPhase } | (TaskStatusView & { kind: "snapshot" }) | { kind: "unchanged" } | { kind: "stale_fence" } | { kind: "wrong_node" } | { kind: "rejected"; decision_ref?: string | null };
   type TaskActor = string;
   type TaskLifecycleRecord = { call: string; outcome: string; occurred_at: number; actor: TaskActor; on_behalf_of?: string | null; job_ref?: string | null; trigger_ref?: string | null; fields: Record<string, string> };
@@ -325,9 +328,11 @@ declare namespace Sdk {
   type BriefConstraints = { notes?: string[]; policy_refs?: EntityId[]; budget_ref?: EntityId | null; deadline?: number | null; pins?: SpawnPins };
   type PinnedPack = { pack_ref: EntityId; context_version?: number | null; retrieval_run_id?: EntityId | null; digest: string };
   type PinnedRef = { target: EntityId; frontier?: number[] | null; digest: string };
-  type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[] };
+  type WorkflowBinding = { handle: string; args?: Record<string, string> };
+  type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[]; workflow?: WorkflowBinding | null };
   type Criterion = { text: string; evidence_ref?: EntityId | null };
-  type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null };
+  type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
+  type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[] };
   type EscalationTrigger = "blocked" | "criteria_unmet" | "scope_widen" | "spend_over" | "deadline" | "brief_revised" | "retry_requested";
   type Reversibility = "reversible_read" | "outbound_effect";
   type EscalationRule = { to: TaskAskTarget; triggers?: EscalationTrigger[]; default?: TaskAskDefault; until?: number | null; reversibility: Reversibility; question_ref?: ConsultPayloadRef | null };
@@ -3098,7 +3103,6 @@ declare namespace Sdk {
   type ScrollInput = { direction: ScrollDirection; amount?: number | null; ref?: string | null; base?: ObservationBase | null };
   type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null; cursor?: string | null };
   type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number; next?: string | null; partial?: PartialTree | null; walk_next?: string | null; rebindings?: Rebound[] };
-  type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
   type ExpectOutput = { met: boolean; row?: Row | null; partial?: PartialTree | null; rebindings?: Rebound[] };
   type ScreenshotTrigger = "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt";
   type ScreenshotInput = { trigger: ScreenshotTrigger; since_capture?: string | null };
@@ -4094,7 +4098,7 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
 };
 /** Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion. */
 declare function crawl(input: Sdk.WebCrawlRequest): Promise<Sdk.CrawlResult | StoredResult>;
-/** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it), or the whole TASKS section when nothing is named. */
+/** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it; `workflow`: its bound try), or the whole TASKS section when nothing is named. */
 declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
 declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.TaskDescription | StoredResult>;
 /** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent. */
@@ -4435,12 +4439,12 @@ declare const tasks: {
   consult: {
     result(input: Sdk.ConsultLandRequest): Promise<Sdk.ConsultLandReply | StoredResult>;
   };
-  /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway. */
+  /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway, and may bind an agent TASK to a library program (`context.workflow`). */
   create(input: Sdk.TaskCreateRequest): Promise<Sdk.TaskCreateReceipt | StoredResult>;
   /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
   outcomes(input: Sdk.TaskAskHandle): Promise<Sdk.CalibrationPair[] | StoredResult>;
   refuse(input: Sdk.TaskRefuseInput): Promise<Sdk.TaskRefuseOutput | StoredResult>;
-  /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. */
+  /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries. */
   update(input: Sdk.TaskUpdateRequest & { resultRef: NonNullable<Sdk.TaskUpdateRequest["resultRef"]> }): Promise<Sdk.ReaderReportReceipt | StoredResult>;
   update(input: Sdk.TaskUpdateRequest): Promise<Sdk.TaskUpdateReceipt | StoredResult>;
   wait(input: Sdk.TaskWaitInput): Promise<Sdk.TaskWaitOutput | StoredResult>;
