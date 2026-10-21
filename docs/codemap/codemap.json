@@ -3538,7 +3538,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "re-export": 59
      }
     },
@@ -3578,7 +3578,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -3724,7 +3724,7 @@
      "path": "src/authority/principal_standing.rs",
      "purpose": "FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -80995,7 +80995,7 @@
      "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…",
      "surface": {
       "enum": 1,
-      "fn": 9
+      "fn": 10
      }
     },
     {
@@ -81128,7 +81128,7 @@
      "path": "src/wire.rs",
      "purpose": "The protocol's messages",
      "surface": {
-      "const": 7,
+      "const": 8,
       "enum": 10,
       "fn": 7,
       "struct": 22
@@ -94667,7 +94667,7 @@
      "path": "src/server/organs.rs",
      "purpose": "The organs on the server's one host ([`SyncServer::organs`]): every organ an Active pack carries a build of…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
