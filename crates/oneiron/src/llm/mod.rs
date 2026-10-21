@@ -96,8 +96,13 @@ pub use oneiron_model::llm::{
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 // FIX 6567: the cache evidence a backend reports on a physical call.
 pub use oneiron_model::llm::{
-    CACHE_CALLS_KEY, CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch,
-    CacheEvidenceError, CacheIdentity, CacheOutcome, CachePassReport, CachePassUsage, CachePhase,
+    CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError,
+    CacheIdentity, CacheOutcome, CachePassReport, CachePassUsage, CachePhase,
+};
+// FIX 8314 (INFERENCE R1): model workers and the receipt of each physical call.
+pub use oneiron_model::llm::{
+    INFERENCE_CALLS_KEY, InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence,
+    WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode, WorkerReadiness, WorkerStatus,
 };
 // FIX 7895: the answering llama.cpp process's launch alias, read in one place.
 pub use oneiron_model::llm::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
