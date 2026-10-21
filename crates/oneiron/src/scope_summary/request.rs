@@ -171,6 +171,9 @@ pub(crate) struct ComposedSummary<'a> {
     pub(crate) memo: [u8; 32],
     /// A session summary's lines and the TURNs each came from (FIX 7509).
     pub(crate) line_sources: Option<Vec<SummaryLineSources>>,
+    /// An Arc composed in parts: its work generation, proven complete at the
+    /// landing (FIX 7509 PR3). `None` for one call.
+    pub(crate) arc_work: Option<[u8; 32]>,
 }
 
 pub(super) fn enqueue_in_txn(
@@ -462,6 +465,9 @@ impl Vault {
                     None => return Ok((false, None)),
                 },
             };
+            if !super::arc_completion::reuse_complete_in_txn(self, txn, plan, memo, &summary)? {
+                return Ok((false, None));
+            }
             let (landed, reply) = if let Some(turn) = plan.land_on
                 && !header_landed_in_txn(self, txn, &summary, &turn)?
             {
@@ -518,6 +524,7 @@ impl Vault {
                 .into());
             }
             super::arc_validation::validate_landing(plan, composed)?;
+            super::arc_completion::validate_in_txn(self, txn, plan, evidence, composed, &id)?;
             let now = self.store.clock.now_recorded_at();
             mint_in_txn(
                 self,

@@ -6,22 +6,21 @@
 //! resolves every name through the render's guard, as the engine's
 //! single-hop client does, and connects only to the addresses the guard
 //! admitted; an address-literal request resolves nothing, so it is checked
-//! here before it is sent. A refusal is kept for the render and answered as
-//! the host's destination refusal, in the engine's words; any other failure
-//! fails only its request.
+//! here before it is sent, and a named one's origin is checked here too: a
+//! listed private name is reached only at an origin the operator lists
+//! (FIX 7657). A refusal is kept for the render and answered as the host's
+//! destination refusal, by its reason and in the engine's words; any other
+//! failure fails only its request.
 //!
 //! The client is asynchronous, driven on the server's runtime from the
 //! browser's own worker thread, so that the render's end cancels a request
 //! still in flight, and the render answers without waiting on a page server
 //! that never answers.
 
-use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
-use oneiron::web_fetch::{
-    HOSTED_INFRASTRUCTURE_REASON, HostedEgressGuard, HostedInfrastructureRefusal, RendererError,
-};
+use oneiron::web_fetch::{HostedEgressGuard, HostedEgressRefusal, RendererError};
 use oneiron_browser::{BrowserError, BrowserRequestHandler, DestinationRefusal};
 use oneiron_container::{HttpRequest, HttpResponse};
 use reqwest::Url;
@@ -57,9 +56,9 @@ pub(super) struct PageRequests {
 
 /// Why a page request has no answer.
 pub(super) enum Unanswered {
-    /// The render's guard refused its destination; the render keeps the
-    /// refusal.
-    Refused,
+    /// The render's guard refused its destination, for this reason; the
+    /// render keeps the refusal.
+    Refused(HostedEgressRefusal),
     /// Any other failure, in words that name no URL.
     Failed(String),
 }
@@ -113,16 +112,17 @@ impl PageRequests {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, Unanswered> {
         let url = Url::parse(&request.url).map_err(Unanswered::failed)?;
         // An address literal resolves nothing, so the client's guard never
-        // sees it: it is checked here, before anything is sent.
+        // sees it: it is checked here, before anything is sent. A name's
+        // origin is checked here too, its addresses by the resolver.
         let literal = url
             .host_str()
             .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
             .and_then(|host| host.parse::<IpAddr>().ok());
-        if let Some(ip) = literal {
-            self.operation
-                .check(&request.url, ip)
-                .map_err(|_| Unanswered::Refused)?;
-        }
+        let checked = match literal {
+            Some(ip) => self.operation.check(&request.url, ip),
+            None => self.operation.check_origin(&url),
+        };
+        checked.map_err(Unanswered::Refused)?;
         let method =
             reqwest::Method::from_bytes(request.method.as_bytes()).map_err(Unanswered::failed)?;
         let mut builder = self.client.request(method, url).body(request.body);
@@ -161,51 +161,43 @@ impl PageRequests {
     }
 
     /// `error`, a refusal where the render's guard failed its connection,
-    /// which the render then keeps.
+    /// which the render then keeps: the typed refusal its resolver gave is
+    /// in the error's chain. Never read from words.
     fn unanswered(&self, error: reqwest::Error) -> Unanswered {
-        if guard_refused(&error) {
-            self.operation.refuse(RendererError::hosted_infrastructure(
-                HostedInfrastructureRefusal.to_string(),
-            ));
-            Unanswered::Refused
-        } else {
-            Unanswered::failed(error.without_url())
+        match HostedEgressRefusal::of_error(&error) {
+            Some(refused) => {
+                self.operation
+                    .refuse(RendererError::hosted(refused, refused.to_string()));
+                Unanswered::Refused(refused)
+            }
+            None => Unanswered::failed(error.without_url()),
         }
     }
 }
 
 impl BrowserRequestHandler for PageRequests {
-    /// A refusal answers the host's destination refusal: the hosted
-    /// infrastructure reason, in the engine's own words.
+    /// A refusal answers the host's destination refusal: the guard's reason
+    /// (hosted infrastructure or a private network), in the engine's own
+    /// words.
     fn fetch(&self, request: HttpRequest) -> Result<HttpResponse, BrowserError> {
         self.perform(request)
             .map_err(|unanswered| match unanswered {
-                Unanswered::Refused => BrowserError::DestinationRefused(DestinationRefusal {
-                    reason: HOSTED_INFRASTRUCTURE_REASON.to_owned(),
-                    message: HostedInfrastructureRefusal.to_string(),
-                }),
+                Unanswered::Refused(refused) => {
+                    BrowserError::DestinationRefused(DestinationRefusal {
+                        reason: refused.reason().to_owned(),
+                        message: refused.to_string(),
+                    })
+                }
                 Unanswered::Failed(detail) => BrowserError::Navigation(detail),
             })
     }
 }
 
-/// Whether the render's guard failed `error`'s connection: the typed
-/// refusal its resolver gave is in the error's chain. Never read from words.
-fn guard_refused(error: &reqwest::Error) -> bool {
-    std::iter::successors(std::error::Error::source(error), |&source| source.source()).any(
-        |source| {
-            source.is::<HostedInfrastructureRefusal>()
-                || source
-                    .downcast_ref::<io::Error>()
-                    .and_then(io::Error::get_ref)
-                    .is_some_and(|inner| inner.is::<HostedInfrastructureRefusal>())
-        },
-    )
-}
-
 /// A guarded render's resolver: every name its client connects to resolves
-/// here, and a name with any address the guard refuses fails its connection
-/// with the typed refusal; the connection goes only to the addresses just
+/// here, and a name the guard refuses by its answers
+/// ([`HostedEgressGuard::refuses_resolved`]: infrastructure, or a private
+/// address for a name no operator origin names) fails its connection with
+/// the typed refusal; the connection goes only to the addresses just
 /// admitted, as the engine's guarded client resolves.
 struct GuardedResolver(Arc<HostedEgressGuard>);
 
@@ -223,8 +215,8 @@ async fn resolve_admitted(
     host: String,
 ) -> Result<reqwest::dns::Addrs, Box<dyn std::error::Error + Send + Sync>> {
     let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
-    if guard.refuses_any(addresses.iter().map(SocketAddr::ip)) {
-        return Err(Box::new(HostedInfrastructureRefusal));
+    if let Some(refused) = guard.refuses_resolved(&host, addresses.iter().map(SocketAddr::ip)) {
+        return Err(Box::new(refused));
     }
     Ok(Box::new(addresses.into_iter()))
 }

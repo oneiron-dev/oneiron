@@ -16,6 +16,7 @@
 
 use super::arc::ARC_PURPOSE;
 use super::arc_sources::{ArcSources, sources_in_txn};
+use super::arc_work::ArcManifest;
 use super::codec::invalid;
 use super::derivation::{
     PROJECTION, Projection, current_in_txn, declaration, decode, encode, projection_key,
@@ -31,8 +32,9 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Why an Arc is still owed (FIX 7509 P8): typed, on its row, never a
-/// silent hold. Each is retried at the backstop.
+/// Why an Arc is still owed (FIX 7509 P8, PR3): typed, on its row, never a
+/// silent hold. A failure is retried at the backstop; work in progress
+/// keeps its queued attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ArcPendingCause {
     /// A closed sitting below the Arc has no summary yet.
@@ -41,10 +43,14 @@ pub(crate) enum ArcPendingCause {
     /// A TURN the Arc must read could not be opened, by its full id.
     #[serde(rename = "arc_source_unavailable")]
     SourceUnavailable { handle: String },
-    /// The Arc's input does not fit one call on its model; exhaustive Arc
-    /// splitting comes next (PR3). Never written smaller.
-    #[serde(rename = "arc_needs_split")]
-    NeedsSplit { tokens: u64, window: u64 },
+    /// The Arc composes in parts (PR3): the id of its work generation, whose
+    /// queued attempt goes on at its next wake. Never written smaller.
+    #[serde(rename = "arc_composition_pending")]
+    CompositionPending { work_id: String },
+    /// The model's window holds the call's frame and not one character of
+    /// a source beside it.
+    #[serde(rename = "arc_window_too_small")]
+    WindowTooSmall { window: u64, frame_tokens: u64 },
 }
 
 impl ArcPendingCause {
@@ -53,7 +59,8 @@ impl ArcPendingCause {
         match self {
             Self::LowerPending { .. } => "arc_lower_pending",
             Self::SourceUnavailable { .. } => "arc_source_unavailable",
-            Self::NeedsSplit { .. } => "arc_needs_split",
+            Self::CompositionPending { .. } => "arc_composition_pending",
+            Self::WindowTooSmall { .. } => "arc_window_too_small",
         }
     }
 }
@@ -77,6 +84,9 @@ pub(super) struct ArcState {
     due_at: Option<u64>,
     queued: Option<[u8; 16]>,
     cause: Option<ArcPendingCause>,
+    /// The work generation the Arc last composed in parts (PR3), kept past
+    /// its landing and a requeue so a newer one deletes its rows.
+    work: Option<String>,
 }
 
 impl ArcState {
@@ -312,7 +322,7 @@ fn material(arc: &ArcSources) -> BTreeSet<[u8; 32]> {
 }
 
 /// A declaration's projection key, its request and its purpose.
-fn row_in_txn(
+pub(super) fn row_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     input: &[u8],
@@ -493,6 +503,54 @@ impl Vault {
             let gate = Gate::in_txn(self, txn, now)?;
             let mut state = row.arc.take().unwrap_or_default();
             state.owe(cause, gate);
+            row.arc = Some(state);
+            PROJECTION.put(&self.store, txn, &key, &row)
+        })
+    }
+
+    /// The progress writer of an Arc composed in parts (FIX 7509 PR3): its
+    /// row points at generation `work` (`arc_composition_pending`), its
+    /// queued attempt stays its own and nothing is due at the backstop. With
+    /// `manifest` the generation begins anew from it. A generation the row
+    /// pointed at before is deleted.
+    pub(crate) fn record_arc_progress(
+        &self,
+        input: &[u8],
+        work: &[u8; 32],
+        manifest: Option<&ArcManifest>,
+    ) -> Result<()> {
+        let work = crate::entity_id::bytes_to_hex_lower(work);
+        tracing::info!(
+            cause = "arc_composition_pending",
+            fresh = manifest.is_some(),
+            "an arc composes in parts"
+        );
+        self.with_write_txn_grouped(|txn| {
+            let (key, request, purpose) = row_in_txn(self, txn, input)?;
+            let mut row = match PROJECTION.get(&self.store, txn, &key)? {
+                Some(row) => row,
+                None => Projection {
+                    request: encode(&declaration(&request, &purpose, None))?,
+                    current: None,
+                    observed: [0; 32],
+                    arc: None,
+                },
+            };
+            let mut state = row.arc.take().unwrap_or_default();
+            if let Some(old) = state.work.take()
+                && old != work
+            {
+                super::arc_work_store::delete_generation_in_txn(self, txn, &old)?;
+            }
+            if let Some(manifest) = manifest {
+                super::arc_work_store::delete_generation_in_txn(self, txn, &work)?;
+                super::arc_work_store::put_manifest_in_txn(self, txn, &work, manifest)?;
+            }
+            state.work = Some(work.clone());
+            state.cause = Some(ArcPendingCause::CompositionPending {
+                work_id: work.clone(),
+            });
+            state.due_at = None;
             row.arc = Some(state);
             PROJECTION.put(&self.store, txn, &key, &row)
         })

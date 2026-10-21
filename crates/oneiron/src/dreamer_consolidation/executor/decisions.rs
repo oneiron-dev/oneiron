@@ -2,21 +2,20 @@
 //! resolves and which candidate's identity a merge keeps, and which listed claim an
 //! extracted candidate corrects. The verdict role's generation is each pack's first read.
 
-use std::time::{Duration, Instant};
-
 use serde_json::json;
 
 use super::*;
-use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind, LabelledRungs};
-use crate::dreamer_consolidation::provenance::{KeptAsk, KeptDecision};
+use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
+use crate::dreamer_consolidation::provenance::KeptDecision;
 use crate::dreamer_wake::WakePassDeadline;
 use crate::llm::decision::{
     AnswerActor, AskAct, AskRole, AskTo, DecisionAnswer, DecisionAsk, DecisionBand,
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, DecisionWireLabels,
-    GeneratedDecisions, GeneratedRung, GeneratedStep, HeldLadder, HumanAskReason, ProviderPin,
-    Reversibility, RoleRank, TypedDecision, cut_text, fit_state,
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, HumanAskReason,
+    RoleRank, TypedDecision, cut_text, fit_state,
 };
-use crate::retrieval_depth::RetrievalDeadline;
+
+mod read;
+pub(in crate::dreamer_consolidation) use read::{Decider, ScopedRead};
 
 /// The answer that names no listed id.
 pub(super) const NONE: &str = "none";
@@ -51,6 +50,14 @@ pub struct ConsolidationDecisions {
     pub identity_wording: String,
     /// Which listed claim an extracted candidate corrects.
     pub correction_wording: String,
+    /// Whether a sieve span's mention is new information (OF-498a).
+    pub sieve_novelty_wording: String,
+    /// Which span kind a sieve span is.
+    pub sieve_kind_wording: String,
+    /// Which supplied candidate, if any, a sieve span names.
+    pub sieve_entity_wording: String,
+    /// How sure a sieve reading is, as an integer percent.
+    pub sieve_confidence_wording: String,
 }
 
 impl ConsolidationDecisions {
@@ -70,6 +77,10 @@ impl ConsolidationDecisions {
             resolution_wording: wording.resolution,
             identity_wording: wording.identity,
             correction_wording: wording.correction,
+            sieve_novelty_wording: wording.sieve_novelty,
+            sieve_kind_wording: wording.sieve_kind,
+            sieve_entity_wording: wording.sieve_entity,
+            sieve_confidence_wording: wording.sieve_confidence,
         })
     }
 }
@@ -81,6 +92,10 @@ struct Wording {
     resolution: String,
     identity: String,
     correction: String,
+    sieve_novelty: String,
+    sieve_kind: String,
+    sieve_entity: String,
+    sieve_confidence: String,
 }
 
 /// `ids` as a choice's option groups, each of at most [`IDS_PER_QUESTION`] ids, with
@@ -152,7 +167,7 @@ impl ConsolidationExecutor<'_> {
     /// person questions (FIX 7506), before the pack's state renders: every
     /// request the pack splits into shows the same labels, and its state
     /// names its questions by them.
-    pub(super) fn label_questions(
+    pub(in crate::dreamer_consolidation) fn label_questions(
         &self,
         labels: &mut CallLabelMap,
         questions: &[DecisionQuestion],
@@ -232,23 +247,6 @@ impl ConsolidationExecutor<'_> {
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let vault = step_ctx.vault;
-        let principal = self.actor.entity_ref();
-        let asked = questions
-            .iter()
-            .map(|question| {
-                Ok(vault
-                    .decision_ask_for(question, principal, evidence, to, Some(correlation))?
-                    .filter(holds))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let mut dial = self.decisions.dial;
-        if dial.ceiling == DecisionRung::Human
-            && asked.iter().flatten().any(|ask| ask.answer.is_some())
-        {
-            dial.ceiling = DecisionRung::Big;
-        }
-        dial.ceiling = dial.ceiling.min(VERDICT_CEILING);
-        dial.first = dial.first.min(dial.ceiling);
         let call = self.role(DREAMER_VERDICT_ROLE);
         let seal = |request: LlmRequest| -> Result<LlmRequest> {
             let mut request = vault
@@ -257,45 +255,29 @@ impl ConsolidationExecutor<'_> {
             super::super::roles::bind_reasoning(vault, call.backend, &mut request)?;
             Ok(request)
         };
-        let rung = GeneratedRung {
-            pin: ProviderPin {
-                rung: self.decisions.dial.first,
-                model: call.model.to_string(),
-                version: call.model.to_string(),
-            },
-            backend: call.backend,
-            step: GeneratedStep::Durable {
-                step: step_ctx,
-                guard: self.guard,
-            },
-            request: verdict_shell(&call, resources.scope())?,
-            seal: &seal,
-        };
-        let pack: Vec<&DecisionQuestion> = questions.iter().collect();
+        // Every decision's receipt names the version of each evidence body
+        // the branch pinned.
+        let versions = resources.evidence_versions(evidence);
         let mut spent = Vec::new();
-        let mut held = self.decisions.ladder.ladder();
-        held.ask_to = Some(to);
-        held.correlation = Some(correlation);
-        let wire: &dyn DecisionWireLabels = labels;
-        // Each rung past the generated read shows the pack's choices alike.
-        let rungs = LabelledRungs::of(&held, wire);
-        let ladder = rungs.ladder(&held);
-        let decided = ladder
-            .run_pack_generated_spent(
-                &rung,
-                &pack,
-                principal,
-                evidence,
-                state,
-                dial,
-                &self.decisions.bands,
-                Reversibility::ReversibleRead,
-                &RetrievalDeadline::hard(
-                    Instant::now(),
-                    Duration::from_millis(pass.remaining_ms()),
-                ),
+        let decided = self
+            .decider()
+            .decide_scoped(
+                ScopedRead {
+                    step: step_ctx,
+                    pass,
+                    call: &call,
+                    shell: verdict_shell(&call, resources.scope())?,
+                    seal: &seal,
+                    versions: &versions,
+                    to,
+                    correlation,
+                    evidence,
+                    state,
+                    ceiling: VERDICT_CEILING,
+                },
+                questions,
+                labels,
                 &mut spent,
-                Some(wire),
             )
             .await;
         // Every generation that finished is spent, whatever the pack's outcome: a later
@@ -303,36 +285,7 @@ impl ConsolidationExecutor<'_> {
         for (hash, usage) in &spent {
             charges.record_terminal(vault, step_ctx.attempt_id, *hash, usage)?;
         }
-        let decisions = match decided? {
-            GeneratedDecisions::Decided { decisions, .. } => decisions,
-            GeneratedDecisions::Trapped => return Ok(None),
-            GeneratedDecisions::Unread(_) => {
-                return Err(
-                    invalid_consolidation("a durable decision read came back unread").into(),
-                );
-            }
-        };
-        let mut kept = Vec::with_capacity(decisions.len());
-        for ((question, mut decision), asked) in questions.iter().zip(decisions).zip(asked) {
-            decision
-                .receipt
-                .evidence_versions
-                .extend(resources.evidence_versions(&decision.evidence));
-            let ask = match asked {
-                Some(ask) => Some(ask),
-                None if went_up(&decision)
-                    && decision.human_ask != Some(HumanAskReason::Deadline) =>
-                {
-                    vault.decision_ask_for(question, principal, evidence, to, Some(correlation))?
-                }
-                None => None,
-            };
-            kept.push(KeptDecision {
-                decision,
-                ask: ask.as_ref().map(KeptAsk::of),
-            });
-        }
-        Ok(Some(kept))
+        decided
     }
 }
 
