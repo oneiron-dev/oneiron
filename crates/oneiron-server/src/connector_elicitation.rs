@@ -20,9 +20,10 @@
 //! connector says next: another round of questions under the same handle,
 //! the tool's result, or a failure.
 //!
-//! A set's questions are durable too (FIX 3837): the engine keeps them on
-//! the call's row, which its caller polls by `connector.call_status`, and
-//! the registry knows that row, so the worker keeps it current. A round
+//! A set's round is durable too (FIX 3837): the engine keeps it on the
+//! call's row (its handle, generation and count, never the questions'
+//! text), which its caller polls by `connector.call_status`, and the
+//! registry knows that row, so the worker keeps it current. A round
 //! never lapses: its worker waits for an answer for as long as the exchange
 //! lives, and an exchange that ends unanswered leaves the questions standing
 //! with their delivery uncertain.

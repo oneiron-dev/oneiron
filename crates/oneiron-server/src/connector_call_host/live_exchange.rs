@@ -6,10 +6,10 @@
 //! digests and dispositions, never an answer. A receipt that cannot be
 //! written is logged; the answer has gone or not either way.
 //!
-//! The worker keeps the call's row current (FIX 3837): each next round's
-//! questions, the delivery once the connector answers the call, and, when
-//! the exchange ends unanswered, the questions standing with their delivery
-//! uncertain. A round never lapses: the worker waits for its answer as long
+//! The worker keeps the call's row current (FIX 3837): each next round (its
+//! generation and count, never the questions' text), the delivery once the
+//! connector answers the call, and, when the exchange ends unanswered, the
+//! round standing with its delivery uncertain. A round never lapses: the worker waits for its answer as long
 //! as the exchange lives.
 
 use oneiron::outbound_consent::{
@@ -359,13 +359,14 @@ impl Worker {
                         break;
                     };
                     // The row keeps the round before its caller sees it.
-                    let (handle, generation) = (self.handle.as_str(), self.generation);
+                    let (handle, generation, asked) =
+                        (self.handle.as_str(), self.generation, questions.len());
                     self.keep_row(call_ref, |vault, call_ref| {
                         vault.keep_connector_input_round(
                             call_ref,
                             handle,
                             generation,
-                            &questions,
+                            asked,
                             live_until_ms,
                         )
                     });

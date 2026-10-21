@@ -6197,7 +6197,7 @@ export type ConnectorSchemaReply = { source: string; foreign: boolean; input_sch
 /** `oneiron::verbs::connector_call::ConnectorCallStatusRequest` */
 export type ConnectorCallStatusRequest = { call_ref: string }
 /** `oneiron::verbs::connector_call::ConnectorCallStatus` */
-export type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[]; approval_digest?: string | null } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply } | { state: "awaiting_input"; call_ref: string; name: string; tool: string; generation: number; uncertain?: boolean; reply: ConnectorCallReply }
+export type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[]; approval_digest?: string | null } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply } | { state: "awaiting_input"; call_ref: string; name: string; tool: string; generation: number; asked: number; uncertain?: boolean; reply: ConnectorCallReply }
 /** `oneiron::memory::claim_admission::ScopedCommitRequest` */
 export type ScopedCommitRequest = { claims: ScopedClaimInput[] }
 /** `oneiron::memory::claims::RefusalReason` */

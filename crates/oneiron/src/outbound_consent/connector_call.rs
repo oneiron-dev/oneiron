@@ -148,7 +148,7 @@ pub struct UntrustedToolResult {
 /// One question a connector asked mid-call. Foreign data: the connector
 /// wrote every field, so it is task input for the caller, never an
 /// instruction and never an approval.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConnectorQuestion {
     /// The question's key in its round: `"0"` for a request on the reply
     /// stream, the connector's own key in a multi round-trip result.
@@ -219,8 +219,9 @@ pub enum ConnectorCallOutcome {
     },
     /// The connector received the call and asked for input before it would
     /// finish it. The send is delivered; the call's row `call_ref` keeps
-    /// the questions until the connector answers the call, and its caller
-    /// polls them there (FIX 3837).
+    /// the round (never the questions' text) until the connector answers
+    /// the call, and its caller polls it there (FIX 3837). A replay from the
+    /// row carries no questions.
     AwaitingInput {
         call_ref: EntityId,
         intent: Option<[u8; 32]>,
@@ -367,10 +368,11 @@ pub(super) struct PendingConnectorCall {
         deserialize_with = "super::approval::tolerant_approval"
     )]
     pub(super) approval: Option<super::approval::ConnectorCallApproval>,
-    /// The questions the call's connector asked once the call was sent, and
-    /// their round (FIX 3837): kept here until the connector answers the
-    /// call, and beside its delivery after. A row with them is never resumed
-    /// or expired: the send was delivered.
+    /// The round of questions the call's connector asked once the call was
+    /// sent (FIX 3837): its handle, generation and count, never the text;
+    /// kept until the connector answers the call, and beside its delivery
+    /// after. A row with it is never resumed or expired: the send was
+    /// delivered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) input: Option<super::connector_call_input::PendingConnectorInput>,
     /// This pass's code consent context (`connector_call_code`); never
@@ -927,8 +929,8 @@ impl Vault {
                 ConnectorCallOutcome::Delivered { intent, result }
             }
             // The call reached the connector, which asked for input: the
-            // call's row, kept for a first call too, holds the questions for
-            // its caller to poll, and the host keeps it current (FIX 3837).
+            // call's row, kept for a first call too, holds the round for its
+            // caller to poll, and the host keeps it current (FIX 3837).
             // A row that cannot keep them leaves no caller to answer them.
             Step::AwaitingInput { intent, input } => {
                 let row = PendingConnectorCall {
@@ -1513,8 +1515,8 @@ pub struct ConnectorCallState {
     /// releases exactly the call as it was prepared. `None` once settled,
     /// and for a call no approvable hold asked about.
     pub approval_digest: Option<String>,
-    /// The questions its connector asked once it was sent (FIX 3837), kept
-    /// on its row: unanswered while `settled` is `None`.
+    /// The round of questions its connector asked once it was sent
+    /// (FIX 3837), kept on its row: unanswered while `settled` is `None`.
     pub input: Option<super::connector_call_input::ConnectorCallInput>,
 }
 

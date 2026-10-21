@@ -450,8 +450,8 @@ impl SyncServer {
         // CUA-001: no run guest outlives a restart, so no takeover Ask can be answered.
         super::desktop_seats::clear_stale_asks(&vault);
         // FIX 3837: no connector's live exchange outlives a restart, so the
-        // questions kept on its calls' rows stand with their delivery
-        // uncertain.
+        // rounds of questions kept on its calls' rows stand with their
+        // delivery uncertain.
         if let Err(error) = vault.mark_connector_inputs_uncertain() {
             tracing::warn!(%error, "connector call questions not marked uncertain");
         }

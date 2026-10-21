@@ -3116,7 +3116,7 @@ declare namespace Sdk {
   type ConnectorSchemaRequest = { name: string; tool: string };
   type ConnectorSchemaReply = { source: string; foreign: boolean; input_schema?: unknown | null; destructive?: boolean | null; reasons?: string[] };
   type ConnectorCallStatusRequest = { call_ref: string };
-  type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[]; approval_digest?: string | null } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply } | { state: "awaiting_input"; call_ref: string; name: string; tool: string; generation: number; uncertain?: boolean; reply: ConnectorCallReply };
+  type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[]; approval_digest?: string | null } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply } | { state: "awaiting_input"; call_ref: string; name: string; tool: string; generation: number; asked: number; uncertain?: boolean; reply: ConnectorCallReply };
   type OpenInput = { url: string };
   type TakeoverRecord = { by: string; asked?: string | null; taken_at_ms: number; returned_at_ms: number; inputs: number };
   type WindowSwitchCause = "opened" | "closed";

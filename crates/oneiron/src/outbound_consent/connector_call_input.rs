@@ -4,11 +4,13 @@
 //!
 //! The send that met the questions was delivered, so its ledger intent is
 //! Done; the logical call is not. Its row in the held-call table keeps the
-//! questions' handle, round and questions, cleared at the door as the caller
-//! saw them, until the connector answers the call: then the row keeps the
-//! delivery, receipt-only. `connector.call_status` reads the row, so a
-//! caller polls the questions by the call's ref. The settler never resumes
-//! such a row and the hold expiry never settles it: nothing re-sends it.
+//! round: the questions' handle, generation, how many there are and the
+//! live lease, until the connector answers the call; then the row keeps the
+//! delivery, receipt-only. Never the questions' text: foreign content stays
+//! out of the canonical row, as a reply's bytes do (the caller's own reply,
+//! or its wait, carried them). `connector.call_status` reads the row, so a
+//! caller polls the round by the call's ref. The settler never resumes such
+//! a row and the hold expiry never settles it: nothing re-sends it.
 //!
 //! The live exchange is the host's. Its lease ([`PendingConnectorInput::
 //! live_until_ms`]) is how long a synchronous answer waits, never an expiry:
@@ -24,12 +26,12 @@ use crate::error::Error;
 use crate::outbound_intent_ledger::IntentLedgerError;
 
 use super::connector_call::{
-    ConnectorAwaitingInput, ConnectorCallOutcome, ConnectorQuestion, PENDING_CALLS,
-    PendingConnectorCall, SettledConnectorCall,
+    ConnectorAwaitingInput, ConnectorCallOutcome, PENDING_CALLS, PendingConnectorCall,
+    SettledConnectorCall,
 };
 
-/// The questions one call's connector asked, and their round, on the call's
-/// row. Foreign text, cleared at the door: never logged or receipted.
+/// The round of questions one call's connector asked, on the call's row:
+/// ids and counts, never the questions' text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PendingConnectorInput {
@@ -37,7 +39,8 @@ pub(super) struct PendingConnectorInput {
     pub(super) handle: String,
     /// The round the questions belong to, from 0.
     pub(super) generation: u64,
-    pub(super) questions: Vec<ConnectorQuestion>,
+    /// How many questions the round asks.
+    pub(super) asked: usize,
     /// The original send's ledger intent: Done, the send delivered.
     pub(super) intent: Option<[u8; 32]>,
     /// The end of the round's live lease (unix ms).
@@ -54,41 +57,43 @@ impl PendingConnectorInput {
         Self {
             handle: input.handle.clone(),
             generation: 0,
-            questions: input.questions.clone(),
+            asked: input.questions.len(),
             intent,
             live_until_ms: input.live_until_ms,
             uncertain: false,
         }
     }
 
+    /// The round as a reply carries it from the row: its handle and lease,
+    /// with no questions, which the row never keeps.
     fn awaiting(&self) -> ConnectorAwaitingInput {
         ConnectorAwaitingInput {
             handle: self.handle.clone(),
-            questions: self.questions.clone(),
+            questions: Vec::new(),
             live_until_ms: self.live_until_ms,
         }
     }
 
-    /// The status read's view of the questions.
+    /// The status read's view of the round.
     pub(super) fn view(&self) -> ConnectorCallInput {
         ConnectorCallInput {
             handle: self.handle.clone(),
             generation: self.generation,
-            questions: self.questions.clone(),
+            asked: self.asked,
             live_until_ms: self.live_until_ms,
             uncertain: self.uncertain,
         }
     }
 }
 
-/// The questions a call waits on, as its status read shows them (FIX 3837):
-/// its handle, round, the questions as its caller saw them, the end of the
-/// round's live lease, and whether its live exchange ended unanswered.
-#[derive(Debug, Clone, PartialEq)]
+/// The round of questions a call waits on, as its status read shows it
+/// (FIX 3837): its handle, generation, how many questions it asks, the end
+/// of its live lease, and whether its live exchange ended unanswered.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorCallInput {
     pub handle: String,
     pub generation: u64,
-    pub questions: Vec<ConnectorQuestion>,
+    pub asked: usize,
     pub live_until_ms: u64,
     pub uncertain: bool,
 }
@@ -111,9 +116,10 @@ impl PendingConnectorCall {
 }
 
 impl Vault {
-    /// Keeps round `generation` of the questions `handle` names on the call
-    /// `call_ref`'s row; `true` when it kept them. A row whose questions are
-    /// another handle's, a later round's, or answered keeps what it has.
+    /// Keeps round `generation` of the questions `handle` names, `asked` of
+    /// them, on the call `call_ref`'s row; `true` when it kept it. A row
+    /// whose round is another handle's, a later one, or answered keeps what
+    /// it has.
     ///
     /// # Errors
     ///
@@ -123,7 +129,7 @@ impl Vault {
         call_ref: &EntityId,
         handle: &str,
         generation: u64,
-        questions: &[ConnectorQuestion],
+        asked: usize,
         live_until_ms: u64,
     ) -> Result<bool, IntentLedgerError> {
         self.update_connector_input(call_ref, handle, |input, _| {
@@ -131,7 +137,7 @@ impl Vault {
                 return false;
             }
             input.generation = generation;
-            input.questions = questions.to_vec();
+            input.asked = asked;
             input.live_until_ms = live_until_ms;
             input.uncertain = false;
             true

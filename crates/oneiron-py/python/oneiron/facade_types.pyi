@@ -15613,6 +15613,7 @@ class ConnectorCallStatusAwaitingInput(TypedDict):
     name: str
     tool: str
     generation: int
+    asked: int
     uncertain: NotRequired[bool]
     reply: ConnectorCallReply
 ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled | ConnectorCallStatusAwaitingInput

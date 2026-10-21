@@ -48750,6 +48750,8 @@ pub enum ConnectorCallStatus {
         tool: String,
         #[serde(rename = "generation")]
         generation: u64,
+        #[serde(rename = "asked")]
+        asked: u64,
         #[serde(rename = "uncertain", default, skip_serializing_if = "Option::is_none")]
         uncertain: Option<bool>,
         #[serde(rename = "reply")]
