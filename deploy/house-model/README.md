@@ -37,6 +37,18 @@ Put each under `/var/lib/oneiron-house/models/` (or set the paths in
 - llama.cpp target: `Qwen3.8-27B-UD-Q4_K_M.gguf`.
 - llama.cpp draft: `Qwen3.5-0.8B-Q8_0.gguf`.
 
+Then write the EXL3 target's weights manifest beside it, once per deployed
+snapshot (see "Launch identity"):
+
+```sh
+sudo python3 deploy/house-model/weights_manifest.py prepare \
+  /var/lib/oneiron-house/models/qwen3.8-27b-exl3-4bpw \
+  /var/lib/oneiron-house/models/qwen3.8-27b-exl3-4bpw.weights.json
+```
+
+The repository holds no real weights hashes: the operator, or the
+Orchestrator when it deploys, writes this manifest from the installed bytes.
+
 ## Install
 
 ```sh
@@ -44,7 +56,8 @@ sudo useradd --system --home /var/lib/oneiron-house oneiron-house
 sudo python3 -m venv /opt/oneiron-house/.venv
 # a CUDA PyTorch wheel matching the driver first, then:
 sudo /opt/oneiron-house/.venv/bin/pip install -r deploy/house-model/requirements.txt
-# llama.cpp with CUDA and request decoding, at /opt/oneiron-house/llama.cpp/build/bin/llama-server
+# llama.cpp at the pinned commit with CUDA and request decoding, at
+# /opt/oneiron-house/llama.cpp/build/bin/llama-server, with its build record
 sudo apt-get install libzstd-dev zlib1g-dev
 sudo deploy/house-model/build-llama.sh
 sudo cp deploy/house-model/house.env.example /etc/oneiron-house.env
@@ -56,6 +69,62 @@ Both units are templates: they expect the repo at `/opt/oneiron`. Each server
 listens on loopback only and loads its weights before it answers; a request
 never downloads or starts a model. Then merge `models.toml` into
 `oneiron.toml`, and `GET /v1/ai/status` lists both rungs of each seat.
+
+## Launch identity
+
+Each reply's cache evidence names what answered it (FIX 7895). Identity
+never stops a server: whatever fails below, the server starts and serves,
+with the digests it could not take left out and one warning on stderr.
+
+**llama.cpp.** The pin is llama.cpp
+`d81235049384534c167caea52b85a694f6103d14`: `build-llama.sh` checks out
+exactly that commit (a checkout with changes to tracked files is refused),
+builds it, and writes `llama-server.build.json` beside the binary: the
+commit, the CMake flags and the binary's SHA-256. Before each launch,
+`serve-llama.sh` runs `llama_identity.py prepare`, which:
+
+- mints a random 128-bit epoch for this launch;
+- hashes every GGUF part the launch loads (target and draft, each part of a
+  split GGUF), in full, at every launch, and the binary;
+- reads the target's typed tokenizer metadata and its chat templates;
+- records the launch's arguments, every `LLAMA_ARG_*` variable by name and
+  value (one that may hold a credential, by its SHA-256) and any llama.cpp
+  `config.ini` by its SHA-256 (with one present, the `model`, `tokenizer`
+  and `template` digests are left out: the file could change them);
+- writes the manifest, named by the SHA-256 of its exact bytes, into the
+  manifests-only `ONEIRON_HOUSE_LLAMA_IDENTITY_DIR`
+  (`/var/cache/oneiron-house/llama-identity`, inside the unit's cache
+  directory). Manifests are kept, so an old launch's late answers still
+  resolve.
+
+llama-server then starts with `--alias oneiron-llama/<epoch>/<digest>`, its
+only alias (`LLAMA_ARG_ALIAS` is unset), and `--path` on that directory with
+`--ui`, since llama.cpp mounts `--path` only with its web UI on. The static
+directory replaces the embedded web UI on this loopback port: the house
+server has no browser UI. llama.cpp returns the alias as the `model` of
+every chat, stream and native answer and as its `/v1/models` id, and serves
+the manifest at `GET /<digest>.json`. The engine maps the alias to the
+provider's configured model (`ONEIRON_HOUSE_LLAMA_MODEL_ID`, `qwen3.8-27b`,
+which the manifest is bound to), fetches each manifest once, checks its
+digest, epoch and configured model, and puts its digests into the record.
+A launch whose identity cannot be prepared (an unwritable directory, an
+unreadable file, a `config.ini` that sets an alias) starts as before: no
+alias, no manifest, and its records name only the reported build.
+
+**EXL3.** `weights_manifest.py prepare` lists every `*.safetensors` shard of
+the target with its size and SHA-256 (above). At each launch the server
+hashes the installed shards against it before any weights load; when they
+match, the manifest's digest is the identity's `model`. A missing manifest
+or a changed, missing or unlisted shard leaves `model` out, with a warning,
+and the server serves. The `model` it returns and its `/v1/models` id stay
+`qwen3.8-27b`.
+
+**Deploying.** The operator, or the Orchestrator, rebuilds llama.cpp with
+`build-llama.sh` (or records an existing build of the pin with
+`llama_identity.py record-build BIN COMMIT -- FLAGS...`) and writes the EXL3
+weights manifest whenever the weights change. A manifest attests a launch,
+not a call: a request's own template arguments, samplers, reasoning or cache
+options are not in it, so no record's `execution_mode` comes from it.
 
 ## The EXL3 server's wire
 
@@ -187,8 +256,9 @@ request read from the prompt cache (FIX 6567; `cache_usage.py` builds it):
     `execution_mode`, the server's settings with the request's
     `chat_template_kwargs` and solo flag. `backend_epoch` is 32 hex digits
     minted once when the Generator is built, so a restart is a new epoch.
-    No weights digest is supplied, so no `model` digest is given. Nothing
-    in it reads the `model` a request names.
+    `model` is the weights manifest's digest, given only when the installed
+    shards matched it at launch. Nothing in it reads the `model` a request
+    names.
 
 `timings` keeps its meaning: `prompt_n` is still the logical prompt.
 
@@ -196,12 +266,19 @@ request read from the prompt cache (FIX 6567; `cache_usage.py` builds it):
 `usage.prompt_tokens_details.cached_tokens` and `timings.cache_n`, what it
 computed as `timings.prompt_n`. The engine builds
 the same record from them (`backend` `llama_cpp`, one `prompt` pass), and a
-read is `unknown` when those counts disagree. Its only identity is `runtime`,
-a digest of the reply's `system_fingerprint` (a build, not an incarnation).
-llama.cpp reports no epoch, so none is recorded. `tokens_cached` is the
-slot's occupancy, which counts generated tokens, and is never read as cache
-hits. Each decision-read answer gets a `label_read` record the same way, from
-its native `tokens_evaluated` and `timings`, with no identity.
+read is `unknown` when those counts disagree. Its identity is what the
+answer's own alias names: `backend_epoch` from the alias, and from the
+launch's verified manifest `model`, `tokenizer`, `runtime` (the build),
+`template` and `cache_mode`. A manifest that did not verify leaves those
+out, and a reply without an alias has no epoch either; a chat record then
+names its `runtime` as a digest of the reply's `system_fingerprint` (a build,
+not an incarnation). `tokens_cached` is the slot's occupancy, which
+counts generated tokens, and is never read as cache hits. Each decision-read
+answer gets a `label_read` record the same way, from its native
+`tokens_evaluated`, `timings` and `model`, each answer and each retry with
+its own alias's identity; a native record never names a `template`, since
+the host's recipe renders its prompt. No llama record names an
+`execution_mode`.
 
 ## Compressed requests
 
