@@ -557,10 +557,19 @@ pub enum AgentSpawnOutput {
         /// What the launch starts and may spend, stated before it runs: its
         /// agent count, expected spend and cap (OF-532).
         launch: Option<crate::agent_dispatch::LaunchStatement>,
+        /// The asked fields this spawn did not apply, and why (OF-541): a
+        /// spawn the host did not plan leaves its care, notes, model, width
+        /// and pattern, and its need without the agent's lease. Absent when
+        /// none.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        unapplied: Vec<crate::agent_dispatch::SpawnUnapplied>,
     },
     ProposedWiden {
         kind: AgentSpawnKind,
         proposal: String,
+        /// As on `queued`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        unapplied: Vec<crate::agent_dispatch::SpawnUnapplied>,
     },
 }
 
