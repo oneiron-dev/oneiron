@@ -50,12 +50,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::EntityId;
-use oneiron::llm::decision::{DecisionAnswer, DecisionAsks};
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use oneiron::outbound_consent::{
-    ConnectorAwaitingInput, ConnectorCallOutcome, ConnectorElicitationAnswer,
-    ConnectorElicitationBinding, ConnectorElicitationOwnerAsk, ConnectorQuestion,
-    ElicitationAnswerVerdict, UntrustedToolResult,
+    ConnectorAwaitingInput, ConnectorCallOutcome, ConnectorElicitationBinding,
+    ConnectorElicitationOwnerAsk, ConnectorQuestion, ElicitationAnswerVerdict, UntrustedToolResult,
 };
 use oneiron::task_verb::sdk::{
     ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorCallReply, ConnectorQuestionAnswer,
@@ -65,6 +63,9 @@ use serde_json::Value;
 
 use crate::connector_call_host::elicitation_response;
 use crate::server::SyncServer;
+
+mod owner;
+use owner::{owner_rules, withdraw_owner_ask};
 
 /// A round's live lease, from when it arrived: how long one answer call
 /// waits on the owner's ruling. Never an expiry (FIX 3837).
@@ -265,23 +266,30 @@ impl ConnectorElicitationRegistry {
     }
 
     /// Keeps the owner ask about the answer `digest` to round `generation`
-    /// of `handle`, or forgets it (`None`).
+    /// of `handle`, or forgets it (`None`). `false` when that round is gone.
     fn keep_owner_ask(
         &self,
         handle: &str,
         generation: u64,
         ask: Option<([u8; 32], ConnectorElicitationOwnerAsk)>,
-    ) {
-        if let Some(entry) = self.lock().get_mut(handle)
-            && entry.generation == generation
-        {
-            entry.owner_ask = ask;
+    ) -> bool {
+        match self.lock().get_mut(handle) {
+            Some(entry) if entry.generation == generation => {
+                entry.owner_ask = ask;
+                true
+            }
+            _ => false,
         }
     }
 
-    /// Drops a question set its worker ended.
-    pub(crate) fn finish(&self, handle: &str) {
-        self.lock().remove(handle);
+    /// Drops a question set its worker ended, and withdraws the owner ask
+    /// it still kept, with its parts, from `vault`'s queue: no exchange is
+    /// left to send that answer to (FIX 9160).
+    pub(crate) fn finish(&self, vault: Option<&oneiron::Vault>, handle: &str) {
+        let kept = self.lock().remove(handle).and_then(|entry| entry.owner_ask);
+        if let (Some(vault), Some((_, asked))) = (vault, kept) {
+            withdraw_owner_ask(vault, &asked);
+        }
     }
 
     /// Claims the current round of `handle` for one answer by `principal`.
@@ -428,6 +436,11 @@ impl FrozenAnswer {
         }
     }
 
+    /// The answer as one JSON object, its responses by key.
+    fn value(&self) -> Value {
+        Value::Object(self.responses.clone().into_iter().collect())
+    }
+
     /// Every question of the round answered `action`, with no content: what
     /// goes in place of an answer that may not.
     fn replaced(&self, action: ConnectorAnswerAction) -> BTreeMap<String, Value> {
@@ -524,7 +537,13 @@ pub(crate) fn answer_connector_question(
     let authority = claim.binding.authority();
     let verdict = server
         .vault()
-        .authorize_connector_elicitation_answer(&authority, frozen.digest, frozen.carries_content)
+        .authorize_connector_elicitation_answer(
+            memory,
+            &authority,
+            &frozen.value(),
+            frozen.digest,
+            frozen.carries_content,
+        )
         .map_err(MemoryError::from)?;
     let (responses, reasons) = match verdict {
         ElicitationAnswerVerdict::Send => (frozen.responses, Vec::new()),
@@ -613,19 +632,19 @@ fn check_answer(
     authority: &ConnectorElicitationBinding,
     responses: &BTreeMap<String, Value>,
 ) {
-    let mut checked = Value::Object(responses.clone().into_iter().collect());
-    let digest = *blake3::hash(checked.to_string().as_bytes()).as_bytes();
+    let answer = Value::Object(responses.clone().into_iter().collect());
+    let digest = *blake3::hash(answer.to_string().as_bytes()).as_bytes();
     // The check reads a copy: what goes is `responses`, untouched.
-    if !oneiron::batch::export::redact_credentials(&mut checked) {
+    if !oneiron::batch::export::redact_credentials(&mut answer.clone()) {
         return;
     }
     let vault = Arc::clone(server.vault());
     let (authority, handle, generation) =
         (authority.clone(), claim.handle.clone(), claim.generation);
     let raise = move || {
-        if let Err(error) =
-            vault.queue_connector_elicitation_answer_check(&authority, &handle, generation, digest)
-        {
+        if let Err(error) = vault.queue_connector_elicitation_answer_check(
+            &authority, &handle, generation, digest, &answer,
+        ) {
             tracing::warn!(%error, "connector answer check not queued");
         }
     };
@@ -667,112 +686,4 @@ fn owner_pending(claim: Claim<'_>, call_ref: EntityId) -> ConnectorCallReply {
         },
     )
     .noting(vec!["connector_answer_owner_pending".to_owned()])
-}
-
-/// Asks the owner about exactly `frozen`, or reads the ask the same answer
-/// to this round already raised, and waits for the ruling within the
-/// round's live lease. Past the lease the ask stands, kept with the round,
-/// so the same answer given again reads it (FIX 3837); an ask another
-/// answer superseded is withdrawn. The linked parts of a long ask are
-/// withdrawn once it is decided (FIX 3842).
-fn owner_rules(
-    server: &SyncServer,
-    claim: &Claim<'_>,
-    authority: &ConnectorElicitationBinding,
-    frozen: &FrozenAnswer,
-) -> OwnerRuling {
-    let asks = server.decision_host().asks();
-    let kept = match &claim.owner_ask {
-        Some((digest, asked)) if *digest == frozen.digest => Some(asked.clone()),
-        Some((_, superseded)) => {
-            drop(asks.withdraw(superseded.seq));
-            for part in &superseded.parts {
-                drop(asks.withdraw(*part));
-            }
-            None
-        }
-        None => None,
-    };
-    let asked = match kept {
-        Some(asked) => asked,
-        None => {
-            let answer = ConnectorElicitationAnswer {
-                handle: &claim.handle,
-                generation: claim.generation,
-                questions: &claim.questions,
-                answers: &frozen.text,
-                digest: frozen.digest,
-            };
-            match server
-                .vault()
-                .queue_connector_elicitation_owner_ask(authority, &answer)
-            {
-                Ok(asked) => asked,
-                Err(error) => {
-                    tracing::warn!(%error, "connector elicitation owner ask not queued");
-                    return OwnerRuling::Unasked;
-                }
-            }
-        }
-    };
-    let ruling = owner_ruling(asks, asked.seq, claim.lease);
-    let registry = &server.connector_elicitations;
-    if matches!(ruling, OwnerRuling::Pending) {
-        registry.keep_owner_ask(
-            &claim.handle,
-            claim.generation,
-            Some((frozen.digest, asked)),
-        );
-        return ruling;
-    }
-    registry.keep_owner_ask(&claim.handle, claim.generation, None);
-    for part in asked.parts {
-        drop(asks.withdraw(part));
-    }
-    ruling
-}
-
-/// The owner's ruling on ask `seq` as it stands: `None` while it is open; a
-/// withdrawn or vanished ask abstains.
-fn ruling_now(asks: &DecisionAsks, seq: u64) -> Option<oneiron::Result<DecisionAnswer>> {
-    match asks.get(seq) {
-        Ok(Some(ask)) if ask.withdrawn_at.is_some() => Some(Ok(DecisionAnswer::Abstain)),
-        Ok(Some(ask)) => ask.answer.map(|answer| Ok(answer.answer)),
-        Ok(None) => Some(Ok(DecisionAnswer::Abstain)),
-        Err(error) => Some(Err(error)),
-    }
-}
-
-/// Waits for the owner's ruling on ask `seq` until `lease`; past it the ask
-/// is read once and, still open, stands (FIX 3837).
-fn owner_ruling(asks: &DecisionAsks, seq: u64, lease: Instant) -> OwnerRuling {
-    let runtime = tokio::runtime::Handle::try_current().ok();
-    loop {
-        let left = lease.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return match ruling_now(asks, seq) {
-                None | Some(Err(_)) => OwnerRuling::Pending,
-                Some(Ok(DecisionAnswer::Noul(true))) => OwnerRuling::Yes,
-                Some(Ok(_)) => OwnerRuling::No,
-            };
-        }
-        let wait = left.min(OWNER_ASK_POLL);
-        let answered = match &runtime {
-            Some(runtime) => match runtime.block_on(tokio::time::timeout(wait, asks.answered(seq)))
-            {
-                Ok(answered) => Some(answered.map(|answer| answer.answer)),
-                Err(_) => None,
-            },
-            None => {
-                std::thread::sleep(wait);
-                ruling_now(asks, seq)
-            }
-        };
-        match answered {
-            None => {}
-            Some(Ok(DecisionAnswer::Noul(true))) => return OwnerRuling::Yes,
-            // A no, an abstain or a withdrawn ask declines.
-            Some(_) => return OwnerRuling::No,
-        }
-    }
 }

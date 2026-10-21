@@ -515,12 +515,19 @@ pub fn connector_call_status_read(
         memory.produced_from(state.source_rows.into_iter().flatten());
         let (name, tool) = (state.name, state.tool);
         return Ok(match state.settled {
-            Some(outcome) => ConnectorCallStatus::Settled {
-                reply: ConnectorCallReply::project(&name, &tool, outcome),
-                call_ref: call_ref.to_hex(),
-                name,
-                tool,
-            },
+            Some(outcome) => {
+                // Read once settled, its row goes; its acknowledged caller
+                // keeps this status (FIX 9158).
+                if let Err(error) = vault.consume_settled_connector_input(&call_ref) {
+                    tracing::warn!(%error, "connector call input row not consumed");
+                }
+                ConnectorCallStatus::Settled {
+                    reply: ConnectorCallReply::project(&name, &tool, outcome),
+                    call_ref: call_ref.to_hex(),
+                    name,
+                    tool,
+                }
+            }
             None => ConnectorCallStatus::AwaitingInput {
                 call_ref: call_ref.to_hex(),
                 generation: input.generation,
@@ -539,6 +546,20 @@ pub fn connector_call_status_read(
                 name,
                 tool,
             },
+        });
+    }
+    // A call whose connector asked for input, its row read and gone: its
+    // acknowledged caller keeps its outcome, never its wait's first
+    // questions (FIX 9158).
+    if state.acknowledged
+        && let Some(outcome) = state.settled
+    {
+        memory.produced_from(state.source_rows.into_iter().flatten());
+        return Ok(ConnectorCallStatus::Settled {
+            reply: ConnectorCallReply::project(&state.name, &state.tool, outcome),
+            call_ref: input.call_ref,
+            name: state.name,
+            tool: state.tool,
         });
     }
     let settled = crate::code_run::WaitDeliveries::canonical(vault).settled(call_ref)?;

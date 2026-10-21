@@ -431,6 +431,10 @@ pub enum OutboundFailureKind {
     Rejected,
     InvalidRequest,
     TransportNotStarted,
+    /// The connector is installed at another endpoint than the one the call
+    /// froze and its grant admitted: this send never goes, and no retry of
+    /// it will (FIX 2553).
+    EndpointChanged,
 }
 
 /// Definite non-delivery result with no raw body, URL, or provider text.

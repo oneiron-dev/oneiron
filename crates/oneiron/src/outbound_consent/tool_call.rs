@@ -1,6 +1,6 @@
 //! Resolve header parameters once and freeze them with the consent-visible tool call.
 //! Header parameters form an independent grant class, not a sensitivity rank.
-use super::{FrozenMcpPayload, ScopedMcpCallContext};
+use super::{DataClass, FrozenMcpPayload, ScopedMcpCallContext};
 use crate::outbound_intent_ledger::OutboundToolDescriptor;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -382,6 +382,11 @@ pub fn prepare_tool_call(
         });
     }
     requirements.sort_by(|a, b| a.parameter.cmp(&b.parameter));
+    // The frozen content's own class raises the tool's (FIX 8807): every
+    // check of this call, its retries' too, reads the class frozen here.
+    let mut call = call;
+    let sent = serde_json::json!([&body, &headers]);
+    call.payload_data_class = call.payload_data_class.max(content_data_class(&sent));
     let preview = destructive_hint && mutation == MutationIntent::Preview;
     if destructive_hint && declares_preview {
         body.insert("dry_run".into(), Value::Bool(preview));
@@ -474,6 +479,18 @@ fn declared_headers<'a>(
         }
     }
     Ok(declared)
+}
+
+/// The class `content` shows by itself (FIX 8807): `Secret` when the shared
+/// release check finds a credential or secret in it, read on a copy;
+/// otherwise the lowest, so the tool's slate class (its trusted provenance)
+/// stands. Nothing here classifies personal content.
+pub(super) fn content_data_class(content: &Value) -> DataClass {
+    if crate::batch::export::redact_credentials(&mut content.clone()) {
+        DataClass::Secret
+    } else {
+        DataClass::Public
+    }
 }
 
 /// The parameters an `x-mcp-header` annotation in `schema` can send as
