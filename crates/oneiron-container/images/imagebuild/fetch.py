@@ -235,7 +235,8 @@ CA_BUNDLES = (
     "/etc/ssl/cert.pem",
     "/etc/ca-certificates/extracted/tls-ca-bundle.pem",
 )
-# The device nodes the fetch root binds one by one (no other host device).
+# The device nodes the fetch root binds one by one (no other host device); /proc
+# is the only other host mount in it.
 FETCH_DEVICES = ("null", "zero", "full", "random", "urandom")
 # Inside the fetch root.
 FETCH_SRC, FETCH_CARGO_HOME, FETCH_RUST = "/src", "/cargo-home", "/rust"
@@ -255,9 +256,11 @@ for top in "$boot"/*; do
   name=${top##*/}
   if [ -L "$top" ]; then ln -s "$(readlink "$top")" "$root/$name"; fi
 done
-mkdir -p "$root/usr" "$root/dev" "$root/tmp" "$root/src" "$root/cargo-home" "$root/rust"
+mkdir -p "$root/usr" "$root/dev" "$root/proc" "$root/tmp" "$root/src" "$root/cargo-home" "$root/rust"
 chmod 1777 "$root/tmp"
 mount --bind "$boot/usr" "$root/usr"
+# ld.so expands rustc's $ORIGIN/../lib RUNPATH through /proc/self/exe.
+mount --rbind /proc "$root/proc"
 cp -a "$boot/etc" "$root/etc"
 rm -f "$root/etc/resolv.conf"
 cat "$resolv" > "$root/etc/resolv.conf"

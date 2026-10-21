@@ -243,7 +243,7 @@ pinned_in = "desktop-build-sh"
 [inputs.payloads.checker-rust]
 kind = "rust-toolchain"
 components = ["rustc", "cargo", "rust-std", "rustfmt", "clippy"]
-note = "replaces rustup-init 1.29.1 (checker-dockerfile) with the pinned components themselves"
+note = "replaces rustup-init 1.29.1 (checker-dockerfile) with the pinned components themselves, installed at rustup's toolchain path for 1.96 with /opt/cargo/bin links (the paths .oneiron/checks.json names)"
 
 [inputs.payloads.bun]
 # FIX 8254: the generic agent's JavaScript runtime. The variant builds in phase 3.

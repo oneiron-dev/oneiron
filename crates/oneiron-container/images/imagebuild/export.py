@@ -6,6 +6,10 @@ order. The OCI image's single layer is that tar, gzipped. The Firecracker
 rootfs is `mke2fs -d rootfs.tar` from the tools tree: a root-only ext4, no
 partition table, no ESP, no UKI, its kernel kept separate. Both forms carry
 identical owners, modes and bytes.
+
+rootfs.members.tsv lists every tar member (path, type, mode, uid, gid, size,
+mtime, and the file's sha256 or the link's target): the payload identity a
+second build compares, independent of tar, gzip and ext4 framing.
 """
 
 from __future__ import annotations
@@ -106,10 +110,24 @@ def leak_scan(tree: Path, needles: list[str]) -> None:
         raise PathLeak("build-machine paths in the image:\n  " + "\n  ".join(hits[:40]))
 
 
+class _Hashing:
+    """A read-through file wrapper: tar.addfile reads it, the sha256 sees the same bytes."""
+
+    def __init__(self, stream):
+        self.stream, self.digest = stream, hashlib.sha256()
+
+    def read(self, n: int = -1) -> bytes:
+        data = self.stream.read(n)
+        self.digest.update(data)
+        return data
+
+
 def rootfs_tar(tree: Path, dest: Path, epoch: int, owners: dict) -> dict:
     files = dirs = links = 0
     file_bytes = alloc = 0
-    with tarfile.open(dest, "w", format=tarfile.PAX_FORMAT) as tar:
+    members = dest.with_name("rootfs.members.tsv")
+    with tarfile.open(dest, "w", format=tarfile.PAX_FORMAT) as tar, open(members, "w") as listing:
+        listing.write("# path\ttype\tmode\tuid\tgid\tsize\tmtime\tsha256|target\n")
         for rel in entries(tree):
             full = tree / rel
             info = tar.gettarinfo(str(full), arcname=rel)
@@ -118,25 +136,37 @@ def rootfs_tar(tree: Path, dest: Path, epoch: int, owners: dict) -> dict:
             if mode is not None:
                 info.mode = mode
             info.mtime = min(int(info.mtime), epoch)
+            body = ""
             if info.isreg():
                 files += 1
                 file_bytes += info.size
                 alloc += -(-info.size // BLOCK) * BLOCK
                 with open(full, "rb") as stream:
-                    tar.addfile(info, stream)
-                continue
-            if info.isdir():
+                    hashing = _Hashing(stream)
+                    tar.addfile(info, hashing)
+                body = hashing.digest.hexdigest()
+                kind = "f"
+            elif info.isdir():
                 dirs += 1
                 alloc += BLOCK
+                tar.addfile(info)
+                kind = "d"
             elif info.issym():
                 links += 1
                 alloc += BLOCK if len(info.linkname) > 59 else 0
-            elif not info.islnk():
+                tar.addfile(info)
+                kind, body = "l", info.linkname
+            elif info.islnk():
+                tar.addfile(info)
+                kind, body = "h", info.linkname
+            else:
                 raise StepFailed(f"{rel}: unexpected file type in the image tree")
-            tar.addfile(info)
+            listing.write(f"{rel}\t{kind}\t{info.mode:04o}\t{info.uid}\t{info.gid}\t"
+                          f"{info.size if kind == 'f' else 0}\t{info.mtime}\t{body}\n")
     return {"path": str(dest), "sha256": sha256_file(dest), "bytes": dest.stat().st_size,
             "files": files, "dirs": dirs, "symlinks": links, "file_bytes": file_bytes,
-            "allocated_estimate": alloc, "entries": files + dirs + links}
+            "allocated_estimate": alloc, "entries": files + dirs + links,
+            "members": str(members), "members_sha256": sha256_file(members)}
 
 
 def _blob(layout: Path, data: bytes) -> tuple[str, int]:
@@ -236,11 +266,16 @@ def ext4_capacity(tar: dict) -> tuple[int, int]:
 
 
 def ext4(tar: dict, *, uuid: str, epoch: int, out: Path, cap: int, run_in_tools) -> dict:
+    """The Firecracker rootfs, or, when its capacity would pass the engine's cap,
+    none: the refusal is recorded (ext4_refused) and the OCI form stands alone."""
     capacity, inodes = ext4_capacity(tar)
-    if capacity > cap:
-        raise OverBound(f"the rootfs needs {capacity} bytes, above the engine's {cap}-byte Firecracker cap")
     image = out / "rootfs.ext4"
     image.unlink(missing_ok=True)
+    if capacity > cap:
+        reason = (f"the rootfs needs {capacity} bytes of ext4 capacity, above the engine's {cap}-byte "
+                  "Firecracker rootfs cap: no rootfs.ext4 is written and the cap does not move")
+        log(f"refused: {reason}")
+        return {"ext4_refused": reason, "ext4_needed_bytes": capacity, "ext4_inodes": inodes}
     env = {"SOURCE_DATE_EPOCH": str(epoch), "E2FSPROGS_FAKE_TIME": str(epoch)}
     run_in_tools([
         "mke2fs", "-q", "-F", "-t", "ext4", "-b", str(BLOCK), "-m", "0", "-N", str(inodes),
