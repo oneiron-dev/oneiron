@@ -26,6 +26,7 @@
 
 mod assembly;
 pub(crate) mod branch_scope;
+mod call_labels;
 pub mod confession;
 mod conflict;
 pub(crate) mod evidence;
@@ -130,6 +131,7 @@ pub use settle::{
     CONFLICT_SETTLE_DIAL, ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions,
     ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass,
     RevertedSettlement, SettledAnswer, SettledConflict, settle_parked_conflicts,
+    settle_parked_conflicts_while,
 };
 pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
