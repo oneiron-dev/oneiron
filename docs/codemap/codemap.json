@@ -76239,6 +76239,107 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ImageReleaseFact",
+      "ImageReleaseObservation",
+      "ImageSignaturePolicy",
+      "ManifestObservation",
+      "ReleaseAdmission",
+      "ReleaseDocuments"
+     ],
+     "path": "src/image_release.rs",
+     "purpose": "Signed guest-image releases (FIX 8253, OS-IMAGE phase 1c): the release manifest, ONE signature-verifier…",
+     "surface": {
+      "const": 15,
+      "enum": 4,
+      "fn": 7,
+      "re-export": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BinaryHash",
+      "ContractRevisions",
+      "DigestError",
+      "DocumentRef",
+      "EngineRelease",
+      "FileArtifact",
+      "GuestBinaries",
+      "HostRequirements",
+      "ImageArch",
+      "ImageReleaseManifest",
+      "ImageVariant",
+      "KernelRef",
+      "KernelVersion",
+      "ManifestError",
+      "ManifestFact",
+      "OciArtifacts",
+      "ReleaseArtifacts",
+      "SnapshotCompatibility",
+      "SourcePin",
+      "StorageAbi",
+      "UnversionedContracts",
+      "VaultContractRevisions"
+     ],
+     "path": "src/image_release/manifest.rs",
+     "purpose": "The release manifest payload, `image-release.json`: closed, typed, and read only through…",
+     "surface": {
+      "const": 2,
+      "enum": 4,
+      "fn": 6,
+      "struct": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NoVerifierConfigured",
+      "ReleaseSignatureVerifier",
+      "SignatureEnvelope",
+      "SignatureOutcome",
+      "SignatureProvider",
+      "SignatureRefusal",
+      "SignerIdentity"
+     ],
+     "path": "src/image_release/signature.rs",
+     "purpose": "The detached signature envelope and the ONE verifier seam",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 2,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactCheck",
+      "ArtifactRole",
+      "CheckOutcome",
+      "HostCapabilities",
+      "HostCheck",
+      "HostOutcome",
+      "HostRequirement",
+      "ObservedArtifacts",
+      "ReleaseVerification"
+     ],
+     "path": "src/image_release/verify.rs",
+     "purpose": "`verify_release`: parse, bind to the observed bytes, check the host, read the signature",
+     "surface": {
+      "enum": 4,
+      "fn": 4,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -76278,6 +76379,7 @@
      "surface": {
       "enum": 2,
       "fn": 12,
+      "mod": 1,
       "re-export": 7,
       "struct": 8,
       "type": 1
@@ -76420,6 +76522,13 @@
      "layout": "file",
      "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)"
     },
+    "image_release": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Signed guest-image releases (FIX 8253, OS-IMAGE phase 1c): the release manifest, ONE signature-verifier…"
+    },
     "launcher": {
      "files": 2,
      "impl_vault": false,
@@ -76472,7 +76581,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 18,
+   "source_files": 22,
    "test_files": 0
   },
   "oneiron-contracts": {
