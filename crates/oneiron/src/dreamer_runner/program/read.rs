@@ -13,6 +13,7 @@
 //! admits, resumes or leases. Each side-table snapshot closes before the
 //! lane reads.
 
+mod answer;
 mod checkpoint;
 mod views;
 
@@ -22,7 +23,6 @@ use std::ops::Bound;
 use base64::Engine as _;
 
 use crate::attempt_queue::{AttemptId, AttemptResultRef, AttemptState};
-use crate::code_run::agent_verb_rows_of;
 use crate::dreamer_runner::{DreamerAttemptStatus, DreamerParkedAttemptRecord, DreamerRunnerStore};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, ErrorKind, Result};
@@ -38,13 +38,15 @@ use super::run::{
 use super::types::{ProgramRecipePin, TurnProgramAdmissionRecord, TurnProgramAttemptStamp, run_id};
 use super::{ADMISSION, ATTEMPT};
 
+use self::answer::{ReceiptAnswer, answer_body_base64, receipt_answer_in_txn};
+
 pub use self::checkpoint::program_checkpoint;
 pub use self::views::{
-    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointHeadView,
-    ProgramCheckpointRequest, ProgramCheckpointView, ProgramCheckpointWaitView,
-    ProgramFrontierView, ProgramHeldView, ProgramQueueView, ProgramResultAvailability,
-    ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView, ProgramRunView,
-    ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
+    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointConsentView,
+    ProgramCheckpointHeadView, ProgramCheckpointRequest, ProgramCheckpointView,
+    ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
+    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
+    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
     SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
     TurnProgramAdmissionRequest, TurnProgramAdmissionView,
 };
@@ -196,8 +198,9 @@ pub fn program_run(
 /// Reads one settled step of a program's run and its exact result, as far
 /// as the caller reads it: a model step's terminal claim and stored response
 /// on the caller's own lane (never a response made up from progress), a
-/// write's receipt with the rows its answer was served from, a send's body
-/// as the side-row wall admitted it. A step's body is withheld, never
+/// write's receipt with the rows its answer was served from and, once each
+/// of them reads, the verb's JSON output the receipt keeps (FIX 5837), a
+/// send's body as the side-row wall admitted it. A step's body is withheld, never
 /// refused, once the program's actor is soft-deleted, hard-deleted or erased
 /// (FIX 5710, FIX 5738); an archived actor's bodies still read. `None` for an
 /// issued or uncertain step (the run read shows those), an unknown one, or a
@@ -271,13 +274,14 @@ pub fn settled_program_step(
             view.result_ref = Some(receipt.to_hex());
             view.availability = match answer {
                 ReceiptAnswer::Absent => ProgramResultAvailability::Absent,
-                ReceiptAnswer::Rows(_) | ReceiptAnswer::Unlisted if deleted => {
+                ReceiptAnswer::Rows { .. } | ReceiptAnswer::Unlisted if deleted => {
                     ProgramResultAvailability::Withheld
                 }
                 ReceiptAnswer::Unlisted => ProgramResultAvailability::Withheld,
-                ReceiptAnswer::Rows(rows) => {
+                ReceiptAnswer::Rows { rows, output } => {
                     let wanted = rows.iter().copied().collect::<BTreeSet<_>>();
                     if readable_on_lane(memory, rows)? == wanted {
+                        view.body_base64 = output.as_ref().and_then(answer_body_base64);
                         ProgramResultAvailability::Readable
                     } else {
                         ProgramResultAvailability::Withheld
@@ -679,32 +683,6 @@ fn issue_view(issue: &StepIssue) -> ProgramStepIssueView {
             call_seq: *call_seq,
         },
     }
-}
-
-/// What a write step's receipt keeps as its answer.
-enum ReceiptAnswer {
-    /// No receipt, or one that holds no answer.
-    Absent,
-    /// An answer that does not list the rows it was served from.
-    Unlisted,
-    /// An answer and the rows it was served from.
-    Rows(Vec<EntityId>),
-}
-
-/// The answer the receipt `receipt` keeps as its first row, in `txn`.
-fn receipt_answer_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    receipt: &EntityId,
-) -> Result<ReceiptAnswer> {
-    let Some(record) = vault.get_code_run_replay_record_in_txn(txn, receipt)? else {
-        return Ok(ReceiptAnswer::Absent);
-    };
-    let Some(first) = record.bridge_calls.first() else {
-        return Ok(ReceiptAnswer::Absent);
-    };
-    Ok(agent_verb_rows_of(std::slice::from_ref(first))
-        .map_or(ReceiptAnswer::Unlisted, ReceiptAnswer::Rows))
 }
 
 /// Of `ids`, the ones that read on the caller's own lane, each read listed

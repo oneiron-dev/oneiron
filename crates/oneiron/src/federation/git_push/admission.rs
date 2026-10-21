@@ -43,7 +43,8 @@ use super::caller::{
 
 /// No live GitPush grant names this pusher and this repo.
 const NO_GRANT: &str = "no live git_push Grant names this principal and this repository";
-/// The lease route's checkout is not live, not the pusher's or not this repo's.
+/// The lease route's checkout is not live, not the pusher's or not this
+/// repo's, or its bound attempt no longer runs.
 const STALE_CHECKOUT: &str =
     "the checkout lease is not live, not held by this principal, or not on this repository";
 /// The checkout's run holds no Grant over this repo.
@@ -280,7 +281,11 @@ impl Vault {
             crate::vault::live_entity_row_in_txn(&self.store, txn, &task)?.is_live()
                 && self
                     .task_standing_in(txn, task)?
-                    .is_some_and(|standing| !standing.cancelled),
+                    .is_some_and(|standing| !standing.cancelled)
+                // FIX 7130: a BYOA-bound epoch stands only while its attempt runs.
+                && crate::checkout::lease::attempt_binding::bound_attempt_runs_in_txn(
+                    self, txn, &lease,
+                )?,
         )
     }
 
@@ -411,6 +416,9 @@ impl Vault {
             || self
                 .task_standing_in(txn, lease.task_ref)?
                 .is_none_or(|standing| standing.cancelled)
+            || !crate::checkout::lease::attempt_binding::bound_attempt_runs_in_txn(
+                self, txn, &lease,
+            )?
         {
             return Err(refused(&stamp.served, STALE_CHECKOUT));
         }
