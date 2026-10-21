@@ -494,7 +494,12 @@ impl LlmBackend for BrokerBackend {
         Box::pin(async move {
             let (header, body) = self.build(&request, false, lease.id())?;
             let reply = self.send(&header, &body).await?;
-            self.answer(reply.outcome, &reply.body, &header.wire_model, &request.model)
+            self.answer(
+                reply.outcome,
+                &reply.body,
+                &header.wire_model,
+                &request.model,
+            )
         })
     }
 

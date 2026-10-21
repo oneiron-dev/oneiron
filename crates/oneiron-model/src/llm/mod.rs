@@ -20,8 +20,8 @@ mod budget;
 mod burst_inputs;
 mod cache;
 mod call;
-mod inference;
 mod defaults;
+mod inference;
 pub use defaults::{
     ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
     SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,

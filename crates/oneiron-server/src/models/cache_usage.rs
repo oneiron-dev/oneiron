@@ -88,10 +88,7 @@ pub(super) fn carry_chat_evidence(body: &mut JsonValue, answering: Option<&Answe
             generate_us,
         })
     });
-    let worker = llama_worker(
-        chat_identity(answering, fingerprint.as_deref()),
-        answering,
-    );
+    let worker = llama_worker(chat_identity(answering, fingerprint.as_deref()), answering);
     let call = InferenceCallReceipt {
         logical_prompt_tokens: input,
         passes: pass.into_iter().collect(),
@@ -103,7 +100,10 @@ pub(super) fn carry_chat_evidence(body: &mut JsonValue, answering: Option<&Answe
             .or_insert(JsonValue::String(fingerprint));
     }
     if let Ok(record) = serde_json::to_value(&call) {
-        usage.insert(INFERENCE_CALLS_KEY.to_owned(), JsonValue::Array(vec![record]));
+        usage.insert(
+            INFERENCE_CALLS_KEY.to_owned(),
+            JsonValue::Array(vec![record]),
+        );
     }
 }
 
