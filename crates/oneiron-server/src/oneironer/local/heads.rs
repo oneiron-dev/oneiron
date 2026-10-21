@@ -96,8 +96,10 @@ const MASKED_LOGIT: f32 = -30.0;
 /// The character edge head: each character's probability of starting a span
 /// and of ending one. Two convolutions with exact GELU over projected token
 /// states, character embeddings and in-token positions; no norm, residual or
-/// softmax, as the reference module.
-pub(super) struct CharacterBoundary {
+/// softmax, as the reference module. Its tail runs on projected states from
+/// either runtime: Candle's own projection of its hidden states, or the
+/// Core ML worker's, which its model already applied (FIX 6755 slice 2c).
+pub(in crate::oneironer) struct CharacterBoundary {
     projection: Linear,
     characters: Embedding,
     position: Linear,
@@ -130,17 +132,29 @@ impl CharacterBoundary {
     }
 
     /// Start and end probabilities for each character the features cover,
-    /// the logits taken to F32 before the sigmoid.
+    /// from the encoder's hidden states: their projection, then the tail.
     pub(super) fn probabilities(
         &self,
         hidden: &Tensor,
+        features: &CharacterFeatures,
+    ) -> candle_core::Result<Vec<[f32; 2]>> {
+        let projected = self.projection.forward(hidden)?;
+        self.probabilities_from_projected(&projected, features)
+    }
+
+    /// The same from token states already projected, `[tokens, dim]`: the
+    /// one tail, the logits taken to F32 before the sigmoid. The Core ML
+    /// worker's states come so, and are never projected again.
+    pub(in crate::oneironer) fn probabilities_from_projected(
+        &self,
+        projected: &Tensor,
         features: &CharacterFeatures,
     ) -> candle_core::Result<Vec<[f32; 2]>> {
         let length = features.ids.len();
         if length == 0 {
             return Ok(Vec::new());
         }
-        let device = hidden.device();
+        let device = projected.device();
         let tokens: Vec<u32> = features
             .tokens
             .iter()
@@ -157,7 +171,7 @@ impl CharacterBoundary {
         let positions = Tensor::from_vec(positions, (length, 2), device)?;
         let mask = Tensor::new(mask.as_slice(), device)?;
         // Uncovered characters gather token 0's state; the mask zeroes them.
-        let projected = self.projection.forward(hidden)?.index_select(&tokens, 0)?;
+        let projected = projected.index_select(&tokens, 0)?;
         let characters = self.characters.forward(&ids)?;
         let positions = self.position.forward(&positions)?;
         let states = projected

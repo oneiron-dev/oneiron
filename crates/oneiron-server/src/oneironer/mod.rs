@@ -15,8 +15,9 @@
 //! other call.
 //!
 //! On a Mac, the serving build also starts the slot's platform admission
-//! ([`Admission`]), which adds the bundle's managed MLX worker
-//! ([`mlx`]) to the dispatcher in the background once it clears here.
+//! ([`Admission`]), which adds the bundle's managed MLX worker ([`mlx`]) and
+//! its native Core ML worker ([`coreml`]) to the dispatcher in the
+//! background, each once it clears here.
 
 #[cfg(test)]
 use std::collections::VecDeque;
@@ -37,6 +38,7 @@ use local::WindowCounter;
 pub(crate) use dispatcher::DispatchClaim;
 
 pub(crate) mod bundle;
+mod coreml;
 mod dispatcher;
 pub(crate) mod endpoint;
 pub(crate) mod engines;

@@ -28,7 +28,7 @@ mod manifest;
 mod platform;
 
 pub(crate) use manifest::{CharacterConfig, Manifest, character_vocab};
-pub(crate) use platform::{COREML_ROW, MLX_ROW, MlxPlatform, Platform};
+pub(crate) use platform::{COREML_ROW, CoreMlPlatform, MLX_ROW, MlxPlatform, Platform, TensorSpec};
 
 /// The manifest's file in a bundle; its SHA-256 prefix is the stack.
 pub(crate) const MANIFEST_FILE: &str = "oneironer.json";

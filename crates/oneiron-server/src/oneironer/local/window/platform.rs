@@ -1,6 +1,7 @@
 //! The window as a platform worker tags it (FIX 6755 slice 3): the text it
 //! is sent, the current turn's byte range in it, and the mapping of its
-//! spans back to the turn's messages. The window is Candle's own
+//! spans back to the turn's messages; or, for the Core ML worker, its token
+//! ids (slice 2c). The window is Candle's own
 //! (`Window::new`), so a worker's call holds the same tokens the dispatcher
 //! counted, and its spans are kept and moved by Candle's own rules.
 
@@ -14,6 +15,13 @@ impl Window<'_> {
     /// Its text: what a platform worker is sent and tags whole (FIX 6755).
     pub(in crate::oneironer) fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Its token ids, special tokens included: what the Core ML worker
+    /// looks its input up by, one column each (FIX 6755 slice 2c). Their
+    /// count is the window's length.
+    pub(in crate::oneironer) fn ids(&self) -> &[u32] {
+        self.encoding.get_ids()
     }
 
     /// The current turn's UTF-8 byte range in [`Self::text`]: from its first

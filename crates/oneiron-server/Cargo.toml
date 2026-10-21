@@ -209,6 +209,15 @@ rustix = { version = "1.1", features = ["fs", "process"] }
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 candle-core = { version = "=0.11.0", features = ["metal"] }
 candle-nn = { version = "=0.11.0", features = ["metal"] }
+objc2 = "=0.6.4"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+    "std", "NSArray", "NSDictionary", "NSError", "NSObject", "NSString", "NSURL", "NSValue",
+] }
+objc2-core-ml = { version = "=0.3.2", default-features = false, features = [
+    "std", "MLDictionaryFeatureProvider", "MLFeatureDescription", "MLFeatureProvider",
+    "MLFeatureType", "MLFeatureValue", "MLModel", "MLModelConfiguration", "MLModelDescription",
+    "MLMultiArray", "MLMultiArrayConstraint",
+] }
 
 [dev-dependencies]
 oneiron-remote = { path = "../oneiron-remote" }

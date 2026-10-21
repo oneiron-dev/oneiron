@@ -39,13 +39,13 @@ const END_EDGE: usize = 1;
 /// ends before refinement; the served runtime snaps them again after it, as
 /// refinement can regrow a particle, and E4's frozen baseline does not.
 #[derive(Clone, Copy, Debug)]
-pub(in super::super) struct DecodeLayers {
+pub(in crate::oneironer) struct DecodeLayers {
     pub(in super::super) final_date_snap: bool,
 }
 
 impl DecodeLayers {
-    /// What the slot serves.
-    pub(in super::super) const SERVED: Self = Self {
+    /// What the slot serves, on every runtime that decodes here.
+    pub(in crate::oneironer) const SERVED: Self = Self {
         final_date_snap: true,
     };
     /// E4's baseline, which `oneironer qualify` compares against.
@@ -56,7 +56,7 @@ impl DecodeLayers {
 
 /// The window's text as Unicode scalars, the unit the character head and
 /// its decode count in, beside the UTF-8 byte offsets every output keeps.
-pub(in super::super) struct Characters {
+pub(in crate::oneironer) struct Characters {
     scalars: Vec<char>,
     /// The byte each scalar starts at, then the text's length.
     bytes: Vec<usize>,
@@ -65,7 +65,7 @@ pub(in super::super) struct Characters {
 }
 
 impl Characters {
-    pub(in super::super) fn new(window: &Window<'_>) -> Self {
+    pub(in crate::oneironer) fn new(window: &Window<'_>) -> Self {
         let (mut bytes, scalars): (Vec<usize>, Vec<char>) = window.text.char_indices().unzip();
         bytes.push(window.text.len());
         let tokens = window
@@ -99,7 +99,7 @@ fn scalar_at(bytes: &[usize], byte: usize) -> usize {
 /// The character head's inputs over the observed window: every scalar up to
 /// the furthest token end, prefixes, context and uncovered gaps included, so
 /// its convolutions see the characters around each one.
-pub(in super::super) struct CharacterFeatures {
+pub(in crate::oneironer) struct CharacterFeatures {
     /// Vocabulary ids; `UNKNOWN_CHARACTER` for one outside the vocabulary.
     pub(in super::super) ids: Vec<u32>,
     /// The first token covering each character; none for a gap.
@@ -110,7 +110,7 @@ pub(in super::super) struct CharacterFeatures {
 }
 
 impl CharacterFeatures {
-    pub(in super::super) fn new(characters: &Characters, vocab: &HashMap<char, u32>) -> Self {
+    pub(in crate::oneironer) fn new(characters: &Characters, vocab: &HashMap<char, u32>) -> Self {
         let length = characters
             .tokens
             .iter()
@@ -144,7 +144,7 @@ impl CharacterFeatures {
 
 /// A decoded name, with the byte coordinates BIO gave it before the DATE
 /// snap and refinement moved them: a mention proposed there is this name.
-pub(in super::super) struct Named {
+pub(in crate::oneironer) struct Named {
     pub(in super::super) span: Span,
     pub(in super::super) decoded: (usize, usize),
 }
@@ -162,8 +162,9 @@ impl From<Span> for Named {
 /// snap, character refinement, then the DATE snap again when `layers` asks.
 /// Every stage counts in Unicode scalars, as the reference does. Confidence
 /// is the mean winning probability over the tokens a refined span overlaps,
-/// as the served runtime scores it.
-pub(in super::super) fn decode_ner(
+/// as the served runtime scores it. The Core ML worker decodes its own
+/// logits and character probabilities here too (FIX 6755 slice 2c).
+pub(in crate::oneironer) fn decode_ner(
     window: &Window<'_>,
     characters: &Characters,
     logits: &[Vec<f32>],

@@ -10,9 +10,9 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   backup leaves beside it, the residence and hosted members, the anchor (`custody_anchor_root`,
   `custody_anchor_url`, `/v1/owner/custody-anchor`), the status names, and what a restore says.
 - [Run the server, with or without models](run-with-models.md) — `[models]` config keys
-- [Oneironer workers](oneironer-workers.md) — the managed MLX worker beside Candle: placement, activation, fallback, restart and down reasons, shutdown, receipts
   (HIGH, MID, DETAILED), provider kinds and env vars, what the Dreamer needs to start, chat
   streaming, the saved-workflow pump, and swapping a model in one edit.
+- [Oneironer workers](oneironer-workers.md) — the managed MLX worker and the native Core ML worker beside Candle: placement, activation, fallback, the Core ML cold compile, restart and down reasons, shutdown, receipts
 - [Known-CSAM hosted media response](known-csam-hosted-media.md)
 - [Wasabi snapshot credential runbook](wasabi-snapshot-credential-runbook.md) — preflight, mint,
   custody registration, smoke, root retirement, and rotation of the bucket-scoped snapshot
