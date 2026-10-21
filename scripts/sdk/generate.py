@@ -1226,7 +1226,8 @@ def record_refs_check(row):
     'OF-063: the record-ref check a row with `refs` runs before its engine call.'
     if 'refs' not in row: return ''
     pointers = ', '.join(json.dumps(pointer) for pointer in row['refs'])
-    return f'crate::gate::record_references::admit_row_references(memory, {json.dumps(row["name"])}, &input, &[{pointers}])?; '
+    check = row.get('refs_check', 'crate::gate::record_references::admit_row_references')
+    return f'{check}(memory, {json.dumps(row["name"])}, &input, &[{pointers}])?; '
 
 def prose_links_check(row):
     'OF-063 prose links: the receipt-only link read a row with `prose_links` runs before its engine call.'
