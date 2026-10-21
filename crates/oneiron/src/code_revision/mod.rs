@@ -4,6 +4,7 @@ mod promotion;
 pub use promotion::{CodeRevisionFileOps, CodeSessionRun};
 mod codec;
 mod file_frontiers;
+mod forks;
 mod frontier;
 mod graph;
 mod import_anchor;
@@ -27,6 +28,7 @@ pub use self::codec::{
     CODE_REVISION_FORK_KEYS, CODE_REVISION_RECORD_KEYS, decode_code_revision,
     decode_code_revision_fork, encode_code_revision, encode_code_revision_fork,
 };
+pub(crate) use self::forks::attach_code_revision_fork_in_txn;
 pub use self::proposals::{CodeRevisionProposal, CodeRevisionWriteOutcome};
 pub(crate) use self::storage::checkpoint;
 pub(crate) use self::storage::{

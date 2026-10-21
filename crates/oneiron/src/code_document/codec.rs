@@ -98,5 +98,6 @@ pub(super) fn frontier(doc: &LoroDoc, repo: &str, id: [u8; 32]) -> Result<CodeDo
         version,
         op_fold: hasher.finalize().into(),
         text_hash: hash(doc.get_text("body").to_string().as_bytes()),
+        file_presence: super::file_metadata::presence_in(&meta)?,
     })
 }

@@ -15,6 +15,9 @@ pub struct MergeFile {
     pub expected: Option<Vec<u8>>,
     /// None deletes a file.
     pub content: Option<Vec<u8>>,
+    /// A received bundle's reviewed exact Git state change of this path
+    /// (G4 PR2); `None` on every ordinary file, which stages as before.
+    pub metadata_edit: Option<crate::code_document::CodeFileMetadataEdit>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeProposal {

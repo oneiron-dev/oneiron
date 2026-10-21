@@ -173,6 +173,15 @@ impl MergeQueue<'_> {
             if mask & (1 << index) == 0 {
                 continue;
             }
+            // A received bundle applies its exact entries through the index.
+            if proposal
+                .files
+                .iter()
+                .any(|file| file.metadata_edit.is_some())
+            {
+                super::file_metadata::materialize_received_merge_files(root, &proposal.files)?;
+                continue;
+            }
             for file in &proposal.files {
                 let path = safe_path(root, &file.path)?;
                 let actual = match std::fs::read(&path) {
@@ -394,14 +403,29 @@ pub(super) fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Re
             return Err(invalid("merge proposal identity or green base is invalid"));
         }
         let mut paths = BTreeSet::new();
+        // A received bundle's files all carry their reviewed state change;
+        // an ordinary proposal's carry none (G4 PR2).
+        let received = proposal
+            .files
+            .iter()
+            .any(|file| file.metadata_edit.is_some());
         for file in &proposal.files {
-            if file.content.is_none() {
-                return Err(invalid(
-                    "merge deletion requires a reviewed delete operation",
-                ));
+            match &file.metadata_edit {
+                Some(edit) => super::file_metadata::validate_received_merge_file(file, edit)?,
+                None if received => {
+                    return Err(invalid("a received bundle's every file carries its state"));
+                }
+                None if file.content.is_none() => {
+                    return Err(invalid(
+                        "merge deletion requires a reviewed delete operation",
+                    ));
+                }
+                None if file.expected == file.content => {
+                    return Err(invalid("duplicate, oversized or empty merge edit"));
+                }
+                None => {}
             }
-            if !paths.insert(&file.path) || file.path.len() > 4096 || file.expected == file.content
-            {
+            if !paths.insert(&file.path) || file.path.len() > 4096 {
                 return Err(invalid("duplicate, oversized or empty merge edit"));
             }
             total = total

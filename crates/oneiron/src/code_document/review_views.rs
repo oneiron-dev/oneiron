@@ -52,18 +52,36 @@ pub struct CodeProposedStamp {
 pub struct CodeProposalView {
     pub proposal_ref: String,
     pub repo: String,
-    pub path: String,
+    /// The repo mutation kind it lands as (G4 PR2).
+    pub operation_kind: String,
+    /// An ordinary proposal's one path; `None` for a received bundle,
+    /// whose every file is in `files`.
+    pub path: Option<String>,
     pub message: String,
     pub status: RepoProposalStatus,
     pub proposed: CodeProposedStamp,
     /// The candidate against the file at the proposal's base, unit by unit.
     /// Every change is the proposal's; once it landed, each names that
-    /// operation.
-    pub changes: Vec<CodeChangeView>,
+    /// operation. `None` for a received bundle.
+    pub changes: Option<Vec<CodeChangeView>>,
     /// The document operation the proposal landed as, once applied.
     pub landed: Option<CodeOperationView>,
+    /// Every reviewed file: an ordinary proposal's one, a received
+    /// bundle's all, each with its exact metadata change.
+    pub files: Vec<CodeProposalFileView>,
     /// The changes as text, under the proposed stamp.
     pub rendered: String,
+}
+
+/// One reviewed file of a proposal: its path, its changes against its
+/// base, the document operation it landed as, and its reviewed Git state
+/// change, so a removal or a mode-only change is never shown as unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeProposalFileView {
+    pub path: String,
+    pub changes: Vec<CodeChangeView>,
+    pub landed: Option<CodeOperationView>,
+    pub metadata_edit: Option<super::CodeFileMetadataEdit>,
 }
 
 /// One side of a repo diff: a code revision's tested files
@@ -160,36 +178,74 @@ impl Memory<'_> {
         let repo = RepoRef::parse(&proposal.repo)?;
         let base =
             vault.mount_repo_ref(&repo, RepoMountRef::Fork(proposal.pre_action_fork_hash))?;
-        let old = utf8(base.read_file(&proposal.path)?.unwrap_or(b""))?;
-        let new = utf8(&proposal.content)?;
-        let landed = vault
-            .code_file_edit_receipt(proposal.id)?
-            .map(|receipt| CodeOpAttribution {
-                operation: receipt.operation,
-                session_id: receipt.session_id,
-                actor: receipt.actor,
-                sequence: receipt.sequence,
-                provenance: receipt.provenance,
-            });
-        let changes: Vec<CodeAttributedChange> = semantic_code_diff(&proposal.path, old, new)?
-            .into_iter()
-            .map(|change| CodeAttributedChange {
-                inserted_by: landed
-                    .iter()
-                    .filter(|_| change.after.is_some())
-                    .cloned()
-                    .collect(),
-                deleted_by: landed
-                    .iter()
-                    .filter(|_| change.before.is_some())
-                    .cloned()
-                    .collect(),
-                change,
-            })
-            .collect();
         let mut refs = OpRefs::new(self);
-        let (changes, diff) = refs.changes(changes)?;
-        let landed = landed.as_ref().map(|op| refs.operation(op)).transpose()?;
+        let received = proposal.received_candidate().is_some();
+        let mut files = Vec::with_capacity(proposal.files.len());
+        let mut diff = String::new();
+        for file in &proposal.files {
+            let old = utf8(base.read_file(&file.path)?.unwrap_or(b""))?;
+            let new = utf8(file.content.as_deref().unwrap_or(b""))?;
+            // An ordinary proposal lands under its own id; a received
+            // bundle's file under its deterministic child operation.
+            let operation = match file.source_operation {
+                Some(source) if received => {
+                    crate::repo_mutation::received_file_operation(proposal.id, source)?
+                }
+                _ => proposal.id,
+            };
+            let landed =
+                vault
+                    .code_file_edit_receipt(operation)?
+                    .map(|receipt| CodeOpAttribution {
+                        operation: receipt.operation,
+                        session_id: receipt.session_id,
+                        actor: receipt.actor,
+                        sequence: receipt.sequence,
+                        provenance: receipt.provenance,
+                    });
+            let changes: Vec<CodeAttributedChange> = semantic_code_diff(&file.path, old, new)?
+                .into_iter()
+                .map(|change| CodeAttributedChange {
+                    inserted_by: landed
+                        .iter()
+                        .filter(|_| change.after.is_some())
+                        .cloned()
+                        .collect(),
+                    deleted_by: landed
+                        .iter()
+                        .filter(|_| change.before.is_some())
+                        .cloned()
+                        .collect(),
+                    change,
+                })
+                .collect();
+            let (changes, file_diff) = refs.changes(changes)?;
+            if received {
+                let state = file
+                    .metadata_edit
+                    .as_ref()
+                    .map_or_else(String::new, |edit| {
+                        format!(" {:?} -> {:?}", edit.expected, edit.replacement)
+                    });
+                diff.push_str(&format!("## {}{state}\n{file_diff}", file.path));
+            } else {
+                diff.push_str(&file_diff);
+            }
+            files.push(CodeProposalFileView {
+                path: file.path.clone(),
+                changes,
+                landed: landed.as_ref().map(|op| refs.operation(op)).transpose()?,
+                metadata_edit: file.metadata_edit.clone(),
+            });
+        }
+        let (path, changes, landed) = match (received, files.as_slice()) {
+            (false, [file]) => (
+                Some(file.path.clone()),
+                Some(file.changes.clone()),
+                file.landed.clone(),
+            ),
+            _ => (None, None, None),
+        };
         // The stamp's refs come from the proposal record, so each is shown,
         // and listed as a producer, only when the caller reads it (FIX 4446).
         let provenance = &proposal.op_provenance;
@@ -219,13 +275,15 @@ impl Memory<'_> {
         );
         Ok(Some(CodeProposalView {
             proposal_ref: proposal.id.to_hex(),
+            operation_kind: proposal.operation_kind().to_owned(),
             repo: proposal.repo,
-            path: proposal.path,
+            path,
             message: proposal.message,
             status: proposal.status,
             proposed,
             changes,
             landed,
+            files,
             rendered,
         }))
     }

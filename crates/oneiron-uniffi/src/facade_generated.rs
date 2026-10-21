@@ -3021,6 +3021,21 @@ export_facade! {
     let output = client.vault_code_import(&input)?;
     crate::codec::lift_record("vault.code.import", &output)
 };
+"vault.code.repos.get" => fn vault_code_repos_get(&self, input: CodeRepoGetRequest) -> Option<CodeRepoView> = |client| {
+    let input: oneiron::memory::origin_doors::CodeRepoGetRequest = crate::codec::lower_record("vault.code.repos.get", input)?;
+    let output = client.vault_code_repos_get(&input)?;
+    crate::codec::lift_record("vault.code.repos.get", &output)
+};
+"vault.code.forks.get" => fn vault_code_forks_get(&self, input: CodeForkGetRequest) -> Option<CodeForkView> = |client| {
+    let input: oneiron::memory::origin_doors::CodeForkGetRequest = crate::codec::lower_record("vault.code.forks.get", input)?;
+    let output = client.vault_code_forks_get(&input)?;
+    crate::codec::lift_record("vault.code.forks.get", &output)
+};
+"vault.code.ingress.get" => fn vault_code_ingress_get(&self, input: CodePushIngressGetRequest) -> Option<CodePushIngressView> = |client| {
+    let input: oneiron::memory::origin_doors::CodePushIngressGetRequest = crate::codec::lower_record("vault.code.ingress.get", input)?;
+    let output = client.vault_code_ingress_get(&input)?;
+    crate::codec::lift_record("vault.code.ingress.get", &output)
+};
 "vault.code.origin.register" => fn vault_code_origin_register(&self, input: OriginRegisterRequest) -> OriginRegistered = |client| {
     let input: oneiron::memory::origin_doors::OriginRegisterRequest = crate::codec::lower_record("vault.code.origin.register", input)?;
     let output = client.vault_code_origin_register(&input)?;
@@ -3250,6 +3265,11 @@ export_facade! {
     let input: oneiron::memory::merge_queue_doors::MergeQueueCheckStatusRequest = crate::codec::lower_record("vault.code.merge_queue.check_status", input)?;
     let output = client.vault_code_merge_queue_check_status(&input)?;
     crate::codec::lift_record("vault.code.merge_queue.check_status", &output)
+};
+"vault.code.checks.get" => fn vault_code_checks_get(&self, input: CodeCheckReceiptRequest) -> Option<CodeCheckReceiptView> = |client| {
+    let input: oneiron::memory::merge_queue_doors::CodeCheckReceiptRequest = crate::codec::lower_record("vault.code.checks.get", input)?;
+    let output = client.vault_code_checks_get(&input)?;
+    crate::codec::lift_record("vault.code.checks.get", &output)
 };
 "vault.code.merge_queue.export_green" => fn vault_code_merge_queue_export_green(&self, input: MergeQueueGreenExportRequest) -> CodeExportResult = |client| {
     let input: oneiron::memory::merge_queue_doors::MergeQueueGreenExportRequest = crate::codec::lower_record("vault.code.merge_queue.export_green", input)?;

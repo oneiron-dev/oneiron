@@ -137,7 +137,9 @@ impl Memory<'_> {
             self.code_readable(settled.receipt, None)?;
         }
         let (conflict, task, parents, resolution) = match &row.operation {
-            RepoProposalOperation::CommitFile => (None, None, Vec::new(), None),
+            RepoProposalOperation::CommitFile | RepoProposalOperation::ReceivedFiles { .. } => {
+                (None, None, Vec::new(), None)
+            }
             RepoProposalOperation::ResolveConflictFile {
                 branch_subject,
                 open_conflict_claim_id,

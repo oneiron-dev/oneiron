@@ -1891,6 +1891,15 @@ impl OneironClient {
                 "vault.code.import" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::CodeRepoImportView,
                 >(client, verb, &input),
+                "vault.code.repos.get" => remote_agent_verb_output::<
+                    Option<oneiron::memory::origin_doors::CodeRepoView>,
+                >(client, verb, &input),
+                "vault.code.forks.get" => remote_agent_verb_output::<
+                    Option<oneiron::memory::origin_doors::CodeForkView>,
+                >(client, verb, &input),
+                "vault.code.ingress.get" => remote_agent_verb_output::<
+                    Option<oneiron::memory::origin_doors::CodePushIngressView>,
+                >(client, verb, &input),
                 "vault.code.origin.register" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::OriginRegistered,
                 >(client, verb, &input),
@@ -2030,6 +2039,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.code.merge_queue.check_status" => remote_agent_verb_output::<
                     oneiron::memory::merge_queue_doors::MergeQueueCheckWorkView,
+                >(client, verb, &input),
+                "vault.code.checks.get" => remote_agent_verb_output::<
+                    Option<oneiron::memory::merge_queue_doors::CodeCheckReceiptView>,
                 >(client, verb, &input),
                 "vault.code.merge_queue.export_green" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::CodeExportResult,
@@ -10916,6 +10928,42 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.code.import", value)
     }
+    pub fn vault_code_repos_get(
+        &self,
+        input: &oneiron::memory::origin_doors::CodeRepoGetRequest,
+    ) -> Result<Option<oneiron::memory::origin_doors::CodeRepoView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.repos.get", value)
+    }
+    pub fn vault_code_forks_get(
+        &self,
+        input: &oneiron::memory::origin_doors::CodeForkGetRequest,
+    ) -> Result<Option<oneiron::memory::origin_doors::CodeForkView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.forks.get", value)
+    }
+    pub fn vault_code_ingress_get(
+        &self,
+        input: &oneiron::memory::origin_doors::CodePushIngressGetRequest,
+    ) -> Result<Option<oneiron::memory::origin_doors::CodePushIngressView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.ingress.get", value)
+    }
     pub fn vault_code_origin_register(
         &self,
         input: &oneiron::memory::origin_doors::OriginRegisterRequest,
@@ -11467,6 +11515,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.merge_queue.check_status", value)
+    }
+    pub fn vault_code_checks_get(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::CodeCheckReceiptRequest,
+    ) -> Result<Option<oneiron::memory::merge_queue_doors::CodeCheckReceiptView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.checks.get", value)
     }
     pub fn vault_code_merge_queue_export_green(
         &self,

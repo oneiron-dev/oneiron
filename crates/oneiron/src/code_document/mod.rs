@@ -7,6 +7,7 @@
 
 mod blame;
 mod codec;
+mod file_metadata;
 mod review_views;
 mod session;
 mod storage;
@@ -16,9 +17,11 @@ pub(crate) use storage::archive_document_tables;
 pub(crate) use storage::checkpoint;
 
 pub use blame::CodeRangePair;
+pub use file_metadata::{CodeFileMetadataEdit, CodeFilePresence};
 pub use review_views::{
-    CodeFileChange, CodeFileDiffView, CodeProposalView, CodeProposalViewRequest, CodeProposedStamp,
-    CodeRepoDiffRequest, CodeRepoDiffView, CodeTreeRequest,
+    CodeFileChange, CodeFileDiffView, CodeProposalFileView, CodeProposalView,
+    CodeProposalViewRequest, CodeProposedStamp, CodeRepoDiffRequest, CodeRepoDiffView,
+    CodeTreeRequest,
 };
 pub use session::CodeDocumentSession;
 pub(crate) use storage::{

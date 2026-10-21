@@ -123,3 +123,25 @@ pub(crate) fn view_receipt_in_txn(
 ) -> Result<Option<ViewReceipt>> {
     VIEW_RECEIPTS.get(&vault.store, txn, &id)
 }
+
+/// Every saved view receipt whose run stamp names the CODE anchor `repo`,
+/// read in the caller's snapshot `txn` (G4 PR2): historical work evidence
+/// for the owner's workbench, in view-id order. The caller admits the
+/// owner first; no liveness, file bytes or run authority is inferred.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn repo_view_receipts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    repo: EntityId,
+) -> Result<Vec<ViewReceipt>> {
+    let mut receipts = Vec::new();
+    for row in VIEW_RECEIPTS.iter_from(&vault.store, txn, &[])? {
+        let (_, receipt) = row?;
+        if receipt.run.as_ref().is_some_and(|stamp| stamp.repo == repo) {
+            receipts.push(receipt);
+        }
+    }
+    Ok(receipts)
+}

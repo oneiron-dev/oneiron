@@ -284,7 +284,7 @@ impl Memory<'_> {
             output: RepoProposalSubmitOutput {
                 proposal: proposal.id,
                 work: input.work,
-                path: proposal.path,
+                path: proposal.ordinary_file()?.0.to_owned(),
                 base_green: own.stamp.base_green.clone(),
                 base_snapshot: bytes_to_hex_lower(&proposal.pre_action_fork_hash),
                 session: proposal.session,
@@ -313,7 +313,10 @@ impl Memory<'_> {
             .iter()
             .map(|id| self.repo_run_proposal(binding, &own, *id))
             .collect::<MemoryResult<Vec<_>>>()?;
-        let paths: Vec<String> = rows.iter().map(|row| row.path.clone()).collect();
+        let paths: Vec<String> = rows
+            .iter()
+            .flat_map(|row| row.paths().into_iter().map(str::to_owned))
+            .collect();
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, &paths);
         {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
@@ -356,8 +359,7 @@ impl Memory<'_> {
                 let current = self.vault.repo_proposal_in_txn(txn, row.id)?;
                 if !current.as_ref().is_some_and(|current| {
                     unqueued_candidate(current)
-                        && current.content == row.content
-                        && current.path == row.path
+                        && current.files == row.files
                         && current.pre_action_fork_hash == row.pre_action_fork_hash
                         && current.run == row.run
                 }) {
@@ -491,14 +493,16 @@ impl Memory<'_> {
         let base = self
             .vault
             .mount_repo_ref(&pointer, RepoMountRef::Fork(row.pre_action_fork_hash))?;
-        let expected = base.read_file(&row.path)?.map(<[u8]>::to_vec);
+        let (path, content) = row.ordinary_file()?;
+        let expected = base.read_file(path)?.map(<[u8]>::to_vec);
         Ok(MergeProposal {
             id: row.id.to_hex(),
             base_green: base_green.to_owned(),
             files: vec![MergeFile {
-                path: row.path.clone(),
+                path: path.to_owned(),
                 expected,
-                content: Some(row.content.clone()),
+                content: Some(content.to_vec()),
+                metadata_edit: None,
             }],
         })
     }

@@ -610,6 +610,9 @@ both bindings and their export-census tests in one change.
 - `vault.code.repo_diff`
 - `vault.code.export`
 - `vault.code.import`
+- `vault.code.repos.get`
+- `vault.code.forks.get`
+- `vault.code.ingress.get`
 - `vault.code.origin.register`
 - `vault.code.origin.mirror.get`
 - `vault.code.origin.mirror.set`
@@ -656,6 +659,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.merge_queue.check`
 - `vault.code.merge_queue.diagnose`
 - `vault.code.merge_queue.check_status`
+- `vault.code.checks.get`
 - `vault.code.merge_queue.export_green`
 - `vault.artifacts.export`
 - `vault.agents.create`

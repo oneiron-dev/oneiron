@@ -2290,6 +2290,12 @@ class Oneiron:
         def import_(self, spec: Facade.CodeRepoImportRequest) -> Facade.CodeRepoImportView:
             """Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only."""
         @property
+        def repos(self) -> "Oneiron._VaultCodeReposVerbs": ...
+        @property
+        def forks(self) -> "Oneiron._VaultCodeForksVerbs": ...
+        @property
+        def ingress(self) -> "Oneiron._VaultCodeIngressVerbs": ...
+        @property
         def origin(self) -> "Oneiron._VaultCodeOriginVerbs": ...
         @property
         def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs": ...
@@ -2301,6 +2307,8 @@ class Oneiron:
         def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs": ...
         @property
         def merge_queue(self) -> "Oneiron._VaultCodeMergeQueueVerbs": ...
+        @property
+        def checks(self) -> "Oneiron._VaultCodeChecksVerbs": ...
     class _VaultCodeSymbolsVerbs:
         def declare(self, spec: Facade.CodeSymbolsDeclareRequest) -> Facade.CodeSymbolsDeclared:
             """Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing."""
@@ -2315,6 +2323,15 @@ class Oneiron:
             """Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."""
         def receipt(self, spec: Facade.CodeWaitReceiptRequest) -> Facade.CodeWaitReceiptView | None:
             """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
+    class _VaultCodeReposVerbs:
+        def get(self, spec: Facade.CodeRepoGetRequest) -> Facade.CodeRepoView | None:
+            """Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work."""
+    class _VaultCodeForksVerbs:
+        def get(self, spec: Facade.CodeForkGetRequest) -> Facade.CodeForkView | None:
+            """Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork."""
+    class _VaultCodeIngressVerbs:
+        def get(self, spec: Facade.CodePushIngressGetRequest) -> Facade.CodePushIngressView | None:
+            """Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance."""
     class _VaultCodeOriginVerbs:
         def register(self, spec: Facade.OriginRegisterRequest) -> Facade.OriginRegistered:
             """Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."""
@@ -2422,6 +2439,9 @@ class Oneiron:
             """Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."""
         def export_green(self, spec: Facade.MergeQueueGreenExportRequest) -> Facade.CodeExportResult:
             """Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result."""
+    class _VaultCodeChecksVerbs:
+        def get(self, spec: Facade.CodeCheckReceiptRequest) -> Facade.CodeCheckReceiptView | None:
+            """Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass."""
     class _VaultResultsVerbs:
         def status(self, spec: Facade.ResultRunRequest) -> Facade.ResultRunStatus:
             """The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."""

@@ -6,7 +6,14 @@
 //! additive `pub mod ...;` line when its file exists.
 
 pub(crate) mod actor_erase;
+mod document_candidate_types;
+mod document_candidates;
 mod document_ingress;
+pub use document_candidate_types::{
+    CodePushCandidateState, CodePushCandidateView, ReceivedCandidateRef, ReceivedRefIngress,
+    ReceivedRefSource,
+};
+pub(crate) use document_candidates::CandidateQueue;
 pub use document_ingress::ReceivedFileOperation;
 pub(crate) use document_ingress::erase_code_operations_actor_in_txn;
 pub mod lfs;

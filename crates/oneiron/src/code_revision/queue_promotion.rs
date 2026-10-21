@@ -257,7 +257,14 @@ impl Vault {
             .map(|frontier| frontier.path.as_str())
             .chain(parent.blob_frontiers.keys().map(String::as_str));
         for path in parent_paths {
-            if !paths.contains(path) {
+            // A retirement names the applied reviewed removal that made it,
+            // proved when the seal was finalized (G4 PR2).
+            let retired = revision.retired_paths.get(path).is_some_and(|retirement| {
+                applied
+                    .iter()
+                    .any(|source| source.proposal == retirement.review_ref)
+            });
+            if !paths.contains(path) && !retired {
                 return unreviewed(path, "removed without a reviewed operation");
             }
         }
@@ -272,23 +279,27 @@ impl Vault {
                 || proposal.provenance_claim != source.provenance_claim
             {
                 return unreviewed(
-                    proposal.path.as_str(),
+                    proposal.operation_subject().as_str(),
                     "a source is not the applied review it names",
                 );
+            }
+            if proposal.received_candidate().is_some() {
+                if let Err(gap) = self.received_promotion_documents(&proposal, &mut reviewed)? {
+                    return Ok(Err(gap));
+                }
+                continue;
             }
             let Some(edit) = self.code_file_edit_receipt(source.proposal)? else {
                 continue;
             };
             let mode = proposal.reviewed_file_mode(self, &edit.after)?;
+            let (path, _) = proposal.ordinary_file()?;
             if edit.session_id != proposal.session
                 || edit.actor.map(|actor| actor.entity_ref()) != proposal.actor.id()
                 || edit.provenance != proposal.op_provenance
-                || edit.edit.path != proposal.path
+                || edit.edit.path != path
             {
-                return unreviewed(
-                    proposal.path.as_str(),
-                    "a document receipt is not its source's",
-                );
+                return unreviewed(path, "a document receipt is not its source's");
             }
             reviewed.insert(edit.document_id, (edit.after, mode));
         }
@@ -315,5 +326,43 @@ impl Vault {
         ids.sort();
         ids.dedup();
         Ok(Ok(ids))
+    }
+
+    /// Each present file of the applied received bundle `proposal`, as its
+    /// own child receipt's frontier at its reviewed mode, into `reviewed`
+    /// (G4 PR2). A mode-only change earns its own fold here.
+    fn received_promotion_documents(
+        &self,
+        proposal: &crate::repo_mutation::proposal::RepoProposal,
+        reviewed: &mut BTreeMap<[u8; 32], (crate::code_document::CodeDocumentFrontier, u32)>,
+    ) -> Result<std::result::Result<(), QueuePromotionGap>> {
+        for file in proposal.files.iter().filter(|file| file.content.is_some()) {
+            let gap = |why: &str| {
+                Ok(Err(QueuePromotionGap::Unreviewed(format!(
+                    "{}: {why}",
+                    file.path
+                ))))
+            };
+            let (Some(source), Some(mode)) = (
+                file.source_operation,
+                file.metadata_edit
+                    .as_ref()
+                    .and_then(|edit| edit.replacement.mode),
+            ) else {
+                return gap("a received file has no reviewed state");
+            };
+            let operation = crate::repo_mutation::received_file_operation(proposal.id, source)?;
+            let Some(edit) = self.code_file_edit_receipt(operation)? else {
+                return gap("a received file has no document receipt");
+            };
+            if edit.session_id != proposal.session
+                || edit.actor.map(|actor| actor.entity_ref()) != proposal.actor.id()
+                || edit.edit.path != file.path
+            {
+                return gap("a document receipt is not its source's");
+            }
+            reviewed.insert(edit.document_id, (edit.after, mode));
+        }
+        Ok(Ok(()))
     }
 }

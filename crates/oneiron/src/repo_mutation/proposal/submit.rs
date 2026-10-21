@@ -102,8 +102,7 @@ impl Vault {
             session,
             provenance_claim,
             op_provenance,
-            path,
-            content,
+            files: vec![RepoProposedFile::ordinary(path, content)],
             message,
             operation,
             merge_stack: None,
@@ -118,109 +117,13 @@ impl Vault {
             actor_class: request_class.map(|class| class as u8),
         };
         validate_conflict(self, &row, &repo_root)?;
-        let mut body = ClaimBody::new(
-            "repo.proposed_diff",
-            ClaimSubject::Entity(session),
-            Value::Map(vec![
-                (Value::from("actor"), Value::from(actor.to_hex())),
-                (Value::from("path"), Value::from(row.path.clone())),
-                (
-                    Value::from("operation"),
-                    Value::from(row.request()?.operation.kind()),
-                ),
-                (
-                    Value::from("operation_hash"),
-                    Value::Binary(
-                        blake3::hash(
-                            &rmp_serde::to_vec_named(&(
-                                &row.operation,
-                                &row.path,
-                                &row.content,
-                                &row.message,
-                            ))
-                            .map_err(|_| invalid("proposal operation encoding failed"))?,
-                        )
-                        .as_bytes()
-                        .to_vec(),
-                    ),
-                ),
-                (
-                    Value::from("content_hash"),
-                    Value::Binary(blake3::hash(&row.content).as_bytes().to_vec()),
-                ),
-                (
-                    Value::from("pre_action_fork_hash"),
-                    Value::Binary(fork.to_vec()),
-                ),
-            ]),
-            1.0,
-            ClaimApprovalStatus::Proposed,
-            ClaimLifecycleStatus::Active,
-        )?;
-        body.source = Some(ClaimSource::Generated);
-        body.evidence = Some(Value::Map(vec![(
-            Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
-            Value::Binary(actor.as_bytes().to_vec()),
-        )]));
-        let session_claim_id = actor_erase::session_claim_id(session, row.id)?;
-        let mut session_claim = ClaimBody::new(
-            "repo.session",
-            ClaimSubject::Entity(session),
-            Value::Map(vec![
-                (Value::from("actor"), Value::from(actor.to_hex())),
-                (Value::from("session"), Value::from(session.to_hex())),
-                (
-                    Value::from("provenance_claim_id"),
-                    Value::from(provenance_claim.to_hex()),
-                ),
-            ]),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )?;
-        session_claim.source = Some(ClaimSource::Observed);
-        session_claim.scope = Some(Value::Map(vec![(
-            Value::from("sensitivity"),
-            Value::from("public"),
-        )]));
-        session_claim.evidence = body.evidence.clone();
+        let prepared = super::persist::PreparedRepoProposal::new(row, snapshot)?;
         let mut txn = self.store.env.write_txn()?;
         if let Err(refused) = check(&txn)? {
             return Ok(Err(refused));
         }
-        crate::repo_mutation::trailer::validate_repo_provenance_request_in_txn(
-            self,
-            &txn,
-            &row.request()?,
-        )?;
-        validate_conflict_in_txn(self, &txn, &row)?;
-        if !crate::ports::EntityStoreRead::port_entity_present(
-            &self.store,
-            &txn,
-            &session_claim_id,
-        )? {
-            put_journal_claim(
-                self,
-                &mut txn,
-                session_claim_id,
-                Some(actor),
-                &session_claim,
-                row.created_at,
-            )?;
-        }
-        if !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &actor)? {
-            return Err(Error::EntityNotFound);
-        }
-        put_journal_claim(self, &mut txn, row.id, Some(actor), &body, row.created_at)?;
-        let snapshot_row = SNAPSHOT.decode_value(&snapshot)?;
-        SNAPSHOT.put(
-            &self.store,
-            &mut txn,
-            &repo_mutation_snapshot_key(fork),
-            &snapshot_row,
-        )?;
-        store(self, &mut txn, &row)?;
+        prepared.persist_in_txn(self, &mut txn)?;
         txn.commit()?;
-        Ok(Ok(row))
+        Ok(Ok(prepared.row))
     }
 }

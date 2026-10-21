@@ -18,6 +18,10 @@ pub struct CodeDocumentFrontier {
     pub version: Vec<(u64, i32)>,
     pub op_fold: [u8; 32],
     pub text_hash: [u8; 32],
+    /// The Git file state this document asserts (G4 PR2); `None` for an
+    /// ordinary text document, which asserts none and encodes as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_presence: Option<super::CodeFilePresence>,
 }
 
 /// One edit against Unicode scalar offsets in the session's observed text.
@@ -186,6 +190,9 @@ pub struct CodeEditReceipt {
     pub counter_start: i32,
     pub counter_end: i32,
     pub edit: CodeFileEdit,
+    /// The reviewed metadata change the operation made with its text, if
+    /// any (G4 PR2); `None` on every ordinary text edit.
+    pub metadata_edit: Option<super::CodeFileMetadataEdit>,
     pub before: CodeDocumentFrontier,
     pub after: CodeDocumentFrontier,
 }

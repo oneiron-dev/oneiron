@@ -41,7 +41,11 @@ impl Vault {
         };
         let source = GitOid::parse_hex(manifest.anchor.source_commit)?;
         let mut allowed = vec![source.clone()];
-        let mut nearest = None;
+        // The nearest original boundary: an engine projection, or the
+        // incoming tip of a push a verified seal consumed completely (G4
+        // PR2), the revision's own first. Its original commits are kept.
+        let mut nearest = push_boundary(revision)?;
+        allowed.extend(nearest.clone());
         let mut next = revision.parent_revision_id;
         for _ in 0..crate::limits::MAX_ANCESTOR_DEPTH {
             let Some(id) = next else {
@@ -58,10 +62,12 @@ impl Vault {
                 nearest.get_or_insert_with(|| mapped.clone());
                 allowed.push(mapped);
             }
-            next = self
-                .get_code_revision(&id)?
-                .ok_or(Error::EntityNotFound)?
-                .parent_revision_id;
+            let ancestor = self.get_code_revision(&id)?.ok_or(Error::EntityNotFound)?;
+            if let Some(boundary) = push_boundary(&ancestor)? {
+                nearest.get_or_insert_with(|| boundary.clone());
+                allowed.push(boundary);
+            }
+            next = ancestor.parent_revision_id;
         }
         Err(Error::IndexOverflow("tested queue revision chain"))
     }
@@ -98,6 +104,19 @@ impl Vault {
             ));
         }
         Ok(Some(vec![parent]))
+    }
+}
+
+/// The incoming tip of the last push `revision`'s seal consumed
+/// completely, if any: its checked tree is that tip's own.
+fn push_boundary(revision: &CodeRevision) -> Result<Option<GitOid>> {
+    match revision
+        .tested_queue
+        .as_ref()
+        .and_then(|tested| tested.received_pushes.last())
+    {
+        Some(link) => Ok(Some(GitOid::parse_hex(link.new_commit.clone())?)),
+        None => Ok(None),
     }
 }
 

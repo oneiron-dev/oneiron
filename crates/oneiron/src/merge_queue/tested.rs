@@ -199,6 +199,14 @@ impl MergeQueue<'_> {
         .with_provenance_claim_id(queue_provenance_id(intent.revision)?);
         revision.file_frontiers = inventory.documents;
         revision.blob_frontiers = inventory.blobs;
+        // A received bundle's removals and complete-push links (G4 PR2).
+        match self.received_seal_evidence(&wire, &intent.tree, &sources, parent.as_ref())? {
+            Ok((retired, pushes)) => {
+                revision.retired_paths = retired;
+                tested.received_pushes = pushes;
+            }
+            Err(hold) => return Ok(Err(hold)),
+        }
         tested.inventory_digest = CodeTreeInventory::digest(&revision)?;
         revision.tested_queue = Some(tested);
         let seal = QueueRevisionSeal {
@@ -467,6 +475,7 @@ impl MergeQueue<'_> {
             fast,
             slow,
             inventory_digest: [0; 32],
+            received_pushes: Vec::new(),
         }
     }
 
@@ -501,11 +510,29 @@ impl MergeQueue<'_> {
                 &GitOid::parse_hex(parent_tree.clone())?,
             )?;
             let mut edited = BTreeMap::new();
+            let mut removed = std::collections::BTreeSet::new();
             for source in sources {
+                // A received bundle lands every file under its own child
+                // receipt, and may remove paths (G4 PR2).
+                if source.received_candidate().is_some() {
+                    let tree = match self.received_bundle_tree(source)? {
+                        Ok(tree) => tree,
+                        Err(hold) => return Ok(Err(hold)),
+                    };
+                    edited.extend(tree.documents);
+                    removed.extend(tree.removed);
+                    continue;
+                }
                 if let Some(edit) = self.vault.code_file_edit_receipt(source.id)? {
                     let mode = source.reviewed_file_mode(self.vault, &edit.after)?;
-                    edited.insert(source.path.clone(), (edit.after, mode));
+                    edited.insert(source.ordinary_file()?.0.to_owned(), (edit.after, mode));
                 }
+            }
+            if let Some(path) = removed.iter().find(|path| entries.contains_key(*path)) {
+                return held(
+                    QueueExportHoldReason::HeldUnreviewedChange,
+                    format!("{path}: a reviewed removal is still in the checked tree"),
+                );
             }
             let inherited: BTreeMap<&str, (&CodeDocumentFrontier, u32)> = parent
                 .file_frontiers
@@ -540,7 +567,10 @@ impl MergeQueue<'_> {
                     format!("{path}: a reviewed edit is not in the checked tree"),
                 );
             }
-            if let Some(path) = before.keys().find(|path| !entries.contains_key(*path)) {
+            if let Some(path) = before
+                .keys()
+                .find(|path| !entries.contains_key(*path) && !removed.contains(*path))
+            {
                 return held(
                     QueueExportHoldReason::HeldUnreviewedChange,
                     format!("{path} was removed without an admitted reviewed operation"),

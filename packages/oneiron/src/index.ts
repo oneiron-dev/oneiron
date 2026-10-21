@@ -1983,6 +1983,18 @@ export class Oneiron {
       export: (input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult),
       /** Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only. */
       import: (input: Facade.CodeRepoImportRequest): Facade.CodeRepoImportView => this.#call(() => this.#client.vaultCodeImport(input) as Facade.CodeRepoImportView),
+      repos: {
+        /** Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work. */
+        get: (input: Facade.CodeRepoGetRequest): Facade.CodeRepoView | null => this.#call(() => this.#client.vaultCodeReposGet(input) as Facade.CodeRepoView | null),
+      },
+      forks: {
+        /** Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork. */
+        get: (input: Facade.CodeForkGetRequest): Facade.CodeForkView | null => this.#call(() => this.#client.vaultCodeForksGet(input) as Facade.CodeForkView | null),
+      },
+      ingress: {
+        /** Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance. */
+        get: (input: Facade.CodePushIngressGetRequest): Facade.CodePushIngressView | null => this.#call(() => this.#client.vaultCodeIngressGet(input) as Facade.CodePushIngressView | null),
+      },
       origin: {
         /** Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused. */
         register: (input: Facade.OriginRegisterRequest): Facade.OriginRegistered => this.#call(() => this.#client.vaultCodeOriginRegister(input) as Facade.OriginRegistered),
@@ -2092,6 +2104,10 @@ export class Oneiron {
         check_status: (input: Facade.MergeQueueCheckStatusRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueCheckStatus(input) as Facade.MergeQueueCheckWorkView),
         /** Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result. */
         export_green: (input: Facade.MergeQueueGreenExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeMergeQueueExportGreen(input) as Facade.CodeExportResult),
+      },
+      checks: {
+        /** Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass. */
+        get: (input: Facade.CodeCheckReceiptRequest): Facade.CodeCheckReceiptView | null => this.#call(() => this.#client.vaultCodeChecksGet(input) as Facade.CodeCheckReceiptView | null),
       },
     },
     results: {

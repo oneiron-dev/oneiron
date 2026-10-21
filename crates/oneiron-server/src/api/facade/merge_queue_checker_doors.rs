@@ -66,3 +66,17 @@ pub(crate) async fn vault_code_merge_queue_check_status(
     )
     .await
 }
+
+pub(crate) async fn vault_code_checks_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeCheckReceiptRequest,
+) -> Listed<Option<CodeCheckReceiptView>> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.checks.get",
+        move |memory, owner| memory.merge_queue_check_receipt_as(owner, input),
+    )
+    .await
+}

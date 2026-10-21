@@ -9,24 +9,30 @@ pub(super) fn land_reviewed_document(vault: &Vault, proposal_id: EntityId) -> Re
     let proposal = vault
         .repo_proposal(proposal_id)?
         .ok_or(Error::EntityNotFound)?;
+    // A received bundle lowers every file in one grouped ingress (G4 PR2).
+    if proposal.received_candidate().is_some() {
+        return super::received_file::land_received_files_documents(vault, &proposal);
+    }
+    let (path, content) = proposal.ordinary_file()?;
     let repo = RepoRef::parse(&proposal.repo)?;
     let before = vault.mount_repo_ref(&repo, RepoMountRef::Fork(proposal.pre_action_fork_hash))?;
-    let old = before.read_file(&proposal.path)?.unwrap_or(b"");
+    let old = before.read_file(path)?.unwrap_or(b"");
     let old = std::str::from_utf8(old)
         .map_err(|_| Error::InvalidClaimBody("code document requires UTF-8"))?;
-    let new = std::str::from_utf8(&proposal.content)
+    let new = std::str::from_utf8(content)
         .map_err(|_| Error::InvalidClaimBody("code document requires UTF-8"))?;
     if old == new {
         return Ok(());
     }
     let scope = super::oplog::repo_mutation_repo_key(&repo);
     let session = vault
-        .open_code_document(&scope, &proposal.path, old, proposal.session)?
+        .open_code_document(&scope, path, old, proposal.session)?
         .with_op_provenance(proposal.op_provenance.clone());
     vault.apply_code_file_ingress_exact(&mut [CodeFileIngress {
         operation: proposal_id,
         session,
-        edit: CodeFileEdit::between(&proposal.path, old, new),
+        edit: CodeFileEdit::between(path, old, new),
+        metadata_edit: None,
         actor: proposal.document_actor()?,
         expected_text: old.to_owned(),
     }])?;
@@ -53,7 +59,8 @@ pub(super) fn resume_reviewed_document(
     let Some(row) = super::proposal::for_operation(vault, repo, stale.seq)? else {
         return Ok(None);
     };
-    if row.merge_stack.is_some() {
+    // A received bundle is stack-bound and keeps its queue recovery path.
+    if row.merge_stack.is_some() || row.received_candidate().is_some() {
         return Ok(None);
     }
     // An erased actor's write is never resumed: the generic path rolls it back.
@@ -66,7 +73,7 @@ pub(super) fn resume_reviewed_document(
         || row.pre_action_fork_hash != stale.pre_action_fork_hash
         || Some(actor) != stale.actor_id
         || Some(row.session) != stale.session_id
-        || stale.operation_subject.as_deref() != Some(row.path.as_str())
+        || stale.operation_subject.as_deref() != Some(row.operation_subject().as_str())
         || stale.operation_kind != request.operation.kind()
     {
         return Err(invalid("reviewed recovery authority differs"));
@@ -76,7 +83,8 @@ pub(super) fn resume_reviewed_document(
         // Its immutable pre-snapshot must prove that fact; missing receipts for
         // real edits still take the generic recovery path.
         let before = vault.mount_repo_ref(repo, RepoMountRef::Fork(row.pre_action_fork_hash))?;
-        if before.read_file(&row.path)?.unwrap_or(b"") != row.content {
+        let (path, content) = row.ordinary_file()?;
+        if before.read_file(path)?.unwrap_or(b"") != content {
             return Ok(None);
         }
     }
@@ -99,6 +107,7 @@ pub(super) fn resume_reviewed_document(
             }
             PreparedRepoMutationExecution::CommitFile(prepared)
         }
+        super::proposal::RepoProposalOperation::ReceivedFiles { .. } => return Ok(None),
         super::proposal::RepoProposalOperation::ResolveConflictFile {
             branch_subject,
             open_conflict_claim_id,
@@ -108,7 +117,7 @@ pub(super) fn resume_reviewed_document(
             if recovery.branch_subject != *branch_subject.as_bytes()
                 || recovery.open_conflict_claim_id != *open_conflict_claim_id.as_bytes()
                 || recovery.branch_name != *branch_name
-                || recovery.path != row.path
+                || recovery.path != row.ordinary_file()?.0
                 || recovery.resolved_tree
                     != super::conflict::tree_hash_for_ref(root, &commit.new_head)?
             {
@@ -121,7 +130,7 @@ pub(super) fn resume_reviewed_document(
                     branch_subject: *branch_subject,
                     open_conflict_claim_id: *open_conflict_claim_id,
                     branch_name: branch_name.clone(),
-                    path: row.path.clone(),
+                    path: row.ordinary_file()?.0.to_owned(),
                     resolved_tree: recovery.resolved_tree.clone(),
                 },
             }

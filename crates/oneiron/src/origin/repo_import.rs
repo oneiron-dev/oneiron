@@ -212,13 +212,37 @@ impl Vault {
         repo: &GitWireRepo,
         source: &ServedImportSource<'_>,
     ) -> Result<(OriginPublicationRecord, GitOid)> {
+        self.require_admitted_push(
+            git,
+            repo,
+            source.admission_receipt,
+            source.source_ref,
+            source.source_commit,
+        )
+    }
+
+    /// [`Self::require_admitted_import_source`]'s one body over the bare
+    /// admission, which an accepted push's candidate shares (G4 PR2): the
+    /// Published receive-pack publication `admission_receipt` of `source_ref`
+    /// in this store, and `chosen` its tip or an ancestor.
+    ///
+    /// # Errors
+    /// As there.
+    pub(crate) fn require_admitted_push(
+        &self,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        admission_receipt: EntityId,
+        source_ref: &GitRefName,
+        chosen: &GitOid,
+    ) -> Result<(OriginPublicationRecord, GitOid)> {
         let record = self
-            .origin_publication(source.admission_receipt)?
+            .origin_publication(admission_receipt)?
             .ok_or_else(|| refused("the admission receipt is no publication of this vault"))?;
         let repo_id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
         if record.status != OriginPublicationStatus::Published
             || record.repo_id != repo_id
-            || record.ref_name != *source.source_ref
+            || record.ref_name != *source_ref
         {
             return Err(refused(
                 "the admission receipt is no Published publication of this served ref",
@@ -246,7 +270,6 @@ impl Vault {
             occurred: record.occurred,
             learned_at: record.created_at,
         })?;
-        let chosen = source.source_commit;
         if *chosen != record.new_oid
             && !git
                 .merge_base(repo, chosen.as_str(), record.new_oid.as_str())
