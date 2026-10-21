@@ -18530,6 +18530,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/room_verbs/upkeep_posture.rs",
+     "purpose": "The posture a room host's upkeep voice speaks under (ARCH-0067 §8, OF-417): the mode…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/room_verbs_tests.rs",
@@ -22925,7 +22935,7 @@
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
       "const": 31,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 12,
       "trait": 1
      }
@@ -23524,13 +23534,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/room_upkeep.rs",
      "purpose": "Room upkeep (ARCH-0067 §8, ARCH-0079, OF-417): \"The engine performs every room's mechanical upkeep, and a…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -60437,7 +60447,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1147
+      "fn": 1149
      }
     },
     {
@@ -64590,7 +64600,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
       "crate-vis": 28,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -65500,7 +65510,7 @@
       "crate-vis": 41,
       "enum": 2,
       "fn": 6,
-      "re-export": 19,
+      "re-export": 20,
       "struct": 6
      }
     },
@@ -65735,9 +65745,36 @@
      "path": "src/workspace_roster/rooms/upkeep.rs",
      "purpose": "What a room's upkeep reads (ONEIRON-ARCH-0067 §8: the engine performs every room's mechanical upkeep, and a…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 6,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomUpkeepNudge",
+      "RoomUpkeepPendingRequest",
+      "RoomUpkeepVoiceReceipt",
+      "RoomUpkeepVoiceRequest"
+     ],
+     "path": "src/workspace_roster/rooms/upkeep_voice.rs",
+     "purpose": "The room host's upkeep voice (ARCH-0067 §8, OF-417): \"The engine performs every room's mechanical upkeep…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/upkeep_voice_guard.rs",
+     "purpose": "What a room host's upkeep voice must still hold in the write it lands in (OF-417)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -67664,7 +67701,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68798,7 +68835,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 110,
+     "files": 112,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68821,7 +68858,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4345,
+   "source_files": 4348,
    "test_files": 902
   },
   "oneiron-android": {
@@ -78696,7 +78733,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1118
+      "fn": 1120
      }
     },
     {
@@ -79911,7 +79948,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1119
+      "fn": 1121
      }
     },
     {
@@ -97626,6 +97663,10 @@
       "RoomTrunkHeader",
       "RoomTurn",
       "RoomTurnRequest",
+      "RoomUpkeepNudge",
+      "RoomUpkeepPendingRequest",
+      "RoomUpkeepVoiceReceipt",
+      "RoomUpkeepVoiceRequest",
       "RoomWaitKind",
       "RootRequestCancelRequest",
       "RouteObservation",
@@ -98561,7 +98602,7 @@
      "purpose": "—",
      "surface": {
       "enum": 924,
-      "struct": 2898
+      "struct": 2902
      }
     },
     {
