@@ -14,13 +14,21 @@
 //! file a crash left is read with [`inspect_backup_prefix`], which never
 //! refuses one for being short. The engine writes and reads version 2 only;
 //! version 1 is read here for a host still holding artifacts written before
-//! it.
+//! it. Beside each backup the engine writes now, its checkpoint fact
+//! ([`SignedCheckpointFact`], FIX 7326) names the artifact's checkpoint id,
+//! and [`verify_checkpoint_fact`] checks it against the same pinned signer.
 
+mod checkpoint_fact;
 mod commitment;
 mod inspect;
 mod prelude;
 mod wire;
 
+pub use self::checkpoint_fact::{
+    CHECKPOINT_FACT_DOMAIN, CHECKPOINT_FACT_FILE_VERSION, CHECKPOINT_FACT_MAGIC,
+    CHECKPOINT_FACT_SUBJECT_LEN, CHECKPOINT_FACT_VERSION, CheckpointFact, SignedCheckpointFact,
+    verify_checkpoint_fact,
+};
 pub use self::commitment::{
     CHECKPOINT_SIGNATURE_EPOCH, CHECKPOINT_SIGNATURE_SUITE, COMMITMENT_VERSION,
     COMMITMENT_VERSION_V1, CheckpointSigner, Commitment, CustodyRef, ED25519_KEY_ID,
