@@ -5,6 +5,7 @@ use super::{Memory, MemoryResult};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Error;
+use crate::gate::record_references::receipt_landed_prose;
 use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::temporal::TimeRange;
 use crate::{EntityId, WriteActor};
@@ -122,9 +123,14 @@ impl Memory<'_> {
         expected_version: Option<&str>,
         now: u64,
     ) -> MemoryResult<SkillAuthoringReceipt> {
-        self.with_verified_actor_write_txn(|txn| {
+        // OF-063 (FIX 1230): the saved text's links are read before the
+        // writer opens and receipted once the save lands.
+        let unlinked = crate::skill::saved_skill_prose_links(self, proposed, &[])?;
+        let receipt = self.with_verified_actor_write_txn(|txn| {
             self.save_skill_in_txn(txn, id, proposed, expected_version, now, None)
-        })
+        })?;
+        receipt_landed_prose(self, &unlinked);
+        Ok(receipt)
     }
 
     /// Every loadable callable helper and its call contract: what an agent
@@ -147,9 +153,12 @@ impl Memory<'_> {
         expected_version: Option<&str>,
         now: u64,
     ) -> MemoryResult<SkillAuthoringReceipt> {
-        self.with_verified_actor_write_txn(|txn| {
+        let unlinked = crate::skill::saved_skill_prose_links(self, proposed, &files)?;
+        let receipt = self.with_verified_actor_write_txn(|txn| {
             self.save_skill_in_txn(txn, id, proposed, expected_version, now, Some(files))
-        })
+        })?;
+        receipt_landed_prose(self, &unlinked);
+        Ok(receipt)
     }
 
     fn save_skill_in_txn(
@@ -259,7 +268,8 @@ impl Memory<'_> {
         skill_id: &str,
         now: u64,
     ) -> MemoryResult<SkillAuthoringReceipt> {
-        self.with_verified_actor_write_txn(|txn| {
+        let unlinked = crate::skill::forked_skill_prose_links(self, self.vault, &parent)?;
+        let receipt = self.with_verified_actor_write_txn(|txn| {
             let actor = WriteActor::new(self.actor, self.actor_class);
             verify_live_actor(self.vault, txn, actor)?;
             require_authorship_in_txn(
@@ -332,7 +342,9 @@ impl Memory<'_> {
                 author_receipt: format!("gate:{}", proof.to_hex()),
                 version: record.version,
             })
-        })
+        })?;
+        receipt_landed_prose(self, &unlinked);
+        Ok(receipt)
     }
 
     fn birth_skill_in_txn(

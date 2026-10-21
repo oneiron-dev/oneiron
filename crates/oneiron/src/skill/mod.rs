@@ -18,6 +18,7 @@ mod pack_load;
 mod record;
 pub(crate) mod resident;
 mod role;
+mod saved_prose;
 mod validate;
 
 #[cfg(test)]
@@ -50,6 +51,7 @@ pub use self::record::{
 };
 pub(crate) use self::resident::resident_of;
 pub use self::role::{SkillCallContract, SkillRole};
+pub(crate) use self::saved_prose::{forked_skill_prose_links, saved_skill_prose_links};
 pub(crate) use self::validate::{validate_hub_sync_skill_update, validate_skill_update};
 
 // The flat skill.rs module provided these names to the sibling test module
