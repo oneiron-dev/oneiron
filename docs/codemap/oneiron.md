@@ -2848,7 +2848,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/score_scraper/http.rs` | src | s | 1 struct · 1 fn | HttpScoreFetch | Bounded HTTPS JSON transport for configured score sources |
 | `src/llm/score_scraper/worker.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | ScoreScraperWorker | Lifecycle-owned background score refresh: one immediate attempt, then the configured cadence |
 | `src/llm/seat.rs` | src | m | 7 struct · 3 enum · 16 fn · 3 re-export | DescriptionLine, DescriptionSource, ModelDescription, ModelSeat, PurposeEffort, SeatCandidate, SeatChoiceReceipt, SeatKind +2 | Seat-birth model routing above the raw LLM call seam |
-| `src/llm/seat/decisions.rs` | src | s | 1 struct · 1 trait · 1 fn · 1 crate-vis | SeatDecisions, SeatNotes | The seat pick as typed decisions through the host's ladder, and the note seam beside it |
+| `src/llm/seat/decisions.rs` | src | s | 1 struct · 1 trait · 1 fn | SeatDecisions, SeatNotes | The seat pick as typed decisions through the host's ladder, and the note seam beside it |
 | `src/llm/seat/policy.rs` | src | s | 1 struct · 1 enum · 2 fn · 6 crate-vis | SeatPolicy, SeatPrecedence | Manifest-owned runtime seat policy; shipped defaults are data, not routing code |
 | `src/llm/seat/run.rs` | src | m | 1 struct · 4 fn · 3 crate-vis | TaskSeatReceipt | A run's immutable seat pin: born once per run, loaded again on resume |
 | `src/llm/seat/tests.rs` | test | m | — | — | — |
