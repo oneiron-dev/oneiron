@@ -228,7 +228,9 @@ fn corpus_from_source(source: &Value) -> BeamResult<CitationCorpus> {
                 CitationDisposition::Cite | CitationDisposition::CiteWithCaveat => {
                     result.main_table.push(number);
                 }
-                CitationDisposition::WalledAppendix => result.appendix.push(number),
+                CitationDisposition::WalledAppendix | CitationDisposition::NonComparable => {
+                    result.appendix.push(number);
+                }
                 CitationDisposition::Dropped => result.dropped.push(number),
             }
         }
