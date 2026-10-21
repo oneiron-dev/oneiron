@@ -266,19 +266,49 @@ pub fn recover_vault_window(
     }
     let key = crate::sync::types::WindowKey::new(&snapshot.window);
     crate::sync::window::forward_recovery(vault, &prepared.window, materializer, &key, snapshot)?;
+    // A pad row the artifact names by bare reference completes only with its
+    // pad here, its stored row's or current custody's, checked before the
+    // byte-equal comparisons below: one not here stays pending, refused as
+    // not here yet, never a Healthy or repaired manifest (KS-5).
+    {
+        let txn = vault.store.env.read_txn()?;
+        for entity in &snapshot.entity_blobs {
+            let id = crate::EntityId::from_bytes(entity.id)?;
+            if let Some(waits) = crate::world_keys::pad_reference_waits_in_txn(
+                &vault.store,
+                &txn,
+                &id,
+                &entity.blob,
+            )? {
+                return Err(waits);
+            }
+        }
+    }
     // Forward replay may quarantine semantic/authority failures. Never mark a
     // partial replay complete merely because that door reported its row count.
     let actual = super::capture_canonical_window(vault, &snapshot.window, &prepared.window)?;
-    if &actual != snapshot {
+    if &pad_equivalent(vault, actual, snapshot) != snapshot {
         return Err(invalid("recovery materialization is not equivalent"));
     }
     {
         let txn = vault.store.env.read_txn()?;
         for entity in &snapshot.entity_blobs {
             let id = crate::EntityId::from_bytes(entity.id)?;
-            if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?.as_deref()
-                != Some(entity.blob.as_slice())
-            {
+            // A pad row the artifact names by reference rests with its pad:
+            // it landed when the same key's pad is here (KS-5).
+            let landed =
+                match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)? {
+                    Some(stored) => {
+                        stored == entity.blob
+                            || crate::world_keys::pad_echo_equal(
+                                &vault.store,
+                                &stored,
+                                &entity.blob,
+                            )
+                    }
+                    None => false,
+                };
+            if !landed {
                 return Err(invalid("entity materialization incomplete"));
             }
         }
@@ -314,8 +344,66 @@ pub fn recover_vault_window(
             }
         }
     }
+    carry_window_pads(vault, &prepared.window)?;
     if prepared.tier != RecoveryTier::Healthy {
         prepared.publish(path)?;
     }
     Ok(prepared)
+}
+
+/// `actual`, a recapture of a recovered window, with each pad row naming the
+/// same header, key and pad as `wanted`'s taken as `wanted`'s: a carrier an
+/// artifact kept where custody could not take its pad reads back as its
+/// reference once the recovery published that pad (KS-5).
+#[cfg(feature = "sync")]
+pub(super) fn pad_equivalent(
+    vault: &crate::Vault,
+    mut actual: CanonicalSnapshot,
+    wanted: &CanonicalSnapshot,
+) -> CanonicalSnapshot {
+    for (entity, want) in actual.entity_blobs.iter_mut().zip(&wanted.entity_blobs) {
+        if entity.id == want.id
+            && entity.blob != want.blob
+            && crate::world_keys::image_pad_row_of(&entity.blob).is_some()
+            && crate::world_keys::pad_echo_equal(&vault.store, &entity.blob, &want.blob)
+        {
+            entity.blob.clone_from(&want.blob);
+        }
+    }
+    actual
+}
+
+/// Fills each pad row the rebuilt `window` names by bare reference with its
+/// carrier, as the window's live routes and durable state hold it until
+/// windows take references (FIX 7107): from the row just landed and its
+/// current custody, never from the artifact (KS-5). A pad not here stays a
+/// reference.
+#[cfg(feature = "sync")]
+fn carry_window_pads(vault: &crate::Vault, window: &LoroDoc) -> Result<()> {
+    use super::canonical::{binary_rows, id, insert, parse_id};
+    let txn = vault.store.env.read_txn()?;
+    let mut carried = false;
+    for (key, blob) in binary_rows(window, "entities")? {
+        if crate::world_keys::image_pad_row_of(&blob).is_none_or(|row| row.held) {
+            continue;
+        }
+        let Some(stored) = crate::ports::EntityStoreRead::port_entity_raw(
+            &vault.store,
+            &txn,
+            &id(parse_id(&key)?)?,
+        )?
+        else {
+            continue;
+        };
+        if let Some(carrier) = crate::world_keys::live_route_row(&vault.store, stored)
+            && crate::world_keys::image_pad_row_of(&carrier).is_some_and(|row| row.held)
+        {
+            insert(window, "entities", &key, &carrier)?;
+            carried = true;
+        }
+    }
+    if carried {
+        window.commit();
+    }
+    Ok(())
 }

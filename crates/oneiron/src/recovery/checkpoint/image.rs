@@ -107,6 +107,14 @@ pub(super) fn decode_image(
     }) {
         return Err(codec_error());
     }
+    // A pad row rides an image by reference (KS-5): never at rest with its
+    // pad beside it.
+    if image.databases["entities"]
+        .iter()
+        .any(|(_, value)| !crate::world_keys::image_pad_form_ok(value))
+    {
+        return Err(codec_error());
+    }
     let id = blake3::Hash::from(opened.image_id).to_hex().to_string();
     Ok((image, id, opened.bodies, opened.custody))
 }

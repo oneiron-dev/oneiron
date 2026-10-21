@@ -118,6 +118,7 @@ pub(super) fn receipt(
             dropped_gate_decisions: report.dropped_gate_decisions.clone(),
             custody_note: report.custody_note.clone(),
             training_note: report.training_note.clone(),
+            pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
         },
         admission: admission_wire(admission),
         evidence: context.plan.evidence.clone(),

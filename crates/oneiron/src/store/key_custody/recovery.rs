@@ -117,8 +117,8 @@ impl Store {
     /// Nor is the known-value index's master or history (KS-3): an image's
     /// references name each one it needs, which a restore requires the same
     /// way, and an entry no reference names is never needed. Nor is a world
-    /// pad (KS-5): a restore lands its row when current custody holds it and
-    /// names its world unavailable when not, never refused.
+    /// pad (KS-5): an image names each pad by its row's reference, which a
+    /// restore plans the same way and decides per row (FIX 5686 part 2).
     pub(crate) fn custody_requirement(&self) -> Result<Option<CustodyRequirement>> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(None);
@@ -346,6 +346,7 @@ pub(crate) fn admit_recovery(
                     LogEntry::RetireRecipient(fact) => {
                         admitted.recipients.insert(fact.fingerprint, fact);
                     }
+                    LogEntry::PublicationPolicy(_) => {}
                 }
             }
             admitted.position = anchored;

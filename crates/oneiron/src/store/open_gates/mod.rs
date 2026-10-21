@@ -34,8 +34,8 @@ pub(crate) use self::open_version_keys::{
     TEXT_INDEX_SCHEMA_VERSION, VECTOR_VERSION_KEY,
 };
 pub(in crate::store) use self::read_only_door::not_an_existing_root;
-pub(crate) use self::read_only_door::read_existing_embedding_model;
 pub(in crate::store) use self::read_only_door::read_existing_vault_meta;
+pub(crate) use self::read_only_door::{read_existing_embedding_model, read_existing_entity_rows};
 // Test-only seam (gate/mod.rs precedent): the store test suite names these
 // bare through `use super::*`, but no non-test code outside `open_gates/`
 // reaches them through the seam, so the re-exports live under `cfg(test)`.

@@ -31,6 +31,16 @@ impl Vault {
         // The store's backup incarnation is minted before its first
         // snapshot reads it (the backup watermark).
         self.mint_backup_incarnation()?;
+        // Every pad a row holds goes into current custody first, outside
+        // the custody guard, so the image names it by reference (KS-5, FIX
+        // 5686 part 2). One that does not go rides as its carrier.
+        if let Err(error) = self.prepare_image_pads() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "world key pads were not prepared for this image; any custody lacks rides as \
+                 its carrier"
+            );
+        }
         loop {
             // Every body the image carries has its instance minted and bound
             // first, before the snapshot and its custody guard, the mints
@@ -173,11 +183,13 @@ impl Vault {
                 let value = if let Some(stripped) = stripped {
                     stripped
                 } else if entry.name == "entities"
-                    && let Some(carrier) = crate::world_keys::image_pad_row(&self.store, value)
+                    && let Some(reference) =
+                        crate::world_keys::image_pad_projection(&self.store, value)
                 {
-                    // A pad row at rest names its pad in custody; the image
-                    // carries the pad as it always did, until FIX 5686 part 2.
-                    carrier
+                    // A pad row goes by its bare reference, its pad left in
+                    // current custody, which a restore takes it from (KS-5,
+                    // FIX 5686 part 2).
+                    reference
                 } else if entry.name == "job_records" {
                     rebuild::unlease_attempt(key, value)?
                 } else {

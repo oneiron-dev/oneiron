@@ -94,6 +94,11 @@ pub struct RestoreReportWire {
     pub dropped_gate_decisions: Vec<String>,
     pub custody_note: Option<String>,
     pub training_note: Option<String>,
+    /// The world key pads the restore did not land at rest, each as the
+    /// engine words it: erased since the image, withheld by their world's
+    /// sealed copies setting, or pending. Absent when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pad_notes: Vec<String>,
 }
 
 /// Everything the restore verified, beside what the plan expected.

@@ -33,6 +33,11 @@ pub(crate) struct Restored {
     /// brought no training link key (FIX 5892).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) training_note: Option<String>,
+    /// The world key pads the restore did not land at rest (KS-5): erased
+    /// since the backup, withheld by their world's sealed copies setting, or
+    /// pending as in the vault it replaced.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pad_notes: Vec<String>,
 }
 
 /// Restores `backup` over the stopped vault at `vault_path`.
@@ -286,6 +291,7 @@ fn restore_over_with(
         kinds,
         durability_warning,
         training_note: report.training_note,
+        pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
     })
 }
 
@@ -312,6 +318,11 @@ pub(crate) struct RestoredFresh {
     /// brought no training link key (FIX 5892).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) training_note: Option<String>,
+    /// The world key pads the restore did not land at rest (KS-5): erased
+    /// since the backup, withheld by their world's sealed copies setting, or
+    /// pending as in the vault it replaced.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pad_notes: Vec<String>,
 }
 
 /// Why a new-host restore of a backup that names no custody head left a
@@ -369,6 +380,7 @@ pub(crate) fn restore_fresh(
             dropped_gate_decisions: report.dropped_gate_decisions,
             custody_note: report.custody_note,
             training_note: report.training_note,
+            pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
         },
     ))
 }
@@ -395,6 +407,10 @@ pub(crate) struct Activated {
     /// its training link key did not come with it (FIX 5892, FIX 6033).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) training_note: Option<String>,
+    /// The world key pads the activation took out because the vault that
+    /// replaced it erased them since (KS-5).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pad_notes: Vec<String>,
 }
 
 /// Activates the archived vault a restore over `vault_path` set aside at
@@ -420,6 +436,7 @@ pub(crate) fn activate(
         dropped_gate_decisions: report.dropped_gate_decisions,
         custody_note: report.custody_note,
         training_note: report.training_note,
+        pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
     })
 }
 

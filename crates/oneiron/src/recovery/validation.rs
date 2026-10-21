@@ -210,6 +210,10 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
             return Err(invalid("entity time range"));
         }
         let body = &entity.blob[ENTITY_METADATA_HEADER_LEN..];
+        // A pad row rides by reference, never at rest with its pad (KS-5).
+        if !crate::world_keys::image_pad_form_ok(&entity.blob) {
+            return Err(invalid("world key pad at rest"));
+        }
         if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM && !body.is_empty() {
             let claim = crate::claim::validate_claim_body_and_decode(body, true)?;
             if claim.world != world

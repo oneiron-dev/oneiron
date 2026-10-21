@@ -56,6 +56,9 @@ const OP_RETIRE: u8 = 2;
 /// A released escrow recipient retired (LC FIX 5384/5385): an op of its
 /// own, never a custody kind's tag.
 const OP_RETIRE_RECIPIENT: u8 = 3;
+/// A change of the publication policy heads are sealed under (KS-5, FIX
+/// 7191): content-free, an op of its own.
+const OP_PUBLICATION_POLICY: u8 = 4;
 
 pub(super) fn log_corrupt() -> Error {
     Error::CorruptedIndex("key custody log")
@@ -235,6 +238,11 @@ pub(crate) enum LogEntry {
     /// restore, at its takeover writer epoch: its label, public-key
     /// fingerprint and receipt id, never a key.
     RetireRecipient(RecipientRetirement),
+    /// Every head sealed from here on follows the publication policy whose
+    /// digest this is: which worlds' pads each member's head leaves out
+    /// (KS-5, FIX 7191). It names no key and retires none; it moves the log
+    /// on, so every member's head is sealed and acknowledged again.
+    PublicationPolicy([u8; 32]),
 }
 
 impl LogEntry {
@@ -243,6 +251,11 @@ impl LogEntry {
             Self::RetireRecipient(fact) => {
                 let mut out = vec![OP_RETIRE_RECIPIENT];
                 out.extend_from_slice(&fact.encode());
+                return out;
+            }
+            Self::PublicationPolicy(digest) => {
+                let mut out = vec![OP_PUBLICATION_POLICY];
+                out.extend_from_slice(digest);
                 return out;
             }
             Self::Mint(id) => (OP_MINT, id.subject(), id.generation(), None),
@@ -271,6 +284,11 @@ impl LogEntry {
             return RecipientRetirement::decode(fact)
                 .map(Self::RetireRecipient)
                 .ok_or_else(log_corrupt);
+        }
+        if let Some((&OP_PUBLICATION_POLICY, digest)) = bytes.split_first() {
+            return <[u8; 32]>::try_from(digest)
+                .map(Self::PublicationPolicy)
+                .map_err(|_| log_corrupt());
         }
         let decoded = (|| {
             let (&op, rest) = bytes.split_first()?;

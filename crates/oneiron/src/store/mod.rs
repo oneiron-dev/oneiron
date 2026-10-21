@@ -215,8 +215,8 @@ pub(crate) use key_custody::{
     CustodyPlan, CustodyRecipients, CustodyRequirement, CustodyRoute, CustodySourceAt,
     CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, Publication,
     PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
-    refuse_foreign_binding, retirement_in_txn, route_custody, standing_retirements_in_txn,
-    unbind_in_txn as unbind_custody_in_txn,
+    TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
+    standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
 };
 pub(crate) use key_encoding::*;
 // KS-3: the known-value index's master and history in typed custody.
@@ -256,5 +256,5 @@ pub(crate) use sync_responses::{
 #[cfg(test)]
 pub(crate) use test_hooks::TestHooks;
 pub(crate) use training_link::TrainingLinkSlot;
-pub(crate) use world_pad_custody::WorldPadCustody;
+pub(crate) use world_pad_custody::{PlannedPad, WorldPadCustody, plan_world_pad};
 pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};

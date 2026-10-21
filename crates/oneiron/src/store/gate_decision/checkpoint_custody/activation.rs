@@ -130,9 +130,15 @@ impl Store {
     /// and this install's machine identity dropped, the replacement keeping
     /// it. Anything short of that leaves it archived, as it was. The caller
     /// reopens the vault, whose handles then shred only its own keys.
-    /// Returns the claim-bound decisions dropped because their keys stayed
-    /// on another host, by id (hex), as a restore's report names them.
-    pub(crate) fn activate_archived(&self, source: &LiveCustody) -> Result<Vec<String>> {
+    /// Its world key pads go through the same plan (KS-5, FIX 5686 part 2):
+    /// a pad `source` retired takes its row out, never back from the row's
+    /// own pad, and a live one forks with the rest. Returns the claim-bound
+    /// decisions dropped because their keys stayed on another host, by id
+    /// (hex), as a restore's report names them, and the pads erased.
+    pub(crate) fn activate_archived(
+        &self,
+        source: &LiveCustody,
+    ) -> Result<(Vec<String>, Vec<crate::world_keys::WorldKeyId>)> {
         let rows = {
             let txn = self.env.read_txn()?;
             let mark = ARCHIVED.get(self, &txn, &())?;
@@ -155,6 +161,7 @@ impl Store {
         let mut kept = rows.clone();
         require_known_history(&mut kept, custody.plan_mut())?;
         let prune = ArchivePrune::of(&rows, kept, &retired)?;
+        let erased_pads = crate::world_keys::plan_archived_pads(self, custody.plan_mut())?;
         // The environment's path is the canonical root it was opened at.
         let root = self.env.path().to_path_buf();
         refuse_custody_beside(&root)?;
@@ -167,6 +174,7 @@ impl Store {
         let committed = self
             .prune_bodies_in_txn(&mut wtxn, &prune)
             .and_then(|()| self.drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased()))
+            .and_then(|()| crate::world_keys::drop_pad_rows_in_txn(self, &mut wtxn, &erased_pads))
             .and_then(|()| self.read_back_in_txn(&wtxn))
             .and_then(|()| self.read_back_bodies_in_txn(&wtxn, &prune.kept))
             .and_then(|()| self.read_back_known_in_txn(&wtxn, &prune.kept))
@@ -181,7 +189,8 @@ impl Store {
             }
             return Err(err);
         }
-        Ok(custody.lost().iter().map(|(id, _)| id.to_hex()).collect())
+        let lost = custody.lost().iter().map(|(id, _)| id.to_hex()).collect();
+        Ok((lost, erased_pads.into_iter().map(|(_, key)| key).collect()))
     }
 
     /// Applies `prune` in `wtxn`: its row deletions and rewrites, each
