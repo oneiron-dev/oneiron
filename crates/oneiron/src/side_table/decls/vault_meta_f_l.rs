@@ -46,8 +46,16 @@ side_tables! {
     FEEDBACK_REPORT_ARRIVAL: VaultMeta b"feedback:report-arrival:v1:" Named;
     /// T2 report membership and vectors, keyed by the first ISSUE id.
     FEEDBACK_REPORT_CLUSTER: VaultMeta b"feedback:report-cluster:v1:" Named;
+    /// One issue's publisher delivery lane (OF-420, FIX 739): the frozen ED-08 signature and its
+    /// wire bytes and digest, the frozen destination and logical send, the hold, and the last
+    /// send's receipt and outcome. Key: id16 (the ISSUE) + bytes32 (blake3 of the lane key).
+    FEEDBACK_REPORT_DELIVERY: VaultMeta b"feedback:report-delivery:v1:" Named;
     /// Owner disclosure preference, keyed by the resolved publisher reference.
     FEEDBACK_REPORT_DISCLOSURE: VaultMeta b"feedback:report-disclosure:v1:" Named;
+    /// The owner's binding of a publisher to this host's feedback destination (OF-420): its
+    /// channel and exact endpoint, where that publisher's issue signatures go. Key: publisher
+    /// reference.
+    FEEDBACK_REPORT_PUBLISHER_ENDPOINT: VaultMeta b"feedback:report-publisher-endpoint:v1:" Named;
     /// Host-stamped subject provenance or owner routing policy. Key: subject reference.
     FEEDBACK_REPORT_ROUTE: VaultMeta b"feedback:report-route:v1:" Named;
     /// The SKILL the Coach's feedback triage runs, as the owner bound it, with the binding's

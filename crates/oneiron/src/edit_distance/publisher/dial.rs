@@ -64,10 +64,24 @@ impl RawValue for DialToken {
 /// never wrote.
 pub fn publisher_enabled(vault: &Vault) -> PublisherResult<bool> {
     let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-    if let Some(explicit) = ENABLED.get(&vault.store, &rtxn, &())? {
+    Ok(publisher_enabled_in_txn(vault, &rtxn)?)
+}
+
+/// [`publisher_enabled`] on the caller's transaction, for a check made under
+/// a writer: the publisher delivery rechecks the dial where it admits a send
+/// (OF-420).
+///
+/// # Errors
+///
+/// As [`publisher_enabled`].
+pub(crate) fn publisher_enabled_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<bool> {
+    if let Some(explicit) = ENABLED.get(&vault.store, txn, &())? {
         return Ok(explicit.0);
     }
-    if let Some(profile) = INSTALL_DEFAULT.get(&vault.store, &rtxn, &())? {
+    if let Some(profile) = INSTALL_DEFAULT.get(&vault.store, txn, &())? {
         return Ok(profile.0);
     }
     Ok(PUBLISHER_ENABLED_COMPILED_DEFAULT)
