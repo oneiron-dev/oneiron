@@ -1660,6 +1660,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/executor/decisions.rs` | src | m | 1 struct · 1 fn · 7 crate-vis | ConsolidationDecisions | The consolidation's typed questions through the host's ladder: how a conflict set resolves and which… |
 | `src/dreamer_consolidation/executor/extraction.rs` | src | L | 16 crate-vis | — | Extraction request/response projection for one admitted branch, and the typed pack that decides which listed… |
 | `src/dreamer_consolidation/executor/extraction/cited.rs` | src | s | 3 crate-vis | — | The extraction step's citation check (FIX 7274): a TURN byte range that verification would refuse the whole… |
+| `src/dreamer_consolidation/executor/failure.rs` | src | s | 1 crate-vis | — | How a partition attempt's failed step parks with what it spent (FIX 414) |
 | `src/dreamer_consolidation/executor/merge_resolution.rs` | src | s | 5 crate-vis | — | A conflict set's resolution: the typed pack (how it resolves, and which candidate's identity a merge keeps)… |
 | `src/dreamer_consolidation/extracted_people.rs` | src | s | 1 crate-vis | — | Explicit PERSON outputs from the production extraction response |
 | `src/dreamer_consolidation/failure_rules.rs` | src | m | 1 fn · 13 crate-vis | — | Resident-owned v1 failure rules for the two Dreamer consolidation call sites |
@@ -1678,6 +1679,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/persistence.rs` | src | s | 1 fn · 5 crate-vis | — | Persistent contradiction markers and prior-head context for consolidation |
 | `src/dreamer_consolidation/person_about.rs` | src | m | 1 struct · 2 fn · 1 const · 5 crate-vis | PersonAboutExecutor | PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the… |
 | `src/dreamer_consolidation/provenance.rs` | src | L | 6 struct · 1 enum · 2 trait · 10 fn · 1 re-export · 9 crate-vis | ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, ConsolidationProvenanceHopKind, ConsolidationSink, KeptDecision, PeerAnswerLineage, PeerTrustDigestLine, PeerTrustDigestSink +1 | — |
+| `src/dreamer_consolidation/recipe_failure.rs` | src | s | 3 crate-vis | — | What a failed consolidation recipe step parks as (OF-193a, Engine 10-21) |
 | `src/dreamer_consolidation/redirty.rs` | src | m | 15 crate-vis | — | The re-dirty carrier: a TURN whose final words changed after a round may have consumed it is pending again… |
 | `src/dreamer_consolidation/residency.rs` | src | s | 3 crate-vis | — | A read refused only because a TURN's tagged MESSAGE is away from this replica (a window demoted back to… |
 | `src/dreamer_consolidation/resident_dream.rs` | src | L | 3 struct · 3 fn · 1 const · 3 crate-vis | ResidentDreamModel, ResidentDreamPartial, ResidentDreamProgress | A resident's own dreaming (OF-490, ARCH-0026 frame): each resident dreams under its own stamp, on its own… |
@@ -1700,7 +1702,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/selection.rs` | src | s | 5 struct · 1 enum · 7 fn · 1 crate-vis | SelectionCandidate, SelectionConfig, SelectionHold, SelectionPlan, StrengthSignals, StrengthWeights | Mechanical candidate selection |
 | `src/dreamer_consolidation/settle.rs` | src | L | 8 struct · 2 enum · 3 fn · 1 const · 11 crate-vis | ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions, ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass, RevertedSettlement +2 | Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`) |
 | `src/dreamer_consolidation/sieve_attempt.rs` | src | m | 1 crate-vis | — | The sieve's owed novelty/typing rungs and its sampled expensive-path audit |
-| `src/dreamer_consolidation/step_charge.rs` | src | s | 8 crate-vis | — | Attempt-local step spend due to the shared wake ledger after memo replay |
+| `src/dreamer_consolidation/step_charge.rs` | src | s | 9 crate-vis | — | Attempt-local step spend due to the shared wake ledger after memo replay |
 | `src/dreamer_consolidation/strength.rs` | src | m | 2 struct · 3 fn · 3 crate-vis | ConsolidationStrengthPolicy, ConsolidationStrengthSnapshot | Consolidation strength observations and an archive-only lifecycle (OF-216) |
 | `src/dreamer_consolidation/support.rs` | src | s | 12 const · 30 crate-vis | — | — |
 | `src/dreamer_consolidation/task_realize.rs` | src | m | 1 struct · 1 fn · 1 const · 2 crate-vis | TaskRealizeModel | A Dreamer-lane TASK's realization: the one row `tasks.create` queues for a TASK routed to the Dreamer |
@@ -1861,7 +1863,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/recipe.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | WeaveRecipePin | Per-vault, owner-admitted workflow skill binding for the Dreamer weave |
 | `src/dreamer_runner/store.rs` | src | L | 1 struct · 17 fn · 27 crate-vis | DreamerRunnerStore | The Dreamer runner store: queue lifecycle, park/resume, and readers |
 | `src/dreamer_runner/tests.rs` | test | L | — | — | — |
-| `src/dreamer_runner/types.rs` | src | m | 26 struct · 13 enum · 20 fn · 1 const · 4 crate-vis | AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload +31 | Dreamer runner request/outcome vocabulary and its pure impls |
+| `src/dreamer_runner/types.rs` | src | L | 26 struct · 13 enum · 20 fn · 1 const · 4 crate-vis | AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload +31 | Dreamer runner request/outcome vocabulary and its pure impls |
 | `src/dreamer_runner/wake_park.rs` | src | s | 1 struct · 2 fn | DreamerCheckpointDue | The runner side of the normal Checkpoint resume (DOOR-144): the parks it reads, and the projection the… |
 | `src/dreamer_tournament/evidence.rs` | src | s | 1 struct · 2 fn · 4 crate-vis | DreamerTournamentEvidenceStore | Branch-evidence and critique-artifact rows: keyspace, codec, and the read/write store |
 | `src/dreamer_tournament/mod.rs` | src | s | 3 re-export | — | OF-366 tournament claim-authoring runner primitives |
@@ -1869,8 +1871,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_tournament/tests.rs` | test | m | — | — | — |
 | `src/dreamer_tournament/types.rs` | src | m | 14 struct · 3 enum · 12 fn · 4 const · 10 crate-vis | DreamerTournamentAuthorFork, DreamerTournamentBlindJudgeContext, DreamerTournamentBordaBallot, DreamerTournamentBranch, DreamerTournamentBranchEvidence, DreamerTournamentBranchVerdict, DreamerTournamentCandidate, DreamerTournamentCandidateIdentity +9 | Tournament wire types, their validating constructors, and the pinned bounds |
 | `src/dreamer_tournament/validate.rs` | src | m | 19 crate-vis | — | Every structural predicate the tournament refuses on, and the one error constructor |
-| `src/dreamer_wake/deadline.rs` | src | s | 2 struct · 14 fn · 3 const · 3 crate-vis | WakeCancellation, WakePassDeadline | Monotonic wake-pass clock and cooperative cancellation flag |
-| `src/dreamer_wake/driver.rs` | src | L | 1 struct · 10 fn · 4 const · 1 crate-vis | DreamerWakeDriver | The wake loop: admit, warn, dispatch under panic containment, stop conditions |
+| `src/dreamer_wake/deadline.rs` | src | s | 2 struct · 16 fn · 3 const · 3 crate-vis | WakeCancellation, WakePassDeadline | Monotonic wake-pass clock and cooperative cancellation flag |
+| `src/dreamer_wake/driver.rs` | src | L | 1 struct · 10 fn · 5 const · 1 crate-vis | DreamerWakeDriver | The wake loop: admit, warn, dispatch under panic containment, stop conditions |
 | `src/dreamer_wake/driver/attribution.rs` | src | s | 1 crate-vis | — | One structured line per admitted attempt the pass did not complete (FIX 7271): who it was, where it ended… |
 | `src/dreamer_wake/driver/concurrent.rs` | src | s | 1 fn | — | Poll disjoint MACRO buckets together, with one wake snapshot and meter |
 | `src/dreamer_wake/driver/executor_error.rs` | src | s | 1 crate-vis | — | The executor-error arm (H-S5/R2, ONE-1683; FIX 7272): what a non-deadline error settles and parks before it… |

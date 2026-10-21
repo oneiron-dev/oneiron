@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1170 code-mode rows (1130 host rows, 40 run rows), 3897 declarations.
-// Replies: 1050 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1171 code-mode rows (1131 host rows, 40 run rows), 3904 declarations.
+// Replies: 1051 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2180,6 +2180,14 @@ declare namespace Sdk {
   type OriginPublicationState = "prepared" | "published" | "failed" | "conflicted";
   type OriginPublicationView = { receipt: EntityId; repo_id: EntityId; ref_name: string; git_commit: string; provenance_receipt: EntityId; publication_claim?: EntityId | null; actor?: EntityId | null; status: OriginPublicationState; failure?: string | null; created_at: number; finished_at?: number | null };
   type CodeExportResult = { revision: EntityId; git_commit: string; remote_url: string; receipt: EntityId; publication: OriginPublicationView; ref_was_already_applied: boolean; wire_replayed: boolean; wire_rejected: boolean };
+  type CodeImportAcceptance = { manifest_digest: string; baseline_revision: EntityId; catalog: LensCatalog; review_verdict?: EntityId | null };
+  type CodeRepoImportRequest = { repo: string; project: EntityId; source_ref: string; source_commit: string; admission_receipt: EntityId; accept?: CodeImportAcceptance | null };
+  type CodeImportAnchor = { repo: EntityId; project: EntityId; served_repo: string; object_store: string; source_ref: string; source_commit: string; source_tree: string; admission_receipt: EntityId; receive_provenance: EntityId; snapshot: EntityId; snapshot_fork_hash: string };
+  type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number; mode: number };
+  type CodeImportManifestFile = { git_oid: string; file: CodeSnapshotFile };
+  type CodeImportManifestView = { manifest_ref: EntityId; digest: string; anchor: CodeImportAnchor; inventory_digest: string; files: CodeImportManifestFile[] };
+  type CodeRepoImportState = "manifest_ready" | "held_baseline" | "held_review" | "promoted";
+  type CodeRepoImportView = { manifest: CodeImportManifestView; state: CodeRepoImportState; baseline_revision?: EntityId | null; promotion_receipt?: EntityId | null };
   type OriginRegisterRequest = { repo: string; default_branch: string };
   type OriginRegistered = { repo: string; repo_id: EntityId; default_branch: string };
   type OriginRepoRequest = { repo: string };
@@ -2261,7 +2269,6 @@ declare namespace Sdk {
   type CodeCacheReadRequest = { account: EntityId; action_digest: CodeActionDigest };
   type CodeRepoPointer = { local_folder: string; commit: string };
   type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer };
-  type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number };
   type CodeSnapshotView = { repo: EntityId; repo_ref: string; project_id: string; commit?: string | null; snapshot: string; scope_key: string; files: CodeSnapshotFile[] };
   type CodeSnapshotRequest = { repo: EntityId; snapshot: string };
   type CodeSnapshotReadRequest = { repo: EntityId; snapshot: string; path: string };
@@ -3446,7 +3453,7 @@ declare namespace Sdk {
   type BlobContent = { content_base64: string };
   type ConsolidationEnqueueRequest = { scope: string; input: unknown; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
   type ConsolidationStatusRequest = { job_ref: string };
-  type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "retry" | "cancelled" | "signal" | "other";
+  type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "retry" | "paused" | "cancelled" | "signal" | "other";
   type DreamerParkedAttemptView = { job_ref: string; cause: DreamerParkCauseView; parked_at: number };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number; parked?: DreamerParkedAttemptView | null };
   type ConsolidationWakeStatusRequest = { job_ref?: string | null; wake_ref?: string | null; limit?: number | null; cursor?: string | null };
@@ -4907,6 +4914,8 @@ declare const vault: Sdk.VaultHost & {
     diff(input: Sdk.CodeDiffRequest): Promise<Sdk.CodeDiffView | null | StoredResult>;
     /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
     export(input: Sdk.CodeExportRequest): Promise<Sdk.CodeExportResult | StoredResult>;
+    /** Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only. */
+    import(input: Sdk.CodeRepoImportRequest): Promise<Sdk.CodeRepoImportView | StoredResult>;
     merge_queue: {
       /** Queue one fast or slow check on exact pinned inputs. Owner only. Excess checks wait; no pass, argv or output is accepted from the caller. */
       check(input: Sdk.MergeQueueCheckRequest): Promise<Sdk.MergeQueueCheckWorkView | StoredResult>;

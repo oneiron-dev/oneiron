@@ -35,7 +35,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/compaction/tests.rs` | test | s | 1 crate-vis | — | A compaction pass is bounded work: it outlives the call that started it, so its thread holds a permit of its… |
 | `src/ai_host/connector_event.rs` | src | s | 2 crate-vis | — | The served connector-event responder (OF-519): what a Dreamer pass runs when a subscribed Slack or LINE… |
 | `src/ai_host/contribution.rs` | src | m | 2 crate-vis | — | The host's replay capsule for the Coach's contribution checks (FIX 3028): the concrete… |
-| `src/ai_host/dreamer.rs` | src | L | 16 crate-vis | — | The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the… |
+| `src/ai_host/dreamer.rs` | src | L | 19 crate-vis | — | The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the… |
 | `src/ai_host/dreamer/compaction_check.rs` | src | s | 2 crate-vis | — | The host's loan to the Dreamer's check of a self-written compaction (FIX 4465 B): the weaver's narrative… |
 | `src/ai_host/dreamer/free_time.rs` | src | s | 1 crate-vis | — | A resident's free-time items on this server (FIX 4453) |
 | `src/ai_host/dreamer/run_log.rs` | src | s | 1 crate-vis | — | The outcome line of an attempt the server's Dreamer executor ended without completing it (FIX 7271): who it… |
@@ -47,7 +47,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/judge_swap.rs` | src | s | 2 crate-vis | — | The Coach's judge-swap upkeep on this server (OF-184) |
 | `src/ai_host/lens_callbacks.rs` | src | s | 2 crate-vis | — | OF-181 (FIX 2611): a lens card's model round trip goes back to the agent that rendered the card, as that… |
 | `src/ai_host/local_vision.rs` | src | m | 8 crate-vis | — | The Local-vision seat as the decision ladder's Local rung (OF-329 over OF-600): the small vision model bound… |
-| `src/ai_host/mod.rs` | src | L | 2 struct · 22 fn · 1 mod · 1 re-export · 35 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
+| `src/ai_host/mod.rs` | src | L | 2 struct · 22 fn · 1 mod · 1 re-export · 36 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
 | `src/ai_host/payer_funding.rs` | src | m | 7 crate-vis | — | Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805) |
 | `src/ai_host/policy.rs` | src | s | 5 crate-vis | — | The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to… |
 | `src/ai_host/question_timer.rs` | src | s | 3 crate-vis | — | The hand-off of a bound Dreamer's timer work (OF-506, FIX 1149) |
@@ -58,7 +58,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/shadow_runner/model.rs` | src | s | 3 crate-vis | — | The arm's model gateway (PR-S1): one strict call of a captured step's request, by the pattern of the… |
 | `src/ai_host/skill_author.rs` | src | m | 2 crate-vis | — | The Coach's skill-edit author (OF-214) |
 | `src/ai_host/skill_discovery.rs` | src | m | 2 crate-vis | — | The Coach's skill discovery (ARCH-0056 §5, ARCH-0066 #coach, OF-420): the standing attribution classifier… |
-| `src/ai_host/status.rs` | src | s | 4 struct · 3 enum · 9 crate-vis | AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus | Live state of the server's background AI work, shared between the workers that change it and the routes that… |
+| `src/ai_host/status.rs` | src | s | 5 struct · 4 enum · 9 crate-vis | AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, UnservedNote, UnservedReason, WorkState +1 | Live state of the server's background AI work, shared between the workers that change it and the routes that… |
 | `src/ai_host/step.rs` | src | m | 9 crate-vis | — | One saved-workflow step on a model seat |
 | `src/ai_host/step/secret_use.rs` | src | s | 4 crate-vis | — | `self.use` on a saved-workflow text step (FIX 2315) |
 | `src/ai_host/step_failure.rs` | src | s | 3 crate-vis | — | A failed workflow step, settled through the engine's typed failure ladder: the one door that may retry or… |
@@ -885,7 +885,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/settings.rs` | src | m | 6 crate-vis | — | The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in… |
 | `src/managed/shed.rs` | src | s | 3 crate-vis | — | Mapping the engine's shed transaction, and the supervisor's SLIM status and unslim (FIX 5186), to the… |
 | `src/managed/state_serve.rs` | src | XL | 3 struct · 17 fn · 1 type · 1 const · 18 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
-| `src/managed/state_serve/admission.rs` | src | s | 17 crate-vis | — | The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until… |
+| `src/managed/state_serve/admission.rs` | src | s | 20 crate-vis | — | The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until… |
 | `src/managed/state_serve/boot_keys.rs` | src | s | 3 crate-vis | — | The vault data key's boot steps (moved out of `state_serve`): the page seal a managed vault opens with, its… |
 | `src/managed/state_serve/control.rs` | src | s | 1 fn · 2 crate-vis | — | The ctl dispatcher: every parsed ctl request a managed vault answers |
 | `src/managed/state_serve/idle_backup.rs` | src | m | 4 crate-vis | — | The backup before an idle reap (`prepare_idle_reap`, Engine 10-20 backup shipper row (a), co-signed with LC) |
@@ -1000,10 +1000,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/bundle/manifest.rs` | src | s | 9 crate-vis | — | The manifest's common rows: the trunk, its config and tokenizer, the label table and the optional heads |
 | `src/oneironer/bundle/mod.rs` | src | s | 11 crate-vis | — | The Oneironer bundle as every runtime reads it (FIX 6755): one manifest schema, one identity and one archive… |
 | `src/oneironer/bundle/platform.rs` | src | m | 16 crate-vis | — | The manifest's runtime rows (contract rev 3, B1-B2): the Core ML model and the MLX worker, one archive each |
-| `src/oneironer/dispatcher/capacity.rs` | src | s | 9 crate-vis | — | Room in the dispatcher's pending caps, as owned claims (FIX 6755) |
+| `src/oneironer/dispatcher/capacity.rs` | src | s | 10 crate-vis | — | Room in the dispatcher's pending caps, as owned claims (FIX 6755) |
 | `src/oneironer/dispatcher/eligibility.rs` | src | s | 8 crate-vis | — | Which worker may run which call (FIX 6755 slice 2b) |
 | `src/oneironer/dispatcher/lifecycle.rs` | src | s | 12 crate-vis | — | The life of a supervised worker (FIX 6755 slice 3, Engine call 3): a platform runtime's managed process… |
-| `src/oneironer/dispatcher/mod.rs` | src | m | 20 crate-vis | — | The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready… |
+| `src/oneironer/dispatcher/mod.rs` | src | m | 21 crate-vis | — | The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready… |
 | `src/oneironer/dispatcher/policy.rs` | src | s | 8 crate-vis | — | The dispatcher's policy (Engine 10-21, FIX 6755 rulings 3 and 4): the one definition of each hold, batch cap… |
 | `src/oneironer/dispatcher/worker.rs` | src | m | 21 crate-vis | — | One worker: a model loaded on one engine, or the one opaque endpoint, on its own thread |
 | `src/oneironer/endpoint.rs` | src | m | 12 crate-vis | — | The `endpoint` provider: a tagger server on this machine that speaks the slot's contract |
@@ -1022,7 +1022,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/mlx/mod.rs` | src | m | 4 crate-vis | — | The server-owned managed MLX worker (FIX 6755 slice 3, contract rev 3 A1-A4): a bundle's `mlx-worker`… |
 | `src/oneironer/mlx/process.rs` | src | s | 6 crate-vis | — | The MLX worker's process (FIX 6755 slice 3, contract rev 3 A1, A3b): one child and the threads that own its… |
 | `src/oneironer/mlx/protocol.rs` | src | m | 13 crate-vis | — | The MLX worker's wire, protocol `oneironer-worker-v2` (FIX 6755 slice 3, contract rev 3 A2-A3, Engine call… |
-| `src/oneironer/mod.rs` | src | m | 25 crate-vis | — | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
+| `src/oneironer/mod.rs` | src | m | 26 crate-vis | — | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
 | `src/oneironer/release.rs` | src | m | 25 crate-vis | — | The shipped Oneironer releases, and the fetch that places one on this machine (FIX 6828) |
 | `src/oneironer/release/catalogue.rs` | src | s | 2 crate-vis | — | The shipped release catalogue (FIX 6755) |
 | `src/oneironer/release/platforms.rs` | src | s | 6 crate-vis | — | The platform half of a fetch (FIX 6755): which archives a fetch places, their extraction in staging, and the… |

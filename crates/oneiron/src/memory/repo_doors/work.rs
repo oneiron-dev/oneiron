@@ -329,5 +329,6 @@ pub(super) fn snapshot_file(entry: &CodebaseFileEntry) -> CodeSnapshotFile {
         path: entry.path.clone(),
         content_hash_blake3: bytes_to_hex_lower(&entry.content_hash),
         size_bytes: entry.size_bytes,
+        mode: entry.mode,
     }
 }

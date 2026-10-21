@@ -23,6 +23,14 @@ pub trait PassAttachment {
     /// Serves alongside `pass` and must drive `pass` to completion: the pass
     /// is never dropped mid-await (H-S5/R2), so neither may its wrapper.
     fn serve<'p>(self: Box<Self>, pass: WakePassFuture<'p>) -> AttachedPassFuture<'p>;
+
+    /// What must outlive the pass's last write (FIX 6909): taken once as
+    /// the pass starts, and held by the supervisor through the timer work
+    /// after the wake as well. The default holds everything in
+    /// [`Self::serve`].
+    fn take_pass_hold(&mut self) -> Option<Box<dyn Send>> {
+        None
+    }
 }
 
 /// Host configuration that may attach work to each pass.
