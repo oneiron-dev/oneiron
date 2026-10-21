@@ -636,17 +636,21 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                 SelfAgentSpawnResult::Queued {
                     attempt_ref,
                     launch,
+                    unapplied,
                 } => AgentSpawnOutput::Queued {
                     kind: AgentSpawnKind::AgentSpawn,
                     attempt: crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes()),
                     launch: launch.clone(),
+                    unapplied: unapplied.clone(),
                 },
-                SelfAgentSpawnResult::ProposedWiden { proposal_ref } => {
-                    AgentSpawnOutput::ProposedWiden {
-                        kind: AgentSpawnKind::AgentSpawn,
-                        proposal: proposal_ref.clone(),
-                    }
-                }
+                SelfAgentSpawnResult::ProposedWiden {
+                    proposal_ref,
+                    unapplied,
+                } => AgentSpawnOutput::ProposedWiden {
+                    kind: AgentSpawnKind::AgentSpawn,
+                    proposal: proposal_ref.clone(),
+                    unapplied: unapplied.clone(),
+                },
             };
             json!({ "output": spawn })
         }

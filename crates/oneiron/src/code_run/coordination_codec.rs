@@ -5,7 +5,7 @@ use super::support::{
 };
 use super::{SelfAgentSpawnCall, SelfAgentSpawnResult};
 use crate::Result;
-use crate::agent_dispatch::AgentDispatchTarget;
+use crate::agent_dispatch::{AgentDispatchTarget, SpawnUnapplied};
 use crate::task_verb::{
     TaskAskHandle, TaskAskHoldReason, TaskAskReceipt, TaskAskSpec, TaskAskStatus,
 };
@@ -100,11 +100,26 @@ pub(super) fn ask_request(call: &TaskAskSpec) -> Result<Value> {
         .map_err(|_| invalid_code_run_replay("ask request encode"))
 }
 
+/// OF-541: what a spawn left unapplied replays as it was reported.
+fn unapplied_value(unapplied: &[SpawnUnapplied]) -> Result<Value> {
+    let bytes = rmp_serde::to_vec_named(unapplied)
+        .map_err(|_| invalid_code_run_replay("spawn unapplied encode"))?;
+    rmpv::decode::read_value(&mut bytes.as_slice())
+        .map_err(|_| invalid_code_run_replay("spawn unapplied encode"))
+}
+
+fn decode_unapplied(m: &[(Value, Value)]) -> Result<Vec<SpawnUnapplied>> {
+    let bytes = rmp_serde::to_vec_named(map_get(m, "unapplied")?)
+        .map_err(|_| invalid_code_run_replay("spawn unapplied decode"))?;
+    rmp_serde::from_slice(&bytes).map_err(|_| invalid_code_run_replay("spawn unapplied decode"))
+}
+
 pub(super) fn spawn_value(result: &SelfAgentSpawnResult) -> Result<Value> {
     Ok(match result {
         SelfAgentSpawnResult::Queued {
             attempt_ref,
             launch,
+            unapplied,
         } => request_map(vec![
             ("kind", Value::from("agent_spawn")),
             ("state", Value::from("queued")),
@@ -125,11 +140,16 @@ pub(super) fn spawn_value(result: &SelfAgentSpawnResult) -> Result<Value> {
                     None => Value::Nil,
                 },
             ),
+            ("unapplied", unapplied_value(unapplied)?),
         ]),
-        SelfAgentSpawnResult::ProposedWiden { proposal_ref } => request_map(vec![
+        SelfAgentSpawnResult::ProposedWiden {
+            proposal_ref,
+            unapplied,
+        } => request_map(vec![
             ("kind", Value::from("agent_spawn")),
             ("state", Value::from("proposed_widen")),
             ("proposal", Value::from(proposal_ref.as_str())),
+            ("unapplied", unapplied_value(unapplied)?),
         ]),
     })
 }
@@ -152,9 +172,11 @@ pub(super) fn decode_spawn(value: &Value) -> Result<SelfAgentSpawnResult> {
                     )
                 }
             },
+            unapplied: decode_unapplied(m)?,
         }),
         "proposed_widen" => Ok(SelfAgentSpawnResult::ProposedWiden {
             proposal_ref: str_value(map_get(m, "proposal")?)?.to_owned(),
+            unapplied: decode_unapplied(m)?,
         }),
         _ => Err(invalid_code_run_replay("spawn state")),
     }

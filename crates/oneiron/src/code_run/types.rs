@@ -1100,8 +1100,13 @@ pub enum SelfAgentSpawnResult {
         /// The statement frozen at launch (OF-532): its agent count,
         /// expected spend and cap. `None` only for a launch that stated none.
         launch: Option<crate::agent_dispatch::LaunchStatement>,
+        /// OF-541: the asked fields a direct spawn did not apply, and why.
+        /// Empty for a planned spawn.
+        unapplied: Vec<crate::agent_dispatch::SpawnUnapplied>,
     },
     ProposedWiden {
         proposal_ref: String,
+        /// As on `Queued`.
+        unapplied: Vec<crate::agent_dispatch::SpawnUnapplied>,
     },
 }

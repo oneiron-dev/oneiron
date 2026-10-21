@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 22] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 23] = [
     "schema_version",
     "target",
     "agent_def",
@@ -53,6 +53,7 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 22] = [
     "plan",
     "objectives",
     "comm",
+    "direct_spawn",
 ];
 
 pub(super) const KEY_SCHEMA_VERSION: &str = AGENT_DISPATCH_INPUT_KEYS[0];
@@ -89,6 +90,8 @@ pub(super) const KEY_PLAN: &str = AGENT_DISPATCH_INPUT_KEYS[19];
 pub(super) const KEY_OBJECTIVES: &str = AGENT_DISPATCH_INPUT_KEYS[20];
 /// FIX 1380: the comm reach the dispatch resolved at spawn. Required.
 pub(super) const KEY_COMM: &str = AGENT_DISPATCH_INPUT_KEYS[21];
+/// OF-541: a direct spawn's whole ask and what it left unapplied. Required.
+pub(super) const KEY_DIRECT_SPAWN: &str = AGENT_DISPATCH_INPUT_KEYS[22];
 
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
@@ -184,6 +187,11 @@ pub struct AgentDispatchInput {
     /// the spawn's request or its role's default, clamped to its parent's.
     /// ARCH-0067: "`comm` is whom the child may address".
     pub comm: super::CommReach,
+    /// OF-541: a direct spawn's whole ask, and the asked fields it did not
+    /// apply and why. `None` for a dispatch with no ask and for a planned
+    /// spawn, whose `plan` records its ask. Never authority, and never part
+    /// of `spawn_intent`: a retry is the same spawn whatever it asked.
+    pub direct_spawn: Option<super::DirectSpawnReceipt>,
 }
 
 impl AgentDispatchInput {
@@ -210,6 +218,7 @@ impl AgentDispatchInput {
             plan: None,
             objectives: None,
             comm: super::comm::default_comm_reach(super::comm::SpawnRole::Worker),
+            direct_spawn: None,
         }
     }
 }
@@ -267,6 +276,10 @@ pub struct AgentSpawnContext {
     /// FIX 1380: the comm reach the spawner asks for. `None` takes the
     /// spawn role's default; either is clamped to the parent's reach.
     pub comm: Option<super::CommReach>,
+    /// OF-541: a direct spawn's receipt, staged by the spawning run for
+    /// dispatch to freeze. Never read to execute the spawn, and outside its
+    /// intent digest.
+    pub direct_spawn: Option<super::DirectSpawnReceipt>,
 }
 
 impl AgentSpawnContext {

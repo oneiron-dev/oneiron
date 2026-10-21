@@ -16,10 +16,10 @@ use crate::write_envelope::WriteActor;
 use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
     AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_BUDGET,
-    KEY_COMM, KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_LAUNCH,
-    KEY_OBJECTIVES, KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET, KEY_PROJECT_REF,
-    KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_REF, KEY_TEAM,
-    TARGET_CUSTOM, TARGET_SYSTEM,
+    KEY_COMM, KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING,
+    KEY_DIRECT_SPAWN, KEY_LAUNCH, KEY_OBJECTIVES, KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET,
+    KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET,
+    KEY_TASK_TYPE_REF, KEY_TEAM, TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use crate::error::ArtifactError;
 
@@ -187,6 +187,17 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
     }
     // FIX 1380: the comm reach is required, so every dispatch carries one.
     entries.push((Value::from(KEY_COMM), Value::from(input.comm.as_str())));
+    // OF-541: a direct spawn's receipt, or Nil. Required, so every dispatch
+    // carries the key.
+    let direct_spawn = match &input.direct_spawn {
+        Some(receipt) => Value::from(serde_json::to_string(receipt).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "direct spawn receipt must encode",
+            ))
+        })?),
+        None => Value::Nil,
+    };
+    entries.push((Value::from(KEY_DIRECT_SPAWN), direct_spawn));
     Ok(Value::Map(entries))
 }
 
@@ -239,6 +250,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut plan = None;
     let mut objectives = None;
     let mut comm = None;
+    let mut direct_spawn = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -486,6 +498,24 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     )),
                 )?);
             }
+            KEY_DIRECT_SPAWN => {
+                direct_spawn = Some(if value.is_nil() {
+                    None
+                } else {
+                    let json = value.as_str().ok_or(Error::Artifact(
+                        ArtifactError::InvalidAgentDispatchInput(
+                            "direct_spawn must be a serialized direct spawn receipt",
+                        ),
+                    ))?;
+                    let receipt: super::DirectSpawnReceipt =
+                        serde_json::from_str(json).map_err(|_| {
+                            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                                "direct_spawn must decode as a direct spawn receipt",
+                            ))
+                        })?;
+                    Some(receipt)
+                });
+            }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
     }
@@ -509,6 +539,10 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let comm = comm.ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
         "missing required agent dispatch input key comm",
     )))?;
+    let direct_spawn =
+        direct_spawn.ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "missing required agent dispatch input key direct_spawn",
+        )))?;
 
     // Cross-field target invariant (mirrors `resolve_scope` in agent_def.rs):
     // the id/preset key is present iff the target discriminant selects it.
@@ -560,6 +594,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         plan,
         objectives,
         comm,
+        direct_spawn,
     })
 }
 

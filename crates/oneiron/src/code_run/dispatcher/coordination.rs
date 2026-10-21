@@ -269,6 +269,9 @@ impl<'a> HostSelfDispatcher<'a> {
         // placed and planned; otherwise the named target runs, under the
         // carve the ask's budget narrows.
         let planned = self.planner_bound() && self.agent_lease.is_some();
+        // OF-541: the asked fields a direct spawn did not apply, relayed on
+        // its result; a planned spawn lists none.
+        let mut unapplied = Vec::new();
         let (target, context) = match (call.ask, call.target) {
             // DOOR-111 S4c-4: with the run's own pattern runner bound too,
             // the ask is reserved under its intent key and launched whole, a
@@ -280,6 +283,15 @@ impl<'a> HostSelfDispatcher<'a> {
             (ask, Some(target)) => {
                 let mut context = call.context;
                 if let Some(ask) = ask {
+                    // The whole ask rides the child with what it left
+                    // unapplied; what runs below is unchanged.
+                    let receipt = crate::agent_dispatch::direct_spawn_receipt(
+                        &ask,
+                        self.planner_bound(),
+                        self.agent_lease.is_some(),
+                    );
+                    unapplied.clone_from(&receipt.unapplied);
+                    context.direct_spawn = Some(receipt);
                     super::leader::narrow_budget(&mut context, ask.budget_cap_units.as_ref());
                     // With no planner bound, a leased agent's spawn is still
                     // placed on its need text (the rule rung reads it);
@@ -322,15 +334,18 @@ impl<'a> HostSelfDispatcher<'a> {
                 SelfAgentSpawnResult::Queued {
                     attempt_ref: status.attempt.id,
                     launch,
+                    unapplied,
                 }
             }
             AgentDispatchOutcome::WorkflowDispatched(status)
             | AgentDispatchOutcome::WorkflowExisting(status) => SelfAgentSpawnResult::Queued {
                 attempt_ref: status.attempt.id,
                 launch,
+                unapplied,
             },
             AgentDispatchOutcome::ProposedWiden(proposal) => SelfAgentSpawnResult::ProposedWiden {
                 proposal_ref: proposal.proposal_id,
+                unapplied,
             },
         }))
     }

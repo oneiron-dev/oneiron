@@ -98,6 +98,7 @@ impl HostSelfDispatcher<'_> {
                 }
                 SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::ProposedWiden {
                     proposal_ref,
+                    ..
                 }) => {
                     observed.proposals.push(proposal_ref.clone());
                     (None, Some(proposal_ref))
