@@ -23,9 +23,11 @@
 //! The calls (canon silent), each in one place:
 //! - [`ELICITATION_WAIT`]: a round of questions lapses this long after it
 //!   arrived; its worker then cancels it and ends the session.
-//! - [`MAX_LIVE_ELICITATIONS`]: the live question sets one server holds; a
-//!   connector that asks while it is full gets a `cancel` at once and the
-//!   call goes on without it.
+//! - The live question sets one server holds are the `[limits]` row
+//!   `connector_live_questions` (FIX 3895): a question past it still
+//!   registers and waits like any other, and the row asks whether
+//!   everything is okay. Only the memory floor and a round's deadline end
+//!   a question.
 //! - [`answer_connector_question`]'s owner ask: under `always ask` an answer
 //!   that carries content waits, within the round's deadline, for the
 //!   owner's yes on exactly that answer; a no sends a decline, a lapse
@@ -55,9 +57,6 @@ use crate::server::SyncServer;
 /// How long one round of a connector's questions stays live, from when it
 /// arrived.
 pub(crate) const ELICITATION_WAIT: Duration = Duration::from_secs(120);
-
-/// The live question sets one server holds at once.
-pub(crate) const MAX_LIVE_ELICITATIONS: usize = 64;
 
 /// How often an answer waiting on the owner reads the ask again, for an
 /// answer given through a door that wakes no waiter.
@@ -120,12 +119,14 @@ pub(crate) enum WorkerEvent {
 }
 
 /// A question set the registry took in: its handle, its round's deadline,
-/// and the worker's end of its channel.
+/// the worker's end of its channel, and the live sets the registry held
+/// with it.
 pub(crate) struct Registered {
     pub(crate) handle: String,
     pub(crate) deadline: Instant,
     pub(crate) expires_at_ms: u64,
     pub(crate) commands: mpsc::Receiver<AnswerCommand>,
+    pub(crate) live: usize,
 }
 
 /// One live question set.
@@ -152,17 +153,15 @@ impl ConnectorElicitationRegistry {
         self.live.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Takes in a new question set and mints its handle; `None` when the
-    /// registry is full.
+    /// Takes in a new question set and mints its handle. It never refuses
+    /// one: how many it holds is the `[limits]` row's to measure
+    /// (FIX 3895).
     pub(crate) fn register(
         &self,
         binding: QuestionBinding,
         questions: &[ConnectorQuestion],
-    ) -> Option<Registered> {
+    ) -> Registered {
         let mut live = self.lock();
-        if live.len() >= MAX_LIVE_ELICITATIONS {
-            return None;
-        }
         let handle = loop {
             let handle = mint_handle();
             if !live.contains_key(&handle) {
@@ -191,12 +190,13 @@ impl ConnectorElicitationRegistry {
                 commands: sender,
             },
         );
-        Some(Registered {
+        Registered {
             handle,
             deadline,
             expires_at_ms,
             commands,
-        })
+            live: live.len(),
+        }
     }
 
     /// Opens round `generation` of `handle` with `questions` and a fresh

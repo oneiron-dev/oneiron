@@ -247,6 +247,7 @@ impl ServedConnectorCallHost {
         Some(Declared {
             capability,
             intake,
+            vault: self.vault.as_ref(),
             registry: &self.elicitations,
             binding: QuestionBinding {
                 principal,
@@ -525,6 +526,8 @@ struct Declared<'a> {
     capability: Value,
     intake: Intake,
     binding: QuestionBinding,
+    /// The vault whose `[limits]` row measures the live question sets.
+    vault: &'a Vault,
     registry: &'a Arc<ConnectorElicitationRegistry>,
 }
 
@@ -733,21 +736,13 @@ impl<'a> Exchange<'a> {
                         }
                         continue;
                     };
-                    let request_id = request.get("id").unwrap_or(&Value::Null);
-                    if let Some(round) = declared.keep_questions(vec![question], value) {
-                        // The request's id waits zeroized (FIX 8054).
-                        let request_id = KeptWire::keep(request_id);
-                        let continuation = Continuation::Stream { stream, request_id };
-                        let body = request.to_string().into_bytes();
-                        let kept = value.map(SentValue::keep);
-                        return hand_over(declared, round, continuation, live, body, kept);
-                    }
-                    // A full registry: the question is cancelled at once,
-                    // and the call goes on without it.
-                    if let Some(live) = live.as_ref() {
-                        let cancel = elicitation_response(ConnectorAnswerAction::Cancel, None);
-                        let _ = live.respond(request_id, "result", cancel);
-                    }
+                    let round = declared.keep_questions(vec![question], value);
+                    // The request's id waits zeroized (FIX 8054).
+                    let request_id = KeptWire::keep(request.get("id").unwrap_or(&Value::Null));
+                    let continuation = Continuation::Stream { stream, request_id };
+                    let body = request.to_string().into_bytes();
+                    let kept = value.map(SentValue::keep);
+                    return hand_over(declared, round, continuation, live, body, kept);
                 }
                 Ok(StreamEvent::End) | Err(()) => {
                     return Sent::ambiguous("connector_reply_unreadable");
@@ -758,8 +753,7 @@ impl<'a> Exchange<'a> {
 
     /// The connector's answer to `tools/call`. A 2026-07-28 result that asks
     /// for input, on a send that declared it, hands `live` to a worker; any
-    /// other result is the tool's, and so is that one when the registry is
-    /// full.
+    /// other result is the tool's.
     fn call_answered(
         &self,
         message: &Value,
@@ -772,8 +766,8 @@ impl<'a> Exchange<'a> {
             .as_ref()
             .filter(|declared| declared.intake == Intake::Retry)
             && let Some((questions, request_state)) = retry_questions(message)
-            && let Some(round) = declared.keep_questions(questions, value)
         {
+            let round = declared.keep_questions(questions, value);
             let continuation = Continuation::Retry {
                 tool: self.tool.to_owned(),
                 arguments: self.arguments.clone(),
