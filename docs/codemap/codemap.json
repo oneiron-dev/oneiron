@@ -45015,6 +45015,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ConnectorCallInput"
+     ],
+     "path": "src/outbound_consent/connector_call_input.rs",
+     "purpose": "A connector call whose connector asked for input, kept on the call's own row (ONE-2510, FIX 3837; canon…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/outbound_consent/connector_call_output.rs",
      "purpose": "A connector call's reply after its send (FIX 7646, FIX 7647): the host that sent it cleared it of the…",
@@ -45099,7 +45113,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -65499,7 +65513,7 @@
      "path": "src/verbs/connector_call.rs",
      "purpose": "`connector.call` and `connector.schema` (ONE-2510): one tool of one catalogued connector, called by name…",
      "surface": {
-      "const": 1,
+      "const": 2,
       "enum": 3,
       "fn": 9,
       "struct": 6
@@ -71666,7 +71680,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72291,7 +72305,7 @@
    },
    "over_bar": 171,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4629,
+   "source_files": 4630,
    "test_files": 902
   },
   "oneiron-android": {
@@ -93252,7 +93266,7 @@
      "path": "src/connector_elicitation.rs",
      "purpose": "The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
