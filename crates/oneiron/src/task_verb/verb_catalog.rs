@@ -82,6 +82,7 @@ pub enum AgentVerb {
     VaultFanoutAck,
     TasksUpdate,
     TasksAccept,
+    TasksRedo,
     VaultCommitMessage,
     VaultBeginMessageStream,
     VaultAppendToStream,
@@ -1236,6 +1237,7 @@ impl AgentVerb {
         Self::VaultFanoutAck,
         Self::TasksUpdate,
         Self::TasksAccept,
+        Self::TasksRedo,
         Self::VaultCommitMessage,
         Self::VaultBeginMessageStream,
         Self::VaultAppendToStream,
@@ -2393,6 +2395,7 @@ impl AgentVerb {
             Self::VaultFanoutAck => "vault.fanout.ack",
             Self::TasksUpdate => "tasks.update",
             Self::TasksAccept => "tasks.accept",
+            Self::TasksRedo => "tasks.redo",
             Self::VaultCommitMessage => "vault.commit_message",
             Self::VaultBeginMessageStream => "vault.begin_message_stream",
             Self::VaultAppendToStream => "vault.append_to_stream",
@@ -3577,6 +3580,7 @@ impl AgentVerb {
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -4759,6 +4763,7 @@ impl AgentVerb {
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -5822,6 +5827,7 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::TasksRedo
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
@@ -6080,6 +6086,7 @@ impl AgentVerb {
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
+                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -7124,6 +7131,7 @@ impl AgentVerb {
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -7756,6 +7764,7 @@ impl AgentVerb {
             Self::SelfStandingEdit
                 | Self::Cancel
                 | Self::TasksCreate
+                | Self::TasksRedo
                 | Self::VaultClaimsUpsert
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultClusterPropose
@@ -7777,7 +7786,10 @@ impl AgentVerb {
         matches!(self, Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer)
     }
     pub const fn takes_task_decisions(self) -> bool {
-        matches!(self, Self::TasksCreate | Self::TasksUpdate)
+        matches!(
+            self,
+            Self::TasksCreate | Self::TasksUpdate | Self::TasksRedo
+        )
     }
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
@@ -7879,6 +7891,7 @@ impl AgentVerb {
             Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["spec", "task_ref"],
             Self::TasksAccept => &["spec", "task_ref"],
+            Self::TasksRedo => &["spec"],
             Self::VaultCommitMessage => &["spec"],
             Self::VaultBeginMessageStream => &["spec"],
             Self::VaultAppendToStream => &["spec"],
@@ -9034,6 +9047,7 @@ impl AgentVerb {
             Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["spec", "task_ref"],
             Self::TasksAccept => &["spec", "task_ref"],
+            Self::TasksRedo => &["spec"],
             Self::VaultCommitMessage => &["spec"],
             Self::VaultBeginMessageStream => &["spec"],
             Self::VaultAppendToStream => &["spec"],
@@ -10339,6 +10353,9 @@ impl AgentVerb {
             }
             Self::TasksAccept => {
                 "Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."
+            }
+            Self::TasksRedo => {
+                "Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."
             }
             Self::VaultCommitMessage => {
                 "Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes."

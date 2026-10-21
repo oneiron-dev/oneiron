@@ -5549,6 +5549,9 @@ class Oneiron:
         def accept(self, spec):
             """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
             return json.loads(_translate(lambda: self._client.tasks_accept(json.dumps(spec))))
+        def redo(self, spec):
+            """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
+            return json.loads(_translate(lambda: self._client.tasks_redo(json.dumps(spec))))
         def answer(self, handle, word):
             """Admits one person's word on an ask; the word is evidence, never approval."""
             return json.loads(_translate(lambda: self._client.tasks_answer(json.dumps({"handle": handle, "word": word}))))

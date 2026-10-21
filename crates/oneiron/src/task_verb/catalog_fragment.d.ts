@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1181 code-mode rows (1141 host rows, 40 run rows), 3995 declarations.
-// Replies: 1061 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1182 code-mode rows (1142 host rows, 40 run rows), 3996 declarations.
+// Replies: 1062 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -443,6 +443,7 @@ declare namespace Sdk {
   type TaskUpdateReceipt = { task_ref: EntityId; acked: boolean; report?: TaskCallReceipt | null };
   type ReaderReportReceipt = { task: EntityId; ref: string; replay: boolean };
   type TaskAccept = { task_ref: EntityId; intent_key: string };
+  type TaskRedo = { task_ref: EntityId; intent_key: string };
   type WitnessAuthor = "user" | "companion" | "system";
   type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] };
   type QuoteSpan = { message: EntityId; start: number; end: number };
@@ -4490,6 +4491,8 @@ declare const tasks: {
   create(input: Sdk.TaskCreateRequest): Promise<Sdk.TaskCreateReceipt | StoredResult>;
   /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
   outcomes(input: Sdk.TaskAskHandle): Promise<Sdk.CalibrationPair[] | StoredResult>;
+  /** Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written. */
+  redo(input: Sdk.TaskRedo): Promise<Sdk.TaskCallReceipt | StoredResult>;
   refuse(input: Sdk.TaskRefuseInput): Promise<Sdk.TaskRefuseOutput | StoredResult>;
   /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries. */
   update(input: Sdk.TaskUpdateRequest & { resultRef: NonNullable<Sdk.TaskUpdateRequest["resultRef"]> }): Promise<Sdk.ReaderReportReceipt | StoredResult>;

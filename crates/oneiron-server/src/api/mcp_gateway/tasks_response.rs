@@ -966,6 +966,7 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
+        "tasks.redo" => a.spec.clone().ok_or_else(invalid),
         "vault.commit_message" => a.spec.clone().ok_or_else(invalid),
         "vault.begin_message_stream" => a.spec.clone().ok_or_else(invalid),
         "vault.append_to_stream" => a.spec.clone().ok_or_else(invalid),
@@ -2445,6 +2446,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             if let Some(value) = input.get("task_ref") {
                 arguments.insert("task_ref".to_owned(), value.clone());
             }
+        }
+        "tasks.redo" => {
+            arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.commit_message" => {
             arguments.insert("spec".to_owned(), input.clone());
@@ -6900,6 +6904,20 @@ async fn execute_agent_verb_row(
             served.extend([input.task_ref]);
             let output =
                 oneiron::task_verb::sdk::tasks_accept(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.redo" => {
+            let input: oneiron::task_verb::TaskRedo =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.task_ref]);
+            let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| {
+                oneiron::task_verb::sdk::tasks_redo(memory, input)
+            })
+            .await?;
+            // Derived from the rows its reads listed, on a refusal too.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

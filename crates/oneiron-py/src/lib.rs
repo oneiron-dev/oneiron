@@ -918,6 +918,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn tasks_redo(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.redo")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.redo", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_commit_message(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.commit_message")?;
         let output = py
