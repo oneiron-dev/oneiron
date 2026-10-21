@@ -1,9 +1,12 @@
 //! The host owns renderer configuration; acquisition itself stays in the engine.
 //!
 //! A managed (hosted) node's fetcher never reaches the infrastructure it runs
-//! on (SCAN C447): the engine refuses each page it is asked for, typed, and
-//! this client refuses every address it connects to, a redirect's included,
-//! with the same [`HostedEgressGuard`]. A self-hosted node fetches as before.
+//! on (SCAN C447): the engine refuses each page it is asked for and each hop,
+//! address and landing its rungs reach, typed, and this client refuses every
+//! address it connects to, a redirect's included, with the same
+//! [`HostedEgressGuard`]. The guard reads the node's own addresses afresh at
+//! each check, and a ladder the host supplied carries it too (FIX 6101). A
+//! self-hosted node fetches as before.
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
@@ -17,7 +20,9 @@ use super::SyncServer;
 
 impl SyncServer {
     /// Supplies the host's fixed renderer ladder, including any isolated
-    /// headless or self-hosted Firecrawl adapters. No caller controls it.
+    /// headless or self-hosted Firecrawl adapters. No caller controls it. On
+    /// a managed node it carries the hosted egress guard like the default
+    /// ladder (FIX 6101), installed at first use.
     #[must_use]
     pub fn with_web_fetcher(mut self, fetcher: WebFetcher) -> Self {
         self.web_fetcher = std::sync::OnceLock::from(Arc::new(fetcher));
@@ -26,36 +31,48 @@ impl SyncServer {
 
     /// Called off the async runtime. The default rung is a credential-free
     /// native GET; a host that supplies a ladder keeps that exact ladder. On
-    /// a managed node the default ladder carries the hosted egress guard.
+    /// a managed node every ladder, a supplied one included, carries the
+    /// hosted egress guard.
     pub(crate) fn web_fetcher(&self) -> MemoryResult<Arc<WebFetcher>> {
-        if let Some(fetcher) = self.web_fetcher.get() {
-            return Ok(Arc::clone(fetcher));
-        }
         // The managed switch every hosted-only rule reads: set only by
         // managed boot.
         let guard = self
             .managed_issuer
             .is_some()
-            .then(|| Arc::new(HostedEgressGuard::new(node_addresses())));
-        let builder = reqwest::blocking::Client::builder().no_proxy();
-        let builder = match &guard {
-            Some(guard) => builder
-                .dns_resolver(Arc::new(HostedResolver(Arc::clone(guard))))
-                .redirect(hosted_redirects(Arc::clone(guard))),
-            None => builder,
+            .then(|| Arc::new(HostedEgressGuard::new(node_addresses)));
+        let fetcher = match self.web_fetcher.get() {
+            Some(fetcher) => Arc::clone(fetcher),
+            None => {
+                let fetcher = default_web_fetcher(guard.as_ref())?;
+                Arc::clone(self.web_fetcher.get_or_init(|| Arc::new(fetcher)))
+            }
         };
-        let client = builder.build().map_err(|_| {
-            MemoryError::new("WEB_FETCH_FAILED", "web HTTP client unavailable", &[])
-        })?;
-        let mut fetcher = WebFetcher::new(Arc::new(NativeReadabilityRenderer::new(client)))
-            .map_err(|error| MemoryError::new("WEB_FETCH_FAILED", error.to_string(), &[]))?;
+        // Installed here, at first use, and not by the builder: managed boot
+        // sets the switch after the builder chain, so only now is it final.
+        // Every fetch reaches the ladder through this call, so none runs
+        // unguarded on a managed node (FIX 6101).
         if let Some(guard) = guard {
-            fetcher = fetcher.with_hosted_egress_guard(guard);
+            fetcher.install_hosted_egress_guard(guard);
         }
-        Ok(Arc::clone(
-            self.web_fetcher.get_or_init(|| Arc::new(fetcher)),
-        ))
+        Ok(fetcher)
     }
+}
+
+/// The default ladder: one credential-free native GET rung, its client
+/// refusing hosted infrastructure at every connection on a managed node.
+fn default_web_fetcher(guard: Option<&Arc<HostedEgressGuard>>) -> MemoryResult<WebFetcher> {
+    let builder = reqwest::blocking::Client::builder().no_proxy();
+    let builder = match guard {
+        Some(guard) => builder
+            .dns_resolver(Arc::new(HostedResolver(Arc::clone(guard))))
+            .redirect(hosted_redirects(Arc::clone(guard))),
+        None => builder,
+    };
+    let client = builder
+        .build()
+        .map_err(|_| MemoryError::new("WEB_FETCH_FAILED", "web HTTP client unavailable", &[]))?;
+    WebFetcher::new(Arc::new(NativeReadabilityRenderer::new(client)))
+        .map_err(|error| MemoryError::new("WEB_FETCH_FAILED", error.to_string(), &[]))
 }
 
 /// A managed client's resolver: every name a fetch connects to, a
@@ -77,7 +94,9 @@ async fn resolve_admitted(
     host: String,
 ) -> Result<reqwest::dns::Addrs, Box<dyn std::error::Error + Send + Sync>> {
     let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
-    if addresses.iter().any(|address| guard.refuses(address.ip())) {
+    // Every address the name resolves to now, at connect time: a name that
+    // rebinds after the engine's own check is refused here (FIX 6101).
+    if guard.refuses_any(addresses.iter().map(SocketAddr::ip)) {
         return Err(Box::new(HostedInfrastructureRefusal));
     }
     Ok(Box::new(addresses.into_iter()))
@@ -102,7 +121,10 @@ fn hosted_redirects(guard: Arc<HostedEgressGuard>) -> reqwest::redirect::Policy 
 
 /// This node's own addresses, as far as the standard library reaches them:
 /// the source address it sends from on each family (a connected UDP socket
-/// sends nothing), and on Linux every local address the kernel lists.
+/// sends nothing), and on Linux, where managed nodes run, every local address
+/// the kernel lists. The guard calls it at every check, so an address
+/// assigned after boot is refused too (FIX 6101); each call is a few
+/// syscalls and two small procfs reads.
 fn node_addresses() -> BTreeSet<IpAddr> {
     let mut found = BTreeSet::new();
     let probes = [

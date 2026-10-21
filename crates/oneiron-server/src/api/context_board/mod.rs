@@ -3,6 +3,8 @@
 //! The board renders on every call; without retrieval it carries no MEMORIES section.
 
 mod board;
+mod chat_emit;
+pub(crate) use chat_emit::{ChatContextCapture, freeze_chat_context, record_chat_answer};
 mod cursor;
 mod explain;
 mod history;
@@ -13,6 +15,7 @@ pub(crate) use reply::generate_reply;
 mod scratchpad;
 mod session;
 mod standing;
+mod turn_actions;
 
 pub(crate) use board::{
     ContextBoardProjectControls, ContextBoardRenderBudget, ContextBoardRoomControls,
@@ -24,6 +27,7 @@ pub(crate) use memories::*;
 pub(crate) use prefix::*;
 pub(crate) use scratchpad::*;
 pub(crate) use session::*;
+pub(crate) use turn_actions::action_board;
 
 use super::CoreContextPackRequest;
 use super::CoreContextPackResponse;
@@ -170,6 +174,11 @@ pub(crate) struct ContextBoardResponse {
     /// What recording the named TURN's board wrote; absent without `turn`.
     #[serde(skip_serializing_if = "Option::is_none")]
     board_turn: Option<ContextBoardTurnRecord>,
+    /// What a chat turn's context records keep of this render (FIX 6921);
+    /// never on the wire.
+    #[serde(skip)]
+    #[schema(ignore)]
+    chat_context: Option<ChatContextCapture>,
 }
 
 /// Session prefix: API level, entity counts by numeric type, latest activity.
@@ -505,6 +514,9 @@ pub(crate) async fn context_board_hydrate(
     )
     .map_err(board::board_frame_error)?;
     let board_budget = ContextBoardRenderBudget::of(&board_render);
+    // What a chat turn's context records keep of this render (FIX 6921).
+    let chat_context =
+        chat_emit::capture_chat_context(&auth, memories.as_ref(), &parts.authority, &board_render);
 
     // Only a trusted host may install a run snapshot. Caller-controlled HTTP
     // fields choose neither authority nor the epoch; an absent snapshot is
@@ -569,6 +581,7 @@ pub(crate) async fn context_board_hydrate(
         readers,
         self_brief,
         board_turn: None,
+        chat_context,
     };
     match board_turn {
         // The turn's record is part of the response the budget counts, so the
@@ -787,6 +800,9 @@ pub(crate) struct ChatBoard {
     pub(crate) block: String,
     /// Every row the board served.
     pub(crate) rows: Vec<oneiron::EntityId>,
+    /// What the turn's context records keep of it (FIX 6921); `None` when
+    /// its MEMORIES did not match its settled render.
+    pub(crate) context: Option<ChatContextCapture>,
 }
 
 /// The board for a chat turn's `query`, hydrated as `ai.reply` hydrates its
@@ -819,5 +835,6 @@ pub(crate) async fn chat_board(
     Ok(ChatBoard {
         block: context.board,
         rows: served.0.rows,
+        context: context.chat_context,
     })
 }

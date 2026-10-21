@@ -27,7 +27,7 @@ pub use code_fix::{
     InventedRole, ReplayFidelity, ReplayRun, ScrubRun, ShadowRun,
 };
 pub(crate) use code_fix::{
-    SealedCodeFix, Sealing, code_fix_subject_in, dispatch_worlds_in, exact_replay_request,
+    ExactReplay, SealedCodeFix, Sealing, code_fix_subject_in, dispatch_worlds_in, exact_replay,
     failed_case_in, queue_sealed_in_txn,
 };
 pub use delivery::{

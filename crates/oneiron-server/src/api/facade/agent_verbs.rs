@@ -721,6 +721,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.agents.dreaming.set", post(facade_route))
         .route("/vault.agents.grants.mint", post(facade_route))
         .route("/vault.agents.grants.revoke", post(facade_route))
+        .route("/vault.repo.git_push.mint", post(facade_route))
+        .route("/vault.repo.git_push.revoke", post(facade_route))
         .route("/vault.agents.base", post(facade_route))
         .route("/vault.standing_blocks.configure", post(facade_route))
         .route("/vault.standing_blocks.reconfigure", post(facade_route))

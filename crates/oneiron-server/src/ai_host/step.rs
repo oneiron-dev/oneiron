@@ -17,7 +17,7 @@
 //! none, or one that does not parse, records none.
 use std::collections::{BTreeMap, HashMap};
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispatch_actor};
@@ -34,6 +34,7 @@ use oneiron::{
 use super::CHAT_ROLE;
 use super::payer_funding::{PayerFault, requires_payer, scope_funding};
 use crate::models::ModelRuntime;
+use crate::server::SyncServer;
 
 mod secret_use;
 
@@ -41,6 +42,11 @@ use secret_use::StepSecretUse;
 
 /// The purpose a workflow step's calls are metered and routed under.
 const STEP_PURPOSE: &str = "workflow_step";
+
+/// The server a step's `self.use` calls the served secret-use door on (FIX
+/// 7016): bound once serve has it, held weakly. Unbound, or once the server
+/// is gone, a step uses the embedded door.
+pub(super) type StepHost = Arc<OnceLock<Weak<SyncServer>>>;
 
 pub(super) struct StepRunner {
     /// Steps run on the generative role, admitted against the vault's live
@@ -55,6 +61,8 @@ pub(super) struct StepRunner {
     /// follows: the next try replays exactly that. Held only while a retry
     /// may follow, and only in this process.
     pub(super) spent: Mutex<HashMap<AttemptId, u64>>,
+    /// The server each step's `self.use` sends through, once bound.
+    pub(super) host: StepHost,
 }
 
 /// One model-backed step, with instructions supplied by its stored definition.
@@ -432,7 +440,8 @@ impl StepRunner {
             guard.settle_reserved(&spent).map_err(budget)?;
         }
         let replayed = guard.read().used_units;
-        let uses = offers_use.then(|| StepSecretUse::new(vault, attempt, actor, &run_id));
+        let uses =
+            offers_use.then(|| StepSecretUse::new(vault, attempt, actor, &run_id, &self.host));
         // The step is a run on that meter: each rung its call reaches is
         // admitted on its own permit, sent through the run's gate and
         // settled. An answer pays its tokens, or the reservation when it

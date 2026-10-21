@@ -6,6 +6,8 @@
 
 use super::{CodeFixWithheld, FailureSource, failure_source_in};
 use crate::attempt_queue::AttemptRecord;
+use crate::authority::AuthorityFold;
+use crate::code_run::ReadWorldSnapshot;
 use crate::self_heal::blocked_reports::{RunWorlds, blocked_source_in};
 use crate::{EntityId, Result, Vault};
 
@@ -39,8 +41,10 @@ impl SubjectFailure {
 /// (FIX 2343): the request's text, and the worlds the run's host scoped it
 /// to. A run scoped to no dispatch may have read any world, so every world
 /// the vault withholds from an unknown destination counts as touched, and a
-/// conflicted vault root proves none. No source, or one with no request,
-/// leaves the replay unavailable.
+/// conflicted vault root proves none; where those withhold it, a run whose
+/// read-world ledger was complete at its report touched the worlds of the
+/// rows it was served (FIX 6130, [`served_or_inferred`]). No source, or one
+/// with no request, leaves the replay unavailable.
 pub(super) fn blocked_source_failure_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -60,9 +64,10 @@ pub(super) fn blocked_source_failure_in(
             else {
                 return Ok(SubjectFailure::Unproved);
             };
-            std::iter::once(crate::claim::base_world_id())
+            let inferred = std::iter::once(crate::claim::base_world_id())
                 .chain(withheld)
-                .collect()
+                .collect();
+            served_or_inferred(&fold, inferred, source.read_worlds)
         }
         RunWorlds::Unproved => return Ok(SubjectFailure::Unproved),
     };
@@ -71,9 +76,30 @@ pub(super) fn blocked_source_failure_in(
             instructions: request.instructions,
             briefing: request.briefing,
             task: request.task,
+            // A kept request is text only: no reader names the rows behind
+            // it (FIX 6997).
+            source_rows: None,
         },
         worlds,
     ))
+}
+
+/// The worlds a code fix of a run its host scoped to no dispatch discloses
+/// by (FIX 6130): the ones `inferred` for it, every world the vault
+/// withholds from an unknown destination, while they all read everywhere, as
+/// before; else, when the run's read-world ledger was complete at its report
+/// (`served`), the worlds of the rows it was served, which the delivery's own
+/// check reads again; else the inferred ones, which withhold it as before.
+/// Nothing the inferred worlds deliver is withheld.
+fn served_or_inferred(
+    fold: &AuthorityFold,
+    inferred: Vec<EntityId>,
+    served: Option<ReadWorldSnapshot>,
+) -> Vec<EntityId> {
+    match served {
+        Some(served) if !super::all_public(fold, &inferred) => served.worlds,
+        _ => inferred,
+    }
 }
 
 /// The worlds the agent dispatch `attempt` touched: its scope's and its

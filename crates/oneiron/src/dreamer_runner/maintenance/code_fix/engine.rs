@@ -5,7 +5,8 @@
 //! First the Coach's own Grant must read the failing run's scope (FIX 6357):
 //! a live agent Grant whose member is the Coach, from an owner of this vault,
 //! that confers read now and lists every world the run touched. With none
-//! the pair does not run. Then the failing call's captured executor step is
+//! the pair does not run, and is tried again once such a Grant reads that
+//! scope (FIX 7031). Then the failing call's captured executor step is
 //! resolved and kept as its capsule, and read once into one descriptor: its
 //! step, its request's digest (as sent, or as stored masked), its start, the
 //! bodies each arm must be granted, its clock and seed, its sampling seed
@@ -25,6 +26,7 @@
 
 use serde_json::json;
 
+use super::CodeFixSettled;
 use super::instruction::{CoachReplay, request_conversation};
 use super::publisher::{
     CodeFixShadowHost, EngineAdmission, EngineArm, EngineArmStatus, EngineArmSummary,
@@ -222,16 +224,28 @@ fn coach_read_grant(
 ) -> Result<std::result::Result<EntityId, EngineAdmission>> {
     let coach = vault.coach_authority()?.entity_ref();
     let txn = vault.store.env.read_txn()?;
-    let Some(subject) = code_fix_subject_in(vault, &txn, source)? else {
+    coach_read_grant_in_txn(vault, &txn, source, coach)
+}
+
+/// [`coach_read_grant`] read in `txn`, a queue's or a settlement's own
+/// writer among them, for `coach`, the Coach's id resolved outside any
+/// writer (FIX 7031).
+pub(super) fn coach_read_grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: &CodeFixSource,
+    coach: EntityId,
+) -> Result<std::result::Result<EntityId, EngineAdmission>> {
+    let Some(subject) = code_fix_subject_in(vault, txn, source)? else {
         return Ok(Err(EngineAdmission::ScopeUnproved));
     };
     let Ok((_, worlds)) = subject.failure.read() else {
         return Ok(Err(EngineAdmission::ScopeUnproved));
     };
-    let now = vault.instant_in_txn(&txn)?.secs();
-    let owners = crate::policy_model::owners_in_txn(vault, &txn)?;
+    let now = vault.instant_in_txn(txn)?.secs();
+    let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let grant = vault
-        .agent_grants_in_txn(&txn)?
+        .agent_grants_in_txn(txn)?
         .into_iter()
         .find(|standing| {
             let grant = &standing.grant;
@@ -245,6 +259,25 @@ fn coach_read_grant(
     Ok(grant
         .map(|standing| standing.id)
         .ok_or(EngineAdmission::NoGrant))
+}
+
+/// Whether the Coach's Grant now admits a pair of `settled`, the failure
+/// `source`'s runs, that was kept not run for want of one (FIX 7031): the
+/// same admission as the pair's own, read in `txn` only when such a pair is
+/// there; `false` otherwise.
+pub(super) fn read_granted_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    settled: &CodeFixSettled,
+    source: &CodeFixSource,
+    coach: EntityId,
+) -> Result<bool> {
+    let waits = settled.candidates.iter().any(|run| {
+        run.engine
+            .as_ref()
+            .is_some_and(EngineCandidateRun::waits_on_grant)
+    });
+    Ok(waits && coach_read_grant_in_txn(vault, txn, source, coach)?.is_ok())
 }
 
 /// The failing call's captured executor step, kept as its capsule (FIX

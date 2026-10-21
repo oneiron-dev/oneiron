@@ -23,11 +23,10 @@ use super::constants::{
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
-    DreamerAttemptStatus, DreamerConsolidationScope, DreamerParkedAttemptRecord,
-    DreamerRunTreeRecord, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
-    EnqueueDreamerConsolidationAttempt, EnqueueDreamerSkillOptimizeAttempt,
-    EnqueueDreamerVaultCleanupAttempt, FailDreamerAttempt, FailDreamerAttemptOutcome,
-    ParkDreamerAttempt,
+    DreamerAttemptStatus, DreamerParkedAttemptRecord, DreamerRunTreeRecord, EnqueueDreamerAttempt,
+    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
+    EnqueueDreamerSkillOptimizeAttempt, EnqueueDreamerVaultCleanupAttempt, FailDreamerAttempt,
+    FailDreamerAttemptOutcome, ParkDreamerAttempt,
 };
 use crate::error::MaintenanceError;
 
@@ -67,6 +66,9 @@ impl<'a> DreamerRunnerStore<'a> {
         let outcome = self.enqueue_with_task_ref_in_txn(&mut wtxn, input, None)?;
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
+        // FIX 6941: a raw commit has no owner to drain the enqueue's
+        // marker, so the deadline watch hears of the row here.
+        self.vault.store.notify_proactivity_changes();
         Ok(outcome)
     }
 
@@ -120,6 +122,9 @@ impl<'a> DreamerRunnerStore<'a> {
                         created_at: record.created_at,
                     },
                 )?;
+                // FIX 6941: the transaction's owner re-arms the deadline
+                // watch after commit; inert without one, dropped on rollback.
+                crate::batch::queue_proactivity_change(self.vault, wtxn);
                 Ok(EnqueueDreamerAttemptOutcome::Enqueued(
                     decode_dreamer_attempt_status(record)?,
                 ))
@@ -142,16 +147,14 @@ impl<'a> DreamerRunnerStore<'a> {
         &self,
         input: EnqueueDreamerConsolidationAttempt,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        let macro_scope = input.scope == DreamerConsolidationScope::Macro;
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.enqueue_consolidation_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
-        if macro_scope {
-            // A hint drives only Micro; Macro work arms through the deadline
-            // lane, which re-reads on this watch.
-            self.vault.store.notify_proactivity_changes();
-        }
+        // FIX 6941: every scope re-arms the deadline lane, which re-reads on
+        // this watch; a hint drives only Micro, so a directly queued Meso or
+        // Macro job would otherwise wait for an unrelated wake.
+        self.vault.store.notify_proactivity_changes();
         Ok(outcome)
     }
 
@@ -205,6 +208,8 @@ impl<'a> DreamerRunnerStore<'a> {
         let outcome = self.enqueue_skill_optimize_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
+        // FIX 6941: the raw commit's own deadline-watch signal.
+        self.vault.store.notify_proactivity_changes();
         Ok(outcome)
     }
 
@@ -333,6 +338,8 @@ impl<'a> DreamerRunnerStore<'a> {
         let outcome = self.enqueue_vault_cleanup_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
+        // FIX 6941: the raw commit's own deadline-watch signal.
+        self.vault.store.notify_proactivity_changes();
         Ok(outcome)
     }
 
@@ -503,6 +510,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 created_at: record.created_at,
             },
         )?;
+        crate::batch::queue_proactivity_change(self.vault, wtxn);
         Ok(true)
     }
 
@@ -577,6 +585,9 @@ impl<'a> DreamerRunnerStore<'a> {
                         created_at: record.created_at,
                     },
                 )?;
+                // FIX 6941: the transaction's owner re-arms the deadline
+                // watch after commit; inert without one, dropped on rollback.
+                crate::batch::queue_proactivity_change(self.vault, wtxn);
                 Ok(EnqueueDreamerAttemptOutcome::Enqueued(
                     decode_dreamer_attempt_status(record)?,
                 ))

@@ -70,6 +70,12 @@ pub(super) const MATERIALIZED_KEY: &str = "materialized";
 pub enum ConflictSettlement {
     /// This member stands, and each other live member is superseded by it.
     Keep(EntityId),
+    /// The owner approves this member, a Keep of the conflict still waiting
+    /// in its import's review, and keeps it in the same step: it stands
+    /// approved, and each other live member is superseded by it (FIX 6151).
+    /// An optional act of the vault's root owner beside Approve and Keep,
+    /// which stay as they are.
+    ApproveAndKeep(EntityId),
     /// Every member stays active: the pair is held and its gap is known.
     HoldBoth,
     /// The marker named no real contradiction; every member stays as it is.
@@ -81,8 +87,17 @@ impl ConflictSettlement {
     pub const fn label(&self) -> &'static str {
         match self {
             Self::Keep(_) => "keep",
+            Self::ApproveAndKeep(_) => "approve_and_keep",
             Self::HoldBoth => "hold_both",
             Self::Dismiss => "dismiss",
+        }
+    }
+
+    /// The member or retained alternative this settlement keeps, if any.
+    const fn kept(self) -> Option<EntityId> {
+        match self {
+            Self::Keep(kept) | Self::ApproveAndKeep(kept) => Some(kept),
+            Self::HoldBoth | Self::Dismiss => None,
         }
     }
 }
@@ -102,6 +117,9 @@ pub struct OpenConflict {
     pub subject: EntityId,
     /// The stored claims the marker names, in its own order. An id it names
     /// that is no stored claim (a candidate its round dropped) is left out.
+    /// A Keep staged at a fresh id, after a revert or after the owner
+    /// declined one (FIX 7072), linked to the marker, follows them (FIX
+    /// 6152). A staged Keep the owner declined stays a member.
     pub members: Vec<EntityId>,
     /// The candidates the marker's round dropped, retained on it whole (FIX
     /// 496): none is a stored claim or active truth. Keeping one lands it.
@@ -263,15 +281,18 @@ fn open_conflict_from(
         return Ok(None);
     };
     // A landing a reverted settlement made of a retained candidate is no
-    // member: the candidate stays keepable (FIX 5752).
-    let landings = if reverted {
-        super::retained_keep::reverted_landings_in_txn(vault, txn, marker, subject)?
-    } else {
-        Vec::new()
-    };
+    // member: the candidate stays keepable (FIX 5752). A Keep of it staged
+    // since in its import's review is one, standing for it (FIX 6152)
+    // unless the owner declined it there; a declined one stays a member
+    // standing for nothing (FIX 7072).
+    let named = named_ids(&body);
+    let kept =
+        super::retained_keep::keep_history_in_txn(vault, txn, marker, subject, &named, reverted)?;
+    let staged = kept.staged.iter().map(|(_, staged)| *staged);
     let mut members = Vec::new();
-    for id in named_ids(&body) {
-        if !landings.iter().any(|(_, landed)| *landed == id)
+    for id in named.into_iter().chain(staged) {
+        if !members.contains(&id)
+            && !kept.landings.iter().any(|(_, landed)| *landed == id)
             && vault
                 .get_claim_in_txn(txn, &id)?
                 .is_some_and(|member| member.predicate != PREDICATE_CONFLICT_OPEN)
@@ -283,7 +304,7 @@ fn open_conflict_from(
     let alternatives = super::retained_keep::keepable(
         super::retained_conflict::retained_alternatives(&body.value),
         &members,
-        &landings,
+        &kept,
     );
     Ok(Some(OpenConflict {
         marker,
@@ -396,15 +417,17 @@ pub(crate) fn open_conflict_in_txn(
 }
 
 /// Writes `settlement` for `conflict` in the caller's transaction, after the
-/// caller has checked the responder's authority. `Keep` needs a standing
-/// member on the conflict's own subject, or one of its retained alternatives,
-/// which lands first under the current Gate (FIX 496) and must then stand,
-/// and the answer records it as landed, beside the alternative it was made
-/// of; one from imported words is staged in its import's review instead, and
-/// nothing else is written (FIX 5754). Each other Active member on that
-/// subject is superseded by it (a staged replacement that lost drops its
-/// binding, and a pending review tray closes), under the claim lifecycle's
-/// own guards: a generated claim still never supersedes user-stated truth.
+/// caller has checked the responder's authority (and, for `ApproveAndKeep`,
+/// approved the staged member, which is then kept as `Keep` keeps a member).
+/// `Keep` needs a standing member on the conflict's own subject, or one of
+/// its retained alternatives, which lands first under the current Gate (FIX
+/// 496) and must then stand, and the answer records it as landed, beside the
+/// alternative it was made of; one from imported words is staged in its
+/// import's review instead, and nothing else is written (FIX 5754, FIX
+/// 6152). Each other Active member on that subject is superseded by it (a
+/// staged replacement that lost drops its binding, and a pending review tray
+/// closes), under the claim lifecycle's own guards: a generated claim still
+/// never supersedes user-stated truth.
 /// Only a `person` closes user-stated truth at all: an agent's settlement
 /// that would is refused, and the conflict stays for the owner. `close_as`
 /// attributes a delegate's close; the owner's close is the owner's. The
@@ -424,7 +447,7 @@ pub(crate) fn apply_settlement_in_txn(
     let mut superseded = Vec::new();
     let mut materialized = None;
     let mut standing = None;
-    if let ConflictSettlement::Keep(selected) = settlement {
+    if let Some(selected) = settlement.kept() {
         let mut winner = selected;
         // A retained alternative lands first, as its round proposed it and
         // under the current Gate (FIX 496); a refusal leaves the marker open.
@@ -927,8 +950,14 @@ impl ConflictSettleDecisions<'_> {
         }
         drop(txn);
         // A candidate the round dropped rides as retained, never as a stored
-        // claim; keeping it lands it (FIX 496).
-        for alternative in &conflict.alternatives {
+        // claim; keeping it lands it (FIX 496). One whose staged Keep the
+        // owner declined is the owner's to keep again, never this ladder's
+        // (FIX 7072).
+        for alternative in conflict
+            .alternatives
+            .iter()
+            .filter(|alternative| alternative.declined.is_empty())
+        {
             let keep_option = if keepable.len() < MAX_KEEP_OPTIONS {
                 keepable.push(alternative.id);
                 Some(format!("{KEEP_PREFIX}{}", alternative.id.to_hex()))

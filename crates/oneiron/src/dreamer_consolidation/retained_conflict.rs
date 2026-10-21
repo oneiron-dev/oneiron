@@ -23,7 +23,7 @@ use super::provenance::{
 use super::support::invalid_consolidation;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimSource, ClaimSubject};
-use crate::dreamer_promotion::KeptLanding;
+use crate::dreamer_promotion::{KeptConflictLink, KeptLanding};
 use crate::edge::EdgeActorClass;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
 use crate::{EntityId, Result, TimeRange, Vault};
@@ -48,6 +48,10 @@ pub struct RetainedAlternative {
     /// The landings reverted settlements of its conflict made of it, each
     /// retracted (FIX 5752): a Keep after them lands it at a fresh id.
     pub(super) landings: Vec<EntityId>,
+    /// The Keeps of it staged in their import's review that the owner
+    /// declined there (FIX 7072): a Keep after them stages it at a fresh id,
+    /// and the Dreamer's own ruling never offers it again.
+    pub(super) declined: Vec<EntityId>,
     /// The whole retained entry, read in full only when it is kept.
     entry: Value,
 }
@@ -262,6 +266,7 @@ fn summary(entry: &Value) -> Result<RetainedAlternative> {
         source: evidence.source_meet,
         attempt: AttemptId::from_bytes(bytes_at(entry, "attempt")?)?,
         landings: Vec::new(),
+        declined: Vec::new(),
         entry: entry.clone(),
     })
 }
@@ -372,12 +377,14 @@ impl RetainedAlternative {
 /// settlement's transaction through the promotion writer's selected landing,
 /// as the Dreamer's claim from its round: a refusal is the settlement's, and
 /// its marker stays open. Words from an import are staged in that import's
-/// review instead, never landed (FIX 5754).
+/// review instead, never landed (FIX 5754), linked by `link` to the conflict
+/// it was kept for (FIX 6152).
 pub(super) fn land_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     alternative: &RetainedAlternative,
     landing: EntityId,
+    link: KeptConflictLink,
     now: u64,
 ) -> Result<KeptLanding> {
     let (proposal, evidence) = alternative.proposal_in_txn(vault, txn, landing, now)?;
@@ -390,5 +397,7 @@ pub(super) fn land_in_txn(
         ),
         now_ms: now,
     };
-    crate::dreamer_promotion::land_kept_alternative_in_txn(vault, txn, &run, proposal, &evidence)
+    crate::dreamer_promotion::land_kept_alternative_in_txn(
+        vault, txn, &run, proposal, &evidence, link,
+    )
 }

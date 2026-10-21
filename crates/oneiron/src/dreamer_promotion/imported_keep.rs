@@ -8,6 +8,11 @@
 //! the owner chose for the import's topic. The owner approves or declines it
 //! there as one act with the rest of that import. Nothing here settles its
 //! conflict or supersedes a member: the marker stays open beside it.
+//!
+//! Its provenance names the conflict's marker and the alternative it was
+//! kept from ([`KeptConflictLink`], FIX 6152), so a Keep staged at a fresh id
+//! after a revert stands as a member of that conflict, and the owner may
+//! approve and keep it there in one step (FIX 6151).
 
 use rmpv::Value;
 
@@ -16,40 +21,107 @@ use super::{
     public_evidence_value, scope_with_taint, store_pending_group,
 };
 use crate::Vault;
-use crate::claim::{ClaimApprovalStatus, ClaimSource, claim_evidence_taint};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, claim_evidence_taint};
 use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
-use crate::write_envelope::{SourceLineage, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::{
+    SourceLineage, WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteEnvelope, WriteProvenance,
+};
 
-/// Stages `candidate` Proposed in `review`, the import its words came from
-/// (with none, its round's run), in the settlement's transaction, with
-/// `verified`, its evidence as bound there, and `public_refs`, the document
-/// citations the caller already admitted. Refuses unless the Gate leaves it
-/// Proposed in an owner review, as written.
+/// The provenance key naming the conflict marker a staged Keep answers.
+const KEPT_CONFLICT_MARKER_KEY: &str = "kept_conflict_marker";
+/// The provenance key naming the retained alternative a staged Keep was
+/// made of: its selector.
+const KEPT_SELECTOR_KEY: &str = "kept_selector";
+
+/// What a Keep staged in its import's review answers (FIX 6152): the
+/// conflict's marker and the retained alternative it was kept from, its
+/// selector. Its provenance carries both, so the staged claim reads as a
+/// member of that conflict wherever it landed, and as standing for that
+/// alternative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct KeptConflictLink {
+    pub(crate) marker: EntityId,
+    pub(crate) selector: EntityId,
+}
+
+impl KeptConflictLink {
+    /// The link a staged Keep's provenance carries; `None` for any other
+    /// claim. Only the Dreamer stages a Keep: a claim another writer wrote
+    /// names no conflict here, whatever its provenance says.
+    pub(crate) fn of_claim(body: &ClaimBody) -> Option<Self> {
+        let Some(Value::Map(fields)) = &body.evidence else {
+            return None;
+        };
+        let provenance = fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY))
+            .map(|(_, value)| value)?;
+        let link = Self {
+            marker: crate::dreamer_consolidation::marker_ids(provenance, KEPT_CONFLICT_MARKER_KEY)
+                .next()?,
+            selector: crate::dreamer_consolidation::marker_ids(provenance, KEPT_SELECTOR_KEY)
+                .next()?,
+        };
+        let dreamer = crate::dreamer_runner::authority::dreamer_actor_id().ok()?;
+        (crate::memory::claim_author(body) == Some(dreamer)).then_some(link)
+    }
+
+    /// `provenance`, a promotion's map, with this link beside its entries.
+    fn stamped(self, provenance: Value) -> Result<Value> {
+        let Value::Map(mut entries) = provenance else {
+            return Err(Error::InvalidClaimBody("promotion provenance is not a map"));
+        };
+        entries.push((
+            Value::from(KEPT_CONFLICT_MARKER_KEY),
+            Value::Binary(self.marker.as_bytes().to_vec()),
+        ));
+        entries.push((
+            Value::from(KEPT_SELECTOR_KEY),
+            Value::Binary(self.selector.as_bytes().to_vec()),
+        ));
+        Ok(Value::Map(entries))
+    }
+}
+
+/// Where a kept alternative is staged and what it answers: the import review
+/// it waits in (`None`: its round's run), and its conflict link.
+pub(super) struct StagedIn<'a> {
+    pub(super) review: Option<&'a str>,
+    pub(super) link: KeptConflictLink,
+}
+
+/// Stages `candidate` Proposed in `staged_in`'s review, the import its words
+/// came from (with none, its round's run), in the settlement's transaction,
+/// with `verified`, its evidence as bound there, and `public_refs`, the
+/// document citations the caller already admitted. Its provenance links it to
+/// the conflict it was kept for. Refuses unless the Gate leaves it Proposed in
+/// an owner review, as written.
 pub(super) fn stage_kept_alternative_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     run: &DreamerRunContext,
     candidate: PromotionCandidate,
     verified: &VerifiedEvidenceSet,
-    review: Option<&str>,
+    staged_in: StagedIn<'_>,
     public_refs: &[EvidenceRef],
 ) -> Result<()> {
+    let review = staged_in.review;
     let source = ClaimSource::Imported;
     let refs = verified.refs();
     let cited = verified.cited_messages();
     let mut envelope = WriteEnvelope::with_lineage(
         run.agent_actor,
         source,
-        WriteProvenance::new(promotion_provenance(
+        WriteProvenance::new(staged_in.link.stamped(promotion_provenance(
             run,
             &candidate.provenance_chain,
             review,
             &candidate.decisions,
-        )?)?,
+        )?)?)?,
         ClaimApprovalStatus::Proposed,
         SourceLineage::of(ClaimSource::Generated).with(source),
     );
