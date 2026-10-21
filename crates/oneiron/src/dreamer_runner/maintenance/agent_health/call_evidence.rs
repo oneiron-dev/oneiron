@@ -10,6 +10,11 @@
 //! actor, are judged taskless on the vault's dials, and never join another
 //! stream or another attempt's card. No call is ever given the actor's
 //! newest attempt.
+//!
+//! `silent` reads each leased attempt's part of its actor's calls since its
+//! claim ([`CallActivity`], OF-568 L5): its own, the newest that names no
+//! attempt, and the newest that names another session, which is
+//! counter-evidence only.
 
 use std::collections::BTreeMap;
 
@@ -109,15 +114,68 @@ pub(super) fn call_streams(calls: &AgentCalls) -> Vec<CallStream<'_>> {
     streams
 }
 
+/// One leased attempt's calls as `silent` reads them (OF-568 L5): the
+/// newest of each kind since its claim, its actor's rows read newest first.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct CallActivity {
+    /// Its own newest call: the receipt names it at its current lease
+    /// generation.
+    pub(super) own: Option<u64>,
+    /// Its actor's newest call that names no attempt. It cannot be
+    /// attributed, so it speaks for every leased attempt of the actor
+    /// (FIX 8107).
+    pub(super) actor_only: Option<u64>,
+    /// Its actor's newest call that names another attempt, or another
+    /// generation of this one: counter-evidence on the card, never this
+    /// attempt's activity.
+    pub(super) other: Option<(CallAttemptRef, u64)>,
+}
+
+impl CallActivity {
+    /// The parts from one actor's calls in the lookback, oldest first (the
+    /// nightly review's read), for the attempt and generation `own` names,
+    /// claimed at `claimed`.
+    pub(super) fn of(rows: &[(EntityId, CallReceipt)], own: CallAttemptRef, claimed: u64) -> Self {
+        let mut activity = Self::default();
+        for (_, receipt) in rows.iter().rev() {
+            if receipt.at < claimed || activity.full() {
+                break;
+            }
+            activity.note(receipt, own);
+        }
+        activity
+    }
+
+    /// Takes one call, read newest first, into its part, unless that part
+    /// already holds a newer call.
+    fn note(&mut self, receipt: &CallReceipt, own: CallAttemptRef) {
+        match receipt.attempt_ref {
+            Some(named) if named == own => {
+                self.own.get_or_insert(receipt.at);
+            }
+            Some(named) => {
+                self.other.get_or_insert((named, receipt.at));
+            }
+            None => {
+                self.actor_only.get_or_insert(receipt.at);
+            }
+        }
+    }
+
+    /// Every part holds its newest call: no older row changes any.
+    fn full(&self) -> bool {
+        self.own.is_some() && self.actor_only.is_some() && self.other.is_some()
+    }
+}
+
 /// What the review of one attempt reads of the call ledger (`targeted`).
 pub(super) struct AttemptCalls {
     /// The attempt's own calls at its generation in the lookback, under its
     /// actor, oldest first.
     witnessed: AgentCalls,
-    /// The actor's newest call since its attempt was claimed, whatever
-    /// attempt it names: `silent` reads it as activity, as the nightly
-    /// review reads the actor's newest call.
-    pub(super) activity: AgentCalls,
+    /// For a leased attempt, its calls since its claim as `silent` reads
+    /// them (OF-568 L5); empty for one that is not.
+    pub(super) activity: CallActivity,
 }
 
 impl AttemptCalls {
@@ -129,9 +187,10 @@ impl AttemptCalls {
 
 /// The call ledger as the review of one attempt reads it, in one scan,
 /// newest first: `actor`'s calls at or after `since` whose receipts name
-/// `witness` (none for `None`), and, from `activity_since`, the actor's
-/// newest call at or after it. Each part stops at the first row older than
-/// its own bound, as the nightly review's reads do.
+/// `witness` (none for `None`), and, from `activity_since`, the newest call
+/// of each kind `silent` reads ([`CallActivity`]) at or after it. Each part
+/// stops at the first row older than its own bound, as the nightly review's
+/// reads do; the activity part stops too once each kind holds its newest.
 pub(super) fn attempt_calls(
     vault: &Vault,
     actor: EntityId,
@@ -141,9 +200,9 @@ pub(super) fn attempt_calls(
 ) -> Result<AttemptCalls> {
     let rtxn = vault.store.env.read_txn()?;
     let mut witnessed = Vec::new();
-    let mut activity = AgentCalls::new();
+    let mut activity = CallActivity::default();
     let mut stream_open = witness.is_some();
-    let mut activity_open = activity_since.is_some();
+    let mut activity_open = activity_since.is_some() && witness.is_some();
     let mut read: u64 = 0;
     for row in CALL_RECEIPTS.iter_rev_from(&vault.store, &rtxn, &[])? {
         read += 1;
@@ -152,7 +211,7 @@ pub(super) fn attempt_calls(
         };
         stream_open &= receipt.at >= since;
         activity_open &= activity_since.is_some_and(|start| receipt.at >= start);
-        let wants_activity = activity_open && activity.is_empty();
+        let wants_activity = activity_open && !activity.full();
         if !stream_open && !wants_activity {
             break;
         }
@@ -161,8 +220,8 @@ pub(super) fn attempt_calls(
         {
             continue;
         }
-        if wants_activity {
-            activity.insert(actor, vec![(id, receipt.clone())]);
+        if wants_activity && let Some(own) = witness {
+            activity.note(&receipt, own);
         }
         if stream_open && receipt.attempt_ref == witness {
             witnessed.push((id, receipt));

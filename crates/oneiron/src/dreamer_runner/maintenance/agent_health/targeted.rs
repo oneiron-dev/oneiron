@@ -11,20 +11,23 @@
 //! reviewed under (OF-568 L4, `call_evidence`): a terminal review's is the
 //! one it settled under, a live review's the one it holds. The call-receipt
 //! `loop` and the call half of `failed_check_repeat` judge that stream,
-//! whole. A call that names no attempt stays with the nightly review, and
-//! `silent` reads its actor's newest call, as the nightly review does. So do
-//! `duplicate_work`, which pairs an attempt against every run in the review
-//! window, `cost_spike`, whose baseline is every retained run of the task
-//! type, and the TTL climb over every card. Its output is the nightly
-//! review's cards and DIAGNOSTICs, nothing else.
+//! whole. A call that names no attempt stays with the nightly review.
+//! `silent` reads the attempt's own calls and model steps at that generation
+//! and its actor's calls that name no attempt (OF-568 L5, `silence`), as the
+//! nightly review does. The nightly review alone runs `duplicate_work`,
+//! which pairs an attempt against every run in the review window,
+//! `cost_spike`, whose baseline is every retained run of the task type, and
+//! the TTL climb over every card. Its output is the nightly review's cards
+//! and DIAGNOSTICs, nothing else.
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Attempts, COACH_AGENT_HEALTH_FACET, DialBook, Dispatched, Dispatches, Traps, call_evidence,
-    call_loop, check_repeat, entity, land, long_wait_findings, misalignment_findings, run_loop,
-    silent_findings, unsupported_done_findings, widen_denial_findings,
+    Attempts, COACH_AGENT_HEALTH_FACET, DialBook, Dispatched, Dispatches, SilenceCalls, Traps,
+    call_evidence, call_loop, check_repeat, entity, land, long_wait_findings,
+    misalignment_findings, run_loop, silent_findings, unsupported_done_findings,
+    widen_denial_findings,
 };
 use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
@@ -177,9 +180,9 @@ fn review_attempt(
         }
     }
     // The calls whose receipts name this attempt at its generation, whole,
-    // and for a leased attempt its actor's newest call since its claim: that
-    // call says it is not silent, whatever attempt it names, as in the
-    // nightly review.
+    // and for a leased attempt the calls `silent` reads since its claim: its
+    // own, its actor's that name no attempt, and another session's, which
+    // is counter-evidence only (OF-568 L5).
     let witness = entity(attempt).map(|attempt| CallAttemptRef {
         attempt,
         generation,
@@ -204,13 +207,13 @@ fn review_attempt(
     )?);
     findings.extend(silent_findings(
         vault,
-        &calls.activity,
+        &SilenceCalls::Attempt(attempt, calls.activity),
         &dispatched,
         &attempts,
         &traps,
         &book,
         now,
-    )?);
+    ));
     findings.extend(long_wait_findings(
         &dispatched,
         &attempts,
