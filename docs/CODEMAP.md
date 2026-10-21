@@ -20,7 +20,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 142 | 18 | 0 |
 | [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 16 | 5 | 0 |
 | [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) | 47 | 0 | 4 |
-| [oneiron-code-check](codemap/oneiron-code-check.md) | An optional type check of code-mode programs before they run | 6 | 1 | 0 |
+| [oneiron-code-check](codemap/oneiron-code-check.md) | An optional type check of code-mode programs before they run | 8 | 1 | 0 |
 | [oneiron-container](codemap/oneiron-container.md) | Container sessions with an engine-owned Linux Landlock/seccomp fence | 18 | 0 | 0 |
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 59 | 1 | 1 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 21 | 8 | 0 |
@@ -368,7 +368,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `metrics` | file | 1 | s | Shadow-mode counts: how often agent programs fail a check, which diagnostics they carry, and what their step… |
 | `microsoft` | file | 1 | s | Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when tsc-rs is… |
 | `output` | file | 1 | s | Reads `tsc --pretty false` output |
-| `tsc_rs` | file | 1 | m | tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime |
+| `tsc_rs` | file | 1 | s | tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime… |
+| `tsrs` | file | 1 | s | tsrs in process: the pinned Wasm build of oxc's Rust port of TypeScript 7 (`@tsrs/wasm`, vendored in… |
+| `wasm` | file | 1 | m | The Wasmtime runner of the in-process backends: tsc-rs (`components/tsc-rs`) and tsrs (`vendor/tsrs`) |
 
 ## oneiron-container
 

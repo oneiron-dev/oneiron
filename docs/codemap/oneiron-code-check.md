@@ -12,9 +12,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `examples/latency.rs` | src | s | — | — | Check latency on the synthetic fixtures, per backend: `cargo run --release -p oneiron-code-check --example… |
-| `src/lib.rs` | src | m | 7 struct · 4 enum · 1 trait · 6 fn · 1 mod · 3 re-export | BackendId, BackendKind, CheckConfigError, CheckFailure, CheckInput, CheckMode, CheckReport, CodeCheck +4 | An optional type check of code-mode programs before they run |
+| `src/lib.rs` | src | m | 7 struct · 4 enum · 1 trait · 6 fn · 1 mod · 4 re-export | BackendId, BackendKind, CheckConfigError, CheckFailure, CheckInput, CheckMode, CheckReport, CodeCheck +4 | An optional type check of code-mode programs before they run |
 | `src/metrics.rs` | src | s | 3 struct · 1 enum · 3 fn | CheckMetrics, LatencySummary, MetricsSnapshot, StepThen | Shadow-mode counts: how often agent programs fail a check, which diagnostics they carry, and what their step… |
 | `src/microsoft.rs` | src | s | 1 struct · 1 fn · 1 const | MicrosoftTsc | Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when tsc-rs is… |
 | `src/output.rs` | src | s | 1 crate-vis | — | Reads `tsc --pretty false` output |
-| `src/tsc_rs.rs` | src | m | 2 struct · 1 fn · 1 const | TscRsBudget, TscRsWasm | tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime |
+| `src/tsc_rs.rs` | src | s | 2 struct · 1 fn · 1 const | TscRsBudget, TscRsWasm | tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime… |
+| `src/tsrs.rs` | src | s | 1 struct · 1 fn · 2 const | TsrsWasm | tsrs in process: the pinned Wasm build of oxc's Rust port of TypeScript 7 (`@tsrs/wasm`, vendored in… |
+| `src/wasm.rs` | src | m | 7 crate-vis | — | The Wasmtime runner of the in-process backends: tsc-rs (`components/tsc-rs`) and tsrs (`vendor/tsrs`) |
 | `tests/golden.rs` | test | s | — | — | Oracle comparison: the synthetic code-mode programs of the tsc-check evidence give the same diagnostics on… |
