@@ -26,6 +26,7 @@
 //! acts are the authority log's account of the owner's will.
 
 mod admission;
+mod anchor;
 mod caller;
 mod mint;
 mod registry;

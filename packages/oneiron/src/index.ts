@@ -2136,6 +2136,52 @@ export class Oneiron {
         /** The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing. */
         revoke: (input: Facade.GitPushGrantRevokeInput): Facade.GitPushGrantRevokeOutput => this.#call(() => this.#client.vaultRepoGitPushRevoke(input) as Facade.GitPushGrantRevokeOutput),
       },
+      anchor: {
+        /** The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing. */
+        bind: (input: Facade.RepoAnchorBindInput): Facade.RepoAnchorBindOutput => this.#call(() => this.#client.vaultRepoAnchorBind(input) as Facade.RepoAnchorBindOutput),
+      },
+      snapshots: {
+        /** Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease. */
+        get: (input: Facade.LiveRunRequest<Facade.RepoSnapshotsGetInput>): Facade.RepoSnapshotsGetOutput => this.#call(() => this.#client.vaultRepoSnapshotsGet(input) as Facade.RepoSnapshotsGetOutput),
+        /** Reads one file of such a snapshot on a path the attached run's Grant reads. */
+        read: (input: Facade.LiveRunRequest<Facade.RepoSnapshotsReadInput>): Facade.RepoSnapshotsReadOutput => this.#call(() => this.#client.vaultRepoSnapshotsRead(input) as Facade.RepoSnapshotsReadOutput),
+        /** Imports the commit an admitted repo's full ref names now, readable paths only, for the attached run. */
+        ingest: (input: Facade.LiveRunRequest<Facade.RepoSnapshotsIngestInput>): Facade.RepoSnapshotsIngestOutput => this.#call(() => this.#client.vaultRepoSnapshotsIngest(input) as Facade.RepoSnapshotsIngestOutput),
+      },
+      symbols: {
+        /** Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads. */
+        definitions: (input: Facade.LiveRunRequest<Facade.RepoSymbolsDefinitionsInput>): Facade.RepoSymbolsDefinitionsOutput => this.#call(() => this.#client.vaultRepoSymbolsDefinitions(input) as Facade.RepoSymbolsDefinitionsOutput),
+        /** Declares current symbols of the attached run's own work on paths its Grant edits, for its TASK; an overlap waits, never refused. */
+        declare: (input: Facade.LiveRunRequest<Facade.RepoSymbolsDeclareInput>): Facade.RepoSymbolsDeclareOutput => this.#call(() => this.#client.vaultRepoSymbolsDeclare(input) as Facade.RepoSymbolsDeclareOutput),
+        /** Extends the attached run's own symbol declaration by its declared lifetime. */
+        renew: (input: Facade.LiveRunRequest<Facade.RepoSymbolsRenewInput>): Facade.RepoSymbolsRenewOutput => this.#call(() => this.#client.vaultRepoSymbolsRenew(input) as Facade.RepoSymbolsRenewOutput),
+        /** Removes the attached run's own symbol declaration. */
+        release: (input: Facade.LiveRunRequest<Facade.RepoSymbolsReleaseInput>): Facade.RepoSymbolsReleaseOutput => this.#call(() => this.#client.vaultRepoSymbolsRelease(input) as Facade.RepoSymbolsReleaseOutput),
+      },
+      views: {
+        /** Reads the attached run's own work, as it was opened. */
+        get: (input: Facade.LiveRunRequest<Facade.RepoViewsGetInput>): Facade.RepoViewsGetOutput => this.#call(() => this.#client.vaultRepoViewsGet(input) as Facade.RepoViewsGetOutput),
+        /** Reads one file of the attached run's own work. */
+        read: (input: Facade.LiveRunRequest<Facade.RepoViewsReadInput>): Facade.RepoViewsReadOutput => this.#call(() => this.#client.vaultRepoViewsRead(input) as Facade.RepoViewsReadOutput),
+      },
+      merge_queue: {
+        /** Reads the merge queue the attached run's own work is pinned under, with its own entries and what each waits behind. */
+        observe: (input: Facade.LiveRunRequest<Facade.RepoMergeQueueObserveInput>): Facade.RepoMergeQueueObserveOutput => this.#call(() => this.#client.vaultRepoMergeQueueObserve(input) as Facade.RepoMergeQueueObserveOutput),
+        /** Queues the attached run's own stored proposals of one work as one batch, under the declaration they were made under. */
+        enqueue: (input: Facade.LiveRunRequest<Facade.RepoMergeQueueEnqueueInput>): Facade.RepoMergeQueueEnqueueOutput => this.#call(() => this.#client.vaultRepoMergeQueueEnqueue(input) as Facade.RepoMergeQueueEnqueueOutput),
+      },
+      work: {
+        /** Opens a fresh private working set of an admitted repo at its queue's green commit for the attached run, readable paths only. */
+        open: (input: Facade.LiveRunRequest<Facade.RepoWorkOpenInput>): Facade.RepoWorkOpenOutput => this.#call(() => this.#client.vaultRepoWorkOpen(input) as Facade.RepoWorkOpenOutput),
+      },
+      /** Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept. */
+      proposal_submit: (input: Facade.LiveRunRequest<Facade.RepoProposalSubmitInput>): Facade.RepoProposalSubmitOutput => this.#call(() => this.#client.vaultRepoProposalSubmit(input) as Facade.RepoProposalSubmitOutput),
+      checkout: {
+        /** Materializes the attached run's own live checkout lease of an admitted served repo, for its TASK, with its lease-route remote when a door base is named; no lease is minted and no host path is shown. */
+        bind: (input: Facade.LiveRunRequest<Facade.RepoCheckoutBindInput>): Facade.RepoCheckoutBindOutput => this.#call(() => this.#client.vaultRepoCheckoutBind(input) as Facade.RepoCheckoutBindOutput),
+      },
+      /** Exports one finalized, promoted revision from the attached run's own checkout when one Grant lists publish over the revision's paths; otherwise it holds with a typed code. git_push never implies an export. */
+      export: (input: Facade.LiveRunRequest<Facade.RepoExportInput>): Facade.RepoExportOutput => this.#call(() => this.#client.vaultRepoExport(input) as Facade.RepoExportOutput),
     },
     standing_blocks: {
       /** The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle. */
@@ -2199,6 +2245,10 @@ export class Oneiron {
       program_step: (input: Facade.SettledProgramStepRequest): Facade.SettledProgramStepView | null => this.#call(() => this.#client.vaultRunsProgramStep(input) as Facade.SettledProgramStepView | null),
       /** Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it. */
       program_checkpoint: (input: Facade.ProgramCheckpointRequest): Facade.ProgramCheckpointView | null => this.#call(() => this.#client.vaultRunsProgramCheckpoint(input) as Facade.ProgramCheckpointView | null),
+      program_hold: {
+        /** The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out. */
+        release: (input: Facade.ReleaseTurnProgramHoldRequest): Facade.ProgramHoldReleaseView => this.#call(() => this.#client.vaultRunsProgramHoldRelease(input) as Facade.ProgramHoldReleaseView),
+      },
       /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
       review: (input: Facade.RunReviewRequest): Facade.RunReview => this.#call(() => this.#client.vaultRunsReview(input) as Facade.RunReview),
       /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */

@@ -284,6 +284,9 @@ pub enum SelfEffect {
     RepoSymbolsRelease,
     RepoProposalSubmit,
     RepoMergeQueueEnqueue,
+    /// The run's checkout binding and export (FIX 6867, G1 PR3b).
+    RepoCheckoutBind,
+    RepoExport,
 }
 
 impl SelfEffect {
@@ -340,6 +343,8 @@ impl SelfEffect {
             Self::RepoSymbolsRelease => "self.code.symbols.release",
             Self::RepoProposalSubmit => "self.code.proposal_submit",
             Self::RepoMergeQueueEnqueue => "self.code.merge_queue.enqueue",
+            Self::RepoCheckoutBind => "self.code.checkout.bind",
+            Self::RepoExport => "self.code.export",
         }
     }
 
@@ -395,7 +400,9 @@ impl SelfEffect {
             | Self::RepoSymbolsRenew
             | Self::RepoSymbolsRelease
             | Self::RepoProposalSubmit
-            | Self::RepoMergeQueueEnqueue => None,
+            | Self::RepoMergeQueueEnqueue
+            | Self::RepoCheckoutBind
+            | Self::RepoExport => None,
         }
     }
 

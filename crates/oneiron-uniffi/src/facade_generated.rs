@@ -3296,6 +3296,86 @@ export_facade! {
     let output = client.vault_repo_git_push_revoke(&input)?;
     crate::codec::lift_record("vault.repo.git_push.revoke", &output)
 };
+"vault.repo.anchor.bind" => fn vault_repo_anchor_bind(&self, input: RepoAnchorBindInput) -> RepoAnchorBindOutput = |client| {
+    let input: oneiron::task_verb::sdk::RepoAnchorBindInput = crate::codec::lower_record("vault.repo.anchor.bind", input)?;
+    let output = client.vault_repo_anchor_bind(&input)?;
+    crate::codec::lift_record("vault.repo.anchor.bind", &output)
+};
+"vault.repo.snapshots.get" => fn vault_repo_snapshots_get(&self, input: LiveRunRequestRepoSnapshotsGetInput) -> RepoSnapshotView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoSnapshotsGetInput> = crate::codec::lower_record("vault.repo.snapshots.get", input)?;
+    let output = client.vault_repo_snapshots_get(&input)?;
+    crate::codec::lift_record("vault.repo.snapshots.get", &output)
+};
+"vault.repo.snapshots.read" => fn vault_repo_snapshots_read(&self, input: LiveRunRequestRepoSnapshotsReadInput) -> RepoSnapshotsReadOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoSnapshotsReadInput> = crate::codec::lower_record("vault.repo.snapshots.read", input)?;
+    let output = client.vault_repo_snapshots_read(&input)?;
+    crate::codec::lift_record("vault.repo.snapshots.read", &output)
+};
+"vault.repo.symbols.definitions" => fn vault_repo_symbols_definitions(&self, input: LiveRunRequestRepoSymbolsDefinitionsInput) -> RepoSymbolsDefinitionsOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoSymbolsDefinitionsInput> = crate::codec::lower_record("vault.repo.symbols.definitions", input)?;
+    let output = client.vault_repo_symbols_definitions(&input)?;
+    crate::codec::lift_record("vault.repo.symbols.definitions", &output)
+};
+"vault.repo.views.get" => fn vault_repo_views_get(&self, input: LiveRunRequestRepoViewsGetInput) -> RepoWorkView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoViewsGetInput> = crate::codec::lower_record("vault.repo.views.get", input)?;
+    let output = client.vault_repo_views_get(&input)?;
+    crate::codec::lift_record("vault.repo.views.get", &output)
+};
+"vault.repo.views.read" => fn vault_repo_views_read(&self, input: LiveRunRequestRepoViewsReadInput) -> RepoViewsReadOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoViewsReadInput> = crate::codec::lower_record("vault.repo.views.read", input)?;
+    let output = client.vault_repo_views_read(&input)?;
+    crate::codec::lift_record("vault.repo.views.read", &output)
+};
+"vault.repo.merge_queue.observe" => fn vault_repo_merge_queue_observe(&self, input: LiveRunRequestRepoMergeQueueObserveInput) -> RepoMergeQueueObserveOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoMergeQueueObserveInput> = crate::codec::lower_record("vault.repo.merge_queue.observe", input)?;
+    let output = client.vault_repo_merge_queue_observe(&input)?;
+    crate::codec::lift_record("vault.repo.merge_queue.observe", &output)
+};
+"vault.repo.snapshots.ingest" => fn vault_repo_snapshots_ingest(&self, input: LiveRunRequestRepoSnapshotsIngestInput) -> RepoSnapshotView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoSnapshotsIngestInput> = crate::codec::lower_record("vault.repo.snapshots.ingest", input)?;
+    let output = client.vault_repo_snapshots_ingest(&input)?;
+    crate::codec::lift_record("vault.repo.snapshots.ingest", &output)
+};
+"vault.repo.work.open" => fn vault_repo_work_open(&self, input: LiveRunRequestRepoWorkOpenInput) -> RepoWorkView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoWorkOpenInput> = crate::codec::lower_record("vault.repo.work.open", input)?;
+    let output = client.vault_repo_work_open(&input)?;
+    crate::codec::lift_record("vault.repo.work.open", &output)
+};
+"vault.repo.symbols.declare" => fn vault_repo_symbols_declare(&self, input: LiveRunRequestRepoSymbolsDeclareInput) -> RepoSymbolDeclarationView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoSymbolsDeclareInput> = crate::codec::lower_record("vault.repo.symbols.declare", input)?;
+    let output = client.vault_repo_symbols_declare(&input)?;
+    crate::codec::lift_record("vault.repo.symbols.declare", &output)
+};
+"vault.repo.symbols.renew" => fn vault_repo_symbols_renew(&self, input: LiveRunRequestRepoSymbolsRenewInput) -> RepoSymbolDeclarationView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoSymbolsRenewInput> = crate::codec::lower_record("vault.repo.symbols.renew", input)?;
+    let output = client.vault_repo_symbols_renew(&input)?;
+    crate::codec::lift_record("vault.repo.symbols.renew", &output)
+};
+"vault.repo.symbols.release" => fn vault_repo_symbols_release(&self, input: LiveRunRequestRepoSymbolsReleaseInput) -> RepoSymbolsReleaseOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoSymbolsReleaseInput> = crate::codec::lower_record("vault.repo.symbols.release", input)?;
+    let output = client.vault_repo_symbols_release(&input)?;
+    crate::codec::lift_record("vault.repo.symbols.release", &output)
+};
+"vault.repo.proposal_submit" => fn vault_repo_proposal_submit(&self, input: LiveRunRequestRepoProposalSubmitInput) -> RepoProposalSubmitOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoProposalSubmitInput> = crate::codec::lower_record("vault.repo.proposal_submit", input)?;
+    let output = client.vault_repo_proposal_submit(&input)?;
+    crate::codec::lift_record("vault.repo.proposal_submit", &output)
+};
+"vault.repo.merge_queue.enqueue" => fn vault_repo_merge_queue_enqueue(&self, input: LiveRunRequestRepoMergeQueueEnqueueInput) -> RepoQueueEntryView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoMergeQueueEnqueueInput> = crate::codec::lower_record("vault.repo.merge_queue.enqueue", input)?;
+    let output = client.vault_repo_merge_queue_enqueue(&input)?;
+    crate::codec::lift_record("vault.repo.merge_queue.enqueue", &output)
+};
+"vault.repo.checkout.bind" => fn vault_repo_checkout_bind(&self, input: LiveRunRequestRepoCheckoutBindInput) -> RepoCheckoutBindOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoCheckoutBindInput> = crate::codec::lower_record("vault.repo.checkout.bind", input)?;
+    let output = client.vault_repo_checkout_bind(&input)?;
+    crate::codec::lift_record("vault.repo.checkout.bind", &output)
+};
+"vault.repo.export" => fn vault_repo_export(&self, input: LiveRunRequestRepoExportInput) -> RepoExportOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoExportInput> = crate::codec::lower_record("vault.repo.export", input)?;
+    let output = client.vault_repo_export(&input)?;
+    crate::codec::lift_record("vault.repo.export", &output)
+};
 "vault.agents.base" => fn vault_agents_base(&self) -> BaseAgentList = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.agents.base")?;
     let output = client.vault_agents_base(&input)?;
@@ -4805,6 +4885,11 @@ export_facade! {
     let input: oneiron::dreamer_runner::ProgramCheckpointRequest = crate::codec::lower_record("vault.runs.program_checkpoint", input)?;
     let output = client.vault_runs_program_checkpoint(&input)?;
     crate::codec::lift_record("vault.runs.program_checkpoint", &output)
+};
+"vault.runs.program_hold.release" => fn vault_runs_program_hold_release(&self, input: ReleaseTurnProgramHoldRequest) -> ProgramHoldReleaseView = |client| {
+    let input: oneiron::dreamer_runner::ReleaseTurnProgramHoldRequest = crate::codec::lower_record("vault.runs.program_hold.release", input)?;
+    let output = client.vault_runs_program_hold_release(&input)?;
+    crate::codec::lift_record("vault.runs.program_hold.release", &output)
 };
 "vault.consolidation.home.get" => fn vault_consolidation_home_get(&self) -> ConsolidationHomeView = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.consolidation.home.get")?;

@@ -7,20 +7,25 @@
 //! acknowledgement: it is the position the entry committed. Nothing here
 //! executes, resumes or leases, and no record is read whole. A reply an
 //! erase of the program's actor took still reads as delivered, and is
-//! withheld by name (FIX 5718).
+//! withheld by name (FIX 5718). A wait a code consent binds carries its
+//! consent evidence, read in the same snapshot (FIX 5883): refs and digests
+//! of its binding, the owner's answer, the settlement and the run's
+//! consumption, withheld by name alone when it does not read.
 
 use crate::code_run::{
-    ProgramResumeCall, ProgramResumeHead, WaitKey, WaitReply, program_resume_calls_in_txn,
-    program_resume_head_in_txn, wait_reply_in_txn,
+    CodeConsentWaitState, CodeConsentWaitView, ProgramResumeCall, ProgramResumeHead, WaitKey,
+    WaitReply, program_resume_calls_in_txn, program_resume_head_in_txn, wait_reply_in_txn,
 };
+use crate::consent::CodeWaitReceiptLinks;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
 use super::super::run::program_run_in_txn;
 use super::views::{
-    ProgramCheckpointCallView, ProgramCheckpointHeadView, ProgramCheckpointRequest,
-    ProgramCheckpointView, ProgramCheckpointWaitView, ProgramFrontierView,
+    ProgramCheckpointCallView, ProgramCheckpointConsentView, ProgramCheckpointHeadView,
+    ProgramCheckpointRequest, ProgramCheckpointView, ProgramCheckpointWaitView,
+    ProgramFrontierView,
 };
 use super::{
     Caller, attempt_hex, attempt_ref, page_limit, program_for, readable_on_lane,
@@ -30,6 +35,11 @@ use super::{
 /// The withheld field a checkpoint whose wait's reply an erase took names
 /// (FIX 5718): the wait settled, and its reply is erased for this run.
 const WAIT_REPLY_ERASED: &str = "checkpoint.wait.reply";
+
+/// The withheld field a checkpoint whose wait's consent evidence did not
+/// read, or does not read on the caller's lane, names (FIX 5883). The rest
+/// of the checkpoint stands.
+const WAIT_CONSENT_WITHHELD: &str = "checkpoint.wait.consent";
 
 /// Reads the resume checkpoint of one program's run, one page of its settled
 /// calls at a time: for the program's waking actor or the verified owner,
@@ -79,27 +89,44 @@ pub fn program_checkpoint(
         None => None,
     };
     drop(txn);
-    let readable = readable_on_lane(memory, program.definition.as_ref().map(|pin| pin.skill))?;
+    let (calls, next_cursor, reply, consent) = match page {
+        Some(page) => (page.calls, page.next_cursor, page.reply, page.consent),
+        None => (Vec::new(), None, WaitReply::Pending, WaitConsent::Unbound),
+    };
+    let consent_rows = match &consent {
+        WaitConsent::Bound { rows, .. } => rows.clone(),
+        WaitConsent::Unbound | WaitConsent::Unread => Vec::new(),
+    };
+    let readable = readable_on_lane(
+        memory,
+        program
+            .definition
+            .as_ref()
+            .map(|pin| pin.skill)
+            .into_iter()
+            .chain(consent_rows),
+    )?;
     let mut withheld = Vec::new();
     let definition = withhold_definition(program.definition, &readable, &mut withheld);
-    if page
-        .as_ref()
-        .is_some_and(|page| page.reply == WaitReply::Erased)
-    {
+    if reply == WaitReply::Erased {
         withheld.push(WAIT_REPLY_ERASED.to_owned());
     }
-    let (calls, next_cursor, delivered) = page.map_or((Vec::new(), None, false), |page| {
-        (
-            page.calls,
-            page.next_cursor,
-            page.reply != WaitReply::Pending,
-        )
-    });
+    let consent = match consent {
+        WaitConsent::Unbound => None,
+        WaitConsent::Bound { view, rows } if rows.iter().all(|row| readable.contains(row)) => {
+            Some(*view)
+        }
+        WaitConsent::Bound { .. } | WaitConsent::Unread => {
+            withheld.push(WAIT_CONSENT_WITHHELD.to_owned());
+            None
+        }
+    };
+    let delivered = reply != WaitReply::Pending;
     let code_run = program.code_run.to_hex();
     Ok(Some(ProgramCheckpointView {
         root: attempt_hex(program.root),
         actor: program.actor,
-        checkpoint: head.map(|head| head_view(head, delivered)),
+        checkpoint: head.map(|head| head_view(head, delivered, consent)),
         frontier: frontier.map(|frontier| ProgramFrontierView {
             bridge_calls: frontier.bridge_calls,
             steps: frontier.steps,
@@ -123,6 +150,22 @@ struct CheckpointPage {
     calls: Vec<(u64, ProgramResumeCall, bool)>,
     next_cursor: Option<String>,
     reply: WaitReply,
+    consent: WaitConsent,
+}
+
+/// The consent evidence of the wait a checkpoint parked on, as its page's
+/// snapshot holds it.
+enum WaitConsent {
+    /// No code consent wait binds it, or there is no wait.
+    Unbound,
+    /// The bound wait's evidence, and the records it names that must read
+    /// on the caller's lane before it is shown: its ask and the owner's word.
+    Bound {
+        view: Box<ProgramCheckpointConsentView>,
+        rows: Vec<EntityId>,
+    },
+    /// Its evidence did not read: withheld by name.
+    Unread,
 }
 
 fn page_in_txn(
@@ -136,17 +179,19 @@ fn page_in_txn(
     let to = head.applied.min(from.saturating_add(limit));
     let from = from.min(to);
     let listed = program_resume_calls_in_txn(vault, txn, run, from, to)?;
-    let reply = match head.wait {
-        Some(wait) => wait_reply_in_txn(
-            vault,
-            txn,
-            &WaitKey {
+    let (reply, consent) = match head.wait {
+        Some(wait) => {
+            let key = WaitKey {
                 run,
                 wait_id: wait.wait_id,
                 generation: wait.generation,
-            },
-        )?,
-        None => WaitReply::Pending,
+            };
+            (
+                wait_reply_in_txn(vault, txn, &key)?,
+                wait_consent_in_txn(vault, txn, &key, wait.row),
+            )
+        }
+        None => (WaitReply::Pending, WaitConsent::Unbound),
     };
     Ok(CheckpointPage {
         calls: (from..)
@@ -155,10 +200,76 @@ fn page_in_txn(
             .collect(),
         next_cursor: (to < head.applied).then(|| to.to_string()),
         reply,
+        consent,
     })
 }
 
-fn head_view(head: ProgramResumeHead, delivered: bool) -> ProgramCheckpointHeadView {
+/// The consent evidence of the wait `key` the call at record row `row`
+/// parked on, in `txn`. Evidence that does not read is logged and reads as
+/// [`WaitConsent::Unread`]: it never fails the checkpoint read.
+fn wait_consent_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &WaitKey,
+    row: u64,
+) -> WaitConsent {
+    match vault.code_consent_checkpoint_evidence_in_txn(txn, key, row) {
+        Ok(None) => WaitConsent::Unbound,
+        Ok(Some((wait, binding_digest))) => WaitConsent::Bound {
+            rows: wait.ask.into_iter().chain(wait.word_ref).collect(),
+            view: Box::new(consent_view(&wait, &binding_digest)),
+        },
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                run = %key.run.to_hex(),
+                wait = %key.wait_id.to_hex(),
+                "a program checkpoint's consent evidence did not read; it is withheld"
+            );
+            WaitConsent::Unread
+        }
+    }
+}
+
+/// The wire view of a bound wait's evidence: refs and digests only.
+fn consent_view(
+    wait: &CodeConsentWaitView,
+    binding_digest: &[u8; 32],
+) -> ProgramCheckpointConsentView {
+    let facts = |links: Option<&CodeWaitReceiptLinks>| {
+        links.map(|links| bytes_to_hex_lower(&links.facts_digest))
+    };
+    ProgramCheckpointConsentView {
+        binding_digest: bytes_to_hex_lower(binding_digest),
+        effect_digest: bytes_to_hex_lower(&wait.effect_digest),
+        state: wait_state_name(wait.state).to_owned(),
+        ask: wait.ask.as_ref().map(EntityId::to_hex),
+        choice: wait.answer.map(|choice| choice.as_str().to_owned()),
+        word: wait.word_ref.as_ref().map(EntityId::to_hex),
+        answer_receipt: wait.answer_receipt.clone(),
+        outcome: wait.outcome.map(|outcome| outcome.as_str().to_owned()),
+        settlement_receipt: wait.settlement_receipt.clone(),
+        consumption_receipt: wait.consumption_receipt.clone(),
+        settlement_facts_digest: facts(wait.settlement_links.as_ref()),
+        consumption_facts_digest: facts(wait.consumption_links.as_ref()),
+    }
+}
+
+const fn wait_state_name(state: CodeConsentWaitState) -> &'static str {
+    match state {
+        CodeConsentWaitState::Provisional => "provisional",
+        CodeConsentWaitState::Waiting => "waiting",
+        CodeConsentWaitState::Settling => "settling",
+        CodeConsentWaitState::Settled => "settled",
+        CodeConsentWaitState::Consumed => "consumed",
+    }
+}
+
+fn head_view(
+    head: ProgramResumeHead,
+    delivered: bool,
+    consent: Option<ProgramCheckpointConsentView>,
+) -> ProgramCheckpointHeadView {
     ProgramCheckpointHeadView {
         committed_by: bytes_to_hex_lower(&head.attempt),
         content_hash: head.content_hash,
@@ -174,6 +285,7 @@ fn head_view(head: ProgramResumeHead, delivered: bool) -> ProgramCheckpointHeadV
             wait_id: wait.wait_id.to_hex(),
             generation: wait.generation,
             delivered,
+            consent,
         }),
         at: head.at,
     }
