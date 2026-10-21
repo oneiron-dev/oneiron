@@ -235,10 +235,6 @@ impl<'a> HostModels<'a> {
     /// [`Self::generate_served`] for messages fixed code assembled from
     /// `rows` (FIX 6935), as [`Self::generate_sourced`] carries them, with
     /// the model of the rung that answered. `None` is unknown.
-    #[expect(
-        dead_code,
-        reason = "a Coach call that needs its served model switches to it with its own rows"
-    )]
     pub(super) fn generate_served_sourced(
         &self,
         role: ModelRole,

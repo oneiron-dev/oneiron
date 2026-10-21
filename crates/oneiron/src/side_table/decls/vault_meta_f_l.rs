@@ -50,6 +50,17 @@ side_tables! {
     FEEDBACK_REPORT_DISCLOSURE: VaultMeta b"feedback:report-disclosure:v1:" Named;
     /// Host-stamped subject provenance or owner routing policy. Key: subject reference.
     FEEDBACK_REPORT_ROUTE: VaultMeta b"feedback:report-route:v1:" Named;
+    /// The SKILL the Coach's feedback triage runs, as the owner bound it, with the binding's
+    /// revision (OF-420 T1); absent until the owner binds one. Key: ().
+    FEEDBACK_TRIAGE_BINDING: VaultMeta b"feedback:triage-binding:v1:" Named;
+    /// One feedback revision a triage sweep handed off: its source, id and revision, the ASSET
+    /// holding the exact item the triage reads, the sweeps that handed it off and queued its
+    /// current job, that job, and the committed result once acknowledged. Source and result
+    /// identity only; the queue holds job state. Key: bytes32 (blake3 of source, id, revision).
+    FEEDBACK_TRIAGE_HANDOFF: VaultMeta b"feedback:triage-handoff:v1:" Named;
+    /// Where the triage sweep resumes one feedback source: the open inbox's last arrival number
+    /// handed off. Key: string (source name).
+    FEEDBACK_TRIAGE_SOURCE: VaultMeta b"feedback:triage-source:v1:" Named;
     /// A folder the owner attached as a standing source of notes (OF-554): the folder, its
     /// include patterns, default kind, source and trust tier, and its last rescan. Key: hex16
     /// (hash of the folder).

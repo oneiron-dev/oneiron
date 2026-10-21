@@ -61,6 +61,7 @@ mod dreamer_routes;
 mod embedding_space_routes;
 mod export_audit_routes;
 mod federation_connect_routes;
+mod feedback_triage_routes;
 mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
@@ -173,6 +174,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(pack_preview_routes::routes())
         .merge(cooperative_deletion_routes::routes())
         .merge(federation_connect_routes::routes())
+        .merge(feedback_triage_routes::routes())
         .merge(decision_ask_routes::routes())
         .merge(desktop_takeover_routes::routes())
         .merge(browser_takeover_routes::routes())
