@@ -331,6 +331,13 @@ pub(crate) async fn read_turn_vad_annotation(
     let params = query_params(query)?;
     let turn_id = parse_entity_id_param(&params.turn_id, "turn_id")?;
     require_entity_type(&server, &turn_id, ENTITY_TYPE_TURN, "turn")?;
+    // A turn the TURN routes do not serve the caller, one of a private thread
+    // it does not read above all, has no annotation here either: its affect
+    // is read from its words (FIX 5868).
+    let read = super::scoped_auth::scoped_read_for_core_auth(&server.vault, &auth)?;
+    if !super::conversations::core_turn_served(&server.vault, &read, &turn_id)? {
+        return Err(ApiError::not_found("turn", Some(&params.turn_id)).into());
+    }
 
     let annotation = if let Some(message_id_hex) = &params.message_id {
         let message_id = parse_entity_id_param(message_id_hex, "message_id")?;

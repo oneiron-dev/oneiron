@@ -2088,6 +2088,8 @@ export class Oneiron {
         diagnose: (input: Facade.MergeQueueDiagnoseRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueDiagnose(input) as Facade.MergeQueueCheckWorkView),
         /** Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only. */
         check_status: (input: Facade.MergeQueueCheckStatusRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueCheckStatus(input) as Facade.MergeQueueCheckWorkView),
+        /** Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result. */
+        export_green: (input: Facade.MergeQueueGreenExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeMergeQueueExportGreen(input) as Facade.CodeExportResult),
       },
     },
     results: {

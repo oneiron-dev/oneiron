@@ -143,6 +143,24 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// no backup plan, gives no binding, and none is guessed from a backup's file
 /// name. No `Ping` field is added and this version stays 3.
 ///
+/// VM checkpoint-fact member (FIX 7326/7327): a sealed backup's signed
+/// checkpoint fact rides the carrier beside it as a `Backup` member
+/// ([`vm_outbox_member`](crate::vm_outbox::vm_outbox_member)): exactly one
+/// plain part, a backup artifact's own name with `.cpfact` after it,
+/// guest-origin, in its artifact's set, put before the artifact and retired
+/// after it, and retired only by the engine's prune. It carries a build
+/// floor, at the engine revision it merged in: the host library, the guest
+/// engine and its companion at or after the floor. An older host refuses the
+/// new member (`MemberNotAllowed`), so deploy the host engine before an image
+/// that writes facts: there, the refused fact is not sent again, and its
+/// artifact is carried alone on the next turn. An artifact with no fact (one
+/// taken before the floor, or whose fact was not signed or did not land) is
+/// a set of one, as before, and nothing requires a fact. No field is added to
+/// [`VmOutboxDescriptor`](crate::vm_outbox::VmOutboxDescriptor),
+/// [`VmOutboxFrame::BackupRegistered`](crate::vm_outbox::VmOutboxFrame::BackupRegistered),
+/// `Ping` or an image manifest, the carrier stays at wire revision 2, and
+/// this version stays 3.
+///
 /// VM custody anchor channels (FIX 6517): a vault VM's custody anchor
 /// exchange and proxy ([`vm_anchor`](crate::vm_anchor): vsock ports 1031 and
 /// 1033, their records and the credential payload, `serve`'s

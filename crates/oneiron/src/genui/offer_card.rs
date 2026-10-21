@@ -28,6 +28,25 @@ pub const OFFER_VOTE_NOT_NOW_ACTION_ID: &str = "vote_not_now";
 /// The room host's one-click reopening of a room-wide card that aged out.
 pub const OFFER_REOPEN_ACTION_ID: &str = "reopen";
 
+/// The most of an offer's `what` or artifact a drawn card shows (OF-530).
+/// The offer keeps the whole text, and the card with its fallback stays
+/// within a lens text.
+const OFFER_CARD_PREVIEW_BYTES: usize = 4 * 1024;
+
+/// `text` as a drawn card shows it: whole when it fits
+/// [`OFFER_CARD_PREVIEW_BYTES`], else cut at a character boundary and marked
+/// with an ellipsis.
+fn card_preview(text: &str) -> String {
+    if text.len() <= OFFER_CARD_PREVIEW_BYTES {
+        return text.to_owned();
+    }
+    let mut end = OFFER_CARD_PREVIEW_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\u{2026}", text[..end].trim_end())
+}
+
 /// Where a drawn offer card stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -208,8 +227,8 @@ impl OfferCardPayload {
             room_ref: card.room.to_hex(),
             thread_ref: card.branch.map(|branch| branch.to_hex()),
             agent_ref: card.agent.to_hex(),
-            what: card.what.clone(),
-            artifact_ref: card.artifact_ref.clone(),
+            what: card_preview(&card.what),
+            artifact_ref: card.artifact_ref.as_deref().map(card_preview),
             lease_cap: card.lease_cap.clone(),
             payer_ref: card.payer.map(|payer| payer.to_hex()),
             phase,

@@ -1933,7 +1933,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -13084,8 +13084,8 @@
      "path": "src/code_revision/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 5
+      "crate-vis": 9,
+      "re-export": 6
      }
     },
     {
@@ -13098,7 +13098,7 @@
      "path": "src/code_revision/promotion.rs",
      "purpose": "Session provenance claims and promotion guarded by verified revision history",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 5,
       "struct": 2
      }
@@ -13143,10 +13143,31 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/code_revision/queue.rs",
+     "purpose": "The tested queue revision's finalizer (FIX 6868, G2 PR3): one writer co-commits the queue's aggregation…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/queue_promotion.rs",
+     "purpose": "Promotion of a tested queue revision (FIX 6868, G2 PR3): the queue-only multi-source verifier over the same…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_revision/storage.rs",
      "purpose": "Vault CRUD for code revisions and forks, plus record/index reads, writes and deletes",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 8
      }
     },
@@ -13167,6 +13188,29 @@
      "path": "src/code_revision/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/tree_codec.rs",
+     "purpose": "The strict canonical encoding of a tested queue revision's blob map and queue record, and their fold input…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeTreeBlob"
+     ],
+     "path": "src/code_revision/tree_inventory.rs",
+     "purpose": "A tested revision's complete tree (FIX 6868, G2 PR3): the reviewed documents and every other path as a blob…",
+     "surface": {
+      "crate-vis": 8,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -17452,7 +17496,7 @@
      "path": "src/consent/doors/queue_check.rs",
      "purpose": "The owner's queued check approval (FIX 6868, L02 authority seam): the durable record that the owner approved…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -22876,8 +22920,8 @@
      "path": "src/dreamer_runner/maintenance/coach_diagnostic.rs",
      "purpose": "The Coach's diagnosis of a model finding's issue (OF-418 L3; ARCH-0066 §4, §6)",
      "surface": {
-      "const": 2,
-      "crate-vis": 4,
+      "const": 3,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -22936,6 +22980,16 @@
      "surface": {
       "fn": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/coach_resolution.rs",
+     "purpose": "The Coach's resolution of its model issues (OF-418 L3; ARCH-0066 §6)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -23789,6 +23843,16 @@
      "purpose": "Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority",
      "surface": {
       "crate-vis": 26
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/stop_sends.rs",
+     "purpose": "The sends of a try the owner stopped (FIX 7188)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -31679,7 +31743,7 @@
      "purpose": "OF-221: background events as NOTIFICATION records (type 42)",
      "surface": {
       "const": 4,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -37339,10 +37403,32 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/merge_queue_doors/export.rs",
+     "purpose": "`vault.code.merge_queue.export_green` (FIX 6868, G2 PR3): the owner exports the queue's current tested green…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MergeQueueGreenExportRequest"
+     ],
+     "path": "src/memory/merge_queue_doors/export_types.rs",
+     "purpose": "`vault.code.merge_queue.export_green`'s request (FIX 6868, G2 PR3)",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/merge_queue_doors/mod.rs",
      "purpose": "Typed speculative merge queue doors (DOOR-132): enqueue stored repository proposals as one batch, stage it…",
      "surface": {
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -39156,7 +39242,7 @@
      "purpose": "The checker's companion rows and their attempt lifecycle (FIX 6868)",
      "surface": {
       "const": 2,
-      "crate-vis": 14,
+      "crate-vis": 16,
       "enum": 3,
       "fn": 4,
       "struct": 3
@@ -39257,7 +39343,7 @@
      "path": "src/merge_queue/landing.rs",
      "purpose": "Crash-consistent gated landing and trailing-check green/rollback transitions",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -39280,9 +39366,9 @@
      "path": "src/merge_queue/mod.rs",
      "purpose": "Durable batched speculation over real detached worktrees",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 1
      }
     },
@@ -39348,6 +39434,63 @@
      "surface": {
       "crate-vis": 10,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/tested.rs",
+     "purpose": "The tested-revision seal at green (FIX 6868, G2 PR3)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/tested_export.rs",
+     "purpose": "The current green's sealed revision and its export readiness (FIX 6868, G2 PR3; CALLS D and E)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/tested_store.rs",
+     "purpose": "Where a tested-revision seal is kept (FIX 6868, G2 PR3): one compact link on the green batch's drive record…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GreenQueueRevision",
+      "QueueAppliedSource",
+      "QueueExportHold",
+      "QueueExportHoldReason",
+      "QueueGreenExportView",
+      "QueueReceiptLink",
+      "QueueRevisionIntent",
+      "QueueRevisionLink",
+      "QueueSealTarget",
+      "QueueTestedRevision",
+      "QueueTestedTarget"
+     ],
+     "path": "src/merge_queue/tested_types.rs",
+     "purpose": "The tested-revision seal's records, links and holds (FIX 6868, G2 PR3)",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 4,
+      "fn": 7,
+      "struct": 7
      }
     },
     {
@@ -42804,7 +42947,17 @@
      "path": "src/outbound_intent_ledger/store/pending.rs",
      "purpose": "The sends one attempt has not settled (DOOR-141 PR3b): what a held turn program's resume waits on, read over…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_intent_ledger/store/transition.rs",
+     "purpose": "One ledger row's transition in the caller's writer (FIX 7188): the body the ledger's own transition doors…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -49943,10 +50096,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/self_heal/issue_evidence.rs",
+     "purpose": "What the Coach observes of its model issues after filing them, and when one resolves (OF-418 L3; ARCH-0066 §6)",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/self_heal/issue_work.rs",
      "purpose": "The Coach's Issues work from both of its sources (OF-418 L3; ARCH-0066 §4, §6)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
@@ -49956,7 +50119,7 @@
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 8,
       "re-export": 11
      }
@@ -60222,7 +60385,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1146
+      "fn": 1147
      }
     },
     {
@@ -67316,7 +67479,7 @@
      "purpose": "—"
     },
     "code_revision": {
-     "files": 16,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67589,7 +67752,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 112,
+     "files": 114,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67925,14 +68088,14 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 237,
+     "files": 239,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 21,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68002,7 +68165,7 @@
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5"
     },
     "outbound_intent_ledger": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68261,7 +68424,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68606,7 +68769,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4327,
+   "source_files": 4341,
    "test_files": 902
   },
   "oneiron-android": {
@@ -78412,7 +78575,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1117
+      "fn": 1118
      }
     },
     {
@@ -79627,7 +79790,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1118
+      "fn": 1119
      }
     },
     {
@@ -82662,7 +82825,7 @@
      "path": "src/api/conversations.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -83800,7 +83963,7 @@
      "path": "src/api/facade/merge_queue_doors.rs",
      "purpose": "Credential-bound host projections of the typed speculative merge queue doors (DOOR-132)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -96347,6 +96510,7 @@
       "MergeQueueCheckWorkView",
       "MergeQueueDiagnoseRequest",
       "MergeQueueEnqueueRequest",
+      "MergeQueueGreenExportRequest",
       "MergeQueueInitializeRequest",
       "MergeQueueObservation",
       "MergeQueueObserveRequest",
@@ -97014,6 +97178,9 @@
       "QueueConflictView",
       "QueueDriveStatus",
       "QueueDriveView",
+      "QueueExportHold",
+      "QueueExportHoldReason",
+      "QueueGreenExportView",
       "QueueTaskBrief",
       "QuickFilterAtom",
       "QuoteAnchor",
@@ -98252,8 +98419,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 923,
-      "struct": 2895
+      "enum": 924,
+      "struct": 2898
      }
     },
     {
