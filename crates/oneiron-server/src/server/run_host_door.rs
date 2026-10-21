@@ -68,6 +68,7 @@ use crate::api::{
 use crate::decision_artifact::HostUnitDecider;
 use crate::decision_graph::LadderGraphAnswerer;
 use crate::decision_verdict::{HELD_IMAGE, HeldImage, on_caller_payer, run_verdict};
+use crate::slide_render::{AdmittedRenderer, RenderRefusal};
 
 /// The host rows whose success lands a turn, which wakes its conversation.
 const LANDS_TURN: [AgentVerb; 5] = [
@@ -619,22 +620,33 @@ fn host_row(
         AgentVerb::VaultArtifactsReviewSlides => {
             let request: oneiron::blob_artifact::SlideReviewSubmit = decode(input)?;
             let host = server.decision_host();
+            // Its render takes a turn in the renderer line as it starts, at
+            // the agent's fair place (FIX 7653).
+            let renderer = AdmittedRenderer::at_render(server, Some(principal), Arc::default());
             encode(memory.artifacts_review_slides_through(
                 &request,
                 &HostUnitDecider::new(server, class, "vault.artifacts.review_slides"),
                 host.dial(DecisionRung::Big),
                 &host.bands(),
-                crate::slide_render::host_renderer().map(|renderer| {
-                    renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
-                }),
+                renderer.as_ref().map(AdmittedRenderer::slides),
             )?)
         }
-        AgentVerb::VaultArtifactsBodyDeckPreview => encode(memory.artifacts_body_deck_preview(
-            &decode(input)?,
-            crate::slide_render::host_renderer().map(|renderer| {
-                renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
-            }),
-        )?),
+        AgentVerb::VaultArtifactsBodyDeckPreview => {
+            let request = decode(input)?;
+            // The agent's fair turn in the renderer line comes before any of
+            // the preview's work, as a served caller's does, and is kept with
+            // the memory it leased until the answer is encoded (FIX 7653).
+            let turn = server
+                .renderer_turns
+                .admit_blocking(principal)
+                .map_err(|_| RenderRefusal::Deadline.memory_error())?;
+            let renderer = AdmittedRenderer::held(server, turn, Arc::default())?;
+            let preview = memory.artifacts_body_deck_preview(
+                &request,
+                renderer.as_ref().map(AdmittedRenderer::slides),
+            );
+            encode(crate::slide_render::rendered(preview, renderer)?)
+        }
         AgentVerb::AiOptions => encode(ai_options(server, line, decode(input)?)?),
         // The run's own speech, on the line its entry spends on (FIX 3194).
         AgentVerb::AiSpeech => {

@@ -374,6 +374,18 @@ impl MachineMemory {
         bytes: u64,
         deadline: Instant,
     ) -> Result<MemoryLease, MemoryRefusal> {
+        self.lease_until(bytes, deadline, &|| false)
+    }
+
+    /// [`Self::lease`] for work its caller may stop: `stopped` is asked at
+    /// each look, and once it says so the wait leaves the line as one that
+    /// ran out (FIX 7653), so work whose caller left waits no longer.
+    pub(crate) fn lease_until(
+        &self,
+        bytes: u64,
+        deadline: Instant,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<MemoryLease, MemoryRefusal> {
         let shared = &self.shared;
         let most = shared.total.saturating_sub(shared.reserve);
         if bytes > most {
@@ -400,7 +412,7 @@ impl MachineMemory {
             }
             let now = Instant::now();
             let left = deadline.saturating_duration_since(now);
-            if left.is_zero() {
+            if left.is_zero() || stopped() {
                 line.waiting.retain(|waiting| *waiting != ticket);
                 shared.changed.notify_all();
                 return Err(MemoryRefusal::WaitedOut {
@@ -442,6 +454,37 @@ impl MemoryLease {
     /// The bytes this lease holds.
     pub(crate) fn bytes(&self) -> u64 {
         self.bytes
+    }
+
+    /// Grows this lease by `more` bytes, admitted as
+    /// [`MachineMemory::lease_until`] admits them (in line, until `deadline`
+    /// passes or `stopped` says so), so work that allocates in steps holds
+    /// one lease (FIX 7653). Refused at once when the whole lease would not
+    /// fit even with nothing else leased; a refused growth leaves the lease
+    /// as it was.
+    pub(crate) fn grow(
+        &mut self,
+        more: u64,
+        deadline: Instant,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), MemoryRefusal> {
+        let whole = self.bytes.saturating_add(more);
+        let most = self.shared.total.saturating_sub(self.shared.reserve);
+        if whole > most {
+            return Err(MemoryRefusal::Floor {
+                needed: whole,
+                available: most,
+            });
+        }
+        let machine = MachineMemory {
+            shared: Arc::clone(&self.shared),
+        };
+        let mut grown = machine.lease_until(more, deadline, stopped)?;
+        // The growth's bytes move into this lease; the emptied one gives
+        // back nothing as it drops.
+        self.bytes = whole;
+        grown.bytes = 0;
+        Ok(())
     }
 }
 

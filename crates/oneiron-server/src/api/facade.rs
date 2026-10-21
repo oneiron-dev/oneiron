@@ -1676,6 +1676,11 @@ impl From<MemoryError> for FacadeApiError {
                 browser_doors::browser_refusal_status(code)
                     .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
             }
+            // FIX 7653: a render that ran past its deadline or met a machine
+            // floor is not the caller's fault, and can be asked again.
+            crate::slide_render::RENDER_DEADLINE
+            | crate::slide_render::RENDER_MEMORY_FLOOR
+            | crate::slide_render::RENDER_DISK_FLOOR => StatusCode::SERVICE_UNAVAILABLE,
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
