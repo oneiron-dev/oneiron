@@ -1689,7 +1689,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/note_topics.rs` | src | s | 6 crate-vis | — | The stage-2 topic summary trigger (ARCH-0032 write gate, OF-073 / FIX 907) |
 | `src/dreamer_consolidation/open_conflict.rs` | src | s | 1 crate-vis | — | A judge outage is an open question, persisted through the shared write gate |
 | `src/dreamer_consolidation/parallel.rs` | src | s | 1 crate-vis | — | Read-only neighbourhood fan-out, followed by one parent-owned merge |
-| `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 7 fn · 9 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | — |
+| `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 7 fn · 11 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | — |
 | `src/dreamer_consolidation/persistence.rs` | src | s | 1 fn · 5 crate-vis | — | Persistent contradiction markers and prior-head context for consolidation |
 | `src/dreamer_consolidation/person_about.rs` | src | m | 1 struct · 2 fn · 1 const · 5 crate-vis | PersonAboutExecutor | PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the… |
 | `src/dreamer_consolidation/provenance.rs` | src | L | 6 struct · 1 enum · 2 trait · 10 fn · 1 re-export · 9 crate-vis | ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, ConsolidationProvenanceHopKind, ConsolidationSink, KeptDecision, PeerAnswerLineage, PeerTrustDigestLine, PeerTrustDigestSink +1 | — |
@@ -1877,7 +1877,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/program/wake.rs` | src | s | 3 crate-vis | — | The wake a landed turn owes its actor's armed programs (DOOR-141 §4): it is recorded in the turn's own… |
 | `src/dreamer_runner/progress.rs` | src | m | 4 struct · 1 enum · 12 fn · 4 const · 5 crate-vis | DreamerAttemptProgressProducer, DreamerAttemptProgressSnapshot, DreamerAttemptProgressSource, DreamerAttemptProgressUpdate, DreamerProgressed | The live Dreamer progress lane on the ephemeral sync keyspace |
 | `src/dreamer_runner/recipe.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | WeaveRecipePin | Per-vault, owner-admitted workflow skill binding for the Dreamer weave |
-| `src/dreamer_runner/store.rs` | src | L | 1 struct · 17 fn · 27 crate-vis | DreamerRunnerStore | The Dreamer runner store: queue lifecycle, park/resume, and readers |
+| `src/dreamer_runner/store.rs` | src | L | 1 struct · 17 fn · 28 crate-vis | DreamerRunnerStore | The Dreamer runner store: queue lifecycle, park/resume, and readers |
 | `src/dreamer_runner/tests.rs` | test | L | — | — | — |
 | `src/dreamer_runner/types.rs` | src | L | 26 struct · 13 enum · 20 fn · 1 const · 4 crate-vis | AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload +31 | Dreamer runner request/outcome vocabulary and its pure impls |
 | `src/dreamer_runner/wake_park.rs` | src | s | 1 struct · 2 fn | DreamerCheckpointDue | The runner side of the normal Checkpoint resume (DOOR-144): the parks it reads, and the projection the… |
@@ -1899,7 +1899,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/legibility.rs` | src | s | 1 struct · 2 fn | BudgetLegibilityEnvelope | Budget legibility envelope derived from one BudgetGuard read |
 | `src/dreamer_wake/mod.rs` | src | s | 1 mod · 15 re-export · 16 crate-vis | — | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `src/dreamer_wake/night_step.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | NightStepRequestId | The Dreamer's night step on the owner's say (FIX 6903): a Timer `host.wake` asks for what a Timer wake asks… |
-| `src/dreamer_wake/nightly.rs` | src | s | 6 crate-vis | — | Budgeted interest-queue spending |
+| `src/dreamer_wake/nightly.rs` | src | s | 6 crate-vis | — | Budgeted interest-queue spending, one thing per entity or topic (OF-498c, see `things`): its world, facet… |
+| `src/dreamer_wake/nightly/things.rs` | src | s | 5 crate-vis | — | One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly) |
 | `src/dreamer_wake/observation.rs` | src | m | 8 struct · 1 enum · 3 fn · 1 re-export · 10 crate-vis | WakeCallState, WakeObservedAttempt, WakeObservedCall, WakeObservedCallEnd, WakeObservedCheckpoint, WakeObservedEnd, WakeObservedHeader, WakeObservedResume +1 | The wake observation (DOOR-144): what one wake pass recorded of itself |
 | `src/dreamer_wake/observation/checkpoint.rs` | src | s | 5 crate-vis | — | The wake observation's Checkpoint half: the cut a park's own write records, the check the deadline lane arms… |
 | `src/dreamer_wake/observation/live.rs` | src | s | 13 crate-vis | — | The live half of the wake observation: the passes and admitted calls running on one open vault |

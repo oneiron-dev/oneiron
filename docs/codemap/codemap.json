@@ -21707,7 +21707,7 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 7,
       "struct": 3
      }
@@ -24175,7 +24175,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 17,
       "struct": 1
      }
@@ -24488,9 +24488,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/nightly.rs",
-     "purpose": "Budgeted interest-queue spending",
+     "purpose": "Budgeted interest-queue spending, one thing per entity or topic (OF-498c, see `things`): its world, facet…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/nightly/things.rs",
+     "purpose": "One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -68237,7 +68247,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69240,7 +69250,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4380,
+   "source_files": 4381,
    "test_files": 902
   },
   "oneiron-android": {
