@@ -5,19 +5,25 @@
 //! and its hello or frame taken for the new guest's. Each spawn drops them
 //! first, once the generation before it is reaped and before the new VMM
 //! exists: no connection the new guest makes can be among them. The custody
-//! anchor's exchange socket is a third such listener (FIX 7480).
+//! anchor's exchange socket is a third such listener (FIX 7480), and its
+//! proxy socket a fourth (FIX 7182): a dead guest's stream queued there
+//! would only cost the next generation's proxy an accept, and perhaps a
+//! dial, so it is dropped with the rest. The outbox carrier's socket is not
+//! among them: its accept thread owns it for as long as the driver lives.
 
 use super::VaultVm;
-use oneiron_vault_contract::vm::{VM_ANCHOR_PORT, VM_BOOT_PORT, VM_RESTORE_PORT};
+use oneiron_vault_contract::vm::{
+    VM_ANCHOR_PORT, VM_ANCHOR_PROXY_PORT, VM_BOOT_PORT, VM_RESTORE_PORT,
+};
 use std::io::ErrorKind;
 use std::os::fd::AsFd as _;
 use tokio::net::UnixListener;
 
 impl VaultVm {
     /// Drops every connection queued on the boot port's, the restore
-    /// channel's and the anchor exchange's sockets, before a spawn. Only
-    /// with no VMM held: one held may still run, and what it queued is its
-    /// own. The driver lets go of a VMM only once it is reaped
+    /// channel's and the custody anchor's exchange and proxy sockets, before
+    /// a spawn. Only with no VMM held: one held may still run, and what it
+    /// queued is its own. The driver lets go of a VMM only once it is reaped
     /// ([`VaultVm::end_vmm`]).
     pub(super) fn drop_stale_connections(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
@@ -28,6 +34,7 @@ impl VaultVm {
             (VM_BOOT_PORT, &self.boot),
             (VM_RESTORE_PORT, &self.restore),
             (VM_ANCHOR_PORT, &self.anchor.exchange),
+            (VM_ANCHOR_PROXY_PORT, self.anchor.proxy.as_ref()),
         ] {
             let dropped = drop_queued(listener)?;
             if dropped > 0 {

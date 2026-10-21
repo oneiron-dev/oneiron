@@ -64,6 +64,64 @@ enum PactStandingCheckError {
 const PACT_STANDING_CHECK_ERROR: PactStandingCheckError =
     PactStandingCheckError::PreserveCurrentPath;
 
+/// Where the standing rule reads its snapshot (FIX 7461): through a vault
+/// handle, or through the `Store` a materializing batch holds and the
+/// posture its vault opened with. A PERSON's liveness, the clock and the
+/// owners census each keep the reader their home has; every other seam is
+/// read through the store alike.
+#[derive(Clone, Copy)]
+pub(crate) enum StandingHome<'a> {
+    Vault(&'a Vault),
+    Store(&'a crate::store::Store, crate::HostingPrivacyPosture),
+}
+
+impl<'a> StandingHome<'a> {
+    /// The store every row is read through.
+    pub(crate) fn store(self) -> &'a crate::store::Store {
+        match self {
+            Self::Vault(vault) => &vault.store,
+            Self::Store(store, _) => store,
+        }
+    }
+
+    /// The posture the vault opened with.
+    pub(crate) fn posture(self) -> crate::HostingPrivacyPosture {
+        match self {
+            Self::Vault(vault) => vault.privacy_posture(),
+            Self::Store(_, posture) => posture,
+        }
+    }
+
+    /// Whether `id` names a live PERSON (`consent::person_is_live_in_txn`).
+    pub(crate) fn person_is_live_in(self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        match self {
+            Self::Vault(vault) => crate::consent::person_is_live_in_txn(vault, txn, id),
+            Self::Store(store, _) => {
+                crate::consent::person_is_live_for_store_in_txn(store, txn, id)
+            }
+        }
+    }
+
+    /// The vault's authoritative instant in unix seconds
+    /// (`Vault::instant_in_txn`).
+    pub(crate) fn instant_secs_in(self, txn: &heed::RoTxn<'_>) -> Result<u64> {
+        match self {
+            Self::Vault(vault) => Ok(vault.instant_in_txn(txn)?.secs()),
+            Self::Store(store, _) => super::authority_instant_secs_for_store_in_txn(store, txn),
+        }
+    }
+
+    /// The vault's live owners (`policy_model::owners_in_txn`).
+    pub(crate) fn owners_in(self, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
+        match self {
+            Self::Vault(vault) => crate::policy_model::owners_in_txn(vault, txn),
+            Self::Store(store, posture) => {
+                crate::policy_model::owners_for_store_in_txn(store, posture, txn)
+            }
+        }
+    }
+}
+
 /// Whether `principal`, of `class`, still stands in `txn` for work under
 /// `verb`.
 ///
@@ -81,7 +139,20 @@ pub(crate) fn principal_standing_in_txn(
     class: EdgeActorClass,
     verb: &str,
 ) -> Result<Option<PrincipalStanding>> {
-    Ok(principal_standing_or_lapse_in_txn(vault, txn, principal, class, verb)?.ok())
+    principal_standing_in(StandingHome::Vault(vault), txn, principal, class, verb)
+}
+
+/// [`principal_standing_in_txn`], its snapshot read through `home`.
+/// # Errors
+/// As [`principal_standing_in_txn`].
+pub(crate) fn principal_standing_in(
+    home: StandingHome<'_>,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+) -> Result<Option<PrincipalStanding>> {
+    Ok(principal_standing_or_lapse_in(home, txn, principal, class, verb)?.ok())
 }
 
 /// [`principal_standing_in_txn`], naming why the principal does not stand:
@@ -97,18 +168,29 @@ pub(crate) fn principal_standing_or_lapse_in_txn(
     class: EdgeActorClass,
     verb: &str,
 ) -> Result<std::result::Result<PrincipalStanding, NoStanding>> {
+    principal_standing_or_lapse_in(StandingHome::Vault(vault), txn, principal, class, verb)
+}
+
+/// [`principal_standing_or_lapse_in_txn`], its snapshot read through `home`.
+fn principal_standing_or_lapse_in(
+    home: StandingHome<'_>,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+) -> Result<std::result::Result<PrincipalStanding, NoStanding>> {
     let grant = match class {
         EdgeActorClass::Human => {
-            if !crate::consent::person_is_live_in_txn(vault, txn, &principal)? {
+            if !home.person_is_live_in(txn, &principal)? {
                 return Ok(Err(NoStanding::NotStanding));
             }
             None
         }
         EdgeActorClass::Agent | EdgeActorClass::System => {
-            if !live_agent_principal_in_txn(vault, txn, principal, class)? {
+            if !live_agent_principal_in(home.store(), txn, principal, class)? {
                 return Ok(Err(NoStanding::NotStanding));
             }
-            match agent_grant_listing_in_txn(vault, txn, principal, verb)? {
+            match agent_grant_listing_in(home, txn, principal, verb)? {
                 Ok(grant) => Some(grant),
                 Err(no_standing) => return Ok(Err(no_standing)),
             }
@@ -123,14 +205,16 @@ pub(crate) fn principal_standing_or_lapse_in_txn(
 
 /// Whether `agent` is a live agent principal acting as `class`: an enabled,
 /// active agent definition the archive has not taken, acting as an agent, or
-/// a base agent's MACHINE principal, which acts as the system class.
-fn live_agent_principal_in_txn(
-    vault: &Vault,
+/// a base agent's MACHINE principal, which acts as the system class. The
+/// cleanup-archive marker is read as every module outside deletion reads it.
+fn live_agent_principal_in(
+    store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
     class: EdgeActorClass,
 ) -> Result<bool> {
-    match (class, live_entity_row_in_txn(&vault.store, txn, &agent)?) {
+    use crate::ports::{DeletionMarker, TombstoneStoreRead};
+    match (class, live_entity_row_in_txn(store, txn, &agent)?) {
         (
             EdgeActorClass::Agent,
             LiveEntityRow::Live {
@@ -138,7 +222,7 @@ fn live_agent_principal_in_txn(
                 body,
             },
         ) => {
-            if vault.archive_tombstone_in_txn(txn, &agent)?.is_some() {
+            if store.port_deletion_marked(txn, DeletionMarker::Archive, &agent)? {
                 return Ok(false);
             }
             let definition = crate::agent_def::decode_agent_definition(&body)?;
@@ -160,20 +244,20 @@ fn live_agent_principal_in_txn(
 /// explicit verb set and, on a shared vault, keeps its pact membership
 /// ([`AgentGrantStanding::stands_in_txn`]). With none, the lapse when a
 /// Grant failed on its pact membership alone.
-fn agent_grant_listing_in_txn(
-    vault: &Vault,
+fn agent_grant_listing_in(
+    home: StandingHome<'_>,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
     verb: &str,
 ) -> Result<std::result::Result<EntityId, NoStanding>> {
-    let now = vault.instant_in_txn(txn)?.secs();
-    let owners = crate::policy_model::owners_in_txn(vault, txn)?;
+    let now = home.instant_secs_in(txn)?;
+    let owners = home.owners_in(txn)?;
     let mut lapsed = false;
-    for standing in vault.agent_grants_in_txn(txn)? {
+    for standing in crate::federation::agent_grants_for_store_in_txn(home.store(), txn)? {
         if !standing.stands_for(agent, verb, now, &owners) {
             continue;
         }
-        if standing.pact_standing_lapsed_in_txn(vault, txn) {
+        if standing.pact_standing_lapsed_for_store_in_txn(home.store(), home.posture(), txn) {
             lapsed = true;
             continue;
         }
@@ -232,12 +316,26 @@ impl AgentGrantStanding {
     /// pact half of [`Self::stands_in_txn`], for a reader that picks its
     /// Grants by its own rule.
     pub(crate) fn pact_standing_lapsed_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> bool {
-        match vault.shared_vault_creation_in_txn(txn) {
+        self.pact_standing_lapsed_for_store_in_txn(&vault.store, vault.privacy_posture(), txn)
+    }
+
+    /// [`Self::pact_standing_lapsed_in_txn`] through a `Store` and the
+    /// posture its vault opened with (FIX 7461): the same check, which reads
+    /// nothing else of a vault.
+    pub(crate) fn pact_standing_lapsed_for_store_in_txn(
+        &self,
+        store: &crate::store::Store,
+        posture: crate::HostingPrivacyPosture,
+        txn: &heed::RoTxn<'_>,
+    ) -> bool {
+        match crate::federation::shared_vault_creation_for_store_in_txn(store, txn) {
             Ok(Some(_)) => {}
             Ok(None) => return false,
             Err(error) => return lapse_on_check_error(self.id, &error),
         }
-        match vault.authenticated_grant_membership_in_txn(
+        match crate::federation::authenticated_grant_membership_for_store_in_txn(
+            store,
+            posture,
             txn,
             self.grant.scope,
             self.grant.member_ref,

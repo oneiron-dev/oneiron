@@ -7,7 +7,9 @@
 //! only the socket the bytes travel on differs. A credential handed to a
 //! node's process carries none, and its calls go out as before.
 
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::path::Path;
+use std::path::PathBuf;
 
 use super::CustodyAnchorCredentials;
 
@@ -18,6 +20,7 @@ pub(super) struct AnchorRoute {
 }
 
 impl AnchorRoute {
+    #[cfg(target_os = "linux")]
     pub(super) fn new(url: &str, socket: &Path) -> Self {
         Self {
             url: url.to_owned(),
