@@ -101,9 +101,13 @@ pub(crate) fn spawn(
     server: &Arc<SyncServer>,
     admit: crate::server::HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
-    // The Coach's model drafts the digest settings steps from here on, so
-    // the digest timer only queues their job (FIX 5609).
-    server.vault().register_coach_weave_digest_host();
+    // The Coach's model drafts the digest settings steps once a round of
+    // this worker served, so the digest timer then only queues their job
+    // (FIX 5609); until then, after a round that errs and once the worker
+    // ends, the timer's closed-form rule evaluates (FIX 6165). The guard is
+    // the task's own state from here, so an abort before its first poll
+    // drops it too.
+    let digest = DigestHostReady(Arc::downgrade(server.vault()));
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
@@ -116,7 +120,7 @@ pub(crate) fn spawn(
             let Some(pass) = admit() else {
                 continue;
             };
-            match tokio::task::spawn_blocking(move || {
+            let served = match tokio::task::spawn_blocking(move || {
                 let _pass = pass;
                 round(&server)
             })
@@ -125,12 +129,36 @@ pub(crate) fn spawn(
                 // By kind only: an engine error can quote the vault.
                 Ok(Err(error)) => {
                     tracing::warn!(kind = ?error.kind(), "the Coach's host queue waits for the next round");
+                    false
                 }
-                Err(error) => tracing::warn!(%error, "the Coach's host round stopped"),
-                Ok(Ok(())) => {}
-            }
+                Err(error) => {
+                    tracing::warn!(%error, "the Coach's host round stopped");
+                    false
+                }
+                Ok(Ok(())) => true,
+            };
+            digest.set(served);
         }
     })
+}
+
+/// The worker's word on whether it serves the vault's digest settings steps
+/// (FIX 6165). Dropped with the worker's task, aborted or ended, it says not
+/// ready. It holds the vault weakly, so the worker keeps no vault open.
+struct DigestHostReady(std::sync::Weak<Vault>);
+
+impl DigestHostReady {
+    fn set(&self, ready: bool) {
+        if let Some(vault) = self.0.upgrade() {
+            vault.set_coach_weave_digest_host_ready(ready);
+        }
+    }
+}
+
+impl Drop for DigestHostReady {
+    fn drop(&mut self) {
+        self.set(false);
+    }
 }
 
 fn round(server: &SyncServer) -> oneiron::Result<()> {

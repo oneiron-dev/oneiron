@@ -566,7 +566,17 @@ impl Memory<'_> {
                     if matches!(admission.turn, AdmittedTurn::Mint { .. })
                         || admission.has_new_messages()
                     {
-                        crate::tagging::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
+                        // A chat or voice commit owes a live pass; an import,
+                        // held tags and the host executor a bulk one (FIX 6755).
+                        let work = if plan.imported.is_some()
+                            || held.is_some()
+                            || matches!(door, WitnessDoor::HostExecutor)
+                        {
+                            crate::memory::extraction::ExtractionWork::Bulk
+                        } else {
+                            crate::memory::extraction::ExtractionWork::Live
+                        };
+                        crate::tagging::mark_turn_in_txn(self.vault, wtxn, plan.turn_id, work)?;
                         crate::embed::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
                         crate::workspace_roster::stage_project_detection_in_txn(
                             self.vault,
@@ -829,9 +839,10 @@ impl Memory<'_> {
     /// The in-transaction half both landings share: the ONE-1686 door on every
     /// envelope, then the create-or-verify checks against `dbs` (base for a
     /// base landing, the composed room view for an overlay one). A minted TURN
-    /// carries `person_author` as its immutable byline, `quoted`, the reply
-    /// topology the room guard fixed for its quoted messages, in its first
-    /// body (OF-460, FIX 2028), and `thread`, its thread binding (FIX 2951).
+    /// carries `person_author` as its immutable byline, or with none an Agent
+    /// writer's own AGENT_DEF (FIX 7129), `quoted`, the reply topology the
+    /// room guard fixed for its quoted messages, in its first body (OF-460,
+    /// FIX 2028), and `thread`, its thread binding (FIX 2951).
     /// `assertions` reads the reply's cited and created records first, when
     /// it names any (OF-063).
     #[expect(
@@ -964,9 +975,13 @@ impl Memory<'_> {
             // the turn's role.
             None => match plan.speaker {
                 Some(speaker) => {
+                    // With no PERSON byline, a writer this transaction verified
+                    // as Agent class, so its AGENT_DEF, stamps itself (FIX 7129).
+                    let agent = self.actor_class == crate::edge::EdgeActorClass::Agent;
+                    let author = person_author.or(agent.then_some(self.actor));
                     let body = match &plan.imported {
                         Some(stamp) => encode_imported_turn_body(speaker, stamp.source)?,
-                        None => encode_witness_turn_body(speaker, person_author, quoted)?,
+                        None => encode_witness_turn_body(speaker, author, quoted)?,
                     };
                     AdmittedTurn::Mint {
                         body: match thread {

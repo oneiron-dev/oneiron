@@ -10,6 +10,7 @@ mod defer;
 mod enqueue_claim;
 mod enqueue_record;
 mod mutate;
+mod owner_retained_payload;
 mod place;
 mod prune;
 mod reads;
@@ -52,11 +53,13 @@ impl<'a> AttemptQueue<'a> {
     /// transaction (OF-067; [`super::encoding::encode_admitted_record`]). A
     /// vault-opened handle lifts a secret the payload or notes hold into
     /// custody; a store-only handle holds no custody door and refuses one.
+    /// An erased dispatch target's text leaves the row first (FIX 7076).
     pub(super) fn encode_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         record: &mut super::AttemptRecord,
     ) -> crate::Result<Vec<u8>> {
+        super::payload_erase::scrub_hard_erased_payload_in_txn(self.store, wtxn, record);
         match self.vault {
             Some(vault) => super::encoding::encode_admitted_record(vault, wtxn, record),
             None => super::encoding::encode_admitted_record(self.store, wtxn, record),

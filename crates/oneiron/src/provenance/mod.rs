@@ -247,6 +247,11 @@ pub(crate) fn erase_row_provenance_in_txn(
         crate::store::erase_sync_response_owner_in_txn(store, txn, row)?;
         crate::store::erase_response_owner_in_txn(store, txn, row)?;
     }
+    // An erased dispatch target's instructions and briefing leave the attempt
+    // payloads that carry them, on every platform (FIX 7076).
+    if erase {
+        crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, row)?;
+    }
     Ok(())
 }
 

@@ -27,6 +27,7 @@
 
 mod apply;
 mod lineage;
+mod sourced;
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,9 +37,8 @@ use sha2::{Digest, Sha256};
 
 use super::cohort::{cohorts_in_txn, exposure_in_txn};
 use super::{
-    CASE_PREFIX, DerivationKind, EvalCase, EvalExposureCounts, EvalLabelKind, EvalSeat,
-    FAMILY_PREFIX, FamilyPurpose, SourceFamily, family_in_txn, invalid, root_family_in_txn,
-    rows_in_txn,
+    EvalCase, EvalExposureCounts, EvalLabelKind, EvalSeat, FamilyPurpose, SourceFamily,
+    family_in_txn, invalid, root_family_in_txn,
 };
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -52,6 +52,7 @@ pub use apply::{
 };
 pub(super) use lineage::{LineageReader, SOURCE_TURN_ROOT, amendment_artifact};
 use lineage::{ReceiptLineage, receipt_seat};
+pub use sourced::eval_authoring_inventory_sourced;
 
 /// How far back one pass reads attempt receipts: the Coach's own pacing.
 const EVAL_AUTHORING_WINDOW_SECS: u64 = 30 * 24 * 60 * 60;
@@ -433,86 +434,5 @@ fn inventory_digest(inventory: &EvalAuthoringInventory) -> Result<String> {
 /// # Errors
 /// Unreadable rows, or storage errors.
 pub fn eval_authoring_inventory(vault: &Vault, now: u64) -> Result<EvalAuthoringInventory> {
-    let from = now.saturating_sub(EVAL_AUTHORING_WINDOW_SECS);
-    let lineage = LineageReader::read(vault)?;
-    let mut sourced = Vec::new();
-    for (receipt, seat) in recent_candidates(vault, from, now)? {
-        let resolved = lineage.resolve(vault, &receipt)?;
-        // A session turn is pipeline-inert: nothing derives from it.
-        if !resolved.off_record {
-            sourced.push(Sourced {
-                receipt,
-                seat,
-                lineage: resolved,
-            });
-        }
-    }
-    let txn = vault.store.env.read_txn()?;
-    let cases = rows_in_txn::<EvalCase>(vault, &txn, CASE_PREFIX)?;
-    let families = rows_in_txn::<SourceFamily>(vault, &txn, FAMILY_PREFIX)?;
-    // A case is reused when it reads exactly the candidate's receipt.
-    let mut by_receipt: BTreeMap<(&EvalSeat, &str), &EvalCase> = BTreeMap::new();
-    for case in &cases {
-        if let [receipt] = case.receipts.as_slice()
-            && case.parents.is_empty()
-            && case.kind == DerivationKind::Receipt
-        {
-            by_receipt
-                .entry((&case.seat, receipt.as_str()))
-                .or_insert(case);
-        }
-    }
-    let mut groups = Vec::new();
-    let mut candidates = Vec::new();
-    for (number, members) in group_by_roots(&sourced).into_iter().enumerate() {
-        let id = format!("g{}", number + 1);
-        let members: Vec<&Sourced> = members.into_iter().map(|index| &sourced[index]).collect();
-        for member in &members {
-            let case = by_receipt
-                .get(&(&member.seat, member.receipt.receipt_id.as_str()))
-                .copied();
-            let labels = member
-                .lineage
-                .labels
-                .iter()
-                .map(|label| CandidateLabel {
-                    held: case.is_some_and(|case| {
-                        case.labels.iter().any(|held| {
-                            held.kind == label.kind && held.reference == label.reference
-                        })
-                    }),
-                    ..label.clone()
-                })
-                .collect();
-            candidates.push(EvalCandidate {
-                id: member.receipt.receipt_id.clone(),
-                seat: member.seat.clone(),
-                group: id.clone(),
-                at: member.receipt.occurred_at,
-                labels,
-                case: case.map(|case| case.id),
-                source_rows: member.lineage.sources.clone(),
-            });
-        }
-        groups.push(source_group(vault, &txn, id, &members)?);
-    }
-    let seats: BTreeSet<&EvalSeat> = sourced
-        .iter()
-        .map(|item| &item.seat)
-        .chain(families.iter().map(|family| &family.seat))
-        .collect();
-    let mut seat_rows = Vec::with_capacity(seats.len());
-    for seat in seats {
-        seat_rows.push(seat_inventory(vault, &txn, seat, &families, &cases)?);
-    }
-    let mut inventory = EvalAuthoringInventory {
-        inventory_digest: String::new(),
-        built_at: now,
-        from,
-        groups,
-        candidates,
-        seats: seat_rows,
-    };
-    inventory.inventory_digest = inventory_digest(&inventory)?;
-    Ok(inventory)
+    Ok(eval_authoring_inventory_sourced(vault, now)?.0)
 }

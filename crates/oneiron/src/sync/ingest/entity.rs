@@ -453,6 +453,8 @@ fn admit(
         if *local == *blob
             || pack_sync::pack_echo_equal(&local, blob)
             || crate::sync::asset_body::file_echo_equal(&vault.store, wtxn, &id, &local, blob)?
+            // A pad row rests as a reference to custody, its pad beside it (KS-5).
+            || crate::world_keys::pad_echo_equal(&vault.store, &local, blob)
         {
             // FIX 5500: the replay stays a skip, but a row already here with these bytes still
             // records the origin its window carries for them, as the write below does.
@@ -473,6 +475,16 @@ fn admit(
             );
             return Ok(EntityStep::Skip);
         }
+    }
+    // KS-5: a pad reference whose pad is not here waits, pending, for its carrier.
+    if let Some(err) = crate::world_keys::pad_reference_waits_in_txn(&vault.store, wtxn, &id, blob)?
+    {
+        let retry = RefusalRetry::DependencyPending;
+        return Ok(EntityStep::Quarantine(EntityRefusal {
+            id: Some(id),
+            err,
+            retry,
+        }));
     }
     // FIX 2902: the origin the window carries for these exact bytes lands in this txn first, so
     // a peer's row another own machine or a staged import brings is judged as the peer's below.

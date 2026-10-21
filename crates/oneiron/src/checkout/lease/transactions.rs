@@ -53,6 +53,7 @@ pub(crate) fn claim_in_txn(
         claimed_at,
         lease_expires_at: expires,
         updated_at: r.now,
+        bound_attempt: None,
     };
     store_act_in_txn(vault, t, &a)?;
     Ok(a)
@@ -120,6 +121,8 @@ pub(crate) fn reclaim_in_txn(
         .checked_add(1)
         .ok_or(CheckoutError::Invalid("lease epoch overflow"))?;
     a.holder_ref = new.clone();
+    // A new epoch carries no attempt's custody (FIX 6867, G1 PR3b).
+    a.bound_attempt = None;
     a.claimed_at = vault.instant_in_write_txn(t)?.secs();
     a.updated_at = now;
     a.lease_expires_at = Some(

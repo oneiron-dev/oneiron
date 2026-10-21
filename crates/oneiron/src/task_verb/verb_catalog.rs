@@ -659,6 +659,22 @@ pub enum AgentVerb {
     VaultAgentsGrantsRevoke,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
+    VaultRepoAnchorBind,
+    VaultRepoSnapshotsGet,
+    VaultRepoSnapshotsRead,
+    VaultRepoSymbolsDefinitions,
+    VaultRepoViewsGet,
+    VaultRepoViewsRead,
+    VaultRepoMergeQueueObserve,
+    VaultRepoSnapshotsIngest,
+    VaultRepoWorkOpen,
+    VaultRepoSymbolsDeclare,
+    VaultRepoSymbolsRenew,
+    VaultRepoSymbolsRelease,
+    VaultRepoProposalSubmit,
+    VaultRepoMergeQueueEnqueue,
+    VaultRepoCheckoutBind,
+    VaultRepoExport,
     VaultAgentsBase,
     VaultStandingBlocksConfigure,
     VaultStandingBlocksReconfigure,
@@ -981,6 +997,7 @@ pub enum AgentVerb {
     VaultRunsProgram,
     VaultRunsProgramStep,
     VaultRunsProgramCheckpoint,
+    VaultRunsProgramHoldRelease,
     VaultConsolidationHomeGet,
     VaultConsolidationHomePick,
     VaultConsolidationLineage,
@@ -1778,6 +1795,22 @@ impl AgentVerb {
         Self::VaultAgentsGrantsRevoke,
         Self::VaultRepoGitPushMint,
         Self::VaultRepoGitPushRevoke,
+        Self::VaultRepoAnchorBind,
+        Self::VaultRepoSnapshotsGet,
+        Self::VaultRepoSnapshotsRead,
+        Self::VaultRepoSymbolsDefinitions,
+        Self::VaultRepoViewsGet,
+        Self::VaultRepoViewsRead,
+        Self::VaultRepoMergeQueueObserve,
+        Self::VaultRepoSnapshotsIngest,
+        Self::VaultRepoWorkOpen,
+        Self::VaultRepoSymbolsDeclare,
+        Self::VaultRepoSymbolsRenew,
+        Self::VaultRepoSymbolsRelease,
+        Self::VaultRepoProposalSubmit,
+        Self::VaultRepoMergeQueueEnqueue,
+        Self::VaultRepoCheckoutBind,
+        Self::VaultRepoExport,
         Self::VaultAgentsBase,
         Self::VaultStandingBlocksConfigure,
         Self::VaultStandingBlocksReconfigure,
@@ -2100,6 +2133,7 @@ impl AgentVerb {
         Self::VaultRunsProgram,
         Self::VaultRunsProgramStep,
         Self::VaultRunsProgramCheckpoint,
+        Self::VaultRunsProgramHoldRelease,
         Self::VaultConsolidationHomeGet,
         Self::VaultConsolidationHomePick,
         Self::VaultConsolidationLineage,
@@ -2918,6 +2952,22 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => "vault.agents.grants.revoke",
             Self::VaultRepoGitPushMint => "vault.repo.git_push.mint",
             Self::VaultRepoGitPushRevoke => "vault.repo.git_push.revoke",
+            Self::VaultRepoAnchorBind => "vault.repo.anchor.bind",
+            Self::VaultRepoSnapshotsGet => "vault.repo.snapshots.get",
+            Self::VaultRepoSnapshotsRead => "vault.repo.snapshots.read",
+            Self::VaultRepoSymbolsDefinitions => "vault.repo.symbols.definitions",
+            Self::VaultRepoViewsGet => "vault.repo.views.get",
+            Self::VaultRepoViewsRead => "vault.repo.views.read",
+            Self::VaultRepoMergeQueueObserve => "vault.repo.merge_queue.observe",
+            Self::VaultRepoSnapshotsIngest => "vault.repo.snapshots.ingest",
+            Self::VaultRepoWorkOpen => "vault.repo.work.open",
+            Self::VaultRepoSymbolsDeclare => "vault.repo.symbols.declare",
+            Self::VaultRepoSymbolsRenew => "vault.repo.symbols.renew",
+            Self::VaultRepoSymbolsRelease => "vault.repo.symbols.release",
+            Self::VaultRepoProposalSubmit => "vault.repo.proposal_submit",
+            Self::VaultRepoMergeQueueEnqueue => "vault.repo.merge_queue.enqueue",
+            Self::VaultRepoCheckoutBind => "vault.repo.checkout.bind",
+            Self::VaultRepoExport => "vault.repo.export",
             Self::VaultAgentsBase => "vault.agents.base",
             Self::VaultStandingBlocksConfigure => "vault.standing_blocks.configure",
             Self::VaultStandingBlocksReconfigure => "vault.standing_blocks.reconfigure",
@@ -3246,6 +3296,7 @@ impl AgentVerb {
             Self::VaultRunsProgram => "vault.runs.program",
             Self::VaultRunsProgramStep => "vault.runs.program_step",
             Self::VaultRunsProgramCheckpoint => "vault.runs.program_checkpoint",
+            Self::VaultRunsProgramHoldRelease => "vault.runs.program_hold.release",
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
             Self::VaultConsolidationHomePick => "vault.consolidation.home.pick",
             Self::VaultConsolidationLineage => "vault.consolidation.lineage",
@@ -4049,6 +4100,22 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultRepoAnchorBind
+                | Self::VaultRepoSnapshotsGet
+                | Self::VaultRepoSnapshotsRead
+                | Self::VaultRepoSymbolsDefinitions
+                | Self::VaultRepoViewsGet
+                | Self::VaultRepoViewsRead
+                | Self::VaultRepoMergeQueueObserve
+                | Self::VaultRepoSnapshotsIngest
+                | Self::VaultRepoWorkOpen
+                | Self::VaultRepoSymbolsDeclare
+                | Self::VaultRepoSymbolsRenew
+                | Self::VaultRepoSymbolsRelease
+                | Self::VaultRepoProposalSubmit
+                | Self::VaultRepoMergeQueueEnqueue
+                | Self::VaultRepoCheckoutBind
+                | Self::VaultRepoExport
                 | Self::VaultAgentsBase
                 | Self::VaultStandingBlocksConfigure
                 | Self::VaultStandingBlocksReconfigure
@@ -4351,6 +4418,7 @@ impl AgentVerb {
                 | Self::VaultRunsProgram
                 | Self::VaultRunsProgramStep
                 | Self::VaultRunsProgramCheckpoint
+                | Self::VaultRunsProgramHoldRelease
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
@@ -5196,6 +5264,22 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultRepoAnchorBind
+                | Self::VaultRepoSnapshotsGet
+                | Self::VaultRepoSnapshotsRead
+                | Self::VaultRepoSymbolsDefinitions
+                | Self::VaultRepoViewsGet
+                | Self::VaultRepoViewsRead
+                | Self::VaultRepoMergeQueueObserve
+                | Self::VaultRepoSnapshotsIngest
+                | Self::VaultRepoWorkOpen
+                | Self::VaultRepoSymbolsDeclare
+                | Self::VaultRepoSymbolsRenew
+                | Self::VaultRepoSymbolsRelease
+                | Self::VaultRepoProposalSubmit
+                | Self::VaultRepoMergeQueueEnqueue
+                | Self::VaultRepoCheckoutBind
+                | Self::VaultRepoExport
                 | Self::VaultAgentsBase
                 | Self::VaultStandingBlocksConfigure
                 | Self::VaultStandingBlocksReconfigure
@@ -5498,6 +5582,7 @@ impl AgentVerb {
                 | Self::VaultRunsProgram
                 | Self::VaultRunsProgramStep
                 | Self::VaultRunsProgramCheckpoint
+                | Self::VaultRunsProgramHoldRelease
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
@@ -5778,6 +5863,21 @@ impl AgentVerb {
                 | Self::GraphFsHead
                 | Self::GraphFsWc
                 | Self::ExecuteCode
+                | Self::VaultRepoSnapshotsGet
+                | Self::VaultRepoSnapshotsRead
+                | Self::VaultRepoSymbolsDefinitions
+                | Self::VaultRepoViewsGet
+                | Self::VaultRepoViewsRead
+                | Self::VaultRepoMergeQueueObserve
+                | Self::VaultRepoSnapshotsIngest
+                | Self::VaultRepoWorkOpen
+                | Self::VaultRepoSymbolsDeclare
+                | Self::VaultRepoSymbolsRenew
+                | Self::VaultRepoSymbolsRelease
+                | Self::VaultRepoProposalSubmit
+                | Self::VaultRepoMergeQueueEnqueue
+                | Self::VaultRepoCheckoutBind
+                | Self::VaultRepoExport
                 | Self::VaultWorkflowsDispatchBound
                 | Self::VaultCommit
                 | Self::VaultCalendarPassportsRead
@@ -6438,6 +6538,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultRepoAnchorBind
                 | Self::VaultAgentsBase
                 | Self::VaultStandingBlocksConfigure
                 | Self::VaultStandingBlocksReconfigure
@@ -6735,6 +6836,7 @@ impl AgentVerb {
                 | Self::VaultRunsProgram
                 | Self::VaultRunsProgramStep
                 | Self::VaultRunsProgramCheckpoint
+                | Self::VaultRunsProgramHoldRelease
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
@@ -7264,6 +7366,16 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultRepoAnchorBind
+                | Self::VaultRepoSnapshotsIngest
+                | Self::VaultRepoWorkOpen
+                | Self::VaultRepoSymbolsDeclare
+                | Self::VaultRepoSymbolsRenew
+                | Self::VaultRepoSymbolsRelease
+                | Self::VaultRepoProposalSubmit
+                | Self::VaultRepoMergeQueueEnqueue
+                | Self::VaultRepoCheckoutBind
+                | Self::VaultRepoExport
                 | Self::VaultStandingBlocksConfigure
                 | Self::VaultStandingBlocksReconfigure
                 | Self::VaultWorkflowsSave
@@ -7442,6 +7554,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
+                | Self::VaultRunsProgramHoldRelease
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
@@ -8226,6 +8339,22 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
+            Self::VaultRepoAnchorBind => &["spec"],
+            Self::VaultRepoSnapshotsGet => &["spec"],
+            Self::VaultRepoSnapshotsRead => &["spec"],
+            Self::VaultRepoSymbolsDefinitions => &["spec"],
+            Self::VaultRepoViewsGet => &["spec"],
+            Self::VaultRepoViewsRead => &["spec"],
+            Self::VaultRepoMergeQueueObserve => &["spec"],
+            Self::VaultRepoSnapshotsIngest => &["spec"],
+            Self::VaultRepoWorkOpen => &["spec"],
+            Self::VaultRepoSymbolsDeclare => &["spec"],
+            Self::VaultRepoSymbolsRenew => &["spec"],
+            Self::VaultRepoSymbolsRelease => &["spec"],
+            Self::VaultRepoProposalSubmit => &["spec"],
+            Self::VaultRepoMergeQueueEnqueue => &["spec"],
+            Self::VaultRepoCheckoutBind => &["spec"],
+            Self::VaultRepoExport => &["spec"],
             Self::VaultAgentsBase => &[],
             Self::VaultStandingBlocksConfigure => &["spec"],
             Self::VaultStandingBlocksReconfigure => &["spec"],
@@ -8548,6 +8677,7 @@ impl AgentVerb {
             Self::VaultRunsProgram => &["spec"],
             Self::VaultRunsProgramStep => &["spec"],
             Self::VaultRunsProgramCheckpoint => &["spec"],
+            Self::VaultRunsProgramHoldRelease => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
@@ -9346,6 +9476,22 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
+            Self::VaultRepoAnchorBind => &["spec"],
+            Self::VaultRepoSnapshotsGet => &["spec"],
+            Self::VaultRepoSnapshotsRead => &["spec"],
+            Self::VaultRepoSymbolsDefinitions => &["spec"],
+            Self::VaultRepoViewsGet => &["spec"],
+            Self::VaultRepoViewsRead => &["spec"],
+            Self::VaultRepoMergeQueueObserve => &["spec"],
+            Self::VaultRepoSnapshotsIngest => &["spec"],
+            Self::VaultRepoWorkOpen => &["spec"],
+            Self::VaultRepoSymbolsDeclare => &["spec"],
+            Self::VaultRepoSymbolsRenew => &["spec"],
+            Self::VaultRepoSymbolsRelease => &["spec"],
+            Self::VaultRepoProposalSubmit => &["spec"],
+            Self::VaultRepoMergeQueueEnqueue => &["spec"],
+            Self::VaultRepoCheckoutBind => &["spec"],
+            Self::VaultRepoExport => &["spec"],
             Self::VaultAgentsBase => &[],
             Self::VaultStandingBlocksConfigure => &["spec"],
             Self::VaultStandingBlocksReconfigure => &["spec"],
@@ -9668,6 +9814,7 @@ impl AgentVerb {
             Self::VaultRunsProgram => &["spec"],
             Self::VaultRunsProgramStep => &["spec"],
             Self::VaultRunsProgramCheckpoint => &["spec"],
+            Self::VaultRunsProgramHoldRelease => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
@@ -11745,6 +11892,48 @@ impl AgentVerb {
             Self::VaultRepoGitPushRevoke => {
                 "The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing."
             }
+            Self::VaultRepoAnchorBind => {
+                "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."
+            }
+            Self::VaultRepoSnapshotsGet => {
+                "Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease."
+            }
+            Self::VaultRepoSnapshotsRead => {
+                "Reads one file of such a snapshot on a path the attached run's Grant reads."
+            }
+            Self::VaultRepoSymbolsDefinitions => {
+                "Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads."
+            }
+            Self::VaultRepoViewsGet => "Reads the attached run's own work, as it was opened.",
+            Self::VaultRepoViewsRead => "Reads one file of the attached run's own work.",
+            Self::VaultRepoMergeQueueObserve => {
+                "Reads the merge queue the attached run's own work is pinned under, with its own entries and what each waits behind."
+            }
+            Self::VaultRepoSnapshotsIngest => {
+                "Imports the commit an admitted repo's full ref names now, readable paths only, for the attached run."
+            }
+            Self::VaultRepoWorkOpen => {
+                "Opens a fresh private working set of an admitted repo at its queue's green commit for the attached run, readable paths only."
+            }
+            Self::VaultRepoSymbolsDeclare => {
+                "Declares current symbols of the attached run's own work on paths its Grant edits, for its TASK; an overlap waits, never refused."
+            }
+            Self::VaultRepoSymbolsRenew => {
+                "Extends the attached run's own symbol declaration by its declared lifetime."
+            }
+            Self::VaultRepoSymbolsRelease => "Removes the attached run's own symbol declaration.",
+            Self::VaultRepoProposalSubmit => {
+                "Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept."
+            }
+            Self::VaultRepoMergeQueueEnqueue => {
+                "Queues the attached run's own stored proposals of one work as one batch, under the declaration they were made under."
+            }
+            Self::VaultRepoCheckoutBind => {
+                "Materializes the attached run's own live checkout lease of an admitted served repo, for its TASK, with its lease-route remote when a door base is named; no lease is minted and no host path is shown."
+            }
+            Self::VaultRepoExport => {
+                "Exports one finalized, promoted revision from the attached run's own checkout when one Grant lists publish over the revision's paths; otherwise it holds with a typed code. git_push never implies an export."
+            }
             Self::VaultAgentsBase => {
                 "The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent."
             }
@@ -12654,6 +12843,9 @@ impl AgentVerb {
             }
             Self::VaultRunsProgramCheckpoint => {
                 "Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it."
+            }
+            Self::VaultRunsProgramHoldRelease => {
+                "The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out."
             }
             Self::VaultConsolidationHomeGet => {
                 "The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything."
