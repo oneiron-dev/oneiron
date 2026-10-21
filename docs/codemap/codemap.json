@@ -2298,7 +2298,17 @@
      "path": "src/attempt_queue/payload_erase.rs",
      "purpose": "An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/payload_erase/response.rs",
+     "purpose": "An agent dispatch's payload text in checkpoint images (FIX 7115, KEY STORE = A): its attempt row is a…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -14211,7 +14221,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 7,
       "re-export": 24
      }
@@ -15002,7 +15012,17 @@
      "path": "src/code_run/storage/wait_holders.rs",
      "purpose": "Who held each code-run wait's reply (FIX 5718, KEY STORE = A; Engine ruling 2): one durable row per run a…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/wait_holders/response.rs",
+     "purpose": "A wait's replies in checkpoint images (FIX 6588, KEY STORE = A): each delivery a run was given and each…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -49436,7 +49456,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/landing.rs",
@@ -49545,7 +49565,7 @@
      "path": "src/recovery/checkpoint/response_rows.rs",
      "purpose": "The row-held responses a checkpoint carries (KS-2B1, FIX 5683 part B1): a turn program's STEP bodies, LLM…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -52736,7 +52756,17 @@
      "path": "src/self_heal/blocked_reports/source.rs",
      "purpose": "A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/blocked_reports/source/response.rs",
+     "purpose": "A blocked report's captured requests in checkpoint images (FIX 6708, KEY STORE = A): each receipt row and…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -57036,7 +57066,17 @@
      "path": "src/store/body_envelope/response.rs",
      "purpose": "Row-held response bodies under body custody (KS-2B1, FIX 5683 part B1; owner KEY STORE = A)",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/response/shared_wait.rs",
+     "purpose": "A wait's settled reply, shared by every holder of the wait (FIX 6588, KEY STORE = A): one holder's erase…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -57561,7 +57601,27 @@
      "path": "src/store/key_custody/head.rs",
      "purpose": "The sealed custody head (KS-4, FIX 5685): the latest live entries of one lineage and every retirement fact…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/head/pad_scope.rs",
+     "purpose": "World pad compartments (KS-5, FIX 6706, L04 half): one world's pads, live and retired, sealed apart from…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/head/scope.rs",
+     "purpose": "Who reads each compartment of a custody head, who its keys are wrapped to, and what a restore opens it with",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -57615,13 +57675,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "mod": 1,
       "re-export": 1
      }
@@ -57852,7 +57912,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "mod": 1,
       "re-export": 17
      }
@@ -64840,7 +64900,7 @@
      "path": "src/vault_cleanup/attempt_retention.rs",
      "purpose": "Reversible retention for private queue records; the serialized attempt is never changed",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 3
      }
     },
@@ -64897,7 +64957,7 @@
      "path": "src/vault_cleanup/marks.rs",
      "purpose": "Cleanup marks keyed by id16: a run's archive mark on a completed attempt, and the owner's kept mark on an…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -70863,7 +70923,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -71045,7 +71105,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 137,
+     "files": 138,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71983,7 +72043,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -72102,7 +72162,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 132,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72335,7 +72395,7 @@
    },
    "over_bar": 171,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4633,
+   "source_files": 4639,
    "test_files": 902
   },
   "oneiron-android": {
