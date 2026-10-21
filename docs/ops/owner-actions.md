@@ -948,12 +948,21 @@ archived until you accept, and the engine refuses the automatic posture.
 - `GET /v1/owner/cleanup`: the posture, the done-task retention in days (`0` turns that arm
   off), the open proposals with what accepting would archive, the digests of what was
   archived, and everything still archived: records (`"kind": "record"`) and finished queue
-  attempts (`"kind": "completed_attempt"`), in one list.
+  attempts (`"kind": "completed_attempt"`), in one list. `runs` lists each cleanup run with
+  its snapshot: every entry it archived, with the record's revision and the marks before and
+  after, and whether the run was reverted.
 - `POST /v1/owner/cleanup/accept` or `/reject` with `{"proposal": "<id>"}`. Accept archives the
   candidates that are still empty and records one digest; a proposal already answered is a 409.
 - `POST /v1/owner/cleanup/restore` with `{"entity": "<id>", "kind": "<kind>"}`, both copied
   from that list, brings back the item: a record (`kind` may be left out for one), or an
-  attempt, which returns to the queue listing. An item that is not archived is a 409.
+  attempt, which returns to the queue listing. An item that is not archived is a 409. The
+  restored item is kept: later cleanup runs skip it until it is edited.
+- `POST /v1/owner/cleanup/revert-run` with `{"attempt": "<32 hex>"}` from `runs` undoes a whole
+  run. Each entry answers `restored`, `already_restored`, `changed` (archived again since) or
+  `unavailable` (deleted or gone); a changed entry never stops the rest. Restored entries are
+  kept, as for a single restore. Asking again returns the first answer with `"repeated": true`.
+  A run whose proposal is still open, or one recorded before snapshots, is a 409; an unknown
+  run is a 404.
 - `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
   `auto_with_digest` is refused (409) while the integrity checks are open.
 
