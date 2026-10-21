@@ -31139,7 +31139,7 @@ pub fn vault_questions_read(
 pub fn vault_questions_answers(
     memory: &Memory<'_>,
     input: crate::receipt::QuestionAnswersRequest,
-) -> MemoryResult<Vec<crate::receipt::QuestionAnswer>> {
+) -> MemoryResult<crate::receipt::QuestionAnswersReply> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.answers", &input)
 }
 pub fn vault_questions_refresh(

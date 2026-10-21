@@ -5932,7 +5932,6 @@ impl AgentVerb {
                 | Self::VaultRoomsUpkeepPending
                 | Self::SelfSkillsCallables
                 | Self::VaultVoicesLineage
-                | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
@@ -12697,7 +12696,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => "",
             Self::VaultQuestionsBackfill => "",
             Self::VaultQuestionsRead => "",
-            Self::VaultQuestionsAnswers => "",
+            Self::VaultQuestionsAnswers => {
+                "Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each."
+            }
             Self::VaultQuestionsRefresh => {
                 "Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it."
             }
