@@ -2817,7 +2817,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/extraction/persist.rs` | src | s | 1 fn | — | A host's shadow output, once it clears parity, saved as its turn's tags the way the tagging slot saves an… |
 | `src/memory/extraction/shadow.rs` | src | s | 2 fn · 1 crate-vis | — | Shadow execution never runs under the witness transaction or writes another row |
 | `src/memory/extraction/tests.rs` | test | m | — | — | — |
-| `src/memory/extraction/types.rs` | src | s | 12 struct · 2 enum · 1 trait · 5 fn | ContextLink, CorefLink, EncoderGolden, EncoderInput, EncoderMessage, EncoderOutput, EncoderParity, EncoderTurn +7 | Typed serving payloads and observable extraction receipts |
+| `src/memory/extraction/types.rs` | src | m | 14 struct · 6 enum · 1 trait · 10 fn | ContextLink, CorefLink, EncoderAttempt, EncoderExecution, EncoderGolden, EncoderInput, EncoderMessage, EncoderOutput +13 | Typed serving payloads and observable extraction receipts |
 | `src/memory/foreign_code.rs` | src | m | 6 struct · 4 enum · 1 fn | ForeignCodeApproval, ForeignCodeEffect, ForeignCodeIsolation, ForeignCodeOutput, ForeignCodeProposal, ForeignCodeRead, ForeignCodeRunRequest, ForeignCodeRunResult +2 | Typed foreign code admission |
 | `src/memory/graph_fs_doors/mod.rs` | src | s | 10 fn · 1 re-export | — | Typed read-only file-face verbs |
 | `src/memory/graph_fs_doors/types.rs` | src | s | 12 struct · 3 enum | GraphFsDirectoryView, GraphFsEncoding, GraphFsEntryView, GraphFsFindRequest, GraphFsGrepRequest, GraphFsHeadRequest, GraphFsKind, GraphFsLinkRequest +7 | — |
@@ -4500,7 +4500,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tagging/save_tests.rs` | test | L | — | — | Save mode end to end, observed through the read doors (ARCH-0036, serving the tagger): a tagged turn's… |
 | `src/tagging/tags.rs` | src | L | 5 struct · 2 enum · 7 fn · 21 crate-vis | DerivationEnvelope, MentionHit, MentionLink, MentionReference, MergeEvidence, TaggedMention, TurnTags | The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the… |
 | `src/tagging/tests.rs` | test | XL | — | — | Laws of the tagging marker and its drain, observed through the job tables, the traces and the vault's stored… |
-| `src/tagging/trace.rs` | src | s | 1 struct · 4 enum · 2 crate-vis | HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace | One trace per settled marker attempt |
+| `src/tagging/trace.rs` | src | s | 1 struct · 4 enum · 3 crate-vis | HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace | One trace per settled marker attempt |
 | `src/tagging/verbs.rs` | src | m | 15 struct · 5 enum · 4 fn · 2 crate-vis | DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView, TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState +12 | Typed public reads of the tagging marker and the saved tag sets: the `vault.tagging.*` doors over… |
 | `src/task_authority/binding_generation.rs` | src | s | 1 struct · 1 fn · 1 type · 1 const · 6 crate-vis | BindingGeneration | The binding generation a consult party held when its consult was minted |
 | `src/task_authority/mod.rs` | src | L | 2 struct · 1 enum · 3 fn · 2 const · 1 re-export · 24 crate-vis | TaskAuthorityFact, TaskAuthorityFactKind, TaskAuthorityState | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
