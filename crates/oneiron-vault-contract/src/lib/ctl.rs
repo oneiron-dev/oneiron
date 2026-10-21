@@ -451,9 +451,10 @@ pub enum CtlResponse {
     /// `readiness` is how the vault came up (contract v3,
     /// [`ManagedReadiness`]); a reply that carries none is no `Ping`.
     /// `browser` is how its browser stands now ([`BrowserReadiness`], FIX
-    /// 7670), required, with a build floor: a vault built before it sends
-    /// none, and no reader of such a line as a `Ping` is kept. Such a line
-    /// still matches `Ok`, which is never a `Ping`.
+    /// 7670), optional, with a build floor: absent means this engine offers
+    /// no browser, as an engine built before the floor sends none, and its
+    /// `Ping` is still a `Ping`. A present `browser` carries every key its
+    /// state requires; nothing stands in for an absent one.
     /// `managed_backup` is what the vault reports of its backups (Engine
     /// 10-20 row (b), [`ManagedBackupFacts`]), optional. Build floor: it
     /// rides v3 with no version move, and a vault built before it sends
@@ -487,7 +488,9 @@ pub enum CtlResponse {
         pid: u32,
         contract_version: u32,
         readiness: ManagedReadiness,
-        browser: BrowserReadiness,
+        /// Absent: this engine offers no browser.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        browser: Option<BrowserReadiness>,
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
@@ -536,7 +539,7 @@ pub enum CtlResponse {
     },
     /// Appended after `Ok`. Required fields {slim, status} are disjoint from every
     /// variant above ({quiescent, ledger_rev, next_wake, training},
-    /// {ok, vault, pid, contract_version, readiness, browser}, {ok}), preserving the untagged
+    /// {ok, vault, pid, contract_version, readiness}, {ok}), preserving the untagged
     /// declaration-order invariant. Do NOT add a required `ok` field here:
     /// it would let the `Ok` variant shadow this one during untagged
     /// matching (unknown fields are ignored, so `Ok { ok }` would accept a
