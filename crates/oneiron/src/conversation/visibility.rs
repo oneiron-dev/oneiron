@@ -1,7 +1,7 @@
 //! The audience predicate shared by all ScopedRead paths.
 use super::*;
-use crate::conversation_dag::edge_ids;
-use crate::limits::MAX_ANCESTOR_DEPTH;
+use crate::conversation_dag::counted_edge_ids;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::{
     EdgeKind,
     registry::{
@@ -350,13 +350,12 @@ impl AudienceCache {
                     }
                     Err(error) => return Err(error),
                 };
-                let mut participants = edge_ids(
+                let mut participants = counted_edge_ids(
                     &vault.store,
                     txn,
                     &relationship,
                     EdgeKind::ParticipatesIn,
                     true,
-                    MAX_ANCESTOR_DEPTH,
                 )?;
                 // Relationship participant ids are a read-path feed, not a
                 // replacement for scope/tier authorization or room windows.
@@ -470,14 +469,7 @@ fn thread_placed_in(
     match h.entity_type {
         ENTITY_TYPE_TURN => root_of(raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default()),
         ENTITY_TYPE_MESSAGE => {
-            let turns = edge_ids(
-                &vault.store,
-                txn,
-                &id,
-                EdgeKind::PartOf,
-                false,
-                MAX_ANCESTOR_DEPTH,
-            )?;
+            let turns = counted_edge_ids(&vault.store, txn, &id, EdgeKind::PartOf, false)?;
             let [turn] = turns[..] else {
                 return Ok(None);
             };
@@ -550,22 +542,43 @@ pub(crate) fn room_for_record_in(
 }
 
 /// [`room_for_record_in`] starting from `revision` of `record` when given,
-/// so a served older revision is placed by its own subject.
+/// so a served older revision is placed by its own subject. Every ancestor
+/// is read, however many (rule 5): past its threshold row the walk asks
+/// whether everything is okay, counted on every way out, and a record
+/// already seen ends a cycle.
 fn room_for_revision_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: EntityId,
     revision: Option<&[u8]>,
 ) -> Result<Option<EntityId>> {
-    let mut pending = vec![record];
+    let mut walk = ScanCount::start(
+        &vault.store,
+        txn,
+        EngineScan::RoomAncestryRecords,
+        record.as_bytes(),
+    )?;
     let mut seen = BTreeSet::new();
+    let room = room_walk_in(vault, txn, record, revision, &mut seen);
+    walk.rows(seen.len());
+    walk.defer(&vault.store);
+    room
+}
+
+/// The walk [`room_for_revision_in`] counts, each record it reaches in
+/// `seen`.
+fn room_walk_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: EntityId,
+    revision: Option<&[u8]>,
+    seen: &mut BTreeSet<EntityId>,
+) -> Result<Option<EntityId>> {
+    let mut pending = vec![record];
     let mut room = None;
     while let Some(id) = pending.pop() {
         if !seen.insert(id) {
             continue;
-        }
-        if seen.len() > MAX_ANCESTOR_DEPTH {
-            return Err(state("room ancestor depth bound"));
         }
         let raw = match revision.filter(|_| id == record) {
             Some(raw) => raw.to_vec(),
@@ -588,14 +601,7 @@ fn room_for_revision_in(
             EdgeKind::SpawnedBy,
             EdgeKind::BelongsTo,
         ] {
-            pending.extend(edge_ids(
-                &vault.store,
-                txn,
-                &id,
-                kind,
-                false,
-                MAX_ANCESTOR_DEPTH,
-            )?);
+            pending.extend(counted_edge_ids(&vault.store, txn, &id, kind, false)?);
         }
         if h.entity_type == ENTITY_TYPE_CLAIM {
             let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
@@ -639,16 +645,9 @@ fn rooms_of_revision_in(
             EdgeKind::SpawnedBy,
             EdgeKind::BelongsTo,
         ] {
-            next.extend(edge_ids(
-                &vault.store,
-                txn,
-                &id,
-                kind,
-                false,
-                MAX_ANCESTOR_DEPTH,
-            )?);
+            next.extend(counted_edge_ids(&vault.store, txn, &id, kind, false)?);
             if union {
-                next.extend(edge_ids(dbs, txn, &id, kind, false, MAX_ANCESTOR_DEPTH)?);
+                next.extend(counted_edge_ids(dbs, txn, &id, kind, false)?);
             }
         }
         if h.entity_type == ENTITY_TYPE_CLAIM
