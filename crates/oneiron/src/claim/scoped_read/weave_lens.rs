@@ -444,7 +444,7 @@ fn item_sources(item: &WeaveItem) -> Option<EntityId> {
     match item {
         WeaveItem::Claim { id, .. } | WeaveItem::Project { id, .. } => Some(*id),
         WeaveItem::Budget { project, .. } => Some(*project),
-        WeaveItem::SieveAudit { audit, .. } => Some(audit.source),
+        WeaveItem::SieveAudit { audit, .. } => Some(audit.source()),
         WeaveItem::Link { .. }
         | WeaveItem::DreamProgress { .. }
         | WeaveItem::AgentHealth { .. }

@@ -19,6 +19,8 @@ use crate::memory::{ClaimView, Memory, MemoryError, MemoryResult};
 use crate::provenance::EdgeRef;
 use serde::{Deserialize, Serialize};
 
+pub(super) mod sieve_audit;
+
 /// One section a weave report asks for, in the reader's own recipe.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -258,6 +260,12 @@ pub enum WeaveItemView {
         confidence: u8,
         agrees: bool,
         audited_at: u64,
+    },
+    /// One unflagged window's sieve audit (OF-498f); its wrong control is a
+    /// `sieve_audit` item's, by `attempt_ref`.
+    SieveWindowAudit {
+        attempt_ref: String,
+        finding: sieve_audit::WeaveSieveFindingView,
     },
     /// One loop decision (OF-499 A2), its refs as hex: its outcome and kind
     /// exactly as stored, its family, each reason, and whether it is an
