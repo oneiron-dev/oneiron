@@ -46363,14 +46363,16 @@ pub enum ConnectorCallReply {
     AwaitingInput {
         #[serde(rename = "handle")]
         handle: String,
+        #[serde(rename = "call_ref", default, skip_serializing_if = "Option::is_none")]
+        call_ref: Option<String>,
         #[serde(rename = "source")]
         source: String,
         #[serde(rename = "foreign")]
         foreign: bool,
         #[serde(rename = "questions")]
         questions: Vec<ConnectorQuestion>,
-        #[serde(rename = "expires_at_ms")]
-        expires_at_ms: u64,
+        #[serde(rename = "live_until_ms")]
+        live_until_ms: u64,
         #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
         reasons: Option<Vec<String>>,
     },
@@ -48750,6 +48752,23 @@ pub enum ConnectorCallStatus {
         name: String,
         #[serde(rename = "tool")]
         tool: String,
+        #[serde(rename = "reply")]
+        reply: ConnectorCallReply,
+    },
+    #[serde(rename = "awaiting_input")]
+    AwaitingInput {
+        #[serde(rename = "call_ref")]
+        call_ref: String,
+        #[serde(rename = "name")]
+        name: String,
+        #[serde(rename = "tool")]
+        tool: String,
+        #[serde(rename = "generation")]
+        generation: u64,
+        #[serde(rename = "asked")]
+        asked: u64,
+        #[serde(rename = "uncertain", default, skip_serializing_if = "Option::is_none")]
+        uncertain: Option<bool>,
         #[serde(rename = "reply")]
         reply: ConnectorCallReply,
     },

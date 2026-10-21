@@ -65,6 +65,9 @@ pub struct VoxCpm2HttpQueue {
     sender: Sender<VoxCpm2Work>,
     responses: Receiver<VoxCpm2Event>,
     warm: WarmTarget,
+    /// The vault's serving policy the worker was set up under, kept whole
+    /// (FIX 8772): whether the shipped defaults stood in rides with it.
+    serving_policy: VoiceServingPolicyReceipt,
 }
 
 impl VoxCpm2HttpQueue {
@@ -99,7 +102,8 @@ impl VoxCpm2HttpQueue {
         {
             return Err(invalid("worker must be loopback HTTP with a port"));
         }
-        let vault_limits = vault.voice_serving_limits(None)?;
+        let serving_policy = vault.voice_serving_policy(None)?;
+        let vault_limits = serving_policy.limits;
         let client = Client::builder()
             // A loopback URL is not a loopback destination if env proxies apply.
             .no_proxy()
@@ -132,7 +136,15 @@ impl VoxCpm2HttpQueue {
             sender,
             responses,
             warm,
+            serving_policy,
         })
+    }
+
+    /// The vault serving policy this worker was set up under, and whether
+    /// the shipped defaults stood in for an absent row.
+    #[must_use]
+    pub fn serving_policy(&self) -> VoiceServingPolicyReceipt {
+        self.serving_policy
     }
 
     pub fn try_recv(&self) -> Result<Option<VoxCpm2Event>> {
