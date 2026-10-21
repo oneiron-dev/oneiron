@@ -27,7 +27,8 @@ mod storage;
 mod wait;
 
 pub use self::followup::{
-    HumanTaskFollowupDriver, human_followup_record, human_followup_records,
+    HumanTaskFollowupDriver, OPEN_HUMAN_ASK_FAMILIES, OpenHumanAsk, OpenHumanAskKind,
+    OpenHumanAsks, human_followup_record, human_followup_records, open_asks_for,
     resolve_native_human_route,
 };
 pub(crate) use self::followup::{
