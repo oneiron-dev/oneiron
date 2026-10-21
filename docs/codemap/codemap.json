@@ -15326,13 +15326,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_sandbox/egress/dns.rs",
      "purpose": "DNS goes to the host's resolver through the same proxy",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -15366,14 +15366,31 @@
      "kind": "src",
      "notable": [
       "EgressConfig",
-      "OpenEgressProxy"
+      "OpenEgressProxy",
+      "RawEndpointGrant",
+      "RawProtocol"
      ],
      "path": "src/code_sandbox/egress/mod.rs",
      "purpose": "The engine's open egress proxy",
      "surface": {
+      "enum": 1,
       "fn": 6,
-      "re-export": 2,
-      "struct": 2
+      "re-export": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EgressNameRefusal"
+     ],
+     "path": "src/code_sandbox/egress/name_gate.rs",
+     "purpose": "The name a raw stream carries to an address that a name of the owner allowlist admitted (FIX 7652, FIX 634)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -15678,7 +15695,7 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 10,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 7
      }
     },
@@ -15693,8 +15710,26 @@
      "path": "src/code_sandbox/proposal/body.rs",
      "purpose": "A proposed file's bytes, spooled to an anonymous host temp file as they arrive",
      "surface": {
-      "fn": 14,
+      "fn": 15,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProposalSpoolClaim",
+      "ProposalSpoolFloor",
+      "SpoolAtFloor",
+      "SpoolFloorRefusal"
+     ],
+     "path": "src/code_sandbox/proposal/spool.rs",
+     "purpose": "Where a proposal body is spooled, and the disk floor each of its appends keeps (FIX 7650)",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 1,
+      "trait": 2
      }
     },
     {
@@ -42419,7 +42454,7 @@
      "path": "src/office_body/pptx.rs",
      "purpose": "The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) as a Loro document on the typed-body door…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 7,
       "re-export": 2,
       "struct": 3
@@ -42432,7 +42467,7 @@
      "path": "src/office_body/pptx/doc.rs",
      "purpose": "The PPTX body inside its Loro document, schema 1 (ARCH-0077, \"One deck, one document\")",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -65143,13 +65178,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/typed_body/lift.rs",
      "purpose": "Typed bodies the historical lift sweep reads again (OF-067, Engine ruling G2 = b)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -70008,7 +70043,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 44,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71284,7 +71319,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4543,
+   "source_files": 4545,
    "test_files": 902
   },
   "oneiron-android": {
@@ -75973,7 +76008,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -75989,7 +76024,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 19,
+      "const": 20,
       "fn": 7,
       "struct": 5,
       "type": 1
