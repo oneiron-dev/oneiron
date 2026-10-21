@@ -15,7 +15,8 @@ pub(super) struct Cell {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Plan {
-    pub(crate) schema: u32, pub(crate) campaign_seed: u64, pub(crate) manifest_digest: String,
+    pub(crate) schema: u32, pub(crate) campaign_seed: u64,
+    pub(crate) fixture_public_bind: Option<std::net::SocketAddrV4>, pub(crate) manifest_digest: String,
     pub(crate) checker_digest: String, pub(crate) fixture_root: PathBuf, pub(crate) fixture_digest: String,
     pub(crate) checker_version: String, pub(crate) evaluation_seeds: BTreeMap<String, Vec<u64>>,
     pub(crate) holdout_seeds: BTreeMap<String, Vec<u64>>, pub(crate) cells: Vec<Cell>,
@@ -43,8 +44,12 @@ pub(super) fn fixture_digest(root: &Path) -> Result<String> {
     for path in paths { bytes.extend(fs::read(path).map_err(|e| e.to_string())?) }
     Ok(digest(&bytes))
 }
-pub(super) fn generate(manifest: &Path, seed: u64, out: &Path) -> Result<()> {
+pub(super) fn generate(manifest: &Path, seed: u64, fixture_public_bind: Option<std::net::SocketAddrV4>, out: &Path) -> Result<()> {
     if out.exists() { return Err("frozen_output_already_exists".into()) }
+    if let Some(target) = fixture_public_bind {
+        oneiron::code_sandbox::egress::FixtureForward::new(target).map_err(|e| e.to_string())?;
+        if target.port() == 8766 { return Err("public_private_port_collision".into()) }
+    }
     let source: Value = read(manifest)?;
     if source["schema"] != 1 || source["row"] != "S1" { return Err("s1_manifest_required".into()) }
     let fixture_root = manifest.canonicalize().map_err(|e| e.to_string())?
@@ -83,7 +88,7 @@ pub(super) fn generate(manifest: &Path, seed: u64, out: &Path) -> Result<()> {
         fs::set_permissions(out, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
     }
     let public: Vec<_> = cells.iter().map(|c| json!({"id":c.id,"fixture":c.fixture,"task":c.public_task})).collect();
-    let plan = Plan { schema:1, campaign_seed: seed, manifest_digest: digest(&fs::read(manifest).map_err(|e| e.to_string())?),
+    let plan = Plan { schema:1, campaign_seed: seed, fixture_public_bind, manifest_digest: digest(&fs::read(manifest).map_err(|e| e.to_string())?),
         checker_digest: checker_digest(&fixture_root)?, fixture_digest: fixture_digest(&fixture_root)?,
         fixture_root, checker_version: CHECKER_VERSION.into(), evaluation_seeds, holdout_seeds, cells };
     write_json(&out.join("public-packets.json"), &public)?;

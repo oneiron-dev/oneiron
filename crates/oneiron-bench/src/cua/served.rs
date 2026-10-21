@@ -3,7 +3,7 @@ use std::{fs, path::{Path, PathBuf}, process::Stdio, time::Duration};
 use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines}, process::{Child, ChildStdin, ChildStdout, Command}, time::Instant};
 use serde_json::{Value, json};
 use rand::RngCore;
-use super::{Result, config::Arm, rows, write_json};
+use super::{Result, config::Arm, fixture, rows, taskgen::Plan, write_json};
 
 pub(super) struct Process { child: Child, group: u32 }
 impl Process {
@@ -38,8 +38,7 @@ pub(super) fn isolated(binary: &Path) -> Command {
     let mut command = Command::new("setsid");
     command.arg(binary).stdin(Stdio::null());
     for (key, _) in std::env::vars().filter(|(k,_)| k.starts_with("ONEIRON_")) { command.env_remove(key); }
-    command.env("NO_COLOR", "1")
-        .env("ONEIRON_EGRESS_CONFIG", r#"{"allowed_domains": []}"#);
+    command.env("NO_COLOR", "1");
     command
 }
 async fn once(mut command: Command, deadline: Instant, log: &Path) -> Result<()> {
@@ -56,8 +55,13 @@ pub(super) struct Served {
     id: u64, versions: std::collections::BTreeMap<String, String>, evidence: PathBuf,
 }
 impl Served {
-    pub(crate) async fn fresh(binary: &Path, dir: &Path, arm: &Arm, browser: &Value, startup: Duration, poll: Duration) -> Result<Self> {
+    pub(crate) async fn fresh(binary: &Path, dir: &Path, arm: &Arm, browser: &Value, plan: &Plan, startup: Duration, poll: Duration) -> Result<Self> {
         let deadline = Instant::now() + startup;
+        let absolute_dir = dir.canonicalize().map_err(|e| e.to_string())?;
+        let dir = absolute_dir.as_path();
+        let target = fixture::forward_target(plan, browser)?;
+        let egress = dir.join("egress.json");
+        fs::write(&egress, b"{\"allowed_domains\": []}\n").map_err(|e| e.to_string())?;
         let config = dir.join("oneiron.toml");
         let mut secret = [0u8;32]; rand::rngs::OsRng.fill_bytes(&mut secret);
         let issuer: String = secret.iter().map(|b| format!("{b:02x}")).collect();
@@ -73,6 +77,13 @@ impl Served {
             writeln!(file, "{key} = {value}").map_err(|e| e.to_string())?;
         }
         file.sync_all().map_err(|e| e.to_string())?;
+        fixture::transport_ready(plan, browser, &config)?;
+        write_json(&dir.join("transport.json"), &json!({
+            "browser.bench_fixture_forward":target.to_string(), "fixture_public_bind":plan.fixture_public_bind,
+            "config":config, "config_digest":super::digest(&fs::read(&config).map_err(|e| e.to_string())?),
+            "ONEIRON_EGRESS_CONFIG":egress, "egress":super::read::<Value>(&egress)?,
+            "virtual_origin":"http://127.0.0.1:8080"
+        }))?;
         let credential = dir.join("candidate.cred");
         let mut mint = isolated(binary);
         mint.args(["token", "agent", "--name", "cua-candidate", "--tier", "full-access", "--comm", "parent", "--out"])
@@ -83,7 +94,7 @@ impl Served {
         let origin = format!("http://127.0.0.1:{port}");
         let mut serve = isolated(binary);
         serve.args(["serve", "--host", "127.0.0.1", "--port", &port.to_string(), "--config"]).arg(&config)
-            .env("ONEIRON_AUTH_SECRET", &issuer).env("RUST_LOG", "warn,oneiron::run_receipt=info")
+            .env("ONEIRON_AUTH_SECRET", &issuer).env("ONEIRON_EGRESS_CONFIG", &egress).env("RUST_LOG", "warn,oneiron::run_receipt=info")
             .stdout(fs::File::create(dir.join("server.stdout")).map_err(|e| e.to_string())?)
             .stderr(fs::File::create(dir.join("server.stderr")).map_err(|e| e.to_string())?);
         let mut server = Process::spawn(serve)?;
@@ -101,7 +112,7 @@ impl Served {
             tokio::time::sleep_until((Instant::now()+poll).min(deadline)).await;
         }
         let mut bridge_cmd = isolated(binary);
-        bridge_cmd.args(["mcp", "--surface", "primary", "--url", &origin, "--credential-file"]).arg(&credential)
+        bridge_cmd.args(["mcp", "--surface", "tool-first", "--url", &origin, "--credential-file"]).arg(&credential)
             .stdin(Stdio::piped()).stdout(Stdio::piped())
             .stderr(fs::File::create(dir.join("mcp.stderr")).map_err(|e| e.to_string())?);
         let mut bridge = Process::spawn(bridge_cmd)?;
@@ -149,6 +160,23 @@ impl Served {
     }
     pub(crate) async fn execute(&mut self, run_ref: &str, task: &str, deadline: Instant) -> Result<Value> {
         self.tool("execute_code",json!({"run_ref":run_ref,"task":task}),deadline).await
+    }
+    pub(crate) async fn finish(&mut self, run_ref: &str, task: &str, deadline: Instant, poll: Duration) -> Result<Value> {
+        loop {
+            let result = self.execute(run_ref, task, deadline).await?;
+            match result["result"]["status"].as_str().ok_or("executor_status_missing")? {
+                "complete" => return Ok(result),
+                "yielded" | "window_full" => {
+                    if Instant::now() >= deadline { return Err("timeout".into()) }
+                    tokio::time::sleep_until((Instant::now()+poll).min(deadline)).await;
+                }
+                "waiting" => return Err("needs_you_no_send_approval".into()),
+                other => return Err(format!("executor_terminal_status:{other}")),
+            }
+        }
+    }
+    pub(crate) async fn gate_receipts(&mut self, deadline: Instant) -> Result<Value> {
+        self.tool("vault.receipts", json!({"arguments":{"spec":{"limit":100,"kinds":["gate"]}}}), deadline).await
     }
     pub(crate) async fn artifacts(&mut self, run_ref: &str, last: &Value, deadline: Instant) -> Result<Value> {
         let cards = last["results"].as_array().ok_or("artifact_cards_missing")?;

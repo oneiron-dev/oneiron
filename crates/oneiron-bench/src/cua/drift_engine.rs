@@ -1,6 +1,6 @@
 //! Engine/fixture boundary for the S5 protocol. No simulated browser semantics.
 use serde_json::{Value,json};
-use super::{config::Config, drift_plan::Assignment, fixture, programs::Program, Result};
+use super::{config::Config, drift_plan::Assignment, fixture, taskgen::Plan, programs::Program, Result};
 
 /// All values here are original public engine/checker answers, not predicted outcomes.
 #[derive(Clone)]
@@ -25,25 +25,21 @@ pub(super) trait Engine {
     async fn propose(&mut self, assignment:&Assignment, program:&Program, recovery:&Recovery, spec:Value) -> Result<Value>;
 }
 
-/// The single FIX 8061 integration seam. Deliberately no boolean readiness
-/// override: this head cannot prepare even one dynamic-fixture engine guest.
-/// When the engine lane supplies it, this adapter must use PR1's fixture,
-/// served lifecycle, checker and provider gate for the above operations.
-/// Keeping the protocol separate lets the serial scheduler retain all assigned
-/// cells today without substituting fresh solves for strict library calls.
-pub(super) struct FixtureTransport<'a> { pub(crate) config:&'a Config }
+/// S5 cannot refile an original workflow into a new scratch vault under a
+/// replacement ID. Keep that continuity gap distinct from transport readiness.
+pub(super) struct FixtureTransport<'a> { pub(crate) config:&'a Config, pub(crate) plan:&'a Plan }
 impl Engine for FixtureTransport<'_> {
     async fn strict(&mut self, _assignment:&Assignment, _program:&Program, _workflow:&str) -> Result<Execution> {
-        fixture::transport_ready(self.config)?;
-        Err("fixture_transport_unavailable".into())
+        fixture::forward_target(self.plan, &self.config.browser)?;
+        Err("s5_original_workflow_vault_unavailable".into())
     }
     async fn recover(&mut self, _assignment:&Assignment, _program:&Program, _failure:&Value) -> Result<Recovery> {
-        fixture::transport_ready(self.config)?;
-        Err("fixture_transport_unavailable".into())
+        fixture::forward_target(self.plan, &self.config.browser)?;
+        Err("s5_original_workflow_vault_unavailable".into())
     }
     async fn propose(&mut self, _assignment:&Assignment, _program:&Program, _recovery:&Recovery, _spec:Value) -> Result<Value> {
-        fixture::transport_ready(self.config)?;
-        Err("fixture_transport_unavailable".into())
+        fixture::forward_target(self.plan, &self.config.browser)?;
+        Err("s5_original_workflow_vault_unavailable".into())
     }
 }
 

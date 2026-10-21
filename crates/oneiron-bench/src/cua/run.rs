@@ -6,7 +6,7 @@ use super::{Result, check, config::Config, digest, fixture::{self,Fixture}, meas
     provider_gate::{Gate, Ledger}, read, rows::{self,Row}, served::Served,
     taskgen::{self,Cell,Plan}, write_json};
 
-fn validate_plan(plan: &Plan) -> Result<()> {
+pub(super) fn validate_plan(plan: &Plan) -> Result<()> {
     if plan.schema != 1 || plan.checker_version != taskgen::CHECKER_VERSION || plan.cells.len() != 51 {
         return Err("frozen_plan_shape_mismatch".into());
     }
@@ -82,16 +82,20 @@ pub(super) async fn campaign(plan_path: &Path, binary: &Path, pins: &Path, out: 
                         row.status = "blocked".into();
                         row.harness_stop = Some(json!({"cause":stop,"scope":"campaign_provider_gate"}));
                     }
-                    None => match fixture::transport_ready(config) {
-                    Err(cause) => rows::blocked(&mut row,&cause,"FIX 8061: served dynamic PUBLIC-only fixture transport is not available; no file mount or guest bypass"),
-                    Ok(()) => {
+                    None => match fixture::forward_target(&plan,&config.browser) {
+                    Err(cause) => rows::blocked(&mut row,"fixture_transport_unavailable",&cause),
+                    Ok(_) => {
                         rows::append(&out.join("started.jsonl"),&json!({"key":key,"cell":cell.id}))?;
                         fs::create_dir(&row.evidence).map_err(|e| e.to_string())?;
                         let result = trial(&plan,config,binary,cell,&mut row,ledger.as_ref().ok_or("cash_ledger_missing")?.clone()).await;
                         if let Err(error) = result {
-                            row.status = "failed".into();
-                            if row.harness_stop.is_none() {
-                                row.harness_stop = Some(json!({"cause":if error.contains("timeout") {"timeout"} else {"run_failed"},"detail":error}));
+                            if error.starts_with("fixture_transport_unavailable:") {
+                                rows::blocked(&mut row,"fixture_transport_unavailable",&error);
+                            } else {
+                                row.status = "failed".into();
+                                if row.harness_stop.is_none() {
+                                    row.harness_stop = Some(json!({"cause":if error.contains("timeout") {"timeout"} else {"run_failed"},"detail":error}));
+                                }
                             }
                         }
                     }
@@ -139,10 +143,11 @@ async fn trial(plan: &Plan, config: &Config, binary: &Path, cell: &Cell, row: &m
     let mut receipts = Vec::new();
     let mut artifact_files = json!({});
     let execution: Result<()> = async {
-        served = Some(Served::fresh(binary,&row.evidence,arm,&config.browser,
+        served = Some(Served::fresh(binary,&row.evidence,arm,&config.browser,plan,
             startup_deadline.saturating_duration_since(Instant::now()),Duration::from_millis(config.continuation_poll_ms)).await?);
         setup_ms = started.elapsed().as_secs_f64()*1000.0;
-        let task = cell.public_task.replace("{entry_url}",&format!("http://127.0.0.1:8080{}",reset["entry"].as_str().ok_or("reset_entry_missing")?));
+        let task = fixture::task_packet(cell,&reset)?;
+        write_json(&row.evidence.join("task-packet.json"),&json!({"entry_url":fixture::entry_url(&reset)?,"task":task}))?;
         let candidate_start = Instant::now();
         let bridge = served.as_mut().ok_or("served_bridge_missing")?;
         let result: Result<()> = async {

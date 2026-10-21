@@ -37,7 +37,9 @@ fn new_row(assignment:&Assignment, program:Option<&Program>, plan:&str, config:&
         expectation:expected(assignment)}
 }
 fn stop(row:&mut DriftRow,cause:&str,detail:&str) {
-    rows::blocked(&mut row.row,cause,detail);
+    if cause.starts_with("fixture_transport_unavailable:") {
+        rows::blocked(&mut row.row,"fixture_transport_unavailable",cause);
+    } else { rows::blocked(&mut row.row,cause,detail); }
     if cause.contains("timeout") { row.row.status="failed".into(); }
 }
 fn apply(row:&mut DriftRow,execution:Execution,workflow:&str) -> Result<()> {
@@ -138,7 +140,7 @@ pub(super) async fn campaign(plan_path:&Path,submissions_path:&Path,out:&Path) -
                 stop(&mut row,"runtime_config_unavailable",error);
             } else {
                 let config=config.as_ref().map_err(Clone::clone)?;
-                let mut driver=FixtureTransport {config};
+                let mut driver=FixtureTransport {config,plan:&base};
                 dispatch(&mut driver,assignment,program,&terminal,&mut retired,&out.join("started.jsonl"),&mut row).await;
             }
         } else { stop(&mut row,"program_source_missing","assigned author/family retained; A4 is not substituted for a learned author"); }
