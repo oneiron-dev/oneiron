@@ -705,11 +705,7 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
             OpFields {
                 detail: Some(request.kind().as_str().to_owned()),
                 subject_ref: Some(request.act.target.to_hex()),
-                // A kit request (FIX 6053) names no machine as its holder.
-                holder_ref: request
-                    .kit_root()
-                    .is_none()
-                    .then(|| request.executor.to_hex()),
+                holder_ref: request.executor_machine().map(|machine| machine.to_hex()),
                 ..OpFields::default()
             },
         ),

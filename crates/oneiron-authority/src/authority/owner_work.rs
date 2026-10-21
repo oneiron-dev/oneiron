@@ -381,6 +381,13 @@ impl OwnerWorkRequest {
         }
     }
 
+    /// The machine that executes the work: `None` for a kit custody request
+    /// (FIX 6053), which no machine executes.
+    #[must_use]
+    pub fn executor_machine(&self) -> Option<EntityId> {
+        self.kit_root().is_none().then_some(self.executor)
+    }
+
     pub fn validate(&self) -> Result<()> {
         // Key work a settings edit left carries that edit's act, a holder's
         // or an agent's, and asks for Ensure alone (FIX 4704).
