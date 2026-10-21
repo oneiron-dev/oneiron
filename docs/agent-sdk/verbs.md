@@ -609,6 +609,8 @@ both bindings and their export-census tests in one change.
 - `vault.results.slice`
 - `vault.code.repo_diff`
 - `vault.code.export`
+- `vault.code.export.preview`
+- `vault.code.export.preview.read`
 - `vault.code.import`
 - `vault.code.repos.get`
 - `vault.code.forks.get`
