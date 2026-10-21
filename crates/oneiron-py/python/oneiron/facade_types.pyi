@@ -18438,6 +18438,9 @@ class WakeRecipePolicy(TypedDict):
     follower_instruction: str
     follower_keyframe_instruction: str
     follower_sizing_bytes_per_token: int
+    thing_child_code_mode: bool
+    thing_child_instruction: str
+    thing_child_input_window_divisor: int
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
 class SieveLeaseRequest(TypedDict):

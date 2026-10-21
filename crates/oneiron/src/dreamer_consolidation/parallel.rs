@@ -1,7 +1,8 @@
 //! Read-only neighbourhood fan-out, followed by one parent-owned merge. The
 //! fan-out is the child's extraction port (OF-498a,
 //! `NeighbourhoodExtractionPort`): by default its slices on the extraction
-//! role, side by side.
+//! role, side by side. A thing's branch first runs its scoped agent (FIX
+//! 7508, `thing_agent`), whose extracts are these same durable steps.
 use std::sync::Arc;
 
 use rmpv::Value;
@@ -14,6 +15,7 @@ use super::resources::{BranchResources, FallbackOutputPin};
 use super::roles::DREAMER_EXTRACTION_ROLE;
 use super::sieve_ports::{NeighbourhoodExtraction, SliceCall, SliceStep};
 use super::step_charge::StepChargeTally;
+use super::thing_agent::{ThingPass, ThingPassEnd};
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::dreamer_wake::WakeAttemptContext;
@@ -83,6 +85,25 @@ impl ConsolidationExecutor<'_> {
         let citations = Arc::new(extraction::CitationCheck::new(
             resources, axes, attempt_id, ctx.now_ms, namespace,
         ));
+        // A thing's branch runs as one scoped code-mode agent first (FIX
+        // 7508): each slice it extracts is the very durable step below, so
+        // the fan-out below replays it from its memo.
+        if branch.thing.is_some() {
+            let pass = ThingPass {
+                ctx,
+                resources,
+                slices: &slices,
+                low_trust,
+                step: &step_ctx,
+                namespace,
+                rules: rules.as_ref(),
+                citations: &citations,
+                attempt_id,
+            };
+            if let ThingPassEnd::Run(run) = self.thing_agent_pass(&pass, charges).await? {
+                return Ok(run);
+            }
+        }
         let steps = self
             .roles
             .extraction_ports()

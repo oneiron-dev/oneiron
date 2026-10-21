@@ -56482,6 +56482,12 @@ pub struct WakeRecipePolicy {
     pub follower_keyframe_instruction: String,
     #[serde(rename = "follower_sizing_bytes_per_token")]
     pub follower_sizing_bytes_per_token: u32,
+    #[serde(rename = "thing_child_code_mode")]
+    pub thing_child_code_mode: bool,
+    #[serde(rename = "thing_child_instruction")]
+    pub thing_child_instruction: String,
+    #[serde(rename = "thing_child_input_window_divisor")]
+    pub thing_child_input_window_divisor: u32,
 }
 
 /// `oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest`.

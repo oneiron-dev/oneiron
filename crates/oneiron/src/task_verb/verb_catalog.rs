@@ -905,6 +905,8 @@ pub enum AgentVerb {
     SelfDesktopWindows,
     SelfDesktopWindow,
     SelfDesktopHandover,
+    SelfDreamerThingExtract,
+    SelfDreamerThingDecide,
     VaultCommit,
     VaultRemember,
     VaultClaimsRetract,
@@ -2061,6 +2063,8 @@ impl AgentVerb {
         Self::SelfDesktopWindows,
         Self::SelfDesktopWindow,
         Self::SelfDesktopHandover,
+        Self::SelfDreamerThingExtract,
+        Self::SelfDreamerThingDecide,
         Self::VaultCommit,
         Self::VaultRemember,
         Self::VaultClaimsRetract,
@@ -3244,6 +3248,8 @@ impl AgentVerb {
             Self::SelfDesktopWindows => "self.desktop.windows",
             Self::SelfDesktopWindow => "self.desktop.window",
             Self::SelfDesktopHandover => "self.desktop.handover",
+            Self::SelfDreamerThingExtract => "self.dreamer.thing.extract",
+            Self::SelfDreamerThingDecide => "self.dreamer.thing.decide",
             Self::VaultCommit => "vault.commit",
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
@@ -6871,6 +6877,8 @@ impl AgentVerb {
                 | Self::SelfDesktopWindows
                 | Self::SelfDesktopWindow
                 | Self::SelfDesktopHandover
+                | Self::SelfDreamerThingExtract
+                | Self::SelfDreamerThingDecide
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
@@ -7628,6 +7636,8 @@ impl AgentVerb {
                 | Self::SelfDesktopHotkey
                 | Self::SelfDesktopBatch
                 | Self::SelfDesktopHandover
+                | Self::SelfDreamerThingExtract
+                | Self::SelfDreamerThingDecide
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -8721,6 +8731,8 @@ impl AgentVerb {
             Self::SelfDesktopWindows => &["spec"],
             Self::SelfDesktopWindow => &["spec"],
             Self::SelfDesktopHandover => &["spec"],
+            Self::SelfDreamerThingExtract => &["spec"],
+            Self::SelfDreamerThingDecide => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -9878,6 +9890,8 @@ impl AgentVerb {
             Self::SelfDesktopWindows => &["spec"],
             Self::SelfDesktopWindow => &["spec"],
             Self::SelfDesktopHandover => &["spec"],
+            Self::SelfDreamerThingExtract => &["spec"],
+            Self::SelfDreamerThingDecide => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -12749,6 +12763,12 @@ impl AgentVerb {
             }
             Self::SelfDesktopHandover => {
                 "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record."
+            }
+            Self::SelfDreamerThingExtract => {
+                "Runs one lent slice's extraction on the parent's own wake and stages its draft, answering one engine-issued proposal ref per drafted candidate."
+            }
+            Self::SelfDreamerThingDecide => {
+                "Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt."
             }
             Self::VaultCommit => {
                 "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."
