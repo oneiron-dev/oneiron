@@ -416,7 +416,7 @@ pub struct QuestionRecord {
     pub schema_version: u32,
     #[serde(with = "super::super::codec::entity")]
     pub principal: EntityId,
-    pub definition: QuestionDefinition,
+    pub definition: QuestionDefinition<DecisionQuestion>,
     pub created_at: u64,
 }
 

@@ -30,9 +30,15 @@ const INCARNATIONS: SideTable<String, [u8; 16], Raw> =
 const TARGETS: SideTable<TargetKey, VoiceTargetRecord, Named> =
     SideTable::new(&side_table::VOICE_REF_TARGET);
 
-/// A voice's current render/provisioning decision. Key: string (the voice id).
+/// A voice's current render/provisioning decision: the projection of its
+/// render history. Key: string (the voice id).
 const RENDER_CONSENT: SideTable<String, VoiceRenderConsent, Named> =
     SideTable::new(&side_table::VOICE_REF_RENDER_CONSENT);
+
+/// Every render decision recorded for a voice, kept once and never rewritten
+/// (FIX 4396). Key: voice id `\0` event id.
+const RENDER_EVENTS: SideTable<RenderEventKey, VoiceRenderEventReceipt, Named> =
+    SideTable::new(&side_table::VOICE_REF_RENDER_EVENT);
 
 /// Per-owner index over the bank's rows, so erasure finds every row an owner holds. Key: id16
 /// (owner) + the indexed row's full stored key. Value: that full stored key.
@@ -70,6 +76,7 @@ enum BankRow {
     Incarnation(String),
     Target(TargetKey),
     Consent(String),
+    RenderEvent(RenderEventKey),
 }
 
 impl BankRow {
@@ -80,6 +87,7 @@ impl BankRow {
             Self::Incarnation(id) => INCARNATIONS.key_bytes(id),
             Self::Target(key) => TARGETS.key_bytes(key),
             Self::Consent(id) => RENDER_CONSENT.key_bytes(id),
+            Self::RenderEvent(key) => RENDER_EVENTS.key_bytes(key),
         }
     }
 
@@ -91,6 +99,7 @@ impl BankRow {
             Self::Incarnation(id) => INCARNATIONS.delete(store, txn, id),
             Self::Target(key) => TARGETS.delete(store, txn, key),
             Self::Consent(id) => RENDER_CONSENT.delete(store, txn, id),
+            Self::RenderEvent(key) => RENDER_EVENTS.delete(store, txn, key),
         }
     }
 
@@ -121,6 +130,8 @@ impl RawValue for BankRow {
             TargetKey::decode_key(key).map(Self::Target)
         } else if let Some(id) = bytes.strip_prefix(RENDER_CONSENT.decl().prefix) {
             String::decode_key(id).map(Self::Consent)
+        } else if let Some(key) = bytes.strip_prefix(RENDER_EVENTS.decl().prefix) {
+            RenderEventKey::decode_key(key).map(Self::RenderEvent)
         } else {
             None
         };
@@ -138,6 +149,30 @@ pub enum VoiceRefOrigin {
     Designed { vendor: String },
     /// AI-made audio added to an existing identity; never replaces its source pack.
     Generated,
+}
+
+/// Whose voice a banked identity is (FIX 4393). Its owner/subject id is that
+/// entity either way; the kind is bound when the bank first holds the voice
+/// and never relabelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceRefSubjectKind {
+    /// A real person's own voice: its subject consents to its rendering on
+    /// their own person proof, under a consent basis.
+    Person,
+    /// A designed (synthetic) voice: it belongs to the entity that created
+    /// it, the owner by default. No real person is its subject, so no person
+    /// proof or consent basis is asked of it.
+    Designed,
+}
+
+impl VoiceRefSubjectKind {
+    /// The kind a render decision's input names when it names none: a
+    /// person's. Only an input wire defaults it; a stored row never does.
+    #[must_use]
+    pub const fn input_default() -> Self {
+        Self::Person
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,8 +201,12 @@ pub struct VoiceRefPack {
 pub struct VoiceIdentity {
     pub version: u8,
     pub id: String,
+    /// The real person whose voice it is, or a designed voice's creator.
     #[serde(with = "crate::llm::entity_refs")]
     pub owner: EntityId,
+    /// Bound when the identity is born, from the voice's render decision or
+    /// its first designed pack; a later pack never relabels it.
+    pub subject_kind: VoiceRefSubjectKind,
     /// Source and generated pack IDs are kept separate by their persisted origin tags.
     pub pack_ids: Vec<String>,
 }
@@ -188,22 +227,25 @@ pub struct VoiceTargetClone {
 /// The subject's decision on letting a banked voice be rendered from its
 /// refs: provisioned as a target's clone, or uploaded to a target that
 /// renders from them on each call. It is apart from recognition consent:
-/// neither grants the other.
+/// neither grants the other. A designed voice's creator decides for it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceRenderDecision {
     pub event_id: String,
     pub voice_id: String,
-    /// Whose voice it is: the identity's owner.
+    /// Whose voice it is: the identity's owner, a real person or a designed
+    /// voice's creator as `subject_kind` says.
     #[serde(with = "crate::llm::entity_refs")]
     pub subject: EntityId,
+    pub subject_kind: VoiceRefSubjectKind,
     #[serde(with = "crate::llm::entity_refs")]
     pub recorded_by: EntityId,
     pub occurred_at: u64,
     /// The farthest render target a grant lets the refs reach: the device,
     /// the owner's own server, or a third party.
     pub reach: ModelLocality,
-    pub basis: VoiceConsentBasis,
+    /// How a person's decision was captured; a designed voice needs none.
+    pub basis: Option<VoiceConsentBasis>,
     pub state: VoiceConsentState,
 }
 
@@ -214,7 +256,13 @@ impl VoiceRenderDecision {
         if self.occurred_at == 0 {
             return Err(invalid("a voice render decision needs its time"));
         }
-        self.basis.validate()
+        match (&self.basis, self.subject_kind) {
+            (Some(basis), _) => basis.validate(),
+            (None, VoiceRefSubjectKind::Designed) => Ok(()),
+            (None, VoiceRefSubjectKind::Person) => {
+                Err(invalid("a person's voice render decision needs how it was captured"))
+            }
+        }
     }
 }
 
@@ -227,6 +275,10 @@ pub struct VoiceRenderConsent {
     /// Fresh on every decision. Selections and bindings fence on it, so a
     /// withdrawal or a narrower grant never leaves an older one current.
     pub revision: [u8; 16],
+    /// The decision's place in the voice's render history, from 1: one past
+    /// the decision current when it was recorded. Decisions made at the same
+    /// time order by it.
+    pub sequence: u64,
 }
 
 /// The render consent a selection was admitted under: its revision, and the
@@ -416,14 +468,16 @@ impl Vault {
     /// may not be banked yet, since captured refs cite the grant they were
     /// recorded under. A grant names the farthest target the refs may
     /// reach. Every decision is a new revision, so a selection or binding
-    /// taken under an earlier one goes stale. A withdrawal also drops the
-    /// voice's target pointers and returns them, so the host can delete the
-    /// vendors' clones. Holds the ref guard, so no decision commits while
-    /// refs are being uploaded.
+    /// taken under an earlier one goes stale, and joins the voice's render
+    /// history in the same commit. A withdrawal also drops the voice's
+    /// target pointers and returns them as newly evicted, so the host can
+    /// delete the vendors' clones; a replay of a recorded decision returns
+    /// its original receipt and evicts nothing. Holds the ref guard, so no
+    /// decision commits while refs are being uploaded.
     pub fn record_voice_render_consent(
         &self,
         decision: &VoiceRenderDecision,
-    ) -> Result<(VoiceRenderConsent, Vec<VoiceTargetRecord>)> {
+    ) -> Result<VoiceRenderConsentWrite> {
         decision.validate()?;
         let _guard = self
             .voice_ref_guard
@@ -657,10 +711,13 @@ fn store_pack_in(
         }
         return Ok(()); // An immutable retry; the original transaction already committed.
     }
+    let consent = read_render_consent(store, &txn, &pack.voice_id)?;
     if let VoiceRefOrigin::Captured { consent_event_ref } = &pack.origin {
-        let consented = read_render_consent(store, &txn, &pack.voice_id)?.is_some_and(|consent| {
+        // Recorded from a real person, so under that person's own grant.
+        let consented = consent.as_ref().is_some_and(|consent| {
             consent.decision.event_id == *consent_event_ref
                 && consent.decision.subject == pack.owner
+                && consent.decision.subject_kind == VoiceRefSubjectKind::Person
                 && consent.decision.state == VoiceConsentState::Granted
         });
         if !consented {
@@ -684,10 +741,20 @@ fn store_pack_in(
                 uuid::Uuid::new_v4().as_bytes(),
             )?;
             BankRow::Incarnation(pack.voice_id.clone()).index(store, &mut txn, pack.owner)?;
+            // The owner's render decision, recorded first, binds the voice's
+            // kind; otherwise its first source pack does, a designed one
+            // here, since a captured pack needs a person's decision.
+            let subject_kind = match &consent {
+                Some(consent) if consent.decision.subject == pack.owner => {
+                    consent.decision.subject_kind
+                }
+                _ => VoiceRefSubjectKind::Designed,
+            };
             VoiceIdentity {
                 version: 1,
                 id: pack.voice_id.clone(),
                 owner: pack.owner,
+                subject_kind,
                 pack_ids: Vec::new(),
             }
         }
@@ -702,63 +769,6 @@ fn store_pack_in(
     BankRow::Identity(pack.voice_id.clone()).index(store, &mut txn, pack.owner)?;
     txn.commit()?;
     Ok(())
-}
-
-/// [`Vault::record_voice_render_consent`]'s write of a validated `decision`,
-/// in `txn`, which it commits. Its caller holds the ref guard's write lock.
-fn record_render_consent_in(
-    store: &crate::store::Store,
-    mut txn: heed::RwTxn<'_>,
-    decision: &VoiceRenderDecision,
-) -> Result<(VoiceRenderConsent, Vec<VoiceTargetRecord>)> {
-    let owner = read_identity(store, &txn, &decision.voice_id)?.map(|i| i.owner);
-    if owner.is_some_and(|owner| owner != decision.subject) {
-        return Err(invalid("voice identity owner mismatch"));
-    }
-    if let Some(current) = read_render_consent(store, &txn, &decision.voice_id)? {
-        if current.decision.subject != decision.subject {
-            return Err(invalid("voice identity owner mismatch"));
-        }
-        if current.decision.event_id == decision.event_id {
-            if current.decision == *decision {
-                return Ok((current, Vec::new())); // A replay of the current decision.
-            }
-            return Err(invalid(
-                "voice render consent event id already names another decision",
-            ));
-        }
-        if current.decision.occurred_at > decision.occurred_at {
-            return Err(invalid("a later voice render decision is recorded"));
-        }
-    }
-    let consent = VoiceRenderConsent {
-        version: 1,
-        decision: decision.clone(),
-        revision: uuid::Uuid::new_v4().into_bytes(),
-    };
-    RENDER_CONSENT.put(store, &mut txn, &decision.voice_id, &consent)?;
-    BankRow::Consent(decision.voice_id.clone()).index(store, &mut txn, decision.subject)?;
-    let mut evicted = Vec::new();
-    if decision.state == VoiceConsentState::Withdrawn {
-        let mut prefix = decision.voice_id.as_bytes().to_vec();
-        prefix.push(0);
-        for key in TARGETS.scan_keys(store, &txn, &prefix)? {
-            // A corrupt pointer is dropped all the same.
-            if let Ok(Some(record)) =
-                read_row(TARGETS, store, &txn, &key, "corrupt voice target clone")
-            {
-                evicted.push(record);
-            }
-            TARGETS.delete(store, &mut txn, &key)?;
-            OWNER_INDEX.delete(
-                store,
-                &mut txn,
-                &(decision.subject, TARGETS.key_bytes(&key)),
-            )?;
-        }
-    }
-    txn.commit()?;
-    Ok((consent, evicted))
 }
 
 /// [`Vault::record_voice_target_clone`]'s write, in `txn`, which it commits
@@ -886,28 +896,6 @@ fn current_target(
     Ok(Some((record, selected.grant)))
 }
 
-fn read_render_consent(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    voice_id: &str,
-) -> Result<Option<VoiceRenderConsent>> {
-    valid_id(voice_id)?;
-    let Some(consent) = read_row(
-        RENDER_CONSENT,
-        store,
-        txn,
-        &voice_id.to_owned(),
-        "corrupt voice render consent",
-    )?
-    else {
-        return Ok(None);
-    };
-    if consent.version != 1 || consent.decision.voice_id != voice_id {
-        return Err(invalid("corrupt voice render consent"));
-    }
-    Ok(Some(consent))
-}
-
 /// The render consent that lets `voice_id`'s refs reach a target at
 /// `locality`: the owner's current grant, reaching at least that far. A
 /// recognition grant never stands in for it.
@@ -1031,13 +1019,24 @@ fn read_pack(
     Ok(Some(pack))
 }
 
-// The owner's own doors onto the bank (DOOR-143): each act revalidates the
-// request-bound owner proof in the transaction it writes in.
+// The typed doors onto the bank (DOOR-143, FIX 4393): each act revalidates
+// its actor, a person or a designed voice's creator, in the transaction it
+// writes in.
+#[path = "ref_bank/actor.rs"]
+mod actor;
 #[path = "ref_bank/owner_acts.rs"]
 mod owner_acts;
+// Every render decision, kept once beside the current one (FIX 4396).
+#[path = "ref_bank/render_history.rs"]
+mod render_history;
+pub use actor::{VoiceBankActor, VoiceCreator};
 pub use owner_acts::{
     VoiceBankInspection, VoiceClipSummary, VoiceIdentityView, VoicePackSummary,
     VoiceRenderConsentView, VoiceTargetCloneView, VoiceTargetInspection,
+};
+use render_history::{RenderEventKey, read_render_consent, record_render_consent_in};
+pub use render_history::{
+    VoiceDroppedTargetView, VoiceRenderConsentWrite, VoiceRenderEventReceipt, VoiceRenderEventView,
 };
 
 #[cfg(test)]

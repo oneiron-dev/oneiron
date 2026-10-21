@@ -1,36 +1,44 @@
-//! The owner's own doors onto the voice bank (DOOR-143, e2e VOICE-02). Each
-//! act takes the request-bound [`AuthenticatedOwner`] proof, revalidates it
-//! in the transaction it writes in, and runs the same bank write the raw
-//! methods run. The proven person is the voice's subject, its decision's
-//! recorder and its packs' owner: a write naming anyone else refuses, so an
-//! owner never banks, consents to or provisions another person's voice here.
-//! A designed voice the owner holds is theirs. The inspection reads one
-//! snapshot and answers metadata only: no reference audio, transcript or
-//! provider configuration leaves it, and its ids, revisions and digests are
-//! lowercase hex, as the doors' write receipts carry them.
+//! The typed doors onto the voice bank (DOOR-143, e2e VOICE-02, FIX 4393).
+//! Each act takes its [`VoiceBankActor`], revalidates it in the transaction
+//! it writes in, and runs the same bank write the raw methods run. The actor
+//! is the voice's subject (a real person, on their own person proof) or its
+//! creator (a designed voice's, the owner by default), its decision's
+//! recorder and its packs' owner: a write naming anyone else refuses, so no
+//! actor banks, consents to or provisions another's voice here, and a
+//! creator without a person's proof never acts on a real person's voice.
+//! The inspection and the render lineage read one snapshot and answer
+//! metadata only: no reference audio, transcript or provider configuration
+//! leaves them, and their ids, revisions and digests are lowercase hex, as
+//! the doors' write receipts carry them.
 use serde::{Deserialize, Serialize};
 
-use super::{
-    PACKS, VoiceIdentity, VoiceRefOrigin, VoiceRefPack, VoiceRenderConsent, VoiceRenderDecision,
-    VoiceTargetClone, VoiceTargetRecord, admit_render, current_target, evict_target_in, invalid,
-    read_identity, read_pack, read_render_consent, record_render_consent_in,
-    record_target_clone_in, store_pack_in, target_key, valid_id,
+use super::actor::{VoiceBankActor, others_voice};
+use super::render_history::{
+    VoiceRenderConsentWrite, VoiceRenderEventView, read_render_consent, record_render_consent_in,
+    voice_render_lineage_in,
 };
-use crate::consent::AuthenticatedOwner;
+use super::{
+    PACKS, VoiceIdentity, VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRenderConsent,
+    VoiceRenderDecision, VoiceTargetClone, VoiceTargetRecord, admit_render, current_target,
+    evict_target_in, invalid, read_identity, read_pack, record_target_clone_in, store_pack_in,
+    target_key, valid_id,
+};
+use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::llm::ModelLocality;
 use crate::voice_identity::{VoiceConsentBasis, VoiceConsentState};
-use crate::{EntityId, Vault};
 
-/// A banked voice identity: its owner (entity hex) and its packs' ids,
-/// source and generated packs apart by their origin.
+/// A banked voice identity: its owner (entity hex), whether it is a real
+/// person's voice or a designed one, and its packs' ids, source and
+/// generated packs apart by their origin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceIdentityView {
     pub version: u8,
     pub id: String,
     pub owner: String,
+    pub subject_kind: VoiceRefSubjectKind,
     pub pack_ids: Vec<String>,
 }
 
@@ -57,20 +65,26 @@ pub struct VoiceClipSummary {
     pub audio_bytes: u64,
 }
 
-/// A voice's current render decision, granted or withdrawn: whose voice it
-/// is and who recorded it (entity hex), when (unix seconds), how far a grant
-/// lets the refs reach, how it was captured, and its revision.
+/// A voice's render decision, granted or withdrawn: whose voice it is (a
+/// real person's or a designed voice's creator's) and who recorded it
+/// (entity hex), when (unix seconds), how far a grant lets the refs reach,
+/// how a person's was captured, its revision and its place in the voice's
+/// render history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceRenderConsentView {
     pub event_id: String,
     pub subject: String,
+    pub subject_kind: VoiceRefSubjectKind,
     pub recorded_by: String,
     pub occurred_at: u64,
     pub reach: ModelLocality,
-    pub basis: VoiceConsentBasis,
+    /// None for a designed voice's decision recorded without one.
+    pub basis: Option<VoiceConsentBasis>,
     pub state: VoiceConsentState,
     pub revision: String,
+    /// From 1, in the order the voice's decisions were recorded.
+    pub sequence: u64,
 }
 
 /// A target's current clone: the vendor's locator, the source packs and the
@@ -104,7 +118,7 @@ pub struct VoiceTargetInspection {
     pub current: Option<VoiceTargetCloneView>,
 }
 
-/// The owner's voice as the bank holds it, read from one snapshot: its
+/// The actor's voice as the bank holds it, read from one snapshot: its
 /// identity, each pack's metadata, its current render decision, and one
 /// named target's current clone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -127,6 +141,7 @@ impl From<&VoiceIdentity> for VoiceIdentityView {
             version: identity.version,
             id: identity.id.clone(),
             owner: identity.owner.to_hex(),
+            subject_kind: identity.subject_kind,
             pack_ids: identity.pack_ids.clone(),
         }
     }
@@ -138,12 +153,14 @@ impl From<VoiceRenderConsent> for VoiceRenderConsentView {
         Self {
             event_id: decision.event_id,
             subject: decision.subject.to_hex(),
+            subject_kind: decision.subject_kind,
             recorded_by: decision.recorded_by.to_hex(),
             occurred_at: decision.occurred_at,
             reach: decision.reach,
             basis: decision.basis,
             state: decision.state,
             revision: bytes_to_hex_lower(&consent.revision),
+            sequence: consent.sequence,
         }
     }
 }
@@ -179,148 +196,109 @@ impl From<VoiceRefPack> for VoicePackSummary {
     }
 }
 
-/// The refusal of an owner's act on a voice that is another person's.
-fn others_voice() -> Error {
-    invalid("the voice is another person's: only its subject banks, consents to or provisions it")
-}
-
-/// `voice_id`'s subject as the bank holds it: its identity's owner, or,
-/// before its first pack, its render decision's subject. None when the bank
-/// holds nothing of the voice.
-fn subject_in(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    voice_id: &str,
-) -> Result<Option<EntityId>> {
-    if let Some(identity) = read_identity(store, txn, voice_id)? {
-        return Ok(Some(identity.owner));
-    }
-    Ok(read_render_consent(store, txn, voice_id)?.map(|consent| consent.decision.subject))
-}
-
-/// Refuses unless `person` is the voice's subject, or the bank holds nothing
-/// of the voice yet.
-fn admit_person(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    voice_id: &str,
-    person: EntityId,
-) -> Result<()> {
-    match subject_in(store, txn, voice_id)? {
-        Some(subject) if subject != person => Err(others_voice()),
-        _ => Ok(()),
-    }
-}
-
 impl Vault {
-    /// [`Self::store_voice_ref_pack`] for the proven owner's own voice: the
-    /// pack's owner is the proof's person, revalidated in the writing
-    /// transaction, and the voice is nobody else's.
+    /// [`Self::store_voice_ref_pack`] for the actor's own voice: the pack's
+    /// owner is the actor, revalidated in the writing transaction, and the
+    /// voice is nobody else's. The bank, not the request, decides the voice's
+    /// kind, so a creator banks a designed voice alone.
     pub fn store_voice_ref_pack_as(
         &self,
-        owner: &AuthenticatedOwner,
+        actor: &VoiceBankActor,
         pack: &VoiceRefPack,
     ) -> Result<()> {
         valid_id(&pack.id)?;
         valid_id(&pack.voice_id)?;
         let bytes = PACKS.encode_value(pack)?;
         let txn = self.store.env.write_txn()?;
-        let person = owner.revalidate_in_txn(self, &txn)?;
-        if pack.owner != person {
+        let party = actor.revalidate_in_txn(self, &txn)?;
+        if pack.owner != party.entity {
             return Err(others_voice());
         }
-        admit_person(&self.store, &txn, &pack.voice_id, person)?;
+        party.bind_in(&self.store, &txn, &pack.voice_id)?;
         store_pack_in(&self.store, txn, pack, &bytes)
     }
 
-    /// [`Self::record_voice_render_consent`] for the proven owner's own
-    /// voice: the decision's subject and its recorder are both the proof's
-    /// person, revalidated in the writing transaction, and the voice is
-    /// nobody else's. A withdrawal returns the dropped target pointers, so
-    /// the host can delete the vendors' clones.
+    /// [`Self::record_voice_render_consent`] for the actor's own voice: the
+    /// decision's subject and its recorder are both the actor, revalidated
+    /// in the writing transaction, and the voice is nobody else's. A real
+    /// person's decision takes that person's own proof; a designed voice's
+    /// creator decides for it. A withdrawal returns the target pointers it
+    /// dropped, so the host can delete the vendors' clones.
     pub fn record_voice_render_consent_as(
         &self,
-        owner: &AuthenticatedOwner,
+        actor: &VoiceBankActor,
         decision: &VoiceRenderDecision,
-    ) -> Result<(VoiceRenderConsent, Vec<VoiceTargetRecord>)> {
+    ) -> Result<VoiceRenderConsentWrite> {
         decision.validate()?;
         let _guard = self
             .voice_ref_guard
             .write()
             .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
         let txn = self.store.env.write_txn()?;
-        let person = owner.revalidate_in_txn(self, &txn)?;
-        if decision.subject != person || decision.recorded_by != person {
+        let party = actor.revalidate_in_txn(self, &txn)?;
+        if decision.subject != party.entity || decision.recorded_by != party.entity {
             return Err(others_voice());
         }
-        admit_person(&self.store, &txn, &decision.voice_id, person)?;
+        party.admits(decision.subject_kind)?;
+        party.bind_in(&self.store, &txn, &decision.voice_id)?;
         record_render_consent_in(&self.store, txn, decision)
     }
 
-    /// The proven owner's own banked identity, read under the proof: a voice
-    /// the bank holds no identity of refuses, as does another person's.
+    /// The actor's own banked identity, read under its proof: a voice the
+    /// bank holds no identity of refuses, as does another's.
     pub fn owned_voice_identity(
         &self,
-        owner: &AuthenticatedOwner,
+        actor: &VoiceBankActor,
         voice_id: &str,
     ) -> Result<VoiceIdentity> {
         let txn = self.store.env.read_txn()?;
-        let person = owner.revalidate_in_txn(self, &txn)?;
-        let identity = read_identity(&self.store, &txn, voice_id)?
-            .ok_or_else(|| invalid("unknown voice identity"))?;
-        if identity.owner != person {
-            return Err(others_voice());
-        }
-        Ok(identity)
+        let party = actor.revalidate_in_txn(self, &txn)?;
+        party.bind_in(&self.store, &txn, voice_id)?;
+        read_identity(&self.store, &txn, voice_id)?
+            .ok_or_else(|| invalid("unknown voice identity"))
     }
 
-    /// [`Self::record_voice_target_clone`] for the proven owner's own voice,
-    /// under the proof revalidated in the writing transaction.
+    /// [`Self::record_voice_target_clone`] for the actor's own voice, under
+    /// its proof revalidated in the writing transaction.
     pub fn record_voice_target_clone_as(
         &self,
-        owner: &AuthenticatedOwner,
+        actor: &VoiceBankActor,
         request: &VoiceTargetClone,
         vendor_voice_id: &str,
         cloned_at: u64,
     ) -> Result<VoiceTargetRecord> {
         let txn = self.store.env.write_txn()?;
-        let person = owner.revalidate_in_txn(self, &txn)?;
-        if read_identity(&self.store, &txn, &request.voice_id)?
-            .is_some_and(|identity| identity.owner != person)
-        {
-            return Err(others_voice());
-        }
+        let party = actor.revalidate_in_txn(self, &txn)?;
+        party.bind_in(&self.store, &txn, &request.voice_id)?;
         record_target_clone_in(&self.store, txn, request, vendor_voice_id, cloned_at)
     }
 
-    /// [`Self::evict_voice_target`] for the proven owner's own voice, under
-    /// the proof revalidated in the writing transaction.
+    /// [`Self::evict_voice_target`] for the actor's own voice, under its
+    /// proof revalidated in the writing transaction.
     pub fn evict_voice_target_as(
         &self,
-        owner: &AuthenticatedOwner,
+        actor: &VoiceBankActor,
         voice_id: &str,
         target: &str,
     ) -> Result<Option<VoiceTargetRecord>> {
         let key = target_key(voice_id, target)?;
         let txn = self.store.env.write_txn()?;
-        let person = owner.revalidate_in_txn(self, &txn)?;
+        let party = actor.revalidate_in_txn(self, &txn)?;
+        party.bind_in(&self.store, &txn, voice_id)?;
         let identity = read_identity(&self.store, &txn, voice_id)?
             .ok_or_else(|| invalid("unknown voice identity"))?;
-        if identity.owner != person {
-            return Err(others_voice());
-        }
         evict_target_in(&self.store, txn, &key, identity.owner)
     }
 
-    /// The proven owner's voice as the bank holds it, from one snapshot, for
-    /// the named `target` at the `locality` its host states: the identity,
-    /// each pack's metadata, the current render decision, and the target's
-    /// clone while it is current. No provider call and no write. None when
-    /// the bank holds nothing of the voice; another person's voice refuses,
-    /// and a corrupt row is an error, never a gap.
+    /// The actor's voice as the bank holds it, from one snapshot, for the
+    /// named `target` at the `locality` its host states: the identity, each
+    /// pack's metadata, the current render decision, and the target's clone
+    /// while it is current. No provider call and no write. None when the
+    /// bank holds nothing of the voice; another's voice refuses, and a
+    /// corrupt row is an error, never a gap.
     pub fn inspect_voice_bank(
         &self,
-        owner: &AuthenticatedOwner,
+        actor: &VoiceBankActor,
         voice_id: &str,
         target: &str,
         include_generated: bool,
@@ -328,17 +306,12 @@ impl Vault {
     ) -> Result<Option<VoiceBankInspection>> {
         valid_id(target)?;
         let txn = self.store.env.read_txn()?;
-        let person = owner.revalidate_in_txn(self, &txn)?;
+        let party = actor.revalidate_in_txn(self, &txn)?;
+        if party.bind_in(&self.store, &txn, voice_id)?.is_none() {
+            return Ok(None);
+        }
         let identity = read_identity(&self.store, &txn, voice_id)?;
         let render_consent = read_render_consent(&self.store, &txn, voice_id)?;
-        let subject = match (&identity, &render_consent) {
-            (Some(identity), _) => identity.owner,
-            (None, Some(consent)) => consent.decision.subject,
-            (None, None) => return Ok(None),
-        };
-        if subject != person {
-            return Err(others_voice());
-        }
         let mut packs = Vec::new();
         for id in identity.iter().flat_map(|identity| &identity.pack_ids) {
             let pack = read_pack(&self.store, &txn, id)?
@@ -379,5 +352,26 @@ impl Vault {
                 current,
             },
         }))
+    }
+
+    /// The actor's voice's render history (FIX 4396), from one snapshot:
+    /// every decision recorded for it, granted or withdrawn, in the order
+    /// they were recorded, with the target pointers each dropped. Metadata
+    /// only, with no provider call. Empty when the bank holds nothing of the
+    /// voice; another's voice refuses.
+    pub fn voice_render_lineage_as(
+        &self,
+        actor: &VoiceBankActor,
+        voice_id: &str,
+    ) -> Result<Vec<VoiceRenderEventView>> {
+        let txn = self.store.env.read_txn()?;
+        let party = actor.revalidate_in_txn(self, &txn)?;
+        if party.bind_in(&self.store, &txn, voice_id)?.is_none() {
+            return Ok(Vec::new());
+        }
+        Ok(voice_render_lineage_in(&self.store, &txn, voice_id)?
+            .into_iter()
+            .map(VoiceRenderEventView::from)
+            .collect())
     }
 }
