@@ -29,6 +29,9 @@ mod grant;
 // The owner's git_push Grant and the receive-pack decision (FIX 6867, G1-PUSH).
 pub(crate) mod git_push;
 pub use git_push::{GitPushAdmission, GitPushCaller, GitPushCredential, GitPushSeal};
+// The sealed admission of a merge queue reconciliation (FIX 6868, G2 PR2).
+mod queue_reconciliation;
+pub(crate) use queue_reconciliation::QueueReconciliationAdmission;
 pub(crate) mod grant_policy;
 #[cfg(feature = "sync")]
 mod grant_travel;

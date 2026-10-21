@@ -188,7 +188,7 @@ fn page_in_txn(
             };
             (
                 wait_reply_in_txn(vault, txn, &key)?,
-                wait_consent_in_txn(vault, txn, &key, wait.row),
+                wait_consent_in_txn(vault, txn, &key),
             )
         }
         None => (WaitReply::Pending, WaitConsent::Unbound),
@@ -204,16 +204,11 @@ fn page_in_txn(
     })
 }
 
-/// The consent evidence of the wait `key` the call at record row `row`
-/// parked on, in `txn`. Evidence that does not read is logged and reads as
+/// The consent evidence of the wait `key` the checkpoint parked on, in
+/// `txn`. Evidence that does not read is logged and reads as
 /// [`WaitConsent::Unread`]: it never fails the checkpoint read.
-fn wait_consent_in_txn(
-    vault: &crate::Vault,
-    txn: &heed::RoTxn<'_>,
-    key: &WaitKey,
-    row: u64,
-) -> WaitConsent {
-    match vault.code_consent_checkpoint_evidence_in_txn(txn, key, row) {
+fn wait_consent_in_txn(vault: &crate::Vault, txn: &heed::RoTxn<'_>, key: &WaitKey) -> WaitConsent {
+    match vault.code_consent_checkpoint_evidence_in_txn(txn, key) {
         Ok(None) => WaitConsent::Unbound,
         Ok(Some((wait, binding_digest))) => WaitConsent::Bound {
             rows: wait.ask.into_iter().chain(wait.word_ref).collect(),
