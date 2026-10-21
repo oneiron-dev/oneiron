@@ -1251,16 +1251,22 @@ consecutive = 3            # runs a window needs; for t2, positives in a row tha
 window_secs = 3600         # one window of time; for session, how long a conversation is quiet
 ```
 
-Every five minutes the server reads the newest 1,024 runs and asks each detector's question of
-each window it has not graded yet, up to 8 windows a pass, on the decision ladder's local and big
-rungs (never a person). `t3` judges each completed window of time at once. `t2` asks once per
-run. `session` judges one conversation's runs once it has been quiet for `window_secs`. A raised
-window becomes a proposed diagnostic: nothing is repaired. Changing a prompt or rubric grades
-windows again.
+Every five minutes the server reads every stored run and asks each detector's question of each
+window it has not graded yet. A long window is asked in parts of up to 64 runs. A pass asks about
+8 parts, but it always finishes a window it started, and a window counts as graded only once
+every part has been asked. Each question starts at the first rung your decision ladder staffs (your
+rule rows first, then the local rung or the first model rung you run) and goes no higher than the
+big rung (never a person). `t3` judges each completed window of time, and a long window raises
+when any of its parts does. `t2` asks once per run and raises on `consecutive` positives in a
+row, even when the row crosses parts. `session` judges one conversation's runs once it has been
+quiet for `window_secs`. A prompt and rubric of any length are used whole: past the room of one
+question they reach the model beside the telemetry. A raised window becomes a proposed
+diagnostic: nothing is repaired. Changing a prompt or rubric grades windows again.
 
-`GET /v1/owner/self-heal/findings?family=<family>` lists one detector's raised `t3` findings,
-newest first, each with your label. `POST /v1/owner/self-heal/findings/label` with
-`{"family", "event", "positive"}` labels one finding; a label never changes. Once a family has
+`GET /v1/owner/self-heal/findings?family=<family>` lists every one of a detector's raised `t3`
+findings, newest first, each with your label; add `&limit=N` for the newest N only.
+`POST /v1/owner/self-heal/findings/label` with `{"family", "event", "positive"}` labels one
+finding; a label never changes. Once a family has
 `consecutive` positive labels and one negative, a `t2` detector of that family asks with the
 labeled findings. For a `t3` detector, the next pass registers a T2 of the family: it grades each
 window's runs one by one, shown the labeled findings' run facts, beside the `t3`, which keeps
