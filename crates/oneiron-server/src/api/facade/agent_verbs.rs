@@ -1198,6 +1198,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.identity.events.get", post(facade_route))
         .route("/vault.identity.proposals.resolve", post(facade_route))
         .route("/vault.identity.proposals.for_pair", post(facade_route))
+        .route("/connector.answer", post(facade_route))
         .route("/self.browser.open", post(facade_route))
         .route("/self.browser.observe", post(facade_route))
         .route("/self.browser.find", post(facade_route))
