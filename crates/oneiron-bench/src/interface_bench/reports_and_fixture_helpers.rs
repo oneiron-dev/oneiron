@@ -12,7 +12,7 @@ fn usage_reason(tokens: Option<u32>) -> Option<String> {
         .is_none()
         .then(|| "provider_usage_unknown_or_no_interface_execution".into())
 }
-fn sum_tokens<'a>(rows: impl Iterator<Item = &'a SmokeRunRow>) -> Option<u32> {
+fn sum_tokens(rows: impl Iterator<Item = &SmokeRunRow>) -> Option<u32> {
     let rows = rows
         .filter(|row| row.status != "unavailable")
         .collect::<Vec<_>>();
