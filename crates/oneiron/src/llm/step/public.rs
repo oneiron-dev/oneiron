@@ -336,6 +336,49 @@ pub async fn submit_as_owner(
     view(vault, id, &row).map_err(MemoryError::from)
 }
 
+/// The saved terminal of the caller's own step `input` names, read before
+/// any fresh provider admission (FIX 8180): a finished or failed step
+/// answers as its replay does, with no model, route or meter needed, so a
+/// model removed since still answers its completed work. `None` when the
+/// step is new, unfinished, or the key froze another request; that call is
+/// admitted and submitted exactly as before. The frozen request is matched
+/// apart from what admission writes into it from the host's current
+/// configuration ([`same_frozen_request`]), so a saved hit never keys on it.
+pub fn saved_terminal_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &ModelStepSubmit,
+) -> MemoryResult<Option<ModelStepReceipt>> {
+    validate(input)?;
+    let actor = owner.revalidate(vault)?;
+    let id = identity(actor, &input.step_key)?;
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    let row = SUBMISSIONS
+        .get(&vault.store, &txn, &id)?
+        .filter(|row| row.actor == actor && row.result.is_some());
+    drop(txn);
+    let Some(mut row) = row.filter(|row| same_frozen_request(&row.input, input)) else {
+        return Ok(None);
+    };
+    if let Some(ModelStepResult::Finished { memoized, .. }) = &mut row.result {
+        *memoized = true;
+    }
+    view(vault, id, &row).map(Some).map_err(MemoryError::from)
+}
+
+/// Whether `submitted` is the step `frozen` froze, apart from the fields a
+/// raw call's admission writes from the host's current configuration: the
+/// purpose's default tier, the model's catalog locality, and the world it
+/// clears.
+fn same_frozen_request(frozen: &ModelStepSubmit, submitted: &ModelStepSubmit) -> bool {
+    let mut submitted = submitted.clone();
+    let envelope = &mut submitted.request.envelope;
+    envelope.scope.world = None;
+    envelope.tier.purpose_default = frozen.request.envelope.tier.purpose_default.clone();
+    envelope.locality = frozen.request.envelope.locality.clone();
+    submitted == *frozen
+}
+
 /// Read this owner's persisted receipt without a model backend or new lease.
 pub fn receipt_as_owner(
     vault: &Vault,
