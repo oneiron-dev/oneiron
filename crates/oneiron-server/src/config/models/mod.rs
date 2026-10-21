@@ -37,6 +37,7 @@ mod provider;
 mod tests;
 mod training;
 mod voice;
+mod workers;
 
 pub use browser_planner::{BROWSER_PLANNER_ROLE, NEEDS_AGENT_BEFORE_CHAT, unbound_row_is_no_seat};
 pub use compaction::CompactionSettings;
@@ -56,6 +57,9 @@ pub use provider::{
 };
 pub use training::{TRAINING_SERVICE_UNIT, TrainingConnectorSettings, TrainingSettings};
 pub use voice::VoiceSettings;
+pub use workers::{
+    ArtifactSource, ManagedLaunch, NativeServer, WorkerArtifact, WorkerConfig, WorkerEnvelope,
+};
 
 use levels::{RoleFile, Shorthand};
 use provider::ProviderFile;
@@ -99,6 +103,8 @@ pub(crate) struct ModelsFile {
     planner: planner::PlannerFile,
     #[serde(default)]
     training: training::TrainingFile,
+    #[serde(default)]
+    workers: BTreeMap<String, workers::WorkerFile>,
 }
 
 /// `[models.broker]`: where the credential broker listens and the OS user it
@@ -218,6 +224,9 @@ pub struct ModelsConfig {
     /// The trainer connectors an authorized training run dispatches through
     /// (`[models.training]`); none by default.
     pub training: TrainingSettings,
+    /// The model workers this server supervises or probes
+    /// (`[models.workers]`), in id order; none by default.
+    pub workers: Vec<WorkerConfig>,
 }
 
 /// The credential broker (ARCH-0069 `#broker-design`): a separate process
@@ -502,6 +511,7 @@ impl ModelsFile {
         let voice = self.voice.resolve(base)?;
         let planner = self.planner.resolve()?;
         let training = self.training.resolve()?;
+        let workers = workers::resolve(self.workers, &providers, base)?;
         let mut models = ModelsConfig {
             providers,
             roles,
@@ -521,6 +531,7 @@ impl ModelsFile {
             voice,
             planner,
             training,
+            workers,
         };
         if let Some(file) = self.decision_read {
             models.decision_read = Some(file.resolve(base, &models)?);

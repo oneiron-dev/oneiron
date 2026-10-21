@@ -164,7 +164,9 @@ impl Vault {
         let Some(pending) = pending else {
             return Ok(None);
         };
-        if pending.settled.is_some() || pending.owner_ask_seq.is_some() {
+        // A call whose connector asked for input was sent: no hold to ask
+        // about (FIX 3837).
+        if pending.settled.is_some() || pending.owner_ask_seq.is_some() || pending.input.is_some() {
             return Ok(None);
         }
         let Ok(principal) = EntityId::from_hex(&pending.principal_ref) else {
@@ -177,7 +179,7 @@ impl Vault {
             let Some(mut row) = PENDING_CALLS.get(&self.store, txn, call_ref)? else {
                 return Ok(None);
             };
-            if row.settled.is_some() || row.owner_ask_seq.is_some() {
+            if row.settled.is_some() || row.owner_ask_seq.is_some() || row.input.is_some() {
                 return Ok(None);
             }
             row.held_reasons = reasons.to_vec();

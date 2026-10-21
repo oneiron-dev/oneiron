@@ -94,7 +94,11 @@ impl ComparabilityAxes {
         if self.provenance.withdrawn {
             CitationDisposition::Dropped
         } else if self.scale_comparability != ScaleComparability::Comparable
-            || self.native_scale.trim().to_ascii_lowercase().starts_with("unknown")
+            || self
+                .native_scale
+                .trim()
+                .to_ascii_lowercase()
+                .starts_with("unknown")
         {
             CitationDisposition::NonComparable
         } else if self.tier.row != self.tier.reference

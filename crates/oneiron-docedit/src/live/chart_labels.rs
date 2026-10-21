@@ -332,19 +332,35 @@ fn walk<V: Value>(bytes: &[u8], tree: &XmlTree, emit: &mut impl FnMut(Range<usiz
                         written += 1;
                     }
                 }
-                Some(label) if xml::child(tree, label, C, "delete").is_some() => {}
+                // Only a true `c:delete` deletes the label (FIX 8588):
+                // `val="0"` keeps it shown.
+                Some(label)
+                    if xml::child(tree, label, C, "delete")
+                        .is_some_and(|at| on(&tree.nodes[at])) => {}
                 // The point's own label may show or hide the range.
                 _ if !label
                     .and_then(|label| range_flag(tree, label))
                     .unwrap_or(shown) => {}
                 Some(label) => {
-                    // CT_DLbl: idx, layout?, tx?, ...
-                    let after = xml::child(tree, label, C, "layout")
-                        .or_else(|| xml::child(tree, label, C, "idx"));
-                    let at = after.map_or(tree.nodes[label].open_end, |at| tree.nodes[at].span.end);
                     let mut value = V::default();
                     rich(&mut value, Some(label));
-                    emit(at..at, value);
+                    match xml::child(tree, label, C, "delete") {
+                        // CT_DLbl holds `c:delete` or the label's own
+                        // settings: a kept label takes the text and its
+                        // series' settings in its place.
+                        Some(kept) => {
+                            value.put(&flags);
+                            emit(tree.nodes[kept].span.clone(), value);
+                        }
+                        None => {
+                            // CT_DLbl: idx, layout?, tx?, ...
+                            let after = xml::child(tree, label, C, "layout")
+                                .or_else(|| xml::child(tree, label, C, "idx"));
+                            let at = after
+                                .map_or(tree.nodes[label].open_end, |at| tree.nodes[at].span.end);
+                            emit(at..at, value);
+                        }
+                    }
                     written += 1;
                 }
                 None => {

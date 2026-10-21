@@ -138,6 +138,16 @@ impl FirecrackerBackend {
             .ok_or_else(|| refused("jailer host profile unavailable"))?;
         config.validate()?;
         config.pins.verify(image)?;
+        #[cfg(target_os = "linux")]
+        let image_release = oneiron_container::image_release::observe_release(
+            None,
+            &oneiron_container::image_release::ObservedArtifacts::from_firecracker_pins(
+                config.pins.kernel,
+                config.pins.rootfs,
+            ),
+            &oneiron_container::image_release::HostCapabilities::default(),
+            &oneiron_container::image_release::NoVerifierConfigured,
+        );
         {
             let mut states = self
                 .state
@@ -216,6 +226,7 @@ impl FirecrackerBackend {
                                     .map(|b| format!("{b:02x}"))
                                     .collect(),
                             }),
+                            image_release,
                         });
                 }
                 state.phase = Phase::Complete(proposals);

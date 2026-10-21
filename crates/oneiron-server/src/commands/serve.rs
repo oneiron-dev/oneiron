@@ -191,6 +191,8 @@ pub(super) async fn serve_anchored(
     // Connections are admitted, and their headers timed, before any route
     // runs. Both listeners draw on one pool, so the descriptor floor and each
     // address's unauthenticated share hold for the daemon, not per socket.
+    // Past the floor the API listener's sockets may take the pool's owner
+    // reserve, which this server judges (FIX 8274).
     let limits = config.limits.connections();
     let pool = crate::http_listener::ConnectionPool::new(&limits, questions);
     let floor_vault = mesh_server.vault();
@@ -198,7 +200,15 @@ pub(super) async fn serve_anchored(
     // Foreign guests' proposal spools keep the disk floor uploads keep, on
     // its one shared ledger (FIX 7650).
     floor_vault.lend_proposal_spool(Arc::new(mesh_server.transfers.disk.clone()));
-    let api = crate::http_listener::serve_with_pool(listener, app, &pool, limits, api_stop);
+    let owner_judge = Arc::clone(&mesh_server);
+    let api = crate::http_listener::serve_api_with_pool(
+        listener,
+        app,
+        &pool,
+        limits,
+        owner_judge,
+        api_stop,
+    );
     let artifacts = crate::http_listener::serve_with_pool(
         artifact_listener,
         artifact_app,
@@ -417,6 +427,9 @@ pub(crate) async fn start_desktop_workers(
     // device of that home. A startup error below drops `ai`, which tells its
     // workers to stop.
     let device = crate::device_sync::dials_home(config, sync_server.vault());
+    // Plain and embedded serve launch `[models.workers]`' managed workers; a
+    // managed per-vault process never reaches here (FIX 8315).
+    crate::models::permit_worker_launch();
     let (sync_server, ai) =
         crate::ai_host::AiHost::attach_device(sync_server, config.models.as_ref(), device).await;
     let sync_server = Arc::new(sync_server);
