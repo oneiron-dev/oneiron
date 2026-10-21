@@ -33,10 +33,11 @@
 //!   [`Vault::dispatch_outbound_intent`](crate::Vault::dispatch_outbound_intent)
 //!   ([`send_feedback`]) and an air-gapped export
 //!   ([`export_feedback_bundle`]).
-//! - The triage custody over the open inbox ([`COACH_FEEDBACK_SWEEP_FACET`],
-//!   [`FeedbackTriageHandoff`]): each note's revision handed once to a Coach
-//!   job on the skill the owner bound, its result committed with the
-//!   Proposed findings it files.
+//! - The triage custody over the open inbox and each bound GitHub
+//!   repository ([`COACH_FEEDBACK_SWEEP_FACET`], [`FeedbackTriageHandoff`],
+//!   [`GithubIssuePage`]): each item's revision handed once to a Coach job on
+//!   the skill the owner bound, its result committed with the Proposed
+//!   findings it files.
 //!
 //! # What does NOT ship here
 //!
@@ -163,11 +164,14 @@ pub use self::report::{
 };
 pub use self::triage::{
     COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET, FEEDBACK_TRIAGE_FINDING_PREDICATE,
-    FEEDBACK_TRIAGE_INBOX_SOURCE, FeedbackTriageBinding, FeedbackTriageBindingRequest,
-    FeedbackTriageChild, FeedbackTriageContinuation, FeedbackTriageFinding, FeedbackTriageHandoff,
-    FeedbackTriageHold, FeedbackTriageInput, FeedbackTriageJob, FeedbackTriageOutput,
-    FeedbackTriageResult, FeedbackTriageRun, FeedbackTriageRunRequest, FeedbackTriageSourceRef,
-    FeedbackTriageStatus, FeedbackTriageStatusRequest, FeedbackTriageSweep,
+    FEEDBACK_TRIAGE_GITHUB_PREFIX, FEEDBACK_TRIAGE_INBOX_SOURCE, FeedbackTriageBinding,
+    FeedbackTriageBindingRequest, FeedbackTriageChild, FeedbackTriageContinuation,
+    FeedbackTriageFinding, FeedbackTriageHandoff, FeedbackTriageHold, FeedbackTriageInput,
+    FeedbackTriageItem, FeedbackTriageJob, FeedbackTriageOutput, FeedbackTriageResult,
+    FeedbackTriageRun, FeedbackTriageRunRequest, FeedbackTriageSourceError,
+    FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault, FeedbackTriageSourceRef,
+    FeedbackTriageStatus, FeedbackTriageStatusRequest, FeedbackTriageSweep, GithubIssueKind,
+    GithubIssuePage, GithubIssueRevision, GithubSweepContinuation,
 };
 pub(crate) use self::triage::{acknowledge_feedback_triage_in_txn, job_handoff_in_txn};
 

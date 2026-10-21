@@ -281,7 +281,8 @@ pub(crate) async fn build_server(
                     .filter(|token| !token.is_empty())
                     .map(zeroize::Zeroizing::new),
             }
-        }));
+        }))
+        .with_feedback_triage(config.feedback.triage.clone());
     // `[models] extraction_egress = true` is the owner's opt-in for
     // extraction to leave the device (FIX 6621): the raw `/v1/llm` routes
     // and every door that reads the host's predicate admit it, still within

@@ -982,7 +982,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 config: delivery,
                 bearer: None,
             }
-        }));
+        }))
+        .with_feedback_triage(config.feedback.triage.clone());
     // The owner's `[models] extraction_egress` opt-in, as plain serve
     // installs it (FIX 6621): off, nonlocal extraction stays refused.
     if config
