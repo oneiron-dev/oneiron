@@ -329,16 +329,16 @@ pub struct CodeModeSettings {
 }
 
 /// `[models.code_mode.check]`: an optional type check of each generated
-/// program before it runs.
+/// program, run beside it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CodeCheckSettings {
     /// `off` (the default), or `shadow`: check every program and record what
     /// the check found, blocking nothing. `enforce` is reserved.
     pub mode: CheckMode,
-    /// `tsc-rs` in process (the default), or `microsoft`.
+    /// `tsrs` in process (the default), `tsc-rs` in process, or `microsoft`.
     pub backend: BackendKind,
     /// Microsoft's native `tsc` at the pinned version: the `microsoft`
-    /// backend, and tsc-rs's fallback when it is set.
+    /// backend, and the in-process backends' fallback when it is set.
     pub microsoft_tsc: Option<PathBuf>,
 }
 
@@ -575,7 +575,7 @@ impl CodeCheckFile {
                 .map_err(|error| anyhow::anyhow!("models.code_mode.check.mode: {error}"))?,
         };
         let backend = match self.backend.as_deref() {
-            None => BackendKind::TscRs,
+            None => BackendKind::Tsrs,
             Some(backend) => backend
                 .parse()
                 .map_err(|error| anyhow::anyhow!("models.code_mode.check.backend: {error}"))?,
