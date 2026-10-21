@@ -289,10 +289,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_write/successor.rs` | src | s | 1 crate-vis | — | Re-signing a MACHINE claim's successor with its writer's retained signer |
 | `src/authority/mesh_machine.rs` | src | m | 2 struct · 7 fn · 1 const · 1 re-export | MeshMachineAddress, MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
 | `src/authority/mesh_machine/doors.rs` | src | m | 3 struct · 7 fn | MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding | Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal… |
-| `src/authority/mod.rs` | src | m | 59 re-export · 32 crate-vis | — | AUTHORITY_LOG record substrate |
+| `src/authority/mod.rs` | src | m | 59 re-export · 33 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/observation_policy.rs` | src | s | 1 struct · 2 fn · 8 const · 1 crate-vis | AuthorityObservationPolicy | Device-local authority observation policy and its versioned duration row |
 | `src/authority/op_apply.rs` | src | m | 7 crate-vis | — | Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`] |
-| `src/authority/owner_act.rs` | src | m | 1 struct · 2 enum · 4 fn · 12 crate-vis | ActAuthority, GrantedAct, KeyWork | The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged… |
+| `src/authority/owner_act.rs` | src | m | 1 struct · 2 enum · 4 fn · 13 crate-vis | ActAuthority, GrantedAct, KeyWork | The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged… |
 | `src/authority/owner_choice.rs` | src | m | 1 struct · 15 crate-vis | OwnerChoiceHead | The register every vault-wide single-value owner choice keeps: the checkpoint root policy (mesh PR2c… |
 | `src/authority/owner_key_enrollment.rs` | src | s | 2 crate-vis | — | The fold's judge of the owner's enrollment of one of his devices' own owner signing keys (FIX 4920; Engine… |
 | `src/authority/owner_key_enrollment_door.rs` | src | m | 3 struct · 4 fn | EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt | The owner's enrollment of one of his devices' own owner signing keys (FIX 4920 part 2; Engine 10-20 00:5x… |
@@ -305,7 +305,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/owner_work/privacy_basis.rs` | src | s | 1 crate-vis | — | The fold's one judgment of key work a world settings edit left (FIX 4704): a request that carries a… |
 | `src/authority/owner_work/root_basis.rs` | src | s | 2 crate-vis | — | A root request's basis witness, checked on its target (FIX 5551): whether the target's heads are the ones… |
 | `src/authority/pinned_root.rs` | src | s | 12 crate-vis | — | This install's pin: the owner recovery root whose anchor it trusts (world privacy P6b, R1) |
-| `src/authority/principal_standing.rs` | src | m | 16 crate-vis | — | FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that… |
+| `src/authority/principal_standing.rs` | src | m | 20 crate-vis | — | FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that… |
 | `src/authority/readonly_fold.rs` | src | m | 17 crate-vis | — | One read-snapshot authority evaluator shared by Vault and the batch write door |
 | `src/authority/recover_many.rs` | src | s | 2 struct · 2 enum · 1 fn | VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep | M-vault recovery (OF-169): each vault recovers on its own chain |
 | `src/authority/retired_signers.rs` | src | m | 11 crate-vis | — | A handoff retires its predecessor for good (engine-crates-03) |
@@ -1679,6 +1679,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dispatch_byoa/work_hand_off.rs` | src | s | 1 crate-vis | — | A spent seat's work handed to the next seat (OF-137): "the router mints the next attempt on the next seat… |
 | `src/distance.rs` | src | s | 1 crate-vis | — | Cosine distance kernels, defined in `oneiron-retrieval` |
 | `src/dreamer_consolidation/assembly.rs` | src | s | 3 crate-vis | — | Store-backed mechanical inputs for the consolidation executor |
+| `src/dreamer_consolidation/branch.rs` | src | s | 2 struct · 1 trait · 16 crate-vis | BranchTurn, ConsolidationBranchPlan, ConversationPart | One consolidation branch (FIX 7524): a nightly thing's turns across every conversation it appears in… |
 | `src/dreamer_consolidation/branch_scope.rs` | src | s | 4 fn · 7 crate-vis | — | Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis |
 | `src/dreamer_consolidation/call_labels.rs` | src | m | 17 crate-vis | — | Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id |
 | `src/dreamer_consolidation/call_labels/decision_rungs.rs` | src | s | 3 crate-vis | — | The host ladder's model rungs through one call's labels (FIX 7506 P2) |
@@ -1700,10 +1701,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/gap.rs` | src | m | 2 struct · 2 enum · 4 fn · 7 crate-vis | GapQueueDelta, ReflectionGap, ReflectionGapKind, ReflectionGapScan | — |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 2 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
 | `src/dreamer_consolidation/kept_ask.rs` | src | s | 4 struct · 2 fn | KeptAnswer, KeptAsk, KeptRole, KeptRoute | The ask a kept decision went up as, kept actor-free (FIX 4591) |
-| `src/dreamer_consolidation/mod.rs` | src | s | 4 mod · 21 re-export · 26 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
+| `src/dreamer_consolidation/mod.rs` | src | s | 4 mod · 22 re-export · 26 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `src/dreamer_consolidation/neighbourhood.rs` | src | m | 14 crate-vis | — | The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to… |
 | `src/dreamer_consolidation/neighbourhood/render.rs` | src | s | 3 crate-vis | — | The listing as a call shows it (FIX 7506): each entity and claim by its call-local label, never its id |
 | `src/dreamer_consolidation/nightly_merge.rs` | src | m | 6 crate-vis | — | Nightly fan-in over child proposals |
+| `src/dreamer_consolidation/nightly_merge/chunks.rs` | src | s | 1 crate-vis | — | Which unlisted siblings a nightly merge fans in beside its listed children (FIX 7495, FIX 7524): a retry of… |
 | `src/dreamer_consolidation/note_classification.rs` | src | s | 4 crate-vis | — | The NOTE review's classification request and reply (ARCH-0032 stage 2, OF-073) |
 | `src/dreamer_consolidation/note_parts.rs` | src | s | 1 crate-vis | — | A Dreamer-written text past the NOTE body bound, as the ordered parts it lands in: the split an imported… |
 | `src/dreamer_consolidation/note_review.rs` | src | m | 3 crate-vis | — | ARCH-0032 stage 2 (OF-073): the Dreamer reviews NOTEs |
@@ -1712,7 +1714,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/note_topics.rs` | src | s | 6 crate-vis | — | The stage-2 topic summary trigger (ARCH-0032 write gate, OF-073 / FIX 907) |
 | `src/dreamer_consolidation/open_conflict.rs` | src | s | 1 crate-vis | — | A judge outage is an open question, persisted through the shared write gate |
 | `src/dreamer_consolidation/parallel.rs` | src | m | 1 crate-vis | — | Read-only neighbourhood fan-out, followed by one parent-owned merge |
-| `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 7 fn · 11 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | — |
+| `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 6 fn · 1 re-export · 10 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | — |
+| `src/dreamer_consolidation/partition/payload.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | PartitionThing | The consolidation payload codec (FIX 7524): a branch's world and facet, the thing a nightly child is cut… |
 | `src/dreamer_consolidation/persistence.rs` | src | s | 1 fn · 5 crate-vis | — | Persistent contradiction markers and prior-head context for consolidation |
 | `src/dreamer_consolidation/person_about.rs` | src | m | 1 struct · 2 fn · 1 const · 5 crate-vis | PersonAboutExecutor | PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the… |
 | `src/dreamer_consolidation/provenance.rs` | src | L | 6 struct · 1 enum · 2 trait · 10 fn · 1 re-export · 9 crate-vis | ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, ConsolidationProvenanceHopKind, ConsolidationSink, KeptDecision, PeerAnswerLineage, PeerTrustDigestLine, PeerTrustDigestSink +1 | — |
@@ -1723,7 +1726,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/resident_dream/reply.rs` | src | s | 2 crate-vis | — | What a resident's dreaming reply must hold to land: a diary entry |
 | `src/dreamer_consolidation/resident_for_human.rs` | src | m | 1 fn | — | An agent's free time for its human (FIX 4453, `autonomy.for_human`) |
 | `src/dreamer_consolidation/resident_health.rs` | src | s | 3 crate-vis | — | A resident's own health cards as its dreaming's input (OF-490, FIX 1145/1146): the cards whose subject is… |
-| `src/dreamer_consolidation/resources.rs` | src | L | 1 re-export · 39 crate-vis | — | Exact resource bounds for a consolidation partition |
+| `src/dreamer_consolidation/resources.rs` | src | m | 1 re-export · 36 crate-vis | — | Exact resource bounds for a consolidation partition |
+| `src/dreamer_consolidation/resources/parts.rs` | src | s | 4 crate-vis | — | A branch's declared sources (FIX 7524): every part's conversation and its queued TURNs, pinned at one revision |
 | `src/dreamer_consolidation/resources/pins.rs` | src | s | 11 crate-vis | — | What reading an extraction candidate needs from its branch: the pinned sources, the prior heads and the… |
 | `src/dreamer_consolidation/resources/prior.rs` | src | m | 8 crate-vis | — | Exact stored-head admission and question routing |
 | `src/dreamer_consolidation/resources/signals.rs` | src | s | 4 crate-vis | — | Actor- and branch-filtered graph/vector inputs for mechanical selection |
@@ -1769,7 +1773,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/turn_text/projection.rs` | src | s | 2 crate-vis | — | The exact projection a consolidation branch read of one witnessed TURN (FIX 5755), and a retained citation… |
 | `src/dreamer_consolidation/value_projection.rs` | src | s | 2 crate-vis | — | Data projection between extraction/merge JSON and claim MessagePack values |
 | `src/dreamer_consolidation/wake_plan.rs` | src | m | 2 struct · 21 crate-vis | PreparedConsolidationAttempt, PreparedWake | One frozen read revision and exact preparation of queued consolidation work |
-| `src/dreamer_consolidation/wake_plan/chunks.rs` | src | s | 3 crate-vis | — | Rule 5 for a selection retry's source budget (L02-38): `max_sources` is a work size, never a total |
+| `src/dreamer_consolidation/wake_plan/chunks.rs` | src | s | 5 crate-vis | — | Rule 5 for a selection retry's source budget (L02-38): `max_sources` is a work size, never a total |
+| `src/dreamer_consolidation/wake_plan/retry.rs` | src | s | 4 crate-vis | — | A selection retry's widening, part by part (FIX 7524) |
+| `src/dreamer_consolidation/wake_plan/sources.rs` | src | s | 1 crate-vis | — | A multi-part branch's parts at the wake's one pin (FIX 7524, Engine ruling B) |
 | `src/dreamer_consolidation/watermark.rs` | src | m | 2 struct · 5 fn · 14 crate-vis | ConsolidationWatermark, WorkingSetTurn | — |
 | `src/dreamer_consolidation/watermark/codec.rs` | src | s | 2 crate-vis | — | Codec for the exact consolidation cursor position |
 | `src/dreamer_consolidation/watermark/rescan_tests.rs` | test | s | — | — | — |
@@ -1929,7 +1935,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/mod.rs` | src | s | 1 mod · 15 re-export · 16 crate-vis | — | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `src/dreamer_wake/night_step.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | NightStepRequestId | The Dreamer's night step on the owner's say (FIX 6903): a Timer `host.wake` asks for what a Timer wake asks… |
 | `src/dreamer_wake/nightly.rs` | src | s | 6 crate-vis | — | Budgeted interest-queue spending, one thing per entity or topic (OF-498c, see `things`): its world, facet… |
-| `src/dreamer_wake/nightly/things.rs` | src | s | 5 crate-vis | — | One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly) |
+| `src/dreamer_wake/nightly/exposure.rs` | src | s | 3 crate-vis | — | What each planned TURN's text may be read beside in another conversation (FIX 7524, Engine ruling C): its… |
+| `src/dreamer_wake/nightly/things.rs` | src | m | 5 crate-vis | — | One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly) |
 | `src/dreamer_wake/observation.rs` | src | m | 8 struct · 1 enum · 3 fn · 1 re-export · 10 crate-vis | WakeCallState, WakeObservedAttempt, WakeObservedCall, WakeObservedCallEnd, WakeObservedCheckpoint, WakeObservedEnd, WakeObservedHeader, WakeObservedResume +1 | The wake observation (DOOR-144): what one wake pass recorded of itself |
 | `src/dreamer_wake/observation/checkpoint.rs` | src | s | 5 crate-vis | — | The wake observation's Checkpoint half: the cut a park's own write records, the check the deadline lane arms… |
 | `src/dreamer_wake/observation/live.rs` | src | s | 13 crate-vis | — | The live half of the wake observation: the passes and admitted calls running on one open vault |
