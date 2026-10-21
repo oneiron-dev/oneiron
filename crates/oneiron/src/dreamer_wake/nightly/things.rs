@@ -7,16 +7,21 @@
 //!
 //! Every TURN lands in exactly one thing: the entity of its highest scored
 //! bound span, else its partition's topic. Each spent span rides with its
-//! TURN's thing. A thing's children are cut by conversation, the branch one
-//! consolidation reads, and past `CHILD_TURNS` into sibling children of that
-//! size; each names its thing in its payload. Nothing is dropped, and the
-//! number of entities or things is not bounded.
+//! TURN's thing. A bound thing's child holds it across every conversation it
+//! appears in (FIX 7524): one part per conversation, combined only where the
+//! parts' exposure agrees (`exposure`), and past `CHILD_TURNS` of total TURN
+//! work into sibling children of that size. A structural topic, a private
+//! thread's thing and a part whose exposure does not agree stay in their own
+//! conversation's child. Each child names its thing in its payload. Nothing
+//! is dropped, and the number of entities, things or conversations is not
+//! bounded.
 
 use std::collections::BTreeMap;
 
+use super::exposure::Exposure;
 use crate::dreamer_consolidation::{
-    ConsolidationPartitionKey, ConsolidationPartitionPlan, DEFAULT_MESO_ROUND_TURN_CAP,
-    PartitionThing, WorkingSetTurn,
+    ConsolidationBranchPlan, ConsolidationPartitionKey, ConsolidationPartitionPlan,
+    ConversationPart, DEFAULT_MESO_ROUND_TURN_CAP, PartitionThing, WorkingSetTurn,
 };
 use crate::dreamer_wake::sieve::SieveSpan;
 use crate::{EntityId, Result, Vault};
@@ -55,9 +60,10 @@ pub(super) struct NightlyThingPlan {
     pub(super) key: NightlyThingKey,
     /// Every spent span whose TURN is this thing's, in queue order.
     pub(super) spans: Vec<SieveSpan>,
-    /// The thing's TURNs, one child per conversation in the partitions'
-    /// spending order, each in partition order and cut at `CHILD_TURNS`.
-    pub(super) children: Vec<ConsolidationPartitionPlan>,
+    /// The thing's TURNs as branches over its conversation parts, in the
+    /// partitions' spending order, each part in partition order and every
+    /// child cut at `CHILD_TURNS` of total work.
+    pub(super) children: Vec<ConsolidationBranchPlan>,
 }
 
 /// One thing as it gathers, before its children are cut.
@@ -153,11 +159,13 @@ fn thread_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Thre
 /// The things `partitions` hold, each first met at its highest scored span.
 /// `spans` is the night's queue readout, highest score first; a span that
 /// still owes a rung is neither placed nor spent here. `audiences` is
-/// [`audiences_in_txn`] over the same partitions.
+/// [`audiences_in_txn`] and `exposures` `exposure::exposures_in_txn` over the
+/// same partitions.
 pub(super) fn plan_things(
     partitions: &[ConsolidationPartitionPlan],
     spans: &[SieveSpan],
     audiences: &BTreeMap<EntityId, Option<EntityId>>,
+    exposures: &BTreeMap<EntityId, Option<Exposure>>,
 ) -> Vec<NightlyThingPlan> {
     let homes = turn_homes(partitions, spans);
     let audience = |turn: &EntityId| audiences.get(turn).copied().flatten();
@@ -180,7 +188,7 @@ pub(super) fn plan_things(
     }
     drafts
         .into_iter()
-        .map(|draft| cut(partitions, draft))
+        .map(|draft| cut(partitions, draft, exposures))
         .collect()
 }
 
@@ -236,25 +244,57 @@ fn slot(
     })
 }
 
-/// A drafted thing, its TURNs cut into one child per partition and past
-/// `CHILD_TURNS` into children of that size. A child's exposure axes are
-/// its thing's: the same world and facet its partition holds.
-fn cut(partitions: &[ConsolidationPartitionPlan], draft: Draft) -> NightlyThingPlan {
-    let mut children = Vec::new();
-    for (index, turns) in &draft.turns {
-        let partition = &partitions[*index];
-        let key = ConsolidationPartitionKey {
-            conversation_ref: partition.key.conversation_ref,
-            world_ref: draft.key.world,
-            facet_ref: draft.key.facet,
+/// A drafted thing, its TURNs as one part per partition, and its parts
+/// combined into children past `CHILD_TURNS` of total work. A bound thing
+/// off any private thread combines the parts whose exposure agrees; any
+/// other part keeps a child line of its own, as a structural topic's and a
+/// private thread's do. A child's axes are its thing's.
+fn cut(
+    partitions: &[ConsolidationPartitionPlan],
+    draft: Draft,
+    exposures: &BTreeMap<EntityId, Option<Exposure>>,
+) -> NightlyThingPlan {
+    let combines = draft.key.entity.is_some() && draft.key.audience.is_none();
+    let mut lines: Vec<Vec<ConversationPart>> = Vec::new();
+    let mut classes: BTreeMap<Exposure, usize> = BTreeMap::new();
+    for (index, turns) in draft.turns {
+        let partition = &partitions[index];
+        let class = if combines {
+            let of: Vec<Option<&Exposure>> = turns
+                .iter()
+                .map(|turn| exposures.get(&turn.turn_id).and_then(Option::as_ref))
+                .collect();
+            Exposure::of_part(&of)
+        } else {
+            None
         };
+        let part = ConversationPart {
+            conversation_ref: partition.key.conversation_ref,
+            turns,
+            watermark_last_learned_at: partition.watermark_last_learned_at,
+        };
+        match class {
+            Some(class) => {
+                let at = *classes.entry(class).or_insert_with(|| {
+                    lines.push(Vec::new());
+                    lines.len() - 1
+                });
+                lines[at].push(part);
+            }
+            None => lines.push(vec![part]),
+        }
+    }
+    let thing = Some(draft.key.payload());
+    let mut children = Vec::new();
+    for parts in lines {
         children.extend(
-            turns
-                .chunks(CHILD_TURNS)
-                .map(|chunk| ConsolidationPartitionPlan {
-                    key,
-                    turns: chunk.to_vec(),
-                    watermark_last_learned_at: partition.watermark_last_learned_at,
+            sized(parts)
+                .into_iter()
+                .map(|parts| ConsolidationBranchPlan {
+                    world_ref: draft.key.world,
+                    facet_ref: draft.key.facet,
+                    thing,
+                    parts,
                 }),
         );
     }
@@ -263,4 +303,33 @@ fn cut(partitions: &[ConsolidationPartitionPlan], draft: Draft) -> NightlyThingP
         spans: draft.spans,
         children,
     }
+}
+
+/// `parts` cut into children of at most `CHILD_TURNS` TURNs in total, in
+/// order: a part that does not fit continues in the next child.
+fn sized(parts: Vec<ConversationPart>) -> Vec<Vec<ConversationPart>> {
+    let mut children = Vec::new();
+    let mut child = Vec::new();
+    let mut size = 0_usize;
+    for part in parts {
+        let mut rest = part.turns.as_slice();
+        while !rest.is_empty() {
+            let (taken, left) = rest.split_at(rest.len().min(CHILD_TURNS - size));
+            child.push(ConversationPart {
+                conversation_ref: part.conversation_ref,
+                turns: taken.to_vec(),
+                watermark_last_learned_at: part.watermark_last_learned_at,
+            });
+            size += taken.len();
+            rest = left;
+            if size == CHILD_TURNS {
+                children.push(std::mem::take(&mut child));
+                size = 0;
+            }
+        }
+    }
+    if !child.is_empty() {
+        children.push(child);
+    }
+    children
 }
