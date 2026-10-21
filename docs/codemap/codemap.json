@@ -13560,13 +13560,24 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/repo.rs",
-     "purpose": "`self.code.*` (FIX 6867, L11 G1 PR2a): a leased agent run's repo rows",
+     "purpose": "`self.code.*` (FIX 6867, L11 G1 PR2a, PR2b): a leased agent run's repo rows",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/repo_sources.rs",
+     "purpose": "The attribution a run's proposal records (FIX 6867, G1 PR2b; CALL \"FIX 6867 review policy and provenance\")…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -13891,9 +13902,9 @@
       "RepoRunCall"
      ],
      "path": "src/code_run/repo_calls.rs",
-     "purpose": "The run repo rows as typed calls (FIX 6867, L11 G1 PR2a): one variant a row, carrying that row's closed…",
+     "purpose": "The run repo rows as typed calls (FIX 6867, L11 G1 PR2a, PR2b): one variant a row, carrying that row's…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 4
      }
@@ -27732,13 +27743,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/federation/repo_access.rs",
      "purpose": "The repo admission seams on an owner's agent Grant (FIX 6867): the L02 seams the Engine approved for L11 G1",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -30076,7 +30087,7 @@
      "path": "src/git_wire/argv.rs",
      "purpose": "Frozen typed argv: one constructor per git verb plus the token validators",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 36
      }
     },
     {
@@ -30208,7 +30219,7 @@
      "path": "src/git_wire/mirror_push.rs",
      "purpose": "Fixed outbound push profile for an origin's mirror (ARCH-0068 RA8). https only, no redirects, no proxy, no…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -30220,7 +30231,7 @@
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
       "crate-vis": 4,
-      "re-export": 11
+      "re-export": 13
      }
     },
     {
@@ -30279,6 +30290,43 @@
      "purpose": "The crate's single git child-process constructor plus its bounded IO and thread-pump helpers",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GitPublishPushOutcome",
+      "GitRemoteTip"
+     ],
+     "path": "src/git_wire/publish_push.rs",
+     "purpose": "The outbound half of one exact publish (FIX 6866): an authenticated read of one branch at an https mirror…",
+     "surface": {
+      "enum": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GitReviewItem"
+     ],
+     "path": "src/git_wire/publish_review.rs",
+     "purpose": "The full ancestry one exact publish would expose (FIX 6866): every commit the pushed commit reaches that the…",
+     "surface": {
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/publish_review_trees.rs",
+     "purpose": "The tree-by-tree half of an exact publish's review (FIX 6866): one commit whose diff alone passed its output…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -36989,7 +37037,7 @@
      "path": "src/memory/origin_doors/mod.rs",
      "purpose": "Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication…",
      "surface": {
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -37005,11 +37053,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "OriginPublishProof"
+     ],
+     "path": "src/memory/origin_doors/publish.rs",
+     "purpose": "The exact publish doors (FIX 6866): request, review, get, approve, execute and cancel one exact-commit…",
+     "surface": {
+      "enum": 1,
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/memory/origin_doors/setup.rs",
      "purpose": "The owner's repository registration and outbound mirror setup, through the same proof and credential-scoped…",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -37024,6 +37085,7 @@
       "OriginAuthorityView",
       "OriginMirrorCleared",
       "OriginMirrorSetRequest",
+      "OriginMirrorStrategyRequest",
       "OriginMirrorView",
       "OriginPublicationState",
       "OriginPublicationView",
@@ -37037,7 +37099,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1,
-      "struct": 15
+      "struct": 16
      }
     },
     {
@@ -37411,8 +37473,25 @@
      "purpose": "The run repo doors (FIX 6867, L11 G1 PR2a): a leased agent run's own reads of the repos its owner's Grant…",
      "surface": {
       "crate-vis": 11,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RepoReviewPolicy",
+      "RepoRunSources"
+     ],
+     "path": "src/memory/repo_doors/proposals.rs",
+     "purpose": "`self.code.proposal_submit` and `self.code.merge_queue.enqueue` (FIX 6867, G1 PR2b): a leased run's one…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 4,
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -37422,23 +37501,44 @@
      "path": "src/memory/repo_doors/reads.rs",
      "purpose": "The run repo doors' reads: snapshots and their files and definitions at the commit the run's full ref names…",
      "surface": {
+      "crate-vis": 1,
       "fn": 6
      }
     },
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/repo_doors/symbols.rs",
+     "purpose": "`self.code.symbols.declare`, `.renew` and `.release` (FIX 6867, G1 PR2b): a leased run's own symbol…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
+      "RepoMergeQueueEnqueueInput",
       "RepoMergeQueueObserveInput",
       "RepoMergeQueueObserveOutput",
+      "RepoProposalSubmitInput",
+      "RepoProposalSubmitOutput",
+      "RepoQueueEntryView",
       "RepoRunStamp",
       "RepoSnapshotView",
       "RepoSnapshotsGetInput",
       "RepoSnapshotsIngestInput",
       "RepoSnapshotsReadInput",
       "RepoSnapshotsReadOutput",
+      "RepoSymbolDeclarationView",
+      "RepoSymbolsDeclareInput",
       "RepoSymbolsDefinitionsInput",
       "RepoSymbolsDefinitionsOutput",
+      "RepoSymbolsReleaseInput",
+      "RepoSymbolsReleaseOutput",
+      "RepoSymbolsRenewInput",
       "RepoViewsGetInput",
       "RepoViewsReadInput",
       "RepoViewsReadOutput",
@@ -37449,8 +37549,8 @@
      "path": "src/memory/repo_doors/types.rs",
      "purpose": "The run repo doors' closed inputs and per-row outputs (FIX 6867, G1 PR2a), and the run stamp a run's own…",
      "surface": {
-      "struct": 16,
-      "type": 4
+      "struct": 25,
+      "type": 7
      }
     },
     {
@@ -37460,7 +37560,7 @@
      "path": "src/memory/repo_doors/work.rs",
      "purpose": "`self.code.snapshots.ingest` and `self.code.work.open`, the ref contract the run doors share (CALLS \"FIX…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -38583,7 +38683,7 @@
      "purpose": "Durable batched speculation over real detached worktrees",
      "surface": {
       "fn": 1,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 1
      }
     },
@@ -38601,13 +38701,27 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoQueueOrder",
+      "RepoQueuePredecessor"
+     ],
+     "path": "src/merge_queue/run.rs",
+     "purpose": "A leased run's entries in the merge queue (FIX 6867, G1 PR2b): the queue's one batch formation takes the…",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/merge_queue/staging.rs",
      "purpose": "Bounded speculation, materialization and cleanup through the shared repo writer",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 5
      }
     },
@@ -38618,7 +38732,7 @@
      "path": "src/merge_queue/storage.rs",
      "purpose": "Repo-scoped queue/batch rows; every transition is under the repo single writer",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -40193,7 +40307,7 @@
      "purpose": "Outbound mirror pushing (ARCH-0068 RA8)",
      "surface": {
       "const": 5,
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 6,
       "struct": 5
@@ -40212,12 +40326,29 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "OriginMirrorSyncStrategy",
+      "PublishRequestRequired"
+     ],
+     "path": "src/origin/mirror_strategy.rs",
+     "purpose": "Each origin mirror's sync strategy (FIX 6866; owner ruling 10-21 06:3x)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
       "crate-vis": 2,
-      "mod": 11,
+      "mod": 13,
       "re-export": 1
      }
     },
@@ -40328,6 +40459,140 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/origin/publish/approval.rs",
+     "purpose": "Whether an exact publish request's approval still stands at its dispatch (FIX 6866; CALLS \"FIX 6866…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OriginPublishCaller",
+      "OriginPublishDenial"
+     ],
+     "path": "src/origin/publish/authority.rs",
+     "purpose": "Who acts on an exact publish request (FIX 6866; CALLS \"FIX 6866 approval\" and \"FIX 6866 grant destination\")",
+     "surface": {
+      "const": 2,
+      "crate-vis": 8,
+      "struct": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/dispatch.rs",
+     "purpose": "The one dispatch of an approved exact publish request (FIX 6866)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OriginPublishApproveRequest",
+      "OriginPublishIdRequest",
+      "OriginPublishRequestInput",
+      "OriginPublishReviewRequest",
+      "OriginPublishReviewView"
+     ],
+     "path": "src/origin/publish/inputs.rs",
+     "purpose": "The inputs of the exact publish verbs (FIX 6866), and the one answer that is not a request: a review page",
+     "surface": {
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/lifecycle.rs",
+     "purpose": "Reading, approving and cancelling an exact publish request (FIX 6866)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/mod.rs",
+     "purpose": "Exact-commit publication to a repository's mirror (FIX 6866, part 1): a public mirror changes only when we…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/reconcile.rs",
+     "purpose": "An exact publish's outbound IO and its settlement (FIX 6866; CALLS \"FIX 6866 retry\" and \"FIX 6866 unknown…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/review.rs",
+     "purpose": "The full-ancestry review of one exact publish (FIX 6866; CALLS \"FIX 6866 review scope\"): what the push would…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/store.rs",
+     "purpose": "The one store of exact publish requests (`ORIGIN_PUBLISH_REQUEST`, LIVE): each request's row and, beside it…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OriginPublishAct",
+      "OriginPublishActorClass",
+      "OriginPublishAuthority",
+      "OriginPublishDestination",
+      "OriginPublishForce",
+      "OriginPublishLfsBytes",
+      "OriginPublishRefusal",
+      "OriginPublishRefusalReason",
+      "OriginPublishRemote",
+      "OriginPublishRequestView",
+      "OriginPublishReview",
+      "OriginPublishReviewItem",
+      "OriginPublishReviewPage",
+      "OriginPublishState"
+     ],
+     "path": "src/origin/publish/types.rs",
+     "purpose": "The shapes of one exact publish request (FIX 6866): what it names, the review it carries, where it stands…",
+     "surface": {
+      "enum": 8,
+      "fn": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/origin/registration.rs",
      "purpose": "Owner registration of a new, empty served origin",
      "surface": {
@@ -40347,7 +40612,7 @@
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
       "const": 1,
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 2,
       "fn": 7,
       "struct": 2
@@ -46396,7 +46661,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RepoProposal",
@@ -46453,6 +46718,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/proposal/run.rs",
+     "purpose": "A leased run's proposal (FIX 6867, G1 PR2b): the one checked proposer on the immutable base its work is…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RepoProposalDecision",
       "RepoProposalSettlement"
@@ -46463,6 +46738,16 @@
       "crate-vis": 2,
       "enum": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/proposal/submit.rs",
+     "purpose": "The one checked proposer (moved from `proposal.rs`, FIX 6867 G1 PR2b): the trusted and owner proposals take…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -46493,7 +46778,7 @@
      "path": "src/repo_mutation/snapshot.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -46569,7 +46854,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 7,
       "struct": 6,
@@ -48947,11 +49232,13 @@
      "kind": "src",
      "notable": [
       "SessionLine",
+      "SessionResult",
       "SessionText"
      ],
      "path": "src/self_heal/session_text.rs",
      "purpose": "What a session judge reads (FIX 2079): every readable line of the conversations a session window's runs were…",
      "surface": {
+      "enum": 1,
       "fn": 1,
       "struct": 2
      }
@@ -53314,7 +53601,8 @@
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
       "crate-vis": 31,
-      "mod": 1
+      "mod": 1,
+      "re-export": 1
      }
     },
     {
@@ -53354,7 +53642,8 @@
      "path": "src/store/key_custody/platform.rs",
      "purpose": "The one platform seam of key custody's files (KS-2A, Engine 10-20 04:1x): every open, directory sync, lock…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9,
+      "fn": 1
      }
     },
     {
@@ -53534,7 +53823,7 @@
      "surface": {
       "crate-vis": 28,
       "mod": 1,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -58116,7 +58405,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 40,
+      "crate-vis": 41,
       "fn": 1,
       "mod": 5,
       "re-export": 27
@@ -58977,7 +59266,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1116
+      "fn": 1123
      }
     },
     {
@@ -60092,10 +60381,25 @@
      "path": "src/task_verb/symbol_lease.rs",
      "purpose": "Node-local time-held symbol declarations and atomic queue ordering",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SymbolLeaseFence",
+      "SymbolLeaseRun"
+     ],
+     "path": "src/task_verb/symbol_lease/run.rs",
+     "purpose": "The run fence on a symbol declaration (FIX 6867, G1 PR2b): a leased run's declaration names the try, lease…",
+     "surface": {
+      "crate-vis": 7,
+      "struct": 2
      }
     },
     {
@@ -65994,7 +66298,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 124,
+     "files": 125,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66407,7 +66711,7 @@
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 27,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66596,14 +66900,14 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 228,
+     "files": 231,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66638,7 +66942,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 67,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66820,9 +67124,9 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
     "repo_mutation": {
-     "files": 25,
+     "files": 27,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
@@ -67107,7 +67411,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 201,
+     "files": 202,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67275,9 +67579,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 187,
+   "over_bar": 186,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4221,
+   "source_files": 4243,
    "test_files": 902
   },
   "oneiron-android": {
@@ -77056,7 +77360,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1087
+      "fn": 1094
      }
     },
     {
@@ -78271,7 +78575,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1088
+      "fn": 1095
      }
     },
     {
@@ -82264,7 +82568,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 181
+      "crate-vis": 182
      }
     },
     {
@@ -82474,7 +82778,17 @@
      "path": "src/api/facade/origin_doors.rs",
      "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/origin_publish_doors.rs",
+     "purpose": "Credential-bound host projections of the exact publish doors (FIX 6866)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -91916,7 +92230,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 485,
+     "files": 486,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92366,7 +92680,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 970,
+   "source_files": 971,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -94765,12 +95079,32 @@
       "OriginMirrorReadiness",
       "OriginMirrorRun",
       "OriginMirrorSetRequest",
+      "OriginMirrorStrategyRequest",
+      "OriginMirrorSyncStrategy",
       "OriginMirrorTarget",
       "OriginMirrorView",
       "OriginPublicationState",
       "OriginPublicationView",
       "OriginPublicationsRequest",
       "OriginPublicationsView",
+      "OriginPublishAct",
+      "OriginPublishActorClass",
+      "OriginPublishApproveRequest",
+      "OriginPublishAuthority",
+      "OriginPublishDestination",
+      "OriginPublishForce",
+      "OriginPublishIdRequest",
+      "OriginPublishLfsBytes",
+      "OriginPublishRefusal",
+      "OriginPublishRefusalReason",
+      "OriginPublishRemote",
+      "OriginPublishRequestInput",
+      "OriginPublishRequestView",
+      "OriginPublishReview",
+      "OriginPublishReviewItem",
+      "OriginPublishReviewRequest",
+      "OriginPublishReviewView",
+      "OriginPublishState",
       "OriginRegisterRequest",
       "OriginRegistered",
       "OriginRepoRequest",
@@ -96288,8 +96622,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 904,
-      "struct": 2817
+      "enum": 913,
+      "struct": 2828
      }
     },
     {

@@ -100,6 +100,9 @@ impl RepoMutationOperation {
 pub struct RepoMutationRequest {
     pub repo_ref: RepoRef,
     pub actor_id: Option<EntityId>,
+    /// The actor's class when the host stamped a real writer (FIX 6867): a
+    /// run's proposal. `None` keeps the trusted and owner call contract.
+    pub actor_class: Option<crate::edge::EdgeActorClass>,
     pub session_id: Option<EntityId>,
     pub provenance_claim_id: Option<EntityId>,
     /// The authoring turn, activity, intent and model the reviewed document
@@ -114,6 +117,7 @@ impl RepoMutationRequest {
         Self {
             repo_ref,
             actor_id: None,
+            actor_class: None,
             session_id: None,
             provenance_claim_id: None,
             op_provenance: crate::code_document::CodeOpProvenance::default(),
@@ -132,6 +136,24 @@ impl RepoMutationRequest {
     #[must_use]
     pub(super) fn with_recorded_actor(mut self, actor_id: Option<EntityId>) -> Self {
         self.actor_id = actor_id;
+        self
+    }
+
+    /// The writer a host stamped (FIX 6867): its actor and its class.
+    #[must_use]
+    pub(crate) fn with_write_actor(mut self, actor: crate::WriteActor) -> Self {
+        self.actor_id = Some(actor.entity_ref());
+        self.actor_class = Some(actor.actor_class());
+        self
+    }
+
+    /// The class a stored proposal records beside its actor.
+    #[must_use]
+    pub(super) fn with_recorded_class(
+        mut self,
+        actor_class: Option<crate::edge::EdgeActorClass>,
+    ) -> Self {
+        self.actor_class = actor_class;
         self
     }
 
@@ -173,6 +195,9 @@ pub struct RepoMutationOplogEntry {
     pub operation_subject: Option<String>,
     /// None when no actor was recorded, or once that actor was erased (FIX 3520).
     pub actor_id: Option<EntityId>,
+    /// The class a host stamped beside the actor (FIX 6867); `None` for a
+    /// trusted or owner request.
+    pub actor_class: Option<crate::edge::EdgeActorClass>,
     pub session_id: Option<EntityId>,
     pub started_at_ms: u64,
     pub finished_at_ms: Option<u64>,

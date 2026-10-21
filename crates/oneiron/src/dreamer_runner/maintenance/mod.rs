@@ -237,7 +237,7 @@ pub(crate) fn execute(
             coach::run_tradeoff_escalation(ctx.vault, ctx.now_ms / 1000)?;
         }
         coach::COACH_TRAINING_OFFERS_FACET => {
-            coach::run_training_offers(ctx.vault, ctx.now_ms / 1000)?;
+            coach::run_training_offers(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         coach::COACH_LEARNING_SWEEP_FACET => {
             coach::run_learning_sweep(ctx.vault, ctx.now_ms / 1000)?;

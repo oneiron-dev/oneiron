@@ -2,9 +2,7 @@
 use super::mount::RepoMountRef;
 use crate::code_document::{CodeFileEdit, CodeFileIngress};
 use crate::codebase::RepoRef;
-use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
 pub(super) fn land_reviewed_document(vault: &Vault, proposal_id: EntityId) -> Result<()> {
@@ -29,7 +27,7 @@ pub(super) fn land_reviewed_document(vault: &Vault, proposal_id: EntityId) -> Re
         operation: proposal_id,
         session,
         edit: CodeFileEdit::between(&proposal.path, old, new),
-        actor: WriteActor::new(proposal.actor.live()?, EdgeActorClass::Agent),
+        actor: proposal.document_actor()?,
         expected_text: old.to_owned(),
     }])?;
     Ok(())
