@@ -512,6 +512,8 @@ impl Memory<'_> {
                 _ => format!("{short}:{:02x}", row.content_hash),
             }
         });
+        // A repo file's bytes read masked but at the owner's own door (FIX 7608).
+        let body = self.repo_lane_body_in_txn(txn, &row.id, row.entity_type, body)?;
         let mut body = decode_body_json(&body);
         // A key the lift sweep marked in a record's text reads as its handle
         // to all but the owner (OF-067).

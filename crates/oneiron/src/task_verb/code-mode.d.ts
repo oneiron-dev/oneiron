@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1181 code-mode rows (1141 host rows, 40 run rows), 3995 declarations.
+// Census: 1181 code-mode rows (1141 host rows, 40 run rows), 3997 declarations.
 // Replies: 1061 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -2222,7 +2222,9 @@ declare namespace Sdk {
   type CodeImportAcceptance = { manifest_digest: string; baseline_revision: EntityId; catalog: LensCatalog; review_verdict?: EntityId | null };
   type CodeRepoImportRequest = { repo: string; project: EntityId; source_ref: string; source_commit: string; admission_receipt: EntityId; accept?: CodeImportAcceptance | null };
   type CodeImportAnchor = { repo: EntityId; project: EntityId; served_repo: string; object_store: string; source_ref: string; source_commit: string; source_tree: string; admission_receipt: EntityId; receive_provenance: EntityId; snapshot: EntityId; snapshot_fork_hash: string };
-  type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number; mode: number };
+  type RepoFileProjectionKind = "masked" | "opaque";
+  type RepoFileProjectionView = { kind: RepoFileProjectionKind; source_blob: string; copy_blake3: string; copy_size_bytes: number; way_out: string };
+  type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number; mode: number; projection?: RepoFileProjectionView | null };
   type CodeImportManifestFile = { git_oid: string; file: CodeSnapshotFile };
   type CodeImportManifestView = { manifest_ref: EntityId; digest: string; anchor: CodeImportAnchor; inventory_digest: string; files: CodeImportManifestFile[] };
   type CodeRepoImportState = "manifest_ready" | "held_baseline" | "held_review" | "promoted";
@@ -2321,7 +2323,7 @@ declare namespace Sdk {
   type CodeWorkingView = { view: EntityId; repo: EntityId; base: EntityId; account: EntityId; fork_hash: string; files: CodeViewFile[]; receipt: EntityId; host_path: string };
   type CodeViewRequest = { view: EntityId; repo: EntityId; tested: EntityId; account: EntityId };
   type CodeViewReadRequest = { view: CodeViewRequest; path: string };
-  type CodeViewFileBytes = { path: string; bytes: number[]; sha256: string };
+  type CodeViewFileBytes = { path: string; bytes: number[]; sha256: string; projection?: RepoFileProjectionView | null };
   type CodeSecretTaintRef = { secret_ref: string; rotation_generation: number };
   type CodeBuildClass = "build" | "verify";
   type CodeBuildSpec = { argv: string[]; env_allowlist: Record<string, string>; platform: Record<string, string>; declared_outputs: string[]; secret_taint_refs: CodeSecretTaintRef[]; class: CodeBuildClass };

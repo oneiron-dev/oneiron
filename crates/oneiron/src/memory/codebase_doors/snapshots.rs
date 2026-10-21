@@ -92,6 +92,65 @@ impl Memory<'_> {
         }))
     }
 
+    /// [`Self::code_snapshot_get_as`] for a caller the host knows is a tool
+    /// or a run (FIX 7608, ASK 1): the same owner proof and manifest, each
+    /// marked file naming the copy a masked reader reads.
+    pub fn code_snapshot_get_projected_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeSnapshotRequest,
+    ) -> MemoryResult<Option<CodeSnapshotView>> {
+        self.codebase_owner(owner)?;
+        let Some(mount) = self.codebase_pinned(input.repo, &input.snapshot)? else {
+            return Ok(None);
+        };
+        let mut views = mount.projected_file_views(|_| true)?;
+        let mut view = snapshot_view(mount.code_artifact_id(), mount.snapshot());
+        for file in &mut view.files {
+            file.projection = views.remove(&file.path);
+        }
+        Ok(Some(view))
+    }
+
+    /// [`Self::code_snapshot_read_as`] for a caller the host knows is a tool
+    /// or a run (FIX 7608, ASK 1): the same owner proof, mount, withheld
+    /// paths and ASSET admission; a marked file reads as its projection,
+    /// found before its stored bytes are read.
+    pub fn code_snapshot_read_projected_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeSnapshotReadRequest,
+    ) -> MemoryResult<Option<CodeSnapshotPinnedFile>> {
+        self.codebase_owner(owner)?;
+        let Some(mount) = self.codebase_pinned(input.repo, &input.snapshot)? else {
+            return Ok(None);
+        };
+        let Some(read) = mount.read_file_projected(&input.path)? else {
+            return Ok(None);
+        };
+        let Some(entry) = mount
+            .snapshot()
+            .files
+            .iter()
+            .find(|entry| entry.path == input.path)
+        else {
+            return Ok(None);
+        };
+        if !self.codebase_readable(snapshot_asset_entity_id(&entry.content_hash)?)? {
+            return Ok(None);
+        }
+        let mut file = snapshot_file(entry);
+        file.projection = read.view();
+        let (content, text_sha256) = pinned_text(read.into_bytes())?;
+        Ok(Some(CodeSnapshotPinnedFile {
+            repo: input.repo,
+            snapshot: input.snapshot,
+            file,
+            content,
+            text_sha256,
+        }))
+    }
+
     /// The CALL behind import timing: the vault clock stamps both when the
     /// import occurred and when it was learned. No caller clock is read.
     fn codebase_import_time(&self) -> (TimeRange, u64) {
@@ -157,5 +216,6 @@ fn snapshot_file(entry: &CodebaseFileEntry) -> CodeSnapshotFile {
         content_hash_blake3: bytes_to_hex_lower(&entry.content_hash),
         size_bytes: entry.size_bytes,
         mode: entry.mode,
+        projection: None,
     }
 }

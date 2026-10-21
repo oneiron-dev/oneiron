@@ -21,6 +21,7 @@ use crate::git_wire::{
 use crate::memory::codebase_doors::CodeSnapshotFile;
 use crate::memory::{Memory, MemoryResult};
 use crate::merge_queue::MergeQueue;
+use crate::origin::secret_projection::{RepoSecretAudience, materialize_masked_repo};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
 
@@ -269,6 +270,10 @@ impl Memory<'_> {
             .into_iter()
             .filter(|(path, _)| membership.bounds.admits_path(RepoAccessIntent::Read, path))
             .collect();
+        // A run's work holds the masked copy of each admitted file a repo
+        // mark covers (FIX 7608); its stamp keeps the canonical green.
+        let selected = materialize_masked_repo(self.vault, selected, &RepoSecretAudience::Masked)?
+            .into_contents();
         let entries = selected
             .iter()
             .map(|(path, bytes)| {
@@ -330,5 +335,6 @@ pub(super) fn snapshot_file(entry: &CodebaseFileEntry) -> CodeSnapshotFile {
         content_hash_blake3: bytes_to_hex_lower(&entry.content_hash),
         size_bytes: entry.size_bytes,
         mode: entry.mode,
+        projection: None,
     }
 }

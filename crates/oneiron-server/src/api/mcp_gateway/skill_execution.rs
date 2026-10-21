@@ -13,6 +13,14 @@ tokio::task_local! {
     pub(super) static CALLER: McpCallContext;
 }
 
+/// Whether this call runs as an MCP tool's (FIX 7608, ASK 1): a direct tool
+/// call, a code-mode call and a verb-ask replay each run inside
+/// `execute_agent_verb_input`, which binds [`CALLER`]. A repo door reached
+/// this way serves the masked projection; no request field sets it.
+pub(crate) fn mcp_call_in_scope() -> bool {
+    CALLER.try_with(|_| ()).is_ok()
+}
+
 /// `None` means this is not an MCP call: the facade binds its own credential
 /// door. A present but different credential is refused, never downgraded.
 pub(crate) fn skill_execution_door(

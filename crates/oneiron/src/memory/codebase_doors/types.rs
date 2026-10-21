@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
+// The projection descriptor's own leaf is crate-private; the wire names it here.
+pub use crate::origin::secret_projection::types::{RepoFileProjectionKind, RepoFileProjectionView};
 
 /// One committed Git tree on the serving engine host.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -70,6 +72,10 @@ pub struct CodeSnapshotFile {
     /// The file's exact Git mode: 33188 (100644), 33261 (100755) or 40960
     /// (120000, a link whose bytes are its target).
     pub mode: u32,
+    /// How the bytes a masked reader reads differ from the stored blob
+    /// (FIX 7608): absent for the stored bytes, and for every unmarked file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection: Option<RepoFileProjectionView>,
 }
 
 /// One imported snapshot manifest. `repo` is the artifact of this one

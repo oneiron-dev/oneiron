@@ -5,6 +5,7 @@ use crate::context_pack::{
     ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, DEFAULT_MAX_NEIGHBORS,
     EmptyContext, EmptyReason, FieldProfile, TokenAllocation,
 };
+use crate::memory::repo_secret_reads::masked_asset_body;
 use crate::pipeline::ScoredEntity;
 use crate::receipt::ServedForm;
 use crate::registry::{
@@ -484,6 +485,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 | crate::memory::HydratedAsset::Omitted { .. } => None,
             };
         }
+        // This adapter serves MCP tools: a repo file reads masked (FIX 7608).
+        let body = masked_asset_body(self.scoped_read.vault(), &id, entity_type, body)
+            .map_err(|error| engine_failure(method, &error))?;
         let item = entity_record_from_parts(
             &id,
             entity_type,

@@ -3,6 +3,7 @@ mod ingest;
 mod instructions;
 mod repo_ref;
 mod residue;
+mod secret_projection;
 mod serve_lookup;
 mod snapshot;
 mod store;

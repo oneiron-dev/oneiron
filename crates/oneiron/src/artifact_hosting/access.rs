@@ -279,9 +279,20 @@ impl Vault {
                 {
                     return Ok(None);
                 }
-                let asset = crate::codebase::snapshot_asset_entity_id(&entry.content_hash)?;
-                let bytes =
-                    match self.sighted_body_file_in_txn(txn, &asset, &entry.content_hash, sight)? {
+                // A file a repo mark covers is served as its projection,
+                // found before its bytes are read, under its own hash (FIX 7608).
+                if let Some(copy) = self.repo_marked_asset_copy_in_txn(txn, &entry.content_hash)? {
+                    let bytes = copy.into_bytes();
+                    let hash = *blake3::hash(&bytes).as_bytes();
+                    (bytes, None, hash)
+                } else {
+                    let asset = crate::codebase::snapshot_asset_entity_id(&entry.content_hash)?;
+                    let bytes = match self.sighted_body_file_in_txn(
+                        txn,
+                        &asset,
+                        &entry.content_hash,
+                        sight,
+                    )? {
                         Some(bytes) => bytes,
                         None => self.masked_whole_in_txn(
                             txn,
@@ -293,7 +304,8 @@ impl Vault {
                             &entry.content_hash,
                         )?,
                     };
-                (bytes, None, entry.content_hash)
+                    (bytes, None, entry.content_hash)
+                }
             }
             ArtifactExportRef::BlobVersion {
                 artifact_id,

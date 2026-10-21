@@ -14,6 +14,8 @@ use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
+use crate::memory::repo_secret_reads::project_repo_file;
+use crate::origin::secret_projection::{RepoSecretAudience, materialize_masked_repo};
 use crate::{EdgeActorClass, EntityId};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -96,6 +98,28 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeViewMaterializeRequest,
     ) -> MemoryResult<CodeWorkingView> {
+        self.view_materialize(owner, input, &RepoSecretAudience::HumanOwner(owner))
+    }
+
+    /// [`Self::code_view_materialize_as`] for a caller the host knows is a
+    /// tool or a run (FIX 7608, ASK 1): the same admission and receipt, the
+    /// view holding the masked copy of each file a repo mark covers.
+    pub fn code_view_materialize_projected_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeViewMaterializeRequest,
+    ) -> MemoryResult<CodeWorkingView> {
+        self.view_materialize(owner, input, &RepoSecretAudience::Masked)
+    }
+
+    /// The one materializer of both: the selected files as `audience`
+    /// reads them; stored bytes for the owner.
+    fn view_materialize(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeViewMaterializeRequest,
+        audience: &RepoSecretAudience<'_>,
+    ) -> MemoryResult<CodeWorkingView> {
         self.view_owner(owner, input.account)?;
         let (snapshot, contents) = self.view_source(input.repo, input.tested)?;
         let mut selected = BTreeMap::new();
@@ -110,6 +134,7 @@ impl Memory<'_> {
                 selected.insert(path, bytes);
             }
         }
+        let selected = materialize_masked_repo(self.vault, selected, audience)?.into_contents();
         BuildCache::bind_owner_account(self.vault, owner, &input.account.to_hex())
             .map_err(cache_error)?;
         let set = CodeViewSet::open(self.vault)?;
@@ -203,6 +228,27 @@ impl Memory<'_> {
             path: input.path,
             sha256: bytes_to_hex_lower(&Sha256::digest(&bytes)),
             bytes,
+            projection: None,
+        })
+    }
+
+    /// [`Self::code_view_read_as`] for a caller the host knows is a tool or
+    /// a run (FIX 7608, ASK 1): the same admission; bytes a repo mark covers
+    /// read as their projection, with the copy's own SHA-256.
+    pub fn code_view_read_projected_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeViewReadRequest,
+    ) -> MemoryResult<CodeViewFileBytes> {
+        let file = self.code_view_read_as(owner, input)?;
+        let projected = project_repo_file(self.vault, file.bytes)?;
+        let projection = projected.view();
+        let bytes = projected.into_bytes();
+        Ok(CodeViewFileBytes {
+            path: file.path,
+            sha256: bytes_to_hex_lower(&Sha256::digest(&bytes)),
+            bytes,
+            projection,
         })
     }
 
