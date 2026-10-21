@@ -22,7 +22,7 @@ pub fn promote_scoped_consolidation(
         return Err(Error::InvalidClaimBody("scoped promotion actor mismatch"));
     }
     let mut outcome = PromotionOutcome::default();
-    for (head, candidate, evidence) in write.attachments {
+    for (index, (head, candidate, evidence)) in write.attachments.into_iter().enumerate() {
         // This attempt's own output, met again by a replay after it landed (a
         // kill before the attempt completed): it already carries these words.
         // What its grant left to close still closes, once.
@@ -57,10 +57,14 @@ pub fn promote_scoped_consolidation(
             checker,
         ) {
             Ok(()) => outcome.landed.push(head),
-            Err(error) => outcome.rejected.push((head, error.to_string())),
+            Err(error) => {
+                log_rejected(run, index, "attach_evidence", Some(error.kind()));
+                outcome.rejected.push((head, error.to_string()));
+            }
         }
     }
-    for (mut candidate, evidence) in write.candidates.into_iter().zip(write.candidate_evidence) {
+    let candidates = write.candidates.into_iter().zip(write.candidate_evidence);
+    for (index, (mut candidate, evidence)) in candidates.enumerate() {
         candidate.evidence_meet = evidence.meet();
         let id = candidate.claim_id;
         // The owner declined this claim from these same imported words; a
@@ -115,13 +119,49 @@ pub fn promote_scoped_consolidation(
                     None => outcome.pended.push(id),
                 }
             }
-            Ok(_) => outcome
-                .rejected
-                .push((id, "scoped promotion was not Auto".into())),
-            Err(reason) => outcome.rejected.push((id, reason)),
+            Ok(_) => {
+                log_rejected(run, index, "promote_not_auto", None);
+                outcome
+                    .rejected
+                    .push((id, "scoped promotion was not Auto".into()));
+            }
+            // The promotion door reports its refusal as text; the stage and
+            // the candidate say where to look.
+            Err(reason) => {
+                log_rejected(run, index, "promote", None);
+                outcome.rejected.push((id, reason));
+            }
         }
     }
     Ok(outcome)
+}
+
+/// Logs one candidate of `run`'s sealed write the door rejected, before the
+/// rejections fold into the write's one error (FIX 7271): its index in its
+/// list, a static code for where it was rejected and its error's kind when
+/// the rejection carries one. Never the rejection's text.
+fn log_rejected(
+    run: &DreamerRunContext,
+    index: usize,
+    stage: &'static str,
+    kind: Option<crate::error::ErrorKind>,
+) {
+    let attempt_id = crate::entity_id::bytes_to_hex_lower(run.attempt_id.as_bytes());
+    match kind {
+        Some(kind) => tracing::warn!(
+            attempt_id = %attempt_id,
+            candidate = index,
+            stage,
+            error_kind = ?kind,
+            "a scoped consolidation candidate was rejected"
+        ),
+        None => tracing::warn!(
+            attempt_id = %attempt_id,
+            candidate = index,
+            stage,
+            "a scoped consolidation candidate was rejected"
+        ),
+    }
 }
 
 fn attach_evidence(
