@@ -100,9 +100,6 @@ pub(super) struct RecordingJsHost<'a, 's> {
     pub(super) injection: Option<ProgramInjection>,
 }
 
-/// The name a reader child reads its parent's source by.
-const READER_SOURCE_NAME: &str = "src";
-
 /// Whether the gate an act takes over the run's results (a store, a fold, a
 /// summary, a spawn) counts the stored skills its callables loaded and the
 /// other runs' results they read, as each read's gate does (FIX 5460). Off:
@@ -1009,7 +1006,8 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     }
 
     /// What `reference` names for a read by this run: its own result first,
-    /// then a reader child's source, then a finding of one of its children.
+    /// then a reader child's source (a scoped child's lent inputs, each by
+    /// its name or handle, FIX 7507), then a finding of one of its children.
     fn resolve_for_read(
         &self,
         storage: &ExecutorStorage<'_>,
@@ -1026,14 +1024,13 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             }));
         }
         if let Some(child) = self.gated_write.reader_child() {
-            let source = &child.source;
-            let names_source = match reference {
-                JsResultRef::Name(name) => name == READER_SOURCE_NAME,
-                JsResultRef::Handle(handle) => *handle == source.handle,
+            let named = match reference {
+                JsResultRef::Name(name) => child.delegated(true, name),
+                JsResultRef::Handle(handle) => child.delegated(false, handle),
             };
-            if !names_source {
+            let Some((name, source)) = named else {
                 return Ok(None);
-            }
+            };
             let Some(output) =
                 recorded_output(storage, source.owner, &source.path, &source.handle)?
             else {
@@ -1041,7 +1038,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             };
             return Ok(Some(ResolvedResult {
                 output,
-                name: Some(READER_SOURCE_NAME.to_owned()),
+                name: Some(name.to_owned()),
                 owner: source.owner,
                 rows: Some(source.rows.clone()),
                 within: Some(source.range),
