@@ -1176,14 +1176,15 @@ back with it.
 
 ### Type check (shadow mode)
 
-Each generated program can be type-checked before it runs, against the same
+Each generated program can be type-checked as it runs: the check runs on its
+own thread beside the program, which never waits on it, against the same
 declarations the executor prompt teaches (`allowJs` + `checkJs`, strict,
 ES2022, no DOM or Node globals). It is off by default:
 
 ```toml
 [models.code_mode.check]
 mode = "shadow"              # "off" (default) or "shadow"; "enforce" is reserved and refused
-backend = "tsc-rs"           # "tsc-rs" in process (default), "tsrs" in process (on trial, FIX 8255) or "microsoft"
+backend = "tsrs"             # "tsrs" in process (default), "tsc-rs" in process or "microsoft"
 microsoft_tsc = "/opt/typescript-7.1.0-dev.20261010.1/package/lib/tsc"  # optional
 ```
 
@@ -1196,8 +1197,11 @@ running counts. A step that fails keeps no report, and neither does a run in an
 off-record session, whose overlay is quota-bounded; their checks are only in
 the log.
 
-`tsc-rs` is the pinned Wasm module in `components/tsc-rs`, compiled once at
-startup (a few seconds) and run in a fresh instance per check, two at a time.
+`tsrs` (the default) is oxc's Rust port of TypeScript 7, the pinned Wasm
+module in `crates/oneiron-code-check/vendor/tsrs`; `tsc-rs` is the pinned Wasm
+module in `components/tsc-rs`. Either is compiled once at startup (a few
+seconds) and runs each check in a fresh instance. Checks queue in arrival
+order for one of 2 slots, each until its deadline (10 s).
 `microsoft` runs Microsoft's native `tsc` (`@typescript/typescript-<platform>`,
 version `7.1.0-dev.20261010.1` only) as a process per check, in its own
 process group and temporary directory but with this host's file system. Since
@@ -1205,11 +1209,21 @@ resolving a module would read or probe the path it names, it leaves unchecked
 (`code_check_unsupported`) any program that could name one: one containing
 `import`, `export`, `require`, `reference`, `module` or a `\u` escape, in any
 case.
-With `tsc-rs` selected, a set `microsoft_tsc` is the fallback for any check
-tsc-rs cannot finish, a busy one included. A step's report names the checker
-whose answer or failure it holds. When no checker loads, code mode runs unchecked and the
+With `tsrs` or `tsc-rs` selected, a set `microsoft_tsc` is the fallback for
+any check the in-process backend cannot finish, and for every check when its
+module does not load. A check that cannot get a slot by its deadline times out
+(`code_check_timeout`) and falls back like any other. A step's report names
+the checker whose answer or failure it holds. When no checker loads, code mode runs unchecked and the
 server logs why. The checker binary is trusted configuration, like any path
 in this file; the programs it checks are not.
+
+tsrs is the default because it won the backend direction screen
+(`crates/oneiron-code-check/examples/backend_screen.rs`, FIX 8255): fastest on
+all five programs, with every diagnostic equal to Microsoft's. To rerun it, run
+`python3 crates/oneiron-code-check/scripts/screen.py --output <dir>` from an
+engine checkout on a Linux x64 fleet host with Rust; it fetches the pinned
+Microsoft `tsc`, builds the example in release and writes `screen.md` to
+`<dir>`.
 
 ### Browser subgoals (`[models.roles.browser_planner]`)
 

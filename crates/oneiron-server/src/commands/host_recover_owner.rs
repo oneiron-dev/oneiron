@@ -62,12 +62,18 @@ pub fn host_recover_shared_owner(args: HostRecoverSharedOwnerArgs) -> anyhow::Re
     )?;
     // A blank note was refused above, so the handover always keeps a digest.
     let digest = blake3::hash(args.proof_note.as_bytes());
-    let receipt = vault.recover_shared_owner_with_proof(
+    // The stopped self-hosted vault's own host, on its config's key, is
+    // this recovery's authorization (FIX 1812); the writer checks the vault
+    // is self-hosted.
+    let authorization = oneiron::federation::OwnerRecoveryAuthorization::StoppedSelfHost {
+        note: *digest.as_bytes(),
+    };
+    let receipt = vault.recover_shared_owner_authorized(
         &issuer,
         args.vault_id,
         from,
         claimant,
-        Some(*digest.as_bytes()),
+        &authorization,
     )?;
     super::owner::emit(&receipt)?;
     writeln!(

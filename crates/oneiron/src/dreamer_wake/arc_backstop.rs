@@ -2,8 +2,10 @@
 //! backstop only"): Arcs aged a nightly cadence past their first dirty mark,
 //! stale ones and owed ones are queued from the Nightly recipe's commit and
 //! from the elected home's Macro Timer pass, whose deadline the earliest Arc
-//! due time arms. No timer, service or rate of its own: the age is the wake
-//! policy's `nightly_secs`, and the threshold the recipe row's.
+//! due time arms. Both run the one sweep (FIX 8058): an Arc whose row was
+//! lost is recovered, and one whose attempt failed is re-armed, on either.
+//! No timer, service or rate of its own: the age is the wake policy's
+//! `nightly_secs`, and the threshold the recipe row's.
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -28,7 +30,7 @@ pub(crate) fn enqueue_stale_arcs_in_txn(
     run_id: Option<&str>,
     now: u64,
 ) -> Result<()> {
-    crate::scope_summary::sweep_due_arcs_in_txn(vault, txn, (parent, run_id), now, true)
+    crate::scope_summary::sweep_due_arcs_in_txn(vault, txn, (parent, run_id), now)
 }
 
 /// The home's Macro Timer pass sweeps the Arcs due by `now`, on the elected
@@ -43,7 +45,7 @@ pub(crate) fn sweep_on_timer(vault: &Vault, now: u64, local_node_id: u64) {
         {
             return Ok(false);
         }
-        crate::scope_summary::sweep_due_arcs_in_txn(vault, txn, (None, None), now, false)?;
+        crate::scope_summary::sweep_due_arcs_in_txn(vault, txn, (None, None), now)?;
         Ok(true)
     });
     match swept {

@@ -545,8 +545,8 @@ pub struct ReportBlockedOutput {
     pub receipt: String,
 }
 
-/// `self.agents.spawn`'s output: the queued attempt, or the widening its
-/// spawn proposed instead.
+/// `self.agents.spawn`'s output: the queued attempt, the widening its
+/// spawn proposed instead, or an erased target that launched nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum AgentSpawnOutput {
@@ -571,6 +571,9 @@ pub enum AgentSpawnOutput {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         unapplied: Vec<crate::agent_dispatch::SpawnUnapplied>,
     },
+    /// An erase took the AGENT_DEF the planned spawn's plan seats: nothing
+    /// launched (Engine 10-22).
+    TargetErased { kind: AgentSpawnKind },
 }
 
 /// The `kind` every `self.agents.spawn` output carries.
