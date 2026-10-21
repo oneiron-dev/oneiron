@@ -10,7 +10,11 @@
 //! carries a drafted revision of its skill for the owner to review
 //! (`coach_repair`), a gated candidate nothing here admits. A filed heal wakes
 //! the Coach's code-fix run for its case, or for its report when the report's
-//! run has no failed case (OF-380), on a deployment that exports.
+//! run has no failed case (OF-380), on a deployment that exports. Each
+//! case's and report's route question, and the draft of its skill repair,
+//! also read what the engine recorded about its cause (OF-418 L10): the
+//! failing attempt's whole ancestry with its events, receipts, requests and
+//! the text they read, as untrusted data beside the case or report.
 use std::time::{Duration, Instant};
 
 use rmpv::Value;
@@ -33,10 +37,12 @@ use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
-use crate::self_heal::DiagnosticEventClass;
 use crate::self_heal::blocked_reports::{self, BlockedIssue};
+use crate::self_heal::{DiagnosticEventClass, HealContextSeed, HealEvidenceContext};
 use crate::side_table::{self, Named, SideTable};
-use crate::skill_optimize::{SkillFailureContext, SkillFailureReport, SkillOptimizeAuthor};
+use crate::skill_optimize::{
+    SkillEditDraft, SkillFailureContext, SkillFailureReport, SkillOptimizeBrief,
+};
 use crate::{EntityId, Result, Vault};
 
 /// Predicate of a proposed heal for a failure-ladder case.
@@ -152,6 +158,25 @@ impl HealDecisions<'_> {
     }
 }
 
+/// The author a heal's `skill_edit` repair drafts on (OF-418 L10): the
+/// optimizer's DEV-only brief of the skill, aimed at the failure, with what
+/// the engine recorded about that failure's cause beside it. The cause is
+/// data for the author, never an instruction, and never picks the skill:
+/// the engine chose it before the author is asked.
+pub trait CoachHealAuthor {
+    /// Drafts the revision `brief` supports, reading `cause` as data.
+    ///
+    /// # Errors
+    ///
+    /// Implementation-defined: an author that cannot answer errors rather
+    /// than invents, and the heal stays route-only.
+    fn draft_skill(
+        &self,
+        brief: &SkillOptimizeBrief,
+        cause: &HealEvidenceContext,
+    ) -> Result<SkillEditDraft>;
+}
+
 /// What one Issues run did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct IssuesRun {
@@ -239,17 +264,18 @@ impl DreamerRunnerStore<'_> {
 impl Vault {
     /// The Coach's diagnosis of one failure-ladder case, under the leased
     /// `coach.heal` attempt the escalation woke: the route question over the
-    /// case and its verified blocked reports, filed as a proposed heal. A
+    /// case and its verified blocked reports, with what the engine recorded
+    /// of its cause beside them (OF-418 L10), filed as a proposed heal. A
     /// `skill_edit` heal carries the revision `author` drafts of the case's
-    /// skill, landed as a gated candidate with the heal; a draft that went
-    /// stale before the heal's write files the heal route-only, saying why
-    /// (FIX 2497). A replay returns the heal already filed. Returns the
-    /// proposal.
+    /// skill, aimed at that cause too, landed as a gated candidate with the
+    /// heal; a draft that went stale before the heal's write files the heal
+    /// route-only, saying why (FIX 2497). A replay returns the heal already
+    /// filed. Returns the proposal.
     pub fn run_coach_heal(
         &self,
         attempt: &DreamerAdmittedAttempt,
         decisions: &HealDecisions<'_>,
-        author: &dyn SkillOptimizeAuthor,
+        author: &dyn CoachHealAuthor,
         now: u64,
     ) -> Result<EntityId> {
         self.require_coach_attempt(attempt, COACH_HEAL_ATTEMPT_KIND)?;
@@ -283,6 +309,9 @@ impl Vault {
             .max()
             .unwrap_or(0);
         measure_reports(self, reports.len(), longest);
+        // OF-418 L10: what was recorded of the cause, beside the case.
+        let cause =
+            self.heal_evidence_context(decisions.principal, HealContextSeed::FailureCase(&case));
         let state = json!({
             "about": "failure_case",
             "failure_class": case.failure_class,
@@ -292,12 +321,14 @@ impl Vault {
                 .iter()
                 .map(|(_, report)| report_state(report))
                 .collect::<Vec<_>>(),
+            "untrusted_cause_context": cause.value(),
         });
         let (route, decided) = decisions.route_or_person(b"case", &evidence, &state);
         let repair = match route {
             HealRoute::SkillEdit => Some(self.draft_coach_skill_repair(
                 &case,
                 case_failure(&case, &reports),
+                cause,
                 author,
                 attempt.status.attempt.id,
                 now,
@@ -371,7 +402,8 @@ impl Vault {
 
     /// The Coach's Issues run, under a leased `coach.issues` attempt: each
     /// waiting blocked report, oldest first, a page at a time to the last,
-    /// is asked which fix its agent needs and filed as a proposed heal. A
+    /// is asked which fix its agent needs, with what was recorded of its
+    /// cause beside it (OF-418 L10), and filed as a proposed heal. A
     /// `skill_edit` heal carries the revision `author` drafts of the one
     /// skill the report's run loaded, landed as a gated candidate with the
     /// heal (FIX 2496), or route-only, saying why, when the draft went stale
@@ -382,7 +414,7 @@ impl Vault {
         &self,
         attempt: &DreamerAdmittedAttempt,
         decisions: &HealDecisions<'_>,
-        author: &dyn SkillOptimizeAuthor,
+        author: &dyn CoachHealAuthor,
         now: u64,
     ) -> Result<IssuesRun> {
         self.require_coach_attempt(attempt, COACH_ISSUES_FACET)?;
@@ -432,10 +464,19 @@ impl Vault {
         };
         let evidence = [receipt, issue.diagnostic];
         measure_reports(self, 1, report.untrusted_detail.len());
+        // OF-418 L10: what was recorded of the cause, beside the report.
+        let cause = self.heal_evidence_context(
+            pass.decisions.principal,
+            HealContextSeed::BlockedReport {
+                receipt,
+                run: issue.run,
+            },
+        );
         let state = json!({
             "about": "blocked_report",
             "in_run": issue.run.is_some(),
             "reports": [report_state(&report)],
+            "untrusted_cause_context": cause.value(),
         });
         let (route, decided) = match pass.decisions.route(b"report", &evidence, &state) {
             Ok(Some(route)) => (route, "ladder"),
@@ -450,6 +491,7 @@ impl Vault {
             HealRoute::SkillEdit => Some(self.draft_coach_issue_repair(
                 issue,
                 issue_failure(self, receipt, issue, &report)?,
+                cause,
                 pass.author,
                 pass.attempt,
                 pass.now,
@@ -521,7 +563,7 @@ struct IssuesPass<'a, 'd> {
     /// The leased `coach.issues` attempt.
     attempt: AttemptId,
     decisions: &'a HealDecisions<'d>,
-    author: &'a dyn SkillOptimizeAuthor,
+    author: &'a dyn CoachHealAuthor,
     subject: EntityId,
     envelope: &'a crate::WriteEnvelope,
     now: u64,
