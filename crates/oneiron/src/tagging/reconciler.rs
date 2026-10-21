@@ -327,6 +327,8 @@ impl TaggingReconciler {
         let Some(payload) = MarkerPayload::decode(&record.payload) else {
             return self.fail_unreadable_in_txn(txn, &record, &unread);
         };
+        // The class the row carries under this writer (FIX 6755).
+        let work = payload.effective_work(&self.vault);
         let trace = TaggingTrace {
             turn: Some(payload.turn),
             checkpoint: payload.checkpoint,
@@ -336,7 +338,7 @@ impl TaggingReconciler {
         };
         // Settled first, so its dedupe entry is free for the new marker.
         self.settle_in_txn(txn, &record, &trace)?;
-        enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.config, now)?;
+        enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.config, now, work)?;
         Ok(())
     }
 
@@ -388,8 +390,10 @@ impl TaggingReconciler {
         let Some(payload) = payload else {
             return Ok(());
         };
+        // The class the row carried under this writer (FIX 6755).
+        let work = payload.effective_work(&self.vault);
         if let EnqueueOutcome::Enqueued(owed) =
-            enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.config, now)?
+            enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.config, now, work)?
         {
             queue.intervene_in_txn(
                 txn,
@@ -488,43 +492,124 @@ impl TaggingReconciler {
     /// nothing: a shadow worker writes nothing outside the job state, even
     /// while the clock runs and the queue is empty. The lease is stamped once
     /// the write lock is held, so waiting for another writer does not age it.
+    ///
+    /// A ready live marker is claimed before any bulk one (FIX 6755): bulk is
+    /// planned only from a read that found no live marker ready, and leased
+    /// only if nothing has committed since that read or the writer finds no
+    /// live marker ready either; otherwise the claim is planned again, so a
+    /// live marker committed meanwhile goes first. A payload this build
+    /// cannot read is claimed as live, to be failed.
     fn claim(&self) -> Result<Option<AttemptRecord>> {
         let queue = AttemptQueue::from_store(&self.vault.store);
         let attempt = |now| ClaimAttempt {
             lease_owner: self.lease_owner.clone(),
             now,
         };
-        let plan = {
-            let txn = self.vault.store.env.read_txn()?;
-            let now = self.stamp_in_txn(&txn)?;
-            queue.owner_retained_claim_plan_in_txn(&txn, TAGGING_MARKER_KIND, &attempt(now), now)?
-        };
-        if plan.is_empty() {
-            return Ok(None);
-        }
-        let mut txn = self.vault.store.env.write_txn()?;
-        #[cfg(test)]
-        self.vault.test_hooks().run_after_tagging_claim_writer();
-        let now = self.stamp_in_txn(&txn)?;
-        let (claimed, repaired) = queue.claim_owner_retained_in_txn(
-            &mut txn,
-            TAGGING_MARKER_KIND,
-            attempt(now),
-            now,
-            &plan,
-        )?;
-        let ClaimOutcome::Claimed(record) = claimed else {
-            // An empty claim commits only the index entries it repaired, so
-            // the next pass does not meet them again.
-            if repaired {
-                txn.commit()?;
-                self.vault.store.notify_attempt_observers();
+        loop {
+            // The plan, its class, and for bulk the read that found no live
+            // marker ready.
+            let (plan, live, fence) = {
+                let txn = self.vault.store.env.read_txn()?;
+                let now = self.stamp_in_txn(&txn)?;
+                let mut ready = false;
+                let plan = queue.owner_retained_matching_claim_plan_in_txn(
+                    &txn,
+                    TAGGING_MARKER_KIND,
+                    &attempt(now),
+                    now,
+                    |record| {
+                        let claims = self.claims_live(record);
+                        ready |= claims;
+                        Ok(claims)
+                    },
+                )?;
+                if ready {
+                    (plan, true, None)
+                } else {
+                    let plan = queue.owner_retained_matching_claim_plan_in_txn(
+                        &txn,
+                        TAGGING_MARKER_KIND,
+                        &attempt(now),
+                        now,
+                        |record| Ok(!self.claims_live(record)),
+                    )?;
+                    (plan, false, Some(txn.id()))
+                }
+            };
+            if plan.is_empty() {
+                return Ok(None);
             }
-            return Ok(None);
-        };
-        txn.commit()?;
-        self.vault.store.notify_attempt_observers();
-        Ok(Some(record))
+            let mut txn = self.vault.store.env.write_txn()?;
+            #[cfg(test)]
+            self.vault.test_hooks().run_after_tagging_claim_writer();
+            let now = self.stamp_in_txn(&txn)?;
+            // The writer right after the read commits as its next id. Past any
+            // other commit, the writer looks for a ready live marker itself, so
+            // a busy store cannot keep bulk planning forever.
+            if fence.is_some_and(|read| read.checked_add(1) != Some(txn.id())) {
+                let mut ready = false;
+                queue.owner_retained_matching_claim_plan_in_txn(
+                    &txn,
+                    TAGGING_MARKER_KIND,
+                    &attempt(now),
+                    now,
+                    |record| {
+                        let claims = self.claims_live(record);
+                        ready |= claims;
+                        Ok(claims)
+                    },
+                )?;
+                if ready {
+                    txn.abort();
+                    continue;
+                }
+            }
+            let (claimed, repaired) = queue.claim_owner_retained_matching_in_txn(
+                &mut txn,
+                TAGGING_MARKER_KIND,
+                attempt(now),
+                now,
+                &plan,
+                |record| Ok(self.claims_live(record) == live),
+            )?;
+            let ClaimOutcome::Claimed(record) = claimed else {
+                // An empty claim commits only the index entries it repaired,
+                // so the next pass does not meet them again.
+                if repaired {
+                    txn.commit()?;
+                    self.vault.store.notify_attempt_observers();
+                }
+                return Ok(None);
+            };
+            txn.commit()?;
+            self.vault.store.notify_attempt_observers();
+            return Ok(Some(record));
+        }
+    }
+
+    /// Whether `record` is claimed in the live class: its marker's effective
+    /// class is live, or its payload is one this build cannot read, which a
+    /// live claim fails rather than leaving it behind every bulk marker.
+    fn claims_live(&self, record: &AttemptRecord) -> bool {
+        MarkerPayload::decode(&record.payload)
+            .is_none_or(|payload| payload.effective_work(&self.vault) == ExtractionWork::Live)
+    }
+
+    /// The class the marker of row `id`, read as `payload`, is owed at as
+    /// the row stands in `txn`: a live write may have promoted it since it
+    /// was read. A row gone or unreadable since keeps the class `payload`
+    /// carries.
+    fn persisted_work_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+        payload: &MarkerPayload,
+    ) -> Result<ExtractionWork> {
+        let persisted = AttemptQueue::from_store(&self.vault.store)
+            .get_in_write_txn(txn, id)?
+            .and_then(|row| MarkerPayload::decode(&row.payload));
+        let payload = persisted.as_ref().unwrap_or(payload);
+        Ok(payload.effective_work(&self.vault))
     }
 
     /// Trims history kept under a larger per-turn bound down to the one in
@@ -648,7 +733,8 @@ impl TaggingReconciler {
             trace.outcome = TaggingOutcome::Rekeyed;
             self.vault.try_with_write_txn_grouped(|txn| -> Result<()> {
                 let now = self.stamp_in_txn(txn)?;
-                enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.config, now)?;
+                let work = self.persisted_work_in_txn(txn, record.id, &payload)?;
+                enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.config, now, work)?;
                 self.settle_in_txn(txn, record, &trace)
             })?;
             return Ok(trace);
@@ -685,7 +771,8 @@ impl TaggingReconciler {
         trace.input_hash = Some(hash.clone());
         trace.model = Some(self.encoder.model_id().as_str().to_owned());
         pass.calls += 1;
-        let called = trace.record_call(|| self.encoder.infer(&input, ExtractionWork::Bulk));
+        let work = payload.effective_work(&self.vault);
+        let called = trace.record_call(|| self.encoder.infer(&input, work));
         let output = match called {
             Ok(Ok(output)) => output,
             Ok(Err(error)) => {

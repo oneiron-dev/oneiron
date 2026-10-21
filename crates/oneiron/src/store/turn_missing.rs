@@ -152,7 +152,12 @@ pub(crate) fn erase_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId) ->
     let (named, emptied) = forget_in_txn(&vault.store, txn, id)?;
     for turn in emptied {
         if vault.store.port_entity_present(txn, &turn)? {
-            crate::tagging::mark_turn_in_txn(vault, txn, turn)?;
+            crate::tagging::mark_turn_in_txn(
+                vault,
+                txn,
+                turn,
+                crate::memory::extraction::ExtractionWork::Bulk,
+            )?;
             crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, &turn)?;
         }
     }

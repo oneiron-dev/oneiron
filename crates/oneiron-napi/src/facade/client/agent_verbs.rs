@@ -5713,6 +5713,147 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_repo_anchor_bind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.anchor.bind", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_snapshots_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.snapshots.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_snapshots_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.snapshots.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_symbols_definitions(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.symbols.definitions", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_views_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.views.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_views_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.views.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_merge_queue_observe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.merge_queue.observe", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_snapshots_ingest(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.snapshots.ingest", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_work_open(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.work.open", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_symbols_declare(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.symbols.declare", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_symbols_renew(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.symbols.renew", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_symbols_release(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.symbols.release", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_proposal_submit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.proposal_submit", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_merge_queue_enqueue(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.merge_queue.enqueue", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_checkout_bind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.checkout.bind", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_export(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.export", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_agents_base(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.agents.base", js_json(input))
@@ -8578,6 +8719,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.runs.program_checkpoint", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_runs_program_hold_release(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runs.program_hold.release", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
