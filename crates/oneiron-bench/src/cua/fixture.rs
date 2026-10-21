@@ -14,7 +14,7 @@ pub(super) struct Fixture {
     process: Process, client: reqwest::Client, token: String, pub events: PathBuf,
 }
 impl Fixture {
-    pub async fn start(plan: &Plan, dir: &Path, deadline: Instant) -> Result<Self> {
+    pub(crate) async fn start(plan: &Plan, dir: &Path, deadline: Instant) -> Result<Self> {
         // These binds are readiness checks, not a retry/start-another-server loop.
         for port in [8765,8766] {
             let addr = if port == 8765 { "172.30.91.1" } else { "127.0.0.1" };
@@ -55,12 +55,12 @@ impl Fixture {
                 .error_for_status().map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())
         }).await.map_err(|_| "fixture_private_timeout".to_owned())?
     }
-    pub async fn reset(&self, cell: &Cell, deadline: Instant) -> Result<Value> {
+    pub(crate) async fn reset(&self, cell: &Cell, deadline: Instant) -> Result<Value> {
         self.request("/reset",Some(json!({"fixture":cell.fixture,"version":cell.version,"seed":cell.seed})),deadline).await
     }
-    pub async fn snapshot(&self, cell: &Cell, deadline: Instant) -> Result<Value> {
+    pub(crate) async fn snapshot(&self, cell: &Cell, deadline: Instant) -> Result<Value> {
         self.request(&format!("/state/{}",cell.fixture),None,deadline).await
     }
-    pub async fn settle(&self, duration: Duration) { tokio::time::sleep(duration).await; }
-    pub async fn stop(&mut self) -> Result<()> { self.process.stop().await }
+    pub(crate) async fn settle(&self, duration: Duration) { tokio::time::sleep(duration).await; }
+    pub(crate) async fn stop(&mut self) -> Result<()> { self.process.stop().await }
 }

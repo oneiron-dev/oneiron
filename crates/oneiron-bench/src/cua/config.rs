@@ -9,7 +9,7 @@ use super::{Result, digest, read, provider_gate::Route};
 #[serde(deny_unknown_fields)]
 pub(super) struct Evidence { pub path: PathBuf, pub digest: String }
 impl Evidence {
-    pub fn load(&self) -> Result<serde_json::Value> {
+    pub(crate) fn load(&self) -> Result<serde_json::Value> {
         let bytes = fs::read(&self.path).map_err(|e| e.to_string())?;
         if digest(&bytes) != self.digest { return Err("deployment_evidence_digest_mismatch".into()) }
         serde_json::from_slice(&bytes).map_err(|e| e.to_string())
@@ -52,7 +52,7 @@ pub(super) struct Config {
     pub clock_tolerance_ms: u64,
 }
 impl Config {
-    pub fn load(path: &Path, server: &Path) -> Result<Self> {
+    pub(crate) fn load(path: &Path, server: &Path) -> Result<Self> {
         let config: Self = read(path)?;
         if config.schema != 1 || config.cash_cap_microusd != 5_000_000 || !config.cash_ledger.is_absolute() || config.clock_tolerance_ms == 0 {
             return Err("invalid_schema_or_cash_ceiling".into());
@@ -157,14 +157,14 @@ impl Config {
     }
 }
 impl Arm {
-    pub fn body(&self) -> Result<String> {
+    pub(crate) fn body(&self) -> Result<String> {
         let body = fs::read_to_string(&self.models_body).map_err(|e| e.to_string())?;
         if digest(body.as_bytes()) != self.models_digest { return Err("models_config_pin_mismatch".into()) }
         // Prompt text belongs in pinned prompt files, not multiline TOML literals.
         if body.contains("\"\"\"") || body.contains("'''") { return Err("models_multiline_literal_unsupported".into()) }
         Ok(body)
     }
-    pub fn server_models(&self) -> Result<String> {
+    pub(crate) fn server_models(&self) -> Result<String> {
         let body = self.body()?;
         let mut output = String::from("\n[models]\n");
         for line in body.lines() {

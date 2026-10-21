@@ -35,7 +35,7 @@ pub(super) fn terminal(path: &Path, plan: &str, config: &str) -> Result<BTreeMap
 }
 pub(super) struct Lock(PathBuf);
 impl Lock {
-    pub fn acquire(directory: &Path) -> Result<Self> {
+    pub(crate) fn acquire(directory: &Path) -> Result<Self> {
         fs::create_dir_all(directory).map_err(|e| e.to_string())?;
         #[cfg(unix)] {
             use std::os::unix::fs::PermissionsExt;

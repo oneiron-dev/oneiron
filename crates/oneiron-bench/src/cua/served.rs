@@ -7,14 +7,14 @@ use super::{Result, config::Arm, rows, write_json};
 
 pub(super) struct Process { child: Child, group: u32 }
 impl Process {
-    pub fn spawn(mut command: Command) -> Result<Self> {
+    pub(crate) fn spawn(mut command: Command) -> Result<Self> {
         command.kill_on_drop(true);
         let child = command.spawn().map_err(|e| e.to_string())?;
         let group = child.id().ok_or("child_pid_missing")?;
         Ok(Self { child, group })
     }
-    pub fn child(&mut self) -> &mut Child { &mut self.child }
-    pub async fn stop(&mut self) -> Result<()> {
+    pub(crate) fn child(&mut self) -> &mut Child { &mut self.child }
+    pub(crate) async fn stop(&mut self) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
             let status = Command::new("kill").args(["-KILL", "--", &format!("-{}", self.group)]).status().await.map_err(|e| e.to_string())?;
@@ -55,7 +55,7 @@ pub(super) struct Served {
     id: u64, versions: std::collections::BTreeMap<String, String>, evidence: PathBuf,
 }
 impl Served {
-    pub async fn fresh(binary: &Path, dir: &Path, arm: &Arm, browser: &Value, startup: Duration, poll: Duration) -> Result<Self> {
+    pub(crate) async fn fresh(binary: &Path, dir: &Path, arm: &Arm, browser: &Value, startup: Duration, poll: Duration) -> Result<Self> {
         let deadline = Instant::now() + startup;
         let config = dir.join("oneiron.toml");
         let mut secret = [0u8;32]; rand::rngs::OsRng.fill_bytes(&mut secret);
@@ -146,10 +146,10 @@ impl Served {
         if !content.is_object() { return Err("structured_content_missing".into()) }
         Ok(content.clone())
     }
-    pub async fn execute(&mut self, run_ref: &str, task: &str, deadline: Instant) -> Result<Value> {
+    pub(crate) async fn execute(&mut self, run_ref: &str, task: &str, deadline: Instant) -> Result<Value> {
         self.tool("execute_code",json!({"run_ref":run_ref,"task":task}),deadline).await
     }
-    pub async fn artifacts(&mut self, run_ref: &str, last: &Value, deadline: Instant) -> Result<Value> {
+    pub(crate) async fn artifacts(&mut self, run_ref: &str, last: &Value, deadline: Instant) -> Result<Value> {
         let cards = last["results"].as_array().ok_or("artifact_cards_missing")?;
         if last["resultsCount"].as_u64() != Some(cards.len() as u64) { return Err("artifact_card_coverage_unavailable".into()) }
         let mut files = serde_json::Map::new();
@@ -173,7 +173,7 @@ impl Served {
         }
         Ok(Value::Object(files))
     }
-    pub async fn stop(&mut self) -> Result<()> {
+    pub(crate) async fn stop(&mut self) -> Result<()> {
         let bridge = self.bridge.stop().await;
         let server = self.server.stop().await;
         bridge.and(server)

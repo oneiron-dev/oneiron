@@ -37,8 +37,8 @@ pub(super) struct Route {
     pub attestation: Option<super::config::Evidence>,
 }
 impl Route {
-    pub fn local_url(&self) -> String { format!("http://127.0.0.1:{}", self.listen_port) }
-    pub fn validate(&self) -> Result<()> {
+    pub(crate) fn local_url(&self) -> String { format!("http://127.0.0.1:{}", self.listen_port) }
+    pub(crate) fn validate(&self) -> Result<()> {
         let url = reqwest::Url::parse(&self.upstream).map_err(|e| e.to_string())?;
         if (url.scheme() != "https" && !(url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))))
             || url.query().is_some() || url.fragment().is_some() || !url.username().is_empty() || url.password().is_some()
@@ -85,7 +85,7 @@ pub(super) struct Ledger {
     pub stop: Option<Stop>,
 }
 impl Ledger {
-    pub fn open(path: &Path, pins: &str) -> Result<Self> {
+    pub(crate) fn open(path: &Path, pins: &str) -> Result<Self> {
         let mut ledger = Self {path:path.into(), pins:pins.into(), reserved:0, sequence:0, stop:None};
         for row in rows::load_values(path)? {
             if row["pins"] != pins { return Err("cash_ledger_pin_mismatch".into()) }
@@ -100,7 +100,7 @@ impl Ledger {
         }
         Ok(ledger)
     }
-    pub fn blocked(&self, cash: bool) -> Option<Stop> {
+    pub(crate) fn blocked(&self, cash: bool) -> Option<Stop> {
         self.stop.as_ref().filter(|stop| cash || !matches!(stop, Stop::CashCapReached)).cloned()
     }
     fn stop_with(&mut self, stop: Stop) {
@@ -124,7 +124,7 @@ impl Ledger {
         self.reserved += amount;
         Ok(self.sequence)
     }
-    pub fn reserved(&self) -> u64 { self.reserved }
+    pub(crate) fn reserved(&self) -> u64 { self.reserved }
 }
 pub(super) type SharedLedger = Arc<Mutex<Ledger>>;
 #[derive(Clone)]
@@ -135,11 +135,11 @@ struct Proxy {
 pub(super) struct Gate { tasks: Vec<tokio::task::JoinHandle<()>>, ledger: SharedLedger, cancel: tokio::sync::watch::Sender<bool> }
 impl Drop for Gate { fn drop(&mut self) { self.stop(); } }
 impl Gate {
-    pub fn stop(&mut self) {
+    pub(crate) fn stop(&mut self) {
         let _ = self.cancel.send(true);
         for task in self.tasks.drain(..) { task.abort(); }
     }
-    pub async fn start(routes: &[Route], ledger: SharedLedger, cell: &str, evidence: &Path) -> Result<Self> {
+    pub(crate) async fn start(routes: &[Route], ledger: SharedLedger, cell: &str, evidence: &Path) -> Result<Self> {
         if let Ok(l) = ledger.lock() {
             if let Some(stop) = l.blocked(routes.iter().any(|r| r.cash)) {
                 return Err(format!("provider_gate_terminal:{}",serde_json::to_string(&stop).map_err(|e| e.to_string())?));
