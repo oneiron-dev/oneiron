@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1121 facade rows, 3851 declarations.
+Census: 1121 facade rows, 3854 declarations.
 Inputs: 1056 of 1121 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1008 of 1121 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -19485,15 +19485,22 @@ class LaunchStatement(TypedDict):
     scope: NotRequired[SpendScopeId | None]
     parent_scope: NotRequired[SpendScopeId | None]
     stated_at: int
+SpawnAskField = Literal["need", "care", "notes", "model", "width", "pattern"]
+SpawnUnappliedReason = Literal["planner_unbound", "agent_lease_unbound"]
+class SpawnUnapplied(TypedDict):
+    field: SpawnAskField
+    reason: SpawnUnappliedReason
 class AgentSpawnOutputQueued(TypedDict):
     state: Literal["queued"]
     kind: AgentSpawnKind
     attempt: str
     launch: NotRequired[LaunchStatement | None]
+    unapplied: NotRequired[list[SpawnUnapplied]]
 class AgentSpawnOutputProposedWiden(TypedDict):
     state: Literal["proposed_widen"]
     kind: AgentSpawnKind
     proposal: str
+    unapplied: NotRequired[list[SpawnUnapplied]]
 AgentSpawnOutput = AgentSpawnOutputQueued | AgentSpawnOutputProposedWiden
 class LeaderSplitInput(TypedDict):
     leader: NotRequired[str | None]

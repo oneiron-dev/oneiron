@@ -37,6 +37,9 @@ use super::types::{AttemptId, AttemptRecord};
 const KEY_DEFINITION: &str = AGENT_DISPATCH_INPUT_KEYS[4];
 /// The input member that holds the serialized context spec.
 const KEY_CONTEXT_SPEC: &str = AGENT_DISPATCH_INPUT_KEYS[5];
+/// The input member that holds a direct spawn's receipt: its ask's need and
+/// notes text (OF-541).
+const KEY_DIRECT_SPAWN: &str = AGENT_DISPATCH_INPUT_KEYS[22];
 /// The AGENT_DEF body key of the definition's instructions.
 const KEY_INSTRUCTIONS: &str = AGENT_DEF_BODY_KEYS[3];
 /// The context spec's briefing member, as it serializes.
@@ -57,12 +60,12 @@ fn dispatch_payload_actor(record: &AttemptRecord) -> Option<EntityId> {
         .map(WriteActor::entity_ref)
 }
 
-/// Leaves `record`'s dispatch instructions and briefing absent, keeping
-/// every other input member, the envelope's parent and every row field.
-/// `false` when the row is no agent dispatch or carries neither, so an
-/// erased row is not written again. The same payload always comes out the
-/// same, so each retry generation of one payload is rewritten alike.
-/// `record` changes only on success.
+/// Leaves `record`'s dispatch instructions, briefing and direct spawn
+/// receipt absent, keeping every other input member, the envelope's parent
+/// and every row field. `false` when the row is no agent dispatch or carries
+/// none of them, so an erased row is not written again. The same payload
+/// always comes out the same, so each retry generation of one payload is
+/// rewritten alike. `record` changes only on success.
 fn erase_dispatch_payload_text(record: &mut AttemptRecord) -> Result<bool> {
     if record.kind != DREAMER_RUNNER_ATTEMPT_KIND {
         return Ok(false);
@@ -77,7 +80,8 @@ fn erase_dispatch_payload_text(record: &mut AttemptRecord) -> Result<bool> {
         .context_spec
         .as_ref()
         .is_some_and(|spec| spec.briefing.is_some());
-    if !instructions && !briefing {
+    let direct_spawn = input.direct_spawn.is_some();
+    if !instructions && !briefing && !direct_spawn {
         return Ok(false);
     }
     let Value::Map(entries) = &mut payload.input else {
@@ -91,17 +95,20 @@ fn erase_dispatch_payload_text(record: &mut AttemptRecord) -> Result<bool> {
             Some(KEY_CONTEXT_SPEC) if briefing => {
                 *value = Value::from(without_briefing(value)?);
             }
+            // Nil decodes as no receipt: the ask's text leaves with it.
+            Some(KEY_DIRECT_SPAWN) if direct_spawn => *value = Value::Nil,
             _ => {}
         }
     }
     // The strict decoder every reader uses reads the erased input, with
-    // both fields absent.
+    // all three absent.
     let erased = decode_agent_dispatch_input(&payload.input)?;
     if erased.definition.instructions.is_some()
         || erased
             .context_spec
             .as_ref()
             .is_some_and(|spec| spec.briefing.is_some())
+        || erased.direct_spawn.is_some()
     {
         return Err(unrewritable());
     }
@@ -213,13 +220,13 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
 }
 
 /// A late write's fence (FIX 7076): when `record` is an agent dispatch
-/// whose target bears the permanent hard-delete marker, its instructions
-/// and briefing leave it before it is encoded, so a copy read before the
-/// erase writes back the erased bytes. Only that marker counts: a soft
-/// delete, an archive or a gone actor keeps the text. Read in the writer's
-/// transaction. A marker that cannot be read, or a payload that cannot be
-/// rewritten, leaves `record` as it was and is logged without its content:
-/// the fence never fails the write it stands in.
+/// whose target bears the permanent hard-delete marker, its instructions,
+/// briefing and direct spawn receipt leave it before it is encoded, so a
+/// copy read before the erase writes back the erased bytes. Only that
+/// marker counts: a soft delete, an archive or a gone actor keeps the text.
+/// Read in the writer's transaction. A marker that cannot be read, or a
+/// payload that cannot be rewritten, leaves `record` as it was and is logged
+/// without its content: the fence never fails the write it stands in.
 pub(super) fn scrub_hard_erased_payload_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,

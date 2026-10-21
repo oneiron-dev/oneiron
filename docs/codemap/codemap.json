@@ -834,6 +834,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DirectSpawnReceipt",
+      "SpawnAskField",
+      "SpawnUnapplied",
+      "SpawnUnappliedReason"
+     ],
+     "path": "src/agent_dispatch/direct_spawn.rs",
+     "purpose": "OF-541: a direct spawn's ask, carried whole onto its child",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -966,7 +983,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 2,
-      "re-export": 23
+      "re-export": 24
      }
     },
     {
@@ -1325,7 +1342,7 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 7,
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 7,
       "fn": 26,
       "struct": 9
@@ -21231,6 +21248,7 @@
       "RunnerWork",
       "SeatAuth",
       "SeatIdentity",
+      "SeatPassedOver",
       "SeatRoute",
       "SeatSpent",
       "SkippedRunnerSeat"
@@ -21240,7 +21258,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 3,
-      "enum": 5,
+      "enum": 6,
       "fn": 13,
       "struct": 5
      }
@@ -21260,7 +21278,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ByoaInputStager",
@@ -21269,7 +21287,7 @@
      "path": "src/dispatch_byoa/staged_input.rs",
      "purpose": "A CLI run's job carried as a file in its checkout, never in argv: one argv entry has an OS limit (Linux…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -21323,6 +21341,7 @@
      "notable": [
       "BindRunnerWork",
       "RunnerSeatChoice",
+      "RunnerTaskSource",
       "RunnerWorkBinding",
       "RunnerWorkBindingId",
       "RunnerWorkBound",
@@ -21334,9 +21353,19 @@
      "purpose": "A Dreamer's runner work, bound once and handed seat to seat (OF-137): \"the router mints the next attempt on…",
      "surface": {
       "crate-vis": 3,
-      "enum": 4,
+      "enum": 5,
       "fn": 6,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/work_hand_off.rs",
+     "purpose": "A spent seat's work handed to the next seat (OF-137): \"the router mints the next attempt on the next seat…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -21447,7 +21476,7 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch, and the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -21581,6 +21610,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/note_classification.rs",
+     "purpose": "The NOTE review's classification request and reply (ARCH-0032 stage 2, OF-073)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/note_parts.rs",
      "purpose": "A Dreamer-written text past the NOTE body bound, as the ordered parts it lands in: the split an imported…",
      "surface": {
@@ -21594,7 +21633,7 @@
      "path": "src/dreamer_consolidation/note_review.rs",
      "purpose": "ARCH-0032 stage 2 (OF-073): the Dreamer reviews NOTEs",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -21605,6 +21644,16 @@
      "purpose": "The text of one NOTE as the Dreamer may read it (ARCH-0032 stage 2), in the caller's transaction: one…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/note_topics.rs",
+     "purpose": "The stage-2 topic summary trigger (ARCH-0032 write gate, OF-073 / FIX 907)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -21739,6 +21788,16 @@
       "crate-vis": 3,
       "fn": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resident_dream/reply.rs",
+     "purpose": "What a resident's dreaming reply must hold to land: a diary entry",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -22002,7 +22061,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -22234,6 +22293,16 @@
      "surface": {
       "crate-vis": 21,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/wake_plan/chunks.rs",
+     "purpose": "Rule 5 for a selection retry's source budget (L02-38): `max_sources` is a work size, never a total",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -34644,7 +34713,7 @@
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -49207,7 +49276,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 5,
       "struct": 1
      }
@@ -63470,13 +63539,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault_cleanup/attempt_retention.rs",
      "purpose": "Reversible retention for private queue records; the serialized attempt is never changed",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -63520,12 +63589,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/vault_cleanup/marks.rs",
+     "purpose": "Cleanup marks keyed by id16: a run's archive mark on a completed attempt, and the owner's kept mark on an…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/vault_cleanup/mod.rs",
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)",
      "surface": {
       "crate-vis": 5,
       "mod": 1,
-      "re-export": 4
+      "re-export": 6
      }
     },
     {
@@ -63535,7 +63614,7 @@
      "path": "src/vault_cleanup/owner_doors.rs",
      "purpose": "The owner's cleanup doors for a transport",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -63556,7 +63635,7 @@
      "path": "src/vault_cleanup/proposals_archive.rs",
      "purpose": "Proposal accept/reject lane plus the archived query and restore door",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 7
      }
     },
@@ -63612,7 +63691,43 @@
      "path": "src/vault_cleanup/run_record.rs",
      "purpose": "Durable cleanup results close the job-commit → queue-settlement crash gap",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CleanupRevertEntry",
+      "CleanupRevertOutcome",
+      "CleanupRevertReason",
+      "CleanupRunRevert",
+      "CleanupRunRevertAnswer"
+     ],
+     "path": "src/vault_cleanup/run_revert.rs",
+     "purpose": "The owner reverts one whole cleanup run (OF-449)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CleanupRunRecord",
+      "CleanupRunSnapshot",
+      "CleanupRuns",
+      "CleanupSnapshotEntry"
+     ],
+     "path": "src/vault_cleanup/run_snapshot.rs",
+     "purpose": "What each cleanup run archived, kept on the run's own RUN row (OF-449)",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1,
+      "struct": 4
      }
     },
     {
@@ -67598,7 +67713,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68046,7 +68161,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68060,7 +68175,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 80,
+     "files": 84,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69026,7 +69141,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
     "vault_cleanup": {
-     "files": 18,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69105,7 +69220,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4369,
+   "source_files": 4378,
    "test_files": 902
   },
   "oneiron-android": {
@@ -89029,7 +89144,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_training/shipper/stream.rs",
@@ -89868,7 +89983,7 @@
      "path": "src/idempotency/caller.rs",
      "purpose": "The partition a keyed non-core route keeps its caller's replays in on a vault no supervisor manages (FIX…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -90877,13 +90992,33 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_host/backlog.rs",
+     "purpose": "What an earlier VMM generation left queued on the boot port's and the restore channel's host sockets (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_host/credentials.rs",
+     "purpose": "A cold restore's read of C, its credential frame (FIX 7078)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "VmExitWatch"
      ],
      "path": "src/managed/vm_host/exit.rs",
      "purpose": "A watch on one VMM generation's exit (FIX 7047): a pidfd taken as the VMM spawns, which any number of tasks…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -90906,6 +91041,16 @@
      "purpose": "The host's half of a vault VM's provision connection (FIX 6308): on a cold boot, before the credential…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_host/reaper.rs",
+     "purpose": "Every end of a VMM generation the driver holds (FIX 7126), in the one order that keeps its exit status for…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -91067,7 +91212,7 @@
      "path": "src/managed/vm_outbox/host.rs",
      "purpose": "The host's end of a vault VM's outbox carrier: an attachment bound to one VM's guest-initiated socket for…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 2
      }
@@ -92535,13 +92680,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/cleanup.rs",
      "purpose": "Cleanup review (ARCH-0073): the archive proposals the cleanup job opened, the digests of what cleanup…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 19
      }
     },
     {
@@ -94748,7 +94893,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 75,
+     "files": 78,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -94904,7 +95049,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1028,
+   "source_files": 1031,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -98449,6 +98594,7 @@
       "SpaceMoveState",
       "SpaceProbe",
       "SpaceRef",
+      "SpawnAskField",
       "SpawnAskKnobString",
       "SpawnAskKnobU32",
       "SpawnAskKnobU64",
@@ -98462,6 +98608,8 @@
       "SpawnPattern",
       "SpawnPhase",
       "SpawnPins",
+      "SpawnUnapplied",
+      "SpawnUnappliedReason",
       "SpeakerLink",
       "SpeakerTarget",
       "SpendBasis",
@@ -98938,8 +99086,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 925,
-      "struct": 2908
+      "enum": 927,
+      "struct": 2909
      }
     },
     {

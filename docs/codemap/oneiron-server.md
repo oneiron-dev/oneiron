@@ -723,7 +723,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_training/outbox.rs` | src | m | 3 crate-vis | — | The outbox directory as the engine's training transport: three protocol subdirectories and the vault's… |
 | `src/conversation_training/retry.rs` | src | s | 10 crate-vis | — | The anonymous training window's retry pace (TL-6, CALLS TL6_RETRY_PACE), one per endpoint a self-hosted… |
 | `src/conversation_training/shipper.rs` | src | m | 1 crate-vis | — | The self-host training shipper (TL-6, FIX 5813): the loop that carries a self-hosted vault's released offers… |
-| `src/conversation_training/shipper/stream.rs` | src | s | 6 crate-vis | — | A released offer's files, as the self-host shipper reads them (TL-6): the manifest a piece's facts come… |
+| `src/conversation_training/shipper/stream.rs` | src | m | 6 crate-vis | — | A released offer's files, as the self-host shipper reads them (TL-6): the manifest a piece's facts come… |
 | `src/conversation_training/shipper/tally.rs` | src | s | 5 crate-vis | — | The self-host shipper's counts (TL-6): what a pass did, logged once at its end in counts and classes only… |
 | `src/conversation_training/shipper/walks.rs` | src | m | 3 crate-vis | — | The self-host shipper's three walks over the vault's anonymous custody (TL-6): the withdrawals, the uploads… |
 | `src/conversation_training/shipper/window.rs` | src | m | 18 crate-vis | — | The self-host shipper's requests, planned to the intake's bounds (TL-6): a window per piece packed into… |
@@ -803,7 +803,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/http_listener.rs` | src | m | 9 crate-vis | — | The TCP accept loop the server and the embedder endpoint serve through |
 | `src/http_listener/tests.rs` | test | m | 1 crate-vis | — | The listener's admission, end to end over real sockets (C4, and the rate law of ARCH-0044 C5): headers that… |
 | `src/idempotency.rs` | src | m | 9 crate-vis | — | — |
-| `src/idempotency/caller.rs` | src | s | 1 crate-vis | — | The partition a keyed non-core route keeps its caller's replays in on a vault no supervisor manages (FIX… |
+| `src/idempotency/caller.rs` | src | s | 4 crate-vis | — | The partition a keyed non-core route keeps its caller's replays in on a vault no supervisor manages (FIX… |
 | `src/idempotency/reclaim.rs` | src | s | 2 crate-vis | — | Reclaim of expired idempotency entries (FIX 5951) |
 | `src/idempotency/tests.rs` | test | m | — | — | — |
 | `src/import_audience.rs` | src | m | 1 crate-vis | — | The import audience sweep (OF-492) |
@@ -898,9 +898,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/vm_guest.rs` | src | s | 9 crate-vis | — | Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer… |
 | `src/managed/vm_host.rs` | src | m | 2 struct · 1 enum · 15 fn · 4 re-export | SleepOutcome, VaultVm, VaultVmConfig | The microVM adapter's host half: one Firecracker VM per vault |
 | `src/managed/vm_host/anchor.rs` | src | m | 1 struct · 1 fn · 7 crate-vis | VmAnchorHostIo | The host's half of a vault VM's custody anchor channels (FIX 6517, [`oneiron_vault_contract::vm_anchor`]) |
-| `src/managed/vm_host/exit.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | VmExitWatch | A watch on one VMM generation's exit (FIX 7047): a pidfd taken as the VMM spawns, which any number of tasks… |
+| `src/managed/vm_host/backlog.rs` | src | s | 1 crate-vis | — | What an earlier VMM generation left queued on the boot port's and the restore channel's host sockets (FIX… |
+| `src/managed/vm_host/credentials.rs` | src | s | 1 crate-vis | — | A cold restore's read of C, its credential frame (FIX 7078) |
+| `src/managed/vm_host/exit.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | VmExitWatch | A watch on one VMM generation's exit (FIX 7047): a pidfd taken as the VMM spawns, which any number of tasks… |
 | `src/managed/vm_host/network.rs` | src | s | 2 crate-vis | — | The host's half of a vault VM's guest network (FIX 6808, [`oneiron_vault_contract::vm::VmTapAttachment`])… |
 | `src/managed/vm_host/provision.rs` | src | s | 2 crate-vis | — | The host's half of a vault VM's provision connection (FIX 6308): on a cold boot, before the credential… |
+| `src/managed/vm_host/reaper.rs` | src | s | 1 crate-vis | — | Every end of a VMM generation the driver holds (FIX 7126), in the one order that keeps its exit status for… |
 | `src/managed/vm_host/restore.rs` | src | m | 3 struct · 3 fn · 4 crate-vis | VaultVmInspect, VmRestoreFds, VmRestoreHostIo | The host's half of a vault VM's restore channel (FIX 6584, [`oneiron_vault_contract::vm_restore`]): every… |
 | `src/managed/vm_host/runner.rs` | src | s | 1 struct · 1 fn | VaultVmRun | `oneiron-server host vm`'s runner: one vault VM behind one unix socket |
 | `src/managed/vm_init.rs` | src | m | 1 fn | — | A vault VM's root bootstrap, `oneiron-vm-init` (FIX 6308): the step between the image's shell init, which… |
@@ -915,7 +918,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/vm_init/restore.rs` | src | m | 10 crate-vis | — | The bootstrap's half of the restore channel (FIX 6584, [`oneiron_vault_contract::vm_restore`]): the boot's… |
 | `src/managed/vm_outbox/endpoint.rs` | src | s | 8 crate-vis | — | The companion's local lifecycle endpoint, `/run/oneiron-outbox/ lifecycle.sock`: a root-owned socket only… |
 | `src/managed/vm_outbox/guest.rs` | src | m | 1 fn | — | `oneiron-vm-outbox`: the vault VM's root outbox companion (FIX 5235, FIX 5467) |
-| `src/managed/vm_outbox/host.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | VmOutboxAttachment, VmOutboxHostRoots | The host's end of a vault VM's outbox carrier: an attachment bound to one VM's guest-initiated socket for… |
+| `src/managed/vm_outbox/host.rs` | src | s | 2 struct · 5 fn · 2 crate-vis | VmOutboxAttachment, VmOutboxHostRoots | The host's end of a vault VM's outbox carrier: an attachment bound to one VM's guest-initiated socket for… |
 | `src/managed/vm_outbox/local.rs` | src | m | 15 crate-vis | — | One end's own outbox tree, as the carrier reads and writes it: through held directories, each part opened… |
 | `src/managed/vm_outbox/mod.rs` | src | s | 2 re-export · 5 crate-vis | — | A vault VM's outbox carrier (FIX 5235, FIX 5467): both ends of the one persistent, bidirectional stream on… |
 | `src/managed/vm_outbox/scan.rs` | src | s | 3 crate-vis | — | What one end has to send, found by comparing its tree with its records |
@@ -1045,7 +1048,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/backup/scratch.rs` | src | s | 3 crate-vis | — | The mark a rehearsal's scratch copy carries when it is deleted afterwards, and the start-up sweep of those a… |
 | `src/owner/backup/tests.rs` | test | m | — | — | — |
 | `src/owner/backup/write_budget.rs` | src | s | 16 crate-vis | — | The floor uploads keep, lent to this vault's backups and rehearsals (FIX 5479) |
-| `src/owner/cleanup.rs` | src | s | 13 crate-vis | — | Cleanup review (ARCH-0073): the archive proposals the cleanup job opened, the digests of what cleanup… |
+| `src/owner/cleanup.rs` | src | m | 19 crate-vis | — | Cleanup review (ARCH-0073): the archive proposals the cleanup job opened, the digests of what cleanup… |
 | `src/owner/cooperative_deletion.rs` | src | s | 7 crate-vis | — | Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle): after a disconnect the owner asks a former peer… |
 | `src/owner/embedder.rs` | src | s | 5 crate-vis | — | The embedder section of `doctor` and `GET /v1/owner/status`: what config asks for, what the vault pins and… |
 | `src/owner/federation_connect.rs` | src | m | 11 crate-vis | — | Connect (ARCH-0043 #relationship-lifecycle, FIX 323): the owner offers a pact to a peer vault and accepts… |
