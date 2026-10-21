@@ -12261,7 +12261,7 @@
      "path": "src/claim/scoped_read/search.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 7
      }
     },
@@ -13549,6 +13549,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/read_worlds.rs",
+     "purpose": "A run's read-world capture as its host serves it (FIX 6130)",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -13751,7 +13762,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 7,
       "re-export": 21
      }
@@ -14243,7 +14254,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "re-export": 4
      }
     },
@@ -14255,6 +14266,16 @@
      "purpose": "A turn program's resume checkpoint (DOOR-141 PR3b, FIX 4382): the compact head and keyed pages its pinned…",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/read_worlds.rs",
+     "purpose": "The worlds of the rows one code run is served (FIX 6130): its ledger in `CODE_RUN_READ_WORLD`, on the run's…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -61958,7 +61979,7 @@
      "path": "src/vault/search_retrieval.rs",
      "purpose": "Vault text and vector search, batch and query builders, and retrieval telemetry",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 29
      }
     },
@@ -66298,7 +66319,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 125,
+     "files": 127,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67581,7 +67602,7 @@
    },
    "over_bar": 186,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4243,
+   "source_files": 4245,
    "test_files": 902
   },
   "oneiron-android": {
