@@ -3082,7 +3082,7 @@ declare namespace Sdk {
   type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; duration_ms: number };
   type RecentCounts = { pass: number; miss: number; repair: number; of: number };
   type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
-  type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number };
+  type LibraryCard = { workflow: string; site: string; subgoal: string; type_ref: string; params: string[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
   type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null };
   type ObservationPage = Observation2 & { next?: string | null };
@@ -3860,7 +3860,7 @@ declare namespace Sdk {
   type BrowserScreenshotOutput = BrowserAnswer<ScreenshotOutput>;
   type BrowserImageOutput = BrowserAnswer<ImageOutput>;
   type BrowserBatchOutput = BrowserAnswer<BatchOutput>;
-  type LibraryFindInput = { site?: string | null; subgoal?: string | null };
+  type LibraryFindInput = { site?: string | null; subgoal?: string | null; type_ref?: string | null };
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type BrowserLibraryFindOutput = BrowserAnswer<LibraryFindOutput>;
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null };
@@ -4185,7 +4185,7 @@ declare namespace self {
     /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.BrowserHandoverOutput | StoredResult>;
     library: {
-      /** The replay library's programs for a site, or the open page's, each card with its lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of`), its strict_misses in a row, held_out, supersedes and seed. */
+      /** The replay library's programs for a site, or the open page's; type_ref (node_id@tree_version) keeps that exact task type. Each card: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
       find(input: Sdk.LibraryFindInput): Promise<Sdk.BrowserLibraryFindOutput | StoredResult>;
       /** Offers a solved run's program to the replay library, refs as locators; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance. */
       propose(input: Sdk.ProposeInput): Promise<Sdk.BrowserLibraryProposeOutput | StoredResult>;

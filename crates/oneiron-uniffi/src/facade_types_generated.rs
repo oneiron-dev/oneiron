@@ -59686,6 +59686,8 @@ pub struct LibraryCard {
     pub site: String,
     #[serde(rename = "subgoal")]
     pub subgoal: String,
+    #[serde(rename = "type_ref")]
+    pub type_ref: String,
     #[serde(rename = "params")]
     pub params: Vec<String>,
     #[serde(rename = "runs")]
@@ -60613,6 +60615,8 @@ pub struct LibraryFindInput {
     pub site: Option<String>,
     #[serde(rename = "subgoal", default, skip_serializing_if = "Option::is_none")]
     pub subgoal: Option<String>,
+    #[serde(rename = "type_ref", default, skip_serializing_if = "Option::is_none")]
+    pub type_ref: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LibraryFindInput`.

@@ -7579,7 +7579,7 @@ export type RecentCounts = { pass: number; miss: number; repair: number; of: num
 /** `oneiron_browser::library::admission::WorkflowSeed` */
 export type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string }
 /** `oneiron_browser::library::LibraryCard` */
-export type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number }
+export type LibraryCard = { workflow: string; site: string; subgoal: string; type_ref: string; params: string[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number }
 /** `oneiron_browser::PartialTree` */
 export type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number }
 /** `oneiron_browser::Observation` */
@@ -7665,7 +7665,7 @@ export type BatchOutput = { status: SubgoalStatus; completed: number; failed_ste
 /** `oneiron::task_verb::sdk_browser::BrowserBatchOutput` */
 export type BrowserBatchOutput = BrowserAnswer<BatchOutput>
 /** `oneiron_browser::library::LibraryFindInput` */
-export type LibraryFindInput = { site?: string | null; subgoal?: string | null }
+export type LibraryFindInput = { site?: string | null; subgoal?: string | null; type_ref?: string | null }
 /** `oneiron_browser::library::LibraryFindOutput` */
 export type LibraryFindOutput = { site: string; workflows: LibraryCard[] }
 /** `oneiron::task_verb::sdk_browser::BrowserLibraryFindOutput` */
