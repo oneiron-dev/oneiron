@@ -19,12 +19,19 @@
 # recipients the host sent. It stops the companion when the engine exits,
 # before it removes the key. Given --guest-config-dir, it reads the config
 # drive's typed files itself before the key goes in, and sets up the one NIC
-# the host attached when the drive's network.json plans it (FIX 6808).
+# the host attached when the drive's network.json plans it (FIX 6808). On a
+# boot that serves it prepares the guests' container runtime this image
+# stages for the vault UID before the engine starts (FIX 7671): it mounts
+# cgroup v2 and delegates a cgroup to that UID, and binds its subordinate ID
+# files over the image's empty /etc/subuid and /etc/subgid.
 set -eu
 mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev
 mount -t tmpfs -o mode=0755 run /run
+# A writable /tmp for every UID: the guests' container CLI keeps its
+# temporary files and supervisor sockets there (FIX 7671).
+mount -t tmpfs -o mode=1777,nosuid,nodev tmp /tmp
 # The UID table's directory: a root-owned tmpfs over the read-only image's
 # mountpoint, so the table is rebuilt from the host's binding on every cold
 # boot and never persists.
@@ -66,9 +73,10 @@ guest_config_dir=""
 if [ "$config" = "1" ]; then
   mount -t ext4 -o ro,noatime /dev/vdc /config
   # Only once the drive is mounted: oneiron-vm-init reads its typed files
-  # (the contract's VM_GUEST_NETWORK_FILE and the managed profile's five
-  # files, VM_GUEST_ORGANIZATION_OWNER_FILE and its siblings) and never passes
-  # this flag on.
+  # (the contract's VM_GUEST_NETWORK_FILE, the managed profile's five files,
+  # VM_GUEST_ORGANIZATION_OWNER_FILE and its siblings, and the guests'
+  # runtime bindings, VM_GUEST_BROWSER_RUNTIME_FILE and
+  # VM_GUEST_DESKTOP_RUNTIME_FILE) and never passes this flag on.
   guest_config_dir=/config
   if [ -f /config/settings.toml ]; then
     set -- "$@" --settings-file /config/settings.toml
@@ -94,9 +102,11 @@ if [ "$config" = "1" ]; then
       set -- "$@" "--$flag" "$(head -n 1 "/config/$flag")"
     fi
   done
-  # The supervisor's bindings for the guests' container CLIs (paths in this
-  # rootfs) and the mesh listener's bind and comma-separated relays.
-  for flag in browser-runtime desktop-runtime mesh-bind mesh-relays; do
+  # The mesh listener's bind and comma-separated relays. The guests'
+  # container CLI bindings (browser-runtime, desktop-runtime) are not passed
+  # on here: oneiron-vm-init reads them, checks them against this image's
+  # guest runtime and binds them only once it is prepared (FIX 7671).
+  for flag in mesh-bind mesh-relays; do
     if [ -f "/config/$flag" ]; then
       set -- "$@" "--$flag" "$(head -n 1 "/config/$flag")"
     fi

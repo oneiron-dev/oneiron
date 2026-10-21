@@ -5,7 +5,7 @@ use super::{
 };
 use futures_core::Stream;
 use oneiron::llm::StreamAssembly;
-use oneiron::{FatalLlmError, FinishReason, LlmResult, LlmStreamEvent, LlmUsage};
+use oneiron::{FatalLlmError, FinishReason, LlmResult, LlmStreamEvent, LlmUsage, ModelId};
 use serde_json::Value as JsonValue;
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -25,12 +25,24 @@ pub struct OpenAiCompatStreamAccumulator {
     tools: BTreeMap<u64, ToolHeader>,
     usage: Option<LlmUsage>,
     pending_finish: Option<FinishReason>,
+    /// The model the call was admitted for, which the stream's inference
+    /// receipts are bound to (FIX 8314); `None` binds none.
+    model: Option<ModelId>,
 }
 
 impl OpenAiCompatStreamAccumulator {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The usage a stream reported, its inference receipts bound to the
+    /// admitted model.
+    fn bound(&self, mut usage: LlmUsage) -> LlmUsage {
+        if let Some(model) = &self.model {
+            usage.bind_inference_model(model);
+        }
+        usage
     }
 
     pub fn push_chunk(&mut self, chunk: JsonValue) -> LlmResult<Vec<LlmStreamEvent>> {
@@ -47,7 +59,7 @@ impl OpenAiCompatStreamAccumulator {
             return Err(classify_openai_status(status, &BTreeMap::new(), &chunk));
         }
         if let Some(usage) = chunk.get("usage").filter(|v| !v.is_null()) {
-            self.usage = Some(parse_openai_usage(usage));
+            self.usage = Some(self.bound(parse_openai_usage(usage)));
         }
         let mut events = Vec::new();
         // A chunk this decoder cannot walk could hold a tool request behind
@@ -166,6 +178,7 @@ impl OpenAiCompatStreamAccumulator {
 
     #[must_use]
     pub fn abort_with_usage(&mut self, usage: LlmUsage) -> Vec<LlmStreamEvent> {
+        let usage = self.bound(usage);
         self.assembly.abort(usage)
     }
 }
@@ -184,6 +197,13 @@ impl<'a> OpenAiCompatLlmStream<'a> {
             accumulator: OpenAiCompatStreamAccumulator::new(),
             pending: VecDeque::new(),
         }
+    }
+
+    /// The stream of a call admitted for `model`: its inference receipts
+    /// name that model (FIX 8314).
+    pub(crate) fn bound_to(mut self, model: ModelId) -> Self {
+        self.accumulator.model = Some(model);
+        self
     }
 }
 

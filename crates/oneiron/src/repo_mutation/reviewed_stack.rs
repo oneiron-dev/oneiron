@@ -337,10 +337,11 @@ impl Vault {
         Ok(())
     }
 
-    /// Whether every member of `batch` is an open stored proposal with its
-    /// unanimous critic approval unused, read without writing: the queue
-    /// driver lands only then (FIX 6868, G2 PR2). The admission itself is
-    /// unchanged and still judges every member again.
+    /// Whether every member of `batch` is an open stored proposal that met
+    /// the review the one policy point holds it to, read without writing:
+    /// the queue driver lands only then (FIX 6868, G2 PR2). With no review
+    /// policy and no catalog of its own that is none (FIX 8268). The
+    /// admission still judges every member again.
     pub(crate) fn reviewed_stack_members_ready(
         &self,
         batch: &MergeBatch,
@@ -362,11 +363,17 @@ impl Vault {
                     .merge_stack
                     .as_deref()
                     .is_none_or(|stack| stack == batch.id);
-            if !open || !row.eligible()? {
+            if !open {
                 return Ok(Err(format!(
                     "proposal {} lacks an unused unanimous critic approval",
                     candidate.id
                 )));
+            }
+            let txn = self.store.env.read_txn()?;
+            let requirement =
+                crate::merge_queue::queue_review_requirement_in_txn(self, &txn, &row.review)?;
+            if let Err(wait) = row.queue_review_admission(&requirement, &batch.id)? {
+                return Ok(Err(wait.hold(&candidate.id)));
             }
         }
         Ok(Ok(()))
@@ -458,7 +465,11 @@ impl Vault {
         let mut stopped = false;
         let mut sequence = 0;
         for row in &rows {
-            if row.merge_stack.as_deref() != Some(stack.batch.as_str()) || !row.eligible()? {
+            // Replay reads the review the admission sealed, never a later
+            // policy on effects it already accepted (FIX 8268).
+            if row.merge_stack.as_deref() != Some(stack.batch.as_str())
+                || !row.stack_review_admitted(&stack.batch)?
+            {
                 return Err(invalid("reviewed stack member binding changed"));
             }
             let entry = row
@@ -637,8 +648,10 @@ impl Vault {
             return Err(invalid("reviewed stack bound exceeded"));
         }
         let mut txn = self.store.env.write_txn()?;
-        // Review can run concurrently. Re-read every vote in this ONE transaction;
-        // an invalid late member aborts all approvals and the stack binding.
+        // Review can run concurrently. Re-read every vote and the vault's review
+        // policy in this ONE transaction, and seal the review each member met
+        // (FIX 8268); an invalid late member aborts all approvals and the
+        // stack binding.
         for row in rows {
             let mut current = PROPOSAL
                 .get(&self.store, &txn, &row.id)?
@@ -649,12 +662,18 @@ impl Vault {
                     current.status,
                     RepoProposalStatus::Proposed | RepoProposalStatus::Approved
                 )
-                || !current.eligible()?
             {
                 return Err(invalid(
                     "every stack member needs unused unanimous critic approval",
                 ));
             }
+            let requirement =
+                crate::merge_queue::queue_review_requirement_in_txn(self, &txn, &current.review)?;
+            current.queue_review = Some(
+                current
+                    .queue_review_admission(&requirement, &stack.batch)?
+                    .map_err(|wait| wait.refusal())?,
+            );
             current.merge_stack = Some(stack.batch.clone());
             current.status = RepoProposalStatus::Approved;
             proposal::store(self, &mut txn, &current)?;

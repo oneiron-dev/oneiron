@@ -106,7 +106,8 @@ impl HeldJob {
             MediaJobState::Done { response } => {
                 let units = response.usage.token_units(self.operation, &self.caps);
                 if let Some(permit) = self.permit.take()
-                    && let Err(denied) = permit.settle_media(units)
+                    && let Err(denied) =
+                        permit.settle_media(units, response.usage.inference_calls())
                 {
                     tracing::error!(%denied, "a media job's settlement was refused");
                 }
