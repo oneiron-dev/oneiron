@@ -3724,7 +3724,7 @@
      "path": "src/authority/principal_standing.rs",
      "purpose": "FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 8
      }
     },
     {
