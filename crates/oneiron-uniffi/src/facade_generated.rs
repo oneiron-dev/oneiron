@@ -3266,6 +3266,16 @@ export_facade! {
     let output = client.vault_agents_grants_revoke(&input)?;
     crate::codec::lift_record("vault.agents.grants.revoke", &output)
 };
+"vault.repo.git_push.mint" => fn vault_repo_git_push_mint(&self, input: GitPushGrantMintInput) -> GitPushGrantMintOutput = |client| {
+    let input: oneiron::task_verb::sdk::GitPushGrantMintInput = crate::codec::lower_record("vault.repo.git_push.mint", input)?;
+    let output = client.vault_repo_git_push_mint(&input)?;
+    crate::codec::lift_record("vault.repo.git_push.mint", &output)
+};
+"vault.repo.git_push.revoke" => fn vault_repo_git_push_revoke(&self, input: GitPushGrantRevokeInput) -> GitPushGrantRevokeOutput = |client| {
+    let input: oneiron::task_verb::sdk::GitPushGrantRevokeInput = crate::codec::lower_record("vault.repo.git_push.revoke", input)?;
+    let output = client.vault_repo_git_push_revoke(&input)?;
+    crate::codec::lift_record("vault.repo.git_push.revoke", &output)
+};
 "vault.agents.base" => fn vault_agents_base(&self) -> BaseAgentList = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.agents.base")?;
     let output = client.vault_agents_base(&input)?;

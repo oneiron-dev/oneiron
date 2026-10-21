@@ -321,6 +321,7 @@ mod sdk_fanout_launch;
 mod sdk_federation;
 mod sdk_federation_burst;
 mod sdk_feedback;
+mod sdk_git_push_grant;
 mod sdk_goal_optimize;
 mod sdk_guest_document;
 mod sdk_guest_revoke;

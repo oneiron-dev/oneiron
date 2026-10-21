@@ -10051,6 +10051,38 @@
       "openapi": true
     },
     {
+      "name": "vault.repo.git_push.mint",
+      "description": "The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it.",
+      "input": "crate::task_verb::sdk::GitPushGrantMintInput",
+      "output": "crate::task_verb::sdk::GitPushGrantMintOutput",
+      "call": "crate::task_verb::sdk::mint_git_push_grant_as(memory.vault(), &memory.embedded_owner(\"vault.repo.git_push.mint\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.git_push.revoke",
+      "description": "The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing.",
+      "input": "crate::task_verb::sdk::GitPushGrantRevokeInput",
+      "output": "crate::task_verb::sdk::GitPushGrantRevokeOutput",
+      "call": "crate::task_verb::sdk::revoke_git_push_grant_as(memory.vault(), &memory.embedded_owner(\"vault.repo.git_push.revoke\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.agents.base",
       "description": "The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent.",
       "input": "EmptyRequest",

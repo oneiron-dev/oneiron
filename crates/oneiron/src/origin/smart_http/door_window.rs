@@ -161,13 +161,19 @@ pub(super) fn serve_door_window(
         // The hook is still blocked. Commit the complete operation BEFORE
         // releasing it to mutate refs. No GitWire call or repository lock is
         // taken on this door thread; the serving thread holds that coordinator.
+        // A checkout push's ref moves and changed paths go to the writer,
+        // which rechecks the push's authority (G1-PUSH) and names a refusal.
         let recorded = context
             .admission
             .ok_or_else(|| receive_pack_provenance_refused("intent has no admission"))
-            .and_then(|stamp| vault.record_receive_pack_intent(repo, stamp, &report));
-        if recorded.is_err() {
+            .and_then(|stamp| {
+                let changes =
+                    super::push_paths::checkout_changes(hooks, stamp, &report.ref_updates)?;
+                vault.record_receive_pack_intent(repo, stamp, &report, changes.as_deref())
+            });
+        if let Err(error) = recorded {
             report.verdict = DoorWindowVerdict::Rejected {
-                reasons: vec!["receive-pack intent could not be made durable".to_owned()],
+                reasons: vec![super::push_admission::intent_refusal_reason(&error)],
             };
         }
     }

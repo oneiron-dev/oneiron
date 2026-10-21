@@ -5,12 +5,16 @@
 //! doors can call them across the crate line; they encode and decode values only.
 
 pub mod codec;
+pub mod git_push;
 pub mod pact_scope;
 pub mod repo_scope;
 pub mod scope;
 pub mod scope_codec;
 pub mod selector_kind;
 
+pub use self::git_push::{
+    FederationGrantKind, GIT_PUSH_VERB, GRANT_KIND_GIT_PUSH, GitPushBounds, GitPushRepo,
+};
 pub use self::pact_scope::{
     Ceiling, FEDERATION_PACT_SCOPE_SCHEMA_VERSION, FederationDirectionScope, FederationPactScope,
     Position, SelectorRange, decode_federation_direction_scope_value, decode_federation_pact_scope,

@@ -657,6 +657,8 @@ pub enum AgentVerb {
     VaultAgentsDreamingSet,
     VaultAgentsGrantsMint,
     VaultAgentsGrantsRevoke,
+    VaultRepoGitPushMint,
+    VaultRepoGitPushRevoke,
     VaultAgentsBase,
     VaultStandingBlocksConfigure,
     VaultStandingBlocksReconfigure,
@@ -1774,6 +1776,8 @@ impl AgentVerb {
         Self::VaultAgentsDreamingSet,
         Self::VaultAgentsGrantsMint,
         Self::VaultAgentsGrantsRevoke,
+        Self::VaultRepoGitPushMint,
+        Self::VaultRepoGitPushRevoke,
         Self::VaultAgentsBase,
         Self::VaultStandingBlocksConfigure,
         Self::VaultStandingBlocksReconfigure,
@@ -2912,6 +2916,8 @@ impl AgentVerb {
             Self::VaultAgentsDreamingSet => "vault.agents.dreaming.set",
             Self::VaultAgentsGrantsMint => "vault.agents.grants.mint",
             Self::VaultAgentsGrantsRevoke => "vault.agents.grants.revoke",
+            Self::VaultRepoGitPushMint => "vault.repo.git_push.mint",
+            Self::VaultRepoGitPushRevoke => "vault.repo.git_push.revoke",
             Self::VaultAgentsBase => "vault.agents.base",
             Self::VaultStandingBlocksConfigure => "vault.standing_blocks.configure",
             Self::VaultStandingBlocksReconfigure => "vault.standing_blocks.reconfigure",
@@ -4041,6 +4047,8 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultRepoGitPushMint
+                | Self::VaultRepoGitPushRevoke
                 | Self::VaultAgentsBase
                 | Self::VaultStandingBlocksConfigure
                 | Self::VaultStandingBlocksReconfigure
@@ -5186,6 +5194,8 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultRepoGitPushMint
+                | Self::VaultRepoGitPushRevoke
                 | Self::VaultAgentsBase
                 | Self::VaultStandingBlocksConfigure
                 | Self::VaultStandingBlocksReconfigure
@@ -6426,6 +6436,8 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultRepoGitPushMint
+                | Self::VaultRepoGitPushRevoke
                 | Self::VaultAgentsBase
                 | Self::VaultStandingBlocksConfigure
                 | Self::VaultStandingBlocksReconfigure
@@ -7250,6 +7262,8 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultRepoGitPushMint
+                | Self::VaultRepoGitPushRevoke
                 | Self::VaultStandingBlocksConfigure
                 | Self::VaultStandingBlocksReconfigure
                 | Self::VaultWorkflowsSave
@@ -8210,6 +8224,8 @@ impl AgentVerb {
             Self::VaultAgentsDreamingSet => &["spec"],
             Self::VaultAgentsGrantsMint => &["spec"],
             Self::VaultAgentsGrantsRevoke => &["spec"],
+            Self::VaultRepoGitPushMint => &["spec"],
+            Self::VaultRepoGitPushRevoke => &["spec"],
             Self::VaultAgentsBase => &[],
             Self::VaultStandingBlocksConfigure => &["spec"],
             Self::VaultStandingBlocksReconfigure => &["spec"],
@@ -9328,6 +9344,8 @@ impl AgentVerb {
             Self::VaultAgentsDreamingSet => &["spec"],
             Self::VaultAgentsGrantsMint => &["spec"],
             Self::VaultAgentsGrantsRevoke => &["spec"],
+            Self::VaultRepoGitPushMint => &["spec"],
+            Self::VaultRepoGitPushRevoke => &["spec"],
             Self::VaultAgentsBase => &[],
             Self::VaultStandingBlocksConfigure => &["spec"],
             Self::VaultStandingBlocksReconfigure => &["spec"],
@@ -11720,6 +11738,12 @@ impl AgentVerb {
             }
             Self::VaultAgentsGrantsRevoke => {
                 "The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."
+            }
+            Self::VaultRepoGitPushMint => {
+                "The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it."
+            }
+            Self::VaultRepoGitPushRevoke => {
+                "The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing."
             }
             Self::VaultAgentsBase => {
                 "The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent."

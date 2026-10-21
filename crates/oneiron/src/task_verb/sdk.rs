@@ -491,6 +491,7 @@ pub use super::sdk_fanout_launch::*;
 pub use super::sdk_federation::*;
 pub use super::sdk_federation_burst::*;
 pub use super::sdk_feedback::*;
+pub use super::sdk_git_push_grant::*;
 pub use super::sdk_goal_optimize::*;
 pub use super::sdk_guest_document::*;
 pub use super::sdk_guest_revoke::*;

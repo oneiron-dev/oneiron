@@ -338,6 +338,7 @@ pub enum ErrorKind {
     GitHttpRepositoryBusy,
     LfsReadRoomWaitedOut,
     ReceivePackDoorRejected,
+    GitPushCapabilityRequired,
     ReceivePackLandingRefused,
     OriginPublicationBeyondOwner,
     VaultCleanupRestoreNotArchived,

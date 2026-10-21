@@ -1,6 +1,8 @@
 //! Git smart-HTTP routes and per-service RPC handlers.
 
-use super::gate::{advertised_service, authenticate_request, header_value, remote_user, repo_name};
+use super::gate::{
+    advertised_service, authenticate_request, header_value, push_caller, remote_user, repo_name,
+};
 use super::serve::run_serve;
 use crate::auth::CoreScope;
 use crate::server::SyncServer;
@@ -85,7 +87,7 @@ pub(crate) async fn git_info_refs(
     };
     let name = repo_name(&repo).to_owned();
     let request = advertisement_request(&name, service, remote_user(&auth));
-    run_serve(server, name, request, Body::empty()).await
+    run_serve(server, name, request, Body::empty(), push_caller(&auth)).await
 }
 
 /// The advertisement invocation this route hands to the serving plane.
@@ -176,7 +178,7 @@ async fn serve_rpc(
         remote_user: remote_user(&auth),
         remote_addr: None,
     };
-    run_serve(server, name, request, body).await
+    run_serve(server, name, request, body, push_caller(&auth)).await
 }
 
 /// Lease endpoints keep the registered-principal bearer gate. The lease is a
@@ -203,7 +205,7 @@ async fn lease_info_refs(
     request
         .query_string
         .push_str(&format!("&checkout-lease={lease}"));
-    run_serve(server, name, request, Body::empty()).await
+    run_serve(server, name, request, Body::empty(), push_caller(&auth)).await
 }
 
 async fn lease_upload_pack(

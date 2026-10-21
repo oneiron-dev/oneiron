@@ -2121,6 +2121,14 @@ export class Oneiron {
       /** The agent's travelling AgentPack folder (files base64) and what stayed home. */
       export_pack: (request: Facade.AgentPackExportRequest): Facade.AgentPackExport => this.#call(() => {  const result = JSON.parse(this.#client.vaultAgentsExportPack(keyedJson(request))) as Facade.AgentPackExport; return result }),
     },
+    repo: {
+      git_push: {
+        /** The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it. */
+        mint: (input: Facade.GitPushGrantMintInput): Facade.GitPushGrantMintOutput => this.#call(() => this.#client.vaultRepoGitPushMint(input) as Facade.GitPushGrantMintOutput),
+        /** The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing. */
+        revoke: (input: Facade.GitPushGrantRevokeInput): Facade.GitPushGrantRevokeOutput => this.#call(() => this.#client.vaultRepoGitPushRevoke(input) as Facade.GitPushGrantRevokeOutput),
+      },
+    },
     standing_blocks: {
       /** The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle. */
       configure: (input: Facade.StandingBlockConfigureRequest): Facade.StandingBlockView => this.#call(() => this.#client.vaultStandingBlocksConfigure(input) as Facade.StandingBlockView),

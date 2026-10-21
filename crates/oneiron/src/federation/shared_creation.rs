@@ -82,6 +82,7 @@ fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
         let grant =
             super::decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
         if matches!(grant.scope, FederationGrantScope::Vault { .. })
+            && !grant.is_git_push()
             && !super::is_own_device_grant(&grant)
         {
             return Ok(true);

@@ -3601,6 +3601,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.repo.git_push.mint",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::GitPushGrantMintInput,
+                >(),
+            ),
+            (
+                "vault.repo.git_push.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::GitPushGrantRevokeInput,
+                >(),
+            ),
+            (
                 "vault.agents.base",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -6720,6 +6732,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.dreaming.set",
     "vault.agents.grants.mint",
     "vault.agents.grants.revoke",
+    "vault.repo.git_push.mint",
+    "vault.repo.git_push.revoke",
     "vault.agents.base",
     "vault.standing_blocks.configure",
     "vault.standing_blocks.reconfigure",
@@ -8416,6 +8430,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.agents.grants.revoke" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentGrantRevoked,
+        >(),
+        "vault.repo.git_push.mint" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::GitPushGrantMintOutput,
+        >(),
+        "vault.repo.git_push.revoke" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::GitPushGrantRevokeOutput,
         >(),
         "vault.agents.base" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::BaseAgentList>()
@@ -13866,6 +13886,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.repo.git_push.mint" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.git_push.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.agents.base" => &[],
         "vault.standing_blocks.configure" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -19167,6 +19201,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.agents.grants.revoke" => {
             let _input: crate::task_verb::sdk::AgentGrantRevokeRequest = decode(value.clone())?;
         }
+        "vault.repo.git_push.mint" => {
+            let _input: crate::task_verb::sdk::GitPushGrantMintInput = decode(value.clone())?;
+        }
+        "vault.repo.git_push.revoke" => {
+            let _input: crate::task_verb::sdk::GitPushGrantRevokeInput = decode(value.clone())?;
+        }
         "vault.agents.base" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -22072,6 +22112,8 @@ pub fn invoke(
         "vault.agents.dreaming.set" => encode(vault_agents_dreaming_set(memory, decode(value)?)?),
         "vault.agents.grants.mint" => encode(vault_agents_grants_mint(memory, decode(value)?)?),
         "vault.agents.grants.revoke" => encode(vault_agents_grants_revoke(memory, decode(value)?)?),
+        "vault.repo.git_push.mint" => encode(vault_repo_git_push_mint(memory, decode(value)?)?),
+        "vault.repo.git_push.revoke" => encode(vault_repo_git_push_revoke(memory, decode(value)?)?),
         "vault.agents.base" => encode(vault_agents_base(memory, decode(value)?)?),
         "vault.standing_blocks.configure" => {
             encode(vault_standing_blocks_configure(memory, decode(value)?)?)
@@ -28507,6 +28549,28 @@ pub fn vault_agents_grants_revoke(
     crate::task_verb::sdk::revoke_agent_grant_as(
         memory.vault(),
         &memory.embedded_owner("vault.agents.grants.revoke")?,
+        crate::authority::ActSurface::ThisInstall,
+        input,
+    )
+}
+pub fn vault_repo_git_push_mint(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::GitPushGrantMintInput,
+) -> MemoryResult<crate::task_verb::sdk::GitPushGrantMintOutput> {
+    crate::task_verb::sdk::mint_git_push_grant_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.repo.git_push.mint")?,
+        crate::authority::ActSurface::ThisInstall,
+        input,
+    )
+}
+pub fn vault_repo_git_push_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::GitPushGrantRevokeInput,
+) -> MemoryResult<crate::task_verb::sdk::GitPushGrantRevokeOutput> {
+    crate::task_verb::sdk::revoke_git_push_grant_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.repo.git_push.revoke")?,
         crate::authority::ActSurface::ThisInstall,
         input,
     )

@@ -102,6 +102,7 @@ const ROWS: &[Row] = &[
     always!("vault.guests.revoke", [pin(&["grant_ref"], typed)]),
     always!("vault.support_grants.revoke", [pin(&["grant_ref"], hex32)]),
     always!("vault.agents.grants.revoke", [pin(&["grant_ref"], entity)]),
+    always!("vault.repo.git_push.revoke", [pin(&["grant_ref"], entity)]),
     always!(
         "vault.federation.connect.disconnect",
         [pin(&["pact"], hex32)]

@@ -28,6 +28,8 @@ pub struct DoorAdmissionStamp {
     pub(super) admitted_at: u64,
     pub(super) operation_id: EntityId,
     pub(super) origin_authority: Option<OriginAuthorityStamp>,
+    /// The push authority the receive-pack decision admitted (G1-PUSH).
+    pub(super) push: Option<crate::federation::git_push::GitPushStamp>,
 }
 
 impl DoorAdmissionStamp {
@@ -46,6 +48,7 @@ impl DoorAdmissionStamp {
             admitted_at,
             operation_id,
             origin_authority: None,
+            push: None,
         }
     }
 
@@ -70,6 +73,7 @@ impl DoorAdmissionStamp {
             admitted_at,
             operation_id,
             origin_authority: None,
+            push: None,
         }
     }
 

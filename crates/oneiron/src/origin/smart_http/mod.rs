@@ -96,6 +96,8 @@ mod landing_lfs;
 mod maintain;
 mod owner_pins;
 mod paths;
+mod push_admission;
+mod push_paths;
 mod retained_reasons;
 mod serve;
 mod serve_cmd;
@@ -124,6 +126,7 @@ pub use self::paths::{
     SERVE_REQUEST_ENV_KEYS, origin_door_root, origin_repo_dir, origin_serving_root,
     validate_repo_name,
 };
+pub use self::push_admission::{admit_receive_pack, serve_bounded_as};
 pub use self::serve::{
     ServeReport, ServeSink, push_queue_key, serve, serve_bounded, serve_bounded_with_authority,
     serve_with_authority, serve_with_provenance,

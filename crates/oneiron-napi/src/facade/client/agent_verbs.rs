@@ -5695,6 +5695,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_repo_git_push_mint(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.git_push.mint", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_git_push_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.git_push.revoke", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_agents_base(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.agents.base", js_json(input))
