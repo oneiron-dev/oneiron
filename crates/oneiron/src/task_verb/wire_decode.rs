@@ -139,6 +139,16 @@ pub(crate) fn task_text_in(
     Ok(Some(parts.join("\n")))
 }
 
+/// [`task_text_in`] beside the id of the TASK row it read, the one row its
+/// text is assembled from (FIX 6997). `None` when the row is no TASK.
+pub(crate) fn task_text_with_source_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<(String, EntityId)>> {
+    Ok(task_text_in(vault, txn, task_ref)?.map(|text| (text, task_ref)))
+}
+
 /// Transaction-scoped body read. The custody seal `get_raw` applies is not
 /// needed here: a non-TASK type byte returns `None` two lines below, so a
 /// SECRET_CUSTODY row can never be decoded through this door.

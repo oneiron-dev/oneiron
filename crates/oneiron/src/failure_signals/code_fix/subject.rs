@@ -76,6 +76,9 @@ pub(super) fn blocked_source_failure_in(
             instructions: request.instructions,
             briefing: request.briefing,
             task: request.task,
+            // A kept request is text only: no reader names the rows behind
+            // it (FIX 6997).
+            source_rows: None,
         },
         worlds,
     ))

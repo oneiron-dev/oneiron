@@ -104,11 +104,25 @@ pub(super) fn run_skills(
     vault: &Vault,
     card: &AgentHealthCard,
 ) -> Result<Vec<AgentHealthLoadedSkill>> {
+    Ok(run_skills_sourced(vault, card)?.0)
+}
+
+/// [`run_skills`] beside the rows it read (FIX 6997): the card's attempt,
+/// which its pack receipt is keyed by, and each SKILL revision listed.
+///
+/// # Errors
+///
+/// As [`run_skills`].
+pub(super) fn run_skills_sourced(
+    vault: &Vault,
+    card: &AgentHealthCard,
+) -> Result<(Vec<AgentHealthLoadedSkill>, Vec<EntityId>)> {
     let Some(pack) = RunPack::of(vault, card)? else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     };
+    let mut rows: Vec<EntityId> = card.attempt.into_iter().collect();
     if pack.skills.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), rows));
     }
     let mut found: Vec<(usize, EntityId, SkillRecord)> = Vec::new();
     for id in vault.entities_by_type(ENTITY_TYPE_SKILL)? {
@@ -129,7 +143,8 @@ pub(super) fn run_skills(
         found.push((at, id, record));
     }
     found.sort_by_key(|(at, id, _)| (*at, *id));
-    Ok(found
+    rows.extend(found.iter().map(|(_, id, _)| *id));
+    let skills = found
         .into_iter()
         .map(|(_, id, record)| AgentHealthLoadedSkill {
             skill: id.to_hex(),
@@ -138,7 +153,8 @@ pub(super) fn run_skills(
             version: record.version,
             instructions: record.desc,
         })
-        .collect())
+        .collect();
+    Ok((skills, rows))
 }
 
 /// Binds a `skill_edit` draft to the revision it replaces: the one it names

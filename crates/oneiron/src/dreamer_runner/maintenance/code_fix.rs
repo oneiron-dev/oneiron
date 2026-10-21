@@ -42,7 +42,7 @@ use serde_json::json;
 use self::engine::read_granted_in_txn;
 use self::instruction::{CoachReplay, CoachScrubber, Ran};
 use self::work::{
-    enqueue_run_in_txn, failure_context, keep_in_txn, keep_run_in_txn, not_run, untried,
+    draft_rows, enqueue_run_in_txn, failure_context, keep_in_txn, keep_run_in_txn, not_run, untried,
 };
 use super::coach::COACH_CODE_FIX_FACET;
 use super::coach_heal::HealRoute;
@@ -184,6 +184,8 @@ pub struct CodeFixJob {
     /// The failure's blocked reports, every one: each one's category and
     /// the agent's own words, whole, data and never an instruction.
     pub reports: Vec<serde_json::Value>,
+    /// The rows the draft is assembled from (FIX 6997); `None`, unknown.
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 /// What the Coach drafted for one job.
@@ -216,8 +218,14 @@ pub trait CodeFixHost {
     /// The Coach's draft for `job`; `Ok(None)` when it drafted nothing usable.
     fn draft(&self, job: &CodeFixJob) -> Result<Option<CodeFixDraft>>;
     /// One turn of the failing agent with no tools, so nothing it says can
-    /// act: `system`, then `conversation`. `Ok(None)` when no model runs it.
-    fn reply(&self, system: &str, conversation: &[InventedMessage]) -> Result<Option<String>>;
+    /// act: `system`, then `conversation`, assembled from `rows` (FIX 6997;
+    /// `None`, unknown). `Ok(None)` when no model runs it.
+    fn reply(
+        &self,
+        system: &str,
+        conversation: &[InventedMessage],
+        rows: Option<Vec<EntityId>>,
+    ) -> Result<Option<String>>;
     /// The failing agent's call sent again as the vault kept it (FIX 1662):
     /// `request` whole, its tool declarations kept and no tool its answer
     /// names run, so nothing it says can act. `Ok(None)` when no model sends
@@ -432,8 +440,15 @@ impl Vault {
             if missing.is_empty() || !self.config.failure_signals.exports() {
                 return Ok(settled);
             }
-            let runs =
-                self.code_fix_top_up(&work.source, route, &settled, &missing, decisions, host)?;
+            let runs = self.code_fix_top_up(
+                &work.source,
+                work.proposal,
+                route,
+                &settled,
+                &missing,
+                decisions,
+                host,
+            )?;
             return self.with_write_txn_grouped(|txn| {
                 let mut work = WORK
                     .get(&self.store, &*txn, &key)?
@@ -467,7 +482,7 @@ impl Vault {
                 Ok(settled)
             });
         }
-        let unkept = self.code_fix_run(&work.source, route, decisions, host, now)?;
+        let unkept = self.code_fix_run(&work.source, work.proposal, route, decisions, host, now)?;
         self.with_write_txn_grouped(|txn| {
             let mut work = WORK
                 .get(&self.store, &*txn, &key)?
@@ -496,6 +511,7 @@ impl Vault {
     fn code_fix_run(
         &self,
         source: &CodeFixSource,
+        proposal: EntityId,
         route: HealRoute,
         decisions: &CodeFixDecisions<'_>,
         host: &dyn CodeFixHost,
@@ -565,6 +581,7 @@ impl Vault {
             origin: source.clone(),
             route,
             failure_class,
+            source_rows: draft_rows(case, &failure, &evidence, proposal),
             source: failure,
             reports,
         };
@@ -582,6 +599,7 @@ impl Vault {
                 }),
             _ => None,
         };
+        let drafted_id = own.as_ref().map(|(id, _)| id.clone());
         // A publisher candidate needs no draft of the Coach's: it is replayed
         // against the real failure whatever the heal's route.
         let candidates: Vec<(String, PublisherCandidateKind)> = own
@@ -602,6 +620,7 @@ impl Vault {
             host,
             decisions,
             evidence: &evidence,
+            drafted: drafted_id,
             candidates,
             exact: RefCell::new(exact),
             baseline: RefCell::new(None),
@@ -643,9 +662,11 @@ impl Vault {
     /// each replayed once against the failure and sent through its door. The first run's class and example stand. A failure that no longer
     /// stands, or whose text cannot be read, keeps each as not run, as does
     /// one whose call's capsule was erased (FIX 6251).
+    #[expect(clippy::too_many_arguments)]
     fn code_fix_top_up(
         &self,
         source: &CodeFixSource,
+        proposal: EntityId,
         route: HealRoute,
         settled: &CodeFixSettled,
         missing: &[(String, PublisherCandidateKind)],
@@ -673,6 +694,7 @@ impl Vault {
             origin: source.clone(),
             route,
             failure_class: settled.failure_class,
+            source_rows: draft_rows(subject.case.as_ref(), &failure, &evidence, proposal),
             source: failure,
             reports,
         };
@@ -682,6 +704,7 @@ impl Vault {
             host,
             decisions,
             evidence: &evidence,
+            drafted: None,
             candidates: missing.to_vec(),
             exact: RefCell::new(exact),
             baseline: RefCell::new(None),

@@ -129,7 +129,9 @@ pub use sweep::{
     run_task_attribution_sweep, run_task_attribution_sweep_with_decisions,
 };
 mod trace;
-pub use trace::{LoadedSkillRevision, ReceiptTrace, receipt_attribution_trace};
+pub use trace::{
+    LoadedSkillRevision, ReceiptTrace, receipt_attribution_trace, receipt_attribution_trace_sourced,
+};
 
 pub use self::judge_supersession::{
     DisplacedJudgeReceipt, displaced_judge_receipts, supersede_displaced_judge_receipts,

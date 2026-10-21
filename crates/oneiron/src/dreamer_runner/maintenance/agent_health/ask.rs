@@ -13,7 +13,9 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::apply::{AgentHealthApplicationState, AgentHealthCoachApplication};
-use super::loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget, bind_target, run_skills};
+use super::loaded::{
+    AgentHealthLoadedSkill, AgentHealthSkillTarget, bind_target, run_skills_sourced,
+};
 use super::{AgentHealthCard, AgentHealthMove, CARDS, card_ref, may_read, parse_card_ref};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{
@@ -21,6 +23,7 @@ use crate::dreamer_runner::{
     EnqueueDreamerAttemptOutcome,
 };
 use crate::memory::{DiaryEntry, DiaryReadOutcome, Memory, MemoryError, MemoryResult};
+use crate::skill_optimize::union_source_rows;
 use crate::{EntityId, Error, Result, Vault};
 
 /// The ask's facet on the `coach.heal` queue: the host Coach leases it.
@@ -111,6 +114,9 @@ pub struct CoachHealthBrief {
     pub task: Option<String>,
     /// The sealed pads the Coach read; empty when the read was held.
     pub pads: Vec<DiaryEntry>,
+    /// The rows the brief was read from (FIX 6997); `None`, unknown, while
+    /// the card's numbers name none.
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 /// The host's model, lent to the Coach for one ask.
@@ -292,12 +298,16 @@ impl Vault {
                 return Ok(());
             }
             let task = match card.task {
-                Some(task) => crate::task_verb::task_text_in(self, &rtxn, task)?,
+                Some(task) => crate::task_verb::task_text_with_source_in(self, &rtxn, task)?,
                 None => None,
             };
             (card, task)
         };
-        let skills = run_skills(self, &card)?;
+        let (task, task_rows) = match task {
+            Some((text, row)) => (Some(text), vec![row]),
+            None => (None, Vec::new()),
+        };
+        let (skills, skill_rows) = run_skills_sourced(self, &card)?;
         let coach = self.coach_authority()?;
         let reason = format!(
             "The Coach answers an ask on agent-health card {handle} ({}).",
@@ -323,6 +333,13 @@ impl Vault {
             Ok(DiaryReadOutcome::NotCovered) => (AgentHealthPadRead::NotCovered, Vec::new()),
             Err(error) => (AgentHealthPadRead::Refused { code: error.code }, Vec::new()),
         };
+        // The card's numbers are review state merged across passes, naming no
+        // rows they were counted from: the brief stays unknown until they do
+        // (FIX 6997). Its skills, TASK and the pads read are known.
+        let card_rows: Option<Vec<EntityId>> = None;
+        let pad_rows = entries.iter().map(|pad| pad.id).collect();
+        let source_rows =
+            union_source_rows([card_rows, Some(skill_rows), Some(task_rows), Some(pad_rows)]);
         // A failed call still lands a draftless answer, so the ask may be
         // asked again, and the attempt fails with the error.
         let brief = CoachHealthBrief {
@@ -330,6 +347,7 @@ impl Vault {
             skills,
             task,
             pads: entries,
+            source_rows,
         };
         let drafted = host.draft(&brief);
         let draft = drafted

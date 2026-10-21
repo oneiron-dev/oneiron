@@ -162,9 +162,11 @@ impl CoachHealthHost for HostModel<'_> {
         let Ok(call) = self.runtime.admit_role(self.vault, role, request) else {
             return Ok(None);
         };
+        // The call carries the rows the brief was read from (FIX 6997).
+        let run = self.run.sourced(brief.source_rows.clone());
         let response = self
             .handle
-            .block_on(call.ladder.generate(&self.run, call.request, None))
+            .block_on(call.ladder.generate(&run, call.request, None))
             .map_err(|error| Error::InvalidConfig(format!("a Coach ask call failed: {error}")))?;
         let text: String = response
             .message

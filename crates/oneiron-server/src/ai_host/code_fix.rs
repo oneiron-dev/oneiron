@@ -116,8 +116,9 @@ impl CodeFixHost for CodeFixModels<'_> {
         &self,
         system: &str,
         conversation: &[InventedMessage],
+        rows: Option<Vec<EntityId>>,
     ) -> oneiron::Result<Option<String>> {
-        self.models.reply(system, conversation)
+        self.models.reply(system, conversation, rows)
     }
 
     fn reply_exact(&self, request: &ExactReplayRequest) -> oneiron::Result<Option<String>> {
@@ -368,12 +369,14 @@ impl CodeFixHost for HostModels<'_> {
             "briefing": source.briefing,
             "task": source.task,
         });
-        let Some(text) = self.generate(
+        // The draft reads the job's texts, reports and heal (FIX 6997).
+        let Some(text) = self.generate_sourced(
             self.coach(),
             vec![
                 message(LlmMessageRole::System, DRAFT_SYSTEM.to_owned()),
                 message(LlmMessageRole::User, data.to_string()),
             ],
+            job.source_rows.clone(),
         )?
         else {
             return Ok(None);
@@ -385,6 +388,7 @@ impl CodeFixHost for HostModels<'_> {
         &self,
         system: &str,
         conversation: &[InventedMessage],
+        rows: Option<Vec<EntityId>>,
     ) -> oneiron::Result<Option<String>> {
         let mut messages = Vec::with_capacity(conversation.len() + 1);
         if !system.trim().is_empty() {
@@ -402,7 +406,7 @@ impl CodeFixHost for HostModels<'_> {
             });
         }
         // The failing agent's replay stays on the agent's chat seat.
-        self.generate(CHAT_ROLE, messages)
+        self.generate_sourced(CHAT_ROLE, messages, rows)
     }
 
     fn reply_exact(&self, request: &ExactReplayRequest) -> oneiron::Result<Option<String>> {
