@@ -17,7 +17,10 @@ use crate::{
     EntityId, Vault,
     error::{Error, Result},
     limit_ask::EngineLimit,
-    llm::ModelLocality,
+    llm::{
+        CacheIdentity, InferenceCallReceipt, ModelId, ModelLocality, WorkerBuildEvidence,
+        WorkerDescriptor, WorkerKind,
+    },
     voice_identity::ref_bank::{VoiceRefFence, VoiceRegisterClip},
 };
 
@@ -54,6 +57,27 @@ impl WarmTarget {
             return Err(invalid("worker is not a pinned, ready VoxCPM2 target"));
         }
         Ok(())
+    }
+
+    /// The worker this target names, as far as `/ready` proves it (FIX 8314,
+    /// INFERENCE R1): a VoxCPM2 worker. Its checkpoint is a configured
+    /// revision and its boot id a process's, neither a digest of what it
+    /// loaded or runs, so the identity names nothing and the build is
+    /// unknown. Not readiness: a render matching a pinned build is.
+    #[must_use]
+    pub fn worker(&self) -> WorkerDescriptor {
+        WorkerDescriptor {
+            kind: WorkerKind::VoxCpm2,
+            identity: CacheIdentity::default(),
+            build_evidence: WorkerBuildEvidence::Unknown,
+        }
+    }
+
+    /// One render's receipt, for a call admitted for `model`: the worker,
+    /// and no count, wait or time, none of which the worker reports.
+    #[must_use]
+    pub fn render_receipt(&self, model: &ModelId) -> InferenceCallReceipt {
+        InferenceCallReceipt::unmeasured(Some(model.clone()), self.worker())
     }
 }
 

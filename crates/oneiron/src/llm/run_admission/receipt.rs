@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use serde::Serialize;
 
 use super::super::{
-    BrokerIsolation, BudgetDenied, CacheCallUsage, LlmInputUsage, LlmOutputUsage, ModelId,
+    BrokerIsolation, BudgetDenied, InferenceCallReceipt, LlmInputUsage, LlmOutputUsage, ModelId,
     ModelLocality,
 };
 use super::admission::{RunAttribution, RunDenied};
@@ -66,6 +66,12 @@ pub enum RunEvent {
         /// A metered stream's audio, alongside its charge in `units`.
         #[serde(skip_serializing_if = "Option::is_none")]
         stream: Option<RunStreamUsage>,
+        /// What the call's backend reported, one receipt per physical request
+        /// in order (FIX 8314): typed and content-free, carried apart from
+        /// the token counts and the service quantity that charge it. Empty
+        /// when it reported none.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        inference_calls: Vec<InferenceCallReceipt>,
         units: u64,
         unit: LeaseUnit,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -101,16 +107,13 @@ pub struct RunStreamUsage {
     pub bound_ms: u64,
 }
 
-/// Token facts reported by one physical model call.
+/// Token facts reported by one physical model call: its billing counters.
+/// Its cache passes and identity are on the settlement's `inference_calls`,
+/// never a second copy here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RunTokenUsage {
     pub input: LlmInputUsage,
     pub output: LlmOutputUsage,
-    /// What the backend reported about its prompt cache on this call (FIX
-    /// 6567): each native request's passes, counts and identity digests, typed
-    /// and content-free. Empty when it reported none.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub cache_calls: Vec<CacheCallUsage>,
 }
 
 /// Everything one permit binds.

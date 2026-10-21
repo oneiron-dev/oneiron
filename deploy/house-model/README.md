@@ -237,9 +237,14 @@ request read from the prompt cache (FIX 6567; `cache_usage.py` builds it):
   and its counts agree. `prompt_tokens` less it is what that pass computed.
   A zero thinking budget's first Job is already the answer's re-encode, so
   its reply has none.
-- `cache_calls` holds one record, in the form the engine puts on the call's
-  run receipt (`RunTokenUsage.cache_calls`): `backend` `exl3`,
-  `logical_prompt_tokens`, `passes` and `identity`.
+- `inference_calls` holds one receipt, in the form the engine puts on the
+  call's run receipt (`RunEvent::Settled.inference_calls`, FIX 8314):
+  `worker` (`kind` `exl3`, `identity`, and `build_evidence`
+  `reported_version`), `logical_prompt_tokens`, `passes` and `queue_wait`.
+  - `queue_wait` has `worker_us`, submission to admission, and `engine_us`,
+    each Job's enqueue-to-start with the answer pass's wait for pages, in
+    whole microseconds. First-token time, end, output count and drafts are
+    left out; the engine stamps the receipt's `model`.
   - `passes` has one entry per Job, in order: `reasoning`, `answer` (the
     re-encode of prompt, thought and close) or `prompt`. Each has the Job's
     own `input_tokens`, `cache_read_tokens` (exllamav3's `cached_tokens`,
@@ -249,7 +254,7 @@ request read from the prompt cache (FIX 6567; `cache_usage.py` builds it):
     `counter_source` `exl3_job`, and `outcome`: `hit`, `recompute`, or
     `unknown` when a count is missing or the read exceeds the input. A count
     the Job did not report is left out, never written as zero.
-  - `identity` holds SHA-256 digests of what answered: `template`, the chat
+  - `worker.identity` holds SHA-256 digests of what answered: `template`, the chat
     template's bytes; `tokenizer`, the target directory's tokenizer files
     and `config.json`; `runtime`, the installed exllamav3, torch and Python
     versions as reported; `cache_mode`, the caches' settings; and
@@ -265,8 +270,11 @@ request read from the prompt cache (FIX 6567; `cache_usage.py` builds it):
 `llama-server` reports its own counts: what it read as
 `usage.prompt_tokens_details.cached_tokens` and `timings.cache_n`, what it
 computed as `timings.prompt_n`. The engine builds
-the same record from them (`backend` `llama_cpp`, one `prompt` pass), and a
-read is `unknown` when those counts disagree. Its identity is what the
+the same receipt from them (`kind` `llama_cpp`, one `prompt` pass; an answer
+that names its launch alias but reports no timings gets a receipt with no
+pass), and a read is `unknown` when those counts disagree. Its
+`build_evidence` is `verified_artifacts` only when the launch's manifest
+verified and lists its build, else `unknown`. Its identity is what the
 answer's own alias names: `backend_epoch` from the alias, and from the
 launch's verified manifest `model`, `tokenizer`, `runtime` (the build),
 `template` and `cache_mode`. A manifest that did not verify leaves those

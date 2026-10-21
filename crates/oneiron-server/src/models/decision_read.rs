@@ -23,8 +23,9 @@
 //!
 //! Each answer names the process that answered it as its `model`, the house
 //! launch alias (FIX 7895): each answer of a pack and each retry carries its
-//! own into its cache record, never one read once for the read. The alias is
-//! never compared with the read's model, which stays the engine id.
+//! own into its inference receipt, never one read once for the read (FIX
+//! 8314: one receipt per physical answer, in order). The alias is never
+//! compared with the read's model, which stays the engine id.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -38,7 +39,7 @@ use oneiron::llm::{
 };
 use serde_json::{Value as JsonValue, json};
 
-use super::cache_usage::{label_read, put_cache_calls, take_cache_calls};
+use super::cache_usage::{label_read, put_inference_calls, take_inference_calls};
 use super::catalog::engine_model_id;
 use super::http::{HttpFailure, KeyStyle, ProviderHttp};
 use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver};
@@ -597,8 +598,8 @@ fn normalized(logprobs: &[f64]) -> Vec<f64> {
 /// generates no text still costs its forward pass. An answer without both
 /// counts is refused, so its caller charges the read's reservation. Its
 /// cache read is llama.cpp's own `timings.cache_n` when the answer's counts
-/// agree, beside the answer's cache record (FIX 6567) with the identity its
-/// own alias names, `answering`.
+/// agree, beside the answer's inference receipt (FIX 6567, 8314) with the
+/// identity its own alias names, `answering`.
 fn usage(body: &JsonValue, answering: Option<&AnsweringIdentity>) -> LlmResult<LlmUsage> {
     let count = |key: &str| {
         body.get(key)
@@ -622,13 +623,13 @@ fn usage(body: &JsonValue, answering: Option<&AnsweringIdentity>) -> LlmResult<L
 }
 
 /// A retried read's cost: both calls' tokens and cache reads, each call's
-/// timings, and both calls' cache records, listed once at the top.
+/// timings, and both calls' receipts, in order, listed once at the top.
 fn retried(top_k: LlmUsage, full: LlmUsage) -> LlmUsage {
     let (mut top_k_raw, mut full_raw) = (top_k.raw_provider, full.raw_provider);
-    let mut calls = take_cache_calls(&mut top_k_raw);
-    calls.extend(take_cache_calls(&mut full_raw));
+    let mut calls = take_inference_calls(&mut top_k_raw);
+    calls.extend(take_inference_calls(&mut full_raw));
     let mut raw_provider = json!({"top_k": top_k_raw, "full": full_raw});
-    put_cache_calls(&mut raw_provider, calls);
+    put_inference_calls(&mut raw_provider, calls);
     LlmUsage {
         input: LlmInputUsage {
             total: top_k.input.total.saturating_add(full.input.total),
@@ -645,8 +646,8 @@ fn retried(top_k: LlmUsage, full: LlmUsage) -> LlmUsage {
 }
 
 /// A pack's cost: every question's tokens and cache reads, retries included,
-/// each question's own timings, and every answer's cache record, listed once
-/// at the top. The answers ran side by side, so their times overlap and are
+/// each question's own timings, and every answer's receipt, listed once at
+/// the top. The answers ran side by side, so their times overlap and are
 /// kept apart, not summed.
 fn pack_usage(reads: Vec<LlmUsage>) -> LlmUsage {
     let (mut input, mut cache_read, mut output) = (0_u64, 0_u64, 0_u64);
@@ -656,11 +657,11 @@ fn pack_usage(reads: Vec<LlmUsage>) -> LlmUsage {
         input = input.saturating_add(read.input.total);
         cache_read = cache_read.saturating_add(read.input.cache_read);
         output = output.saturating_add(read.output.total);
-        calls.extend(take_cache_calls(&mut read.raw_provider));
+        calls.extend(take_inference_calls(&mut read.raw_provider));
         timings.push(read.raw_provider);
     }
     let mut raw_provider = json!({ "questions": timings });
-    put_cache_calls(&mut raw_provider, calls);
+    put_inference_calls(&mut raw_provider, calls);
     LlmUsage {
         input: LlmInputUsage {
             total: input,

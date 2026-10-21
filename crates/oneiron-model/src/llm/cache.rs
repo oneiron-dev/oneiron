@@ -8,16 +8,12 @@
 //! may log it. A count the backend did not report is absent, never zero, and
 //! an identity no backend source names stays absent: nothing here is a guess.
 //!
-//! A backend's usage object carries its records as a list under
-//! [`CACHE_CALLS_KEY`]; the adapters keep that object as
-//! [`LlmUsage::raw_provider`], and [`LlmUsage::cache_calls`] reads them back.
+//! A backend's usage object carries these as the identity and passes of its
+//! inference receipts (FIX 8314, [`super::InferenceCallReceipt`]), the one
+//! carrier; [`LlmUsage::cache_calls`] is their cache-only view.
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
-use super::LlmUsage;
-
-/// The key in a provider's usage object that holds its cache records.
-pub const CACHE_CALLS_KEY: &str = "cache_calls";
+use super::{LlmUsage, WorkerKind};
 
 /// One physical call's cache evidence: one native request the backend ran,
 /// its identity and each pass it made over the input, in order.
@@ -306,27 +302,29 @@ impl CachePassUsage {
 }
 
 impl LlmUsage {
-    /// The cache records the backend reported for this call: the list under
-    /// [`CACHE_CALLS_KEY`] in its usage, or in the provider usage a ladder's
-    /// served receipt holds under `usage`. A record that does not read as a
-    /// [`CacheCallUsage`] is no evidence and is left out. Empty when the
+    /// The cache records the backend reported for this call: the llama.cpp
+    /// and EXL3 receipts of [`LlmUsage::inference_calls`] that hold native
+    /// passes, each as its backend, identity, prompt and passes. A receipt
+    /// with no pass is no cache evidence and is left out. Empty when the
     /// backend reported none.
     #[must_use]
     pub fn cache_calls(&self) -> Vec<CacheCallUsage> {
-        let raw = &self.raw_provider;
-        let served = || match raw.get("rung") {
-            Some(rung) if rung.is_u64() => raw.get("usage")?.get(CACHE_CALLS_KEY),
-            _ => None,
-        };
-        raw.get(CACHE_CALLS_KEY)
-            .or_else(served)
-            .and_then(JsonValue::as_array)
-            .map(|records| {
-                records
-                    .iter()
-                    .filter_map(|record| CacheCallUsage::deserialize(record).ok())
-                    .collect::<Vec<_>>()
+        self.inference_calls()
+            .into_iter()
+            .filter(|call| !call.passes.is_empty())
+            .filter_map(|call| {
+                let backend = match call.worker.kind {
+                    WorkerKind::LlamaCpp => CacheBackend::LlamaCpp,
+                    WorkerKind::Exl3 => CacheBackend::Exl3,
+                    _ => return None,
+                };
+                Some(CacheCallUsage {
+                    backend,
+                    identity: call.worker.identity,
+                    logical_prompt_tokens: call.logical_prompt_tokens,
+                    passes: call.passes,
+                })
             })
-            .unwrap_or_default()
+            .collect()
     }
 }

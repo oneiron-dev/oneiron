@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use super::super::{
-    BudgetDenied, BudgetGuard, BudgetLease, BudgetSettlement, DispatchBinding, ModelLocality,
-    PinnedConfigViolation,
+    BudgetDenied, BudgetGuard, BudgetLease, BudgetSettlement, DispatchBinding,
+    InferenceCallReceipt, ModelLocality, PinnedConfigViolation,
 };
 use super::admission::{RunCall, RunDenied, RunInner};
 use super::declaration::{LeaseUnit, RunDeclaration};
@@ -76,10 +76,21 @@ impl RunPermit {
     /// A call that started and then failed pays its reservation as unknown
     /// usage; one that never started pays nothing. A settlement the meter
     /// refuses goes on the receipt and is returned.
-    pub fn settle(mut self, outcome: CallOutcome<'_>) -> Result<BudgetSettlement, RunDenied> {
+    pub fn settle(self, outcome: CallOutcome<'_>) -> Result<BudgetSettlement, RunDenied> {
+        self.settle_with(outcome, Vec::new())
+    }
+
+    /// Settles the call as [`Self::settle`] does, with `provided`, the
+    /// inference receipts the call reported outside an answer's usage, on
+    /// its receipt (FIX 8314).
+    pub(super) fn settle_with(
+        mut self,
+        outcome: CallOutcome<'_>,
+        provided: Vec<InferenceCallReceipt>,
+    ) -> Result<BudgetSettlement, RunDenied> {
         self.settled = true;
         let run = Arc::clone(&self.run);
-        run.settle(&self, outcome, None)
+        run.settle(&self, outcome, None, provided)
     }
 
     /// Settles a metered stream, as [`Self::settle`] settles `Used(units)`,
@@ -91,7 +102,7 @@ impl RunPermit {
     ) -> Result<BudgetSettlement, RunDenied> {
         self.settled = true;
         let run = Arc::clone(&self.run);
-        run.settle(&self, CallOutcome::Used(units), Some(stream))
+        run.settle(&self, CallOutcome::Used(units), Some(stream), Vec::new())
     }
 }
 
@@ -101,7 +112,7 @@ impl Drop for RunPermit {
             self.settled = true;
             let run = Arc::clone(&self.run);
             // The refusal, if any, is on the Settled receipt.
-            run.settle(self, CallOutcome::Failed, None).ok();
+            run.settle(self, CallOutcome::Failed, None, Vec::new()).ok();
         }
     }
 }

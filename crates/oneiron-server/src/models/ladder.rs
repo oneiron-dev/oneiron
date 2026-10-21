@@ -1395,7 +1395,10 @@ impl OfferLadder {
         match answered {
             Ok(mut response) => {
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
-                permit.settle_media(response.usage.token_units(operation, &media.caps))?;
+                permit.settle_media(
+                    response.usage.token_units(operation, &media.caps),
+                    response.usage.inference_calls(),
+                )?;
                 if self.receipt {
                     let raw = std::mem::take(&mut response.usage.raw_provider);
                     response.usage.raw_provider = self.served(index, walk).stamp(raw);

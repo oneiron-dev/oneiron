@@ -251,7 +251,8 @@ fn render(
 }
 
 /// One render as one call on `seat`: its permit starts before `send`'s
-/// request leaves, and an answer settles on the characters it spoke.
+/// request leaves, and an answer settles on the characters it spoke, with
+/// the render's inference receipt (FIX 8314).
 fn admitted_render(
     seat: &WireSeat,
     target: &RenderTarget,
@@ -274,9 +275,14 @@ fn admitted_render(
             transcript: reference.transcript.clone(),
         }),
     );
-    seat.call(&request, send, |_| MediaUsage {
-        characters: u64::try_from(text.chars().count()).unwrap_or(u64::MAX),
-        ..MediaUsage::default()
+    let receipt = target.warm.render_receipt(&request.model);
+    seat.call(&request, send, |_| {
+        let mut usage = MediaUsage {
+            characters: u64::try_from(text.chars().count()).unwrap_or(u64::MAX),
+            ..MediaUsage::default()
+        };
+        usage.put_inference_calls(&[receipt]);
+        usage
     })
     .map_err(|error| match error {
         WireCallError::Refused(_) => invalid("run admission refused the render"),

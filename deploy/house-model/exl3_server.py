@@ -25,9 +25,10 @@ A `response_format` schema constrains the answer only, never the thought.
 A request body may come gzip- or zstd-encoded (`body_codec.py`); one in a
 codec this server cannot read is answered 415.
 
-Each reply's `usage` carries the prompt-cache evidence of every Job the
-request ran, read from each Job's final event, with the server's identity and
-the Generator's epoch (`cache_usage.py`, FIX 6567). The identity's `model` is
+Each reply's `usage` carries its inference receipt: the prompt-cache evidence
+of every Job the request ran, read from each Job's final event, with the
+server's identity, the Generator's epoch and the request's measured queue
+waits (`cache_usage.py`, FIX 6567, 8314). The identity's `model` is
 the target's weights manifest digest, when the installed shards match it
 before they load (`--weights-manifest`, FIX 7895); the server starts either
 way. The `model` it returns and lists stays `--model-id`.
@@ -701,7 +702,9 @@ class Scheduler:
         spent = req.spent
         usage = {"prompt_tokens": prompt_tokens, "completion_tokens": spent,
                  "total_tokens": prompt_tokens + spent}
-        cache_usage.add_evidence(usage, prompt_tokens, req.passes, self.identity.record(req.execution_mode))
+        cache_usage.add_evidence(usage, prompt_tokens, req.passes, self.identity.record(req.execution_mode),
+                                 worker_wait_s=req.admission_wait,
+                                 engine_wait_s=timings["enqueued"] + req.page_wait)
         stats = {
             "prompt_n": prompt_tokens,
             "prompt_per_second": prompt_tokens / timings["prefill"] if timings["prefill"] > 0 else None,

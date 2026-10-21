@@ -10,8 +10,8 @@ use super::super::media::{
     AiOperation, MediaBackend, MediaCaps, MediaJobState, MediaRequest, MediaResponse, MediaUsage,
 };
 use super::super::{
-    BudgetLease, BudgetSettlement, DispatchBinding, DispatchRefused, FatalLlmError, LlmResult,
-    LlmUsage, ModelId,
+    BudgetLease, BudgetSettlement, DispatchBinding, DispatchRefused, FatalLlmError,
+    InferenceCallReceipt, LlmResult, LlmUsage, ModelId,
 };
 use super::admission::{RunDenied, RunInner};
 use super::gate::Dispatch;
@@ -389,11 +389,18 @@ fn served_model(response: &MediaResponse) -> Option<String> {
 impl RunPermit {
     /// Settles a media call that answered: the token units its usage
     /// counts ([`MediaUsage::token_units`](super::super::media::MediaUsage::token_units)),
-    /// or its reservation when it counted none.
-    pub fn settle_media(self, units: Option<u64>) -> Result<BudgetSettlement, RunDenied> {
+    /// or its reservation when it counted none. `inference_calls` is what its
+    /// backend reported ([`MediaUsage::inference_calls`](super::super::media::MediaUsage::inference_calls)),
+    /// kept on its receipt beside its quantity and never part of its charge
+    /// (FIX 8314).
+    pub fn settle_media(
+        self,
+        units: Option<u64>,
+        inference_calls: Vec<InferenceCallReceipt>,
+    ) -> Result<BudgetSettlement, RunDenied> {
         match units {
-            Some(units) => self.settle(CallOutcome::Used(units)),
-            None => self.settle(CallOutcome::Answered(&LlmUsage::zero())),
+            Some(units) => self.settle_with(CallOutcome::Used(units), inference_calls),
+            None => self.settle_with(CallOutcome::Answered(&LlmUsage::zero()), inference_calls),
         }
     }
 

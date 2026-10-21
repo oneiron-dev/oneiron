@@ -33,6 +33,7 @@ mod attachment;
 mod budget_ids;
 mod config;
 mod factory;
+mod inference;
 mod pass;
 mod program_factory;
 #[path = "loop.rs"]
@@ -46,6 +47,7 @@ pub use self::config::{NowSeconds, RestartBackoffConfig, WakeSupervisorConfig};
 pub use self::factory::{
     ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan, WaveReadyDispatcher,
 };
+pub use self::inference::{WorkerProbe, WorkerProbeFuture, WorkerSpec};
 pub use self::program_factory::ProgramExecutorFactory;
 pub use self::run::{WakeSupervisor, WakeSupervisorReport};
 pub use self::shutdown::ShutdownHandle;

@@ -1,5 +1,5 @@
-"""The prompt-cache evidence the house EXL3 server returns in each reply's
-`usage` (FIX 6567, INF 2 step 1).
+"""The inference receipt the house EXL3 server returns in each reply's
+`usage` (FIX 6567, INF 2 step 1; FIX 8314, INFERENCE R1).
 
 Every Job the scheduler runs for a request is one pass over an input: a
 thinking request's reasoning pass over its prompt, then its answer pass over
@@ -8,8 +8,8 @@ over its prompt. exllamav3's final event of each Job reports that input
 (`prompt_tokens`), the part of it read from the cache (`cached_tokens`, whole
 pages included: never add `cached_pages` * 256 to it), the whole pages read,
 and the Job's prefill and generate times. This module turns those finals into
-one record in the form the engine reads (`oneiron::llm::CacheCallUsage`),
-under `usage.cache_calls`, beside the standard counts:
+one receipt in the form the engine reads (`oneiron::llm::InferenceCallReceipt`),
+under `usage.inference_calls`, beside the standard counts:
 
 - `usage.prompt_tokens` stays the request's own prompt length;
 - `usage.prompt_tokens_details.cached_tokens` is the FIRST Job's cache read,
@@ -29,6 +29,15 @@ digest of the target's weights manifest, given only when the installed shards
 matched it before they loaded (`weights_manifest.py`, FIX 7895); without one
 the record names no model. It never reads the model a request body names.
 Nothing here holds prompt text.
+
+The receipt names its worker: kind `exl3`, that identity, and its build as
+`reported_version`, since the runtime digest hashes the versions the packages
+report, not the binaries. Its queue waits are the two the scheduler already
+measures, in whole microseconds: `worker_us` from submission to admission,
+`engine_us` each Job's enqueue-to-start with the answer pass's wait for
+pages. Its first-token time, end, output count and drafts are left out, the
+drafts because the scheduler reads a missing draft count as zero. The engine
+model the call was admitted for is the engine's to stamp.
 """
 import hashlib
 import json
@@ -39,8 +48,8 @@ import uuid
 from importlib import metadata
 from pathlib import Path
 
-# The usage key the engine reads the records under (`CACHE_CALLS_KEY`).
-CACHE_CALLS_KEY = "cache_calls"
+# The usage key the engine reads the receipts under (`INFERENCE_CALLS_KEY`).
+INFERENCE_CALLS_KEY = "inference_calls"
 # The target directory's files the tokenizer is built from, with the model
 # config that names its special tokens; the digest covers each one present,
 # by name. Without `tokenizer.json` there is no tokenizer digest.
@@ -180,16 +189,23 @@ def job_pass(phase, thinking, final):
     return {key: value for key, value in entry.items() if value is not None}
 
 
-def add_evidence(usage, prompt_tokens, passes, identity):
-    """Writes the request's record into `usage`, and the standard cached count
-    when its first pass ran over its own prompt with counts that agree."""
+def add_evidence(usage, prompt_tokens, passes, identity, worker_wait_s=None, engine_wait_s=None):
+    """Writes the request's receipt into `usage`, and the standard cached count
+    when its first pass ran over its own prompt with counts that agree.
+    `worker_wait_s` and `engine_wait_s` are the scheduler's own waits, in
+    seconds; one it did not measure is None and left out."""
     first = passes[0] if passes else None
     if (first is not None and first["phase"] in ("prompt", "reasoning")
             and first.get("input_tokens") == prompt_tokens and first["outcome"] != "unknown"):
         usage["prompt_tokens_details"] = {"cached_tokens": first["cache_read_tokens"]}
-    usage[CACHE_CALLS_KEY] = [{
-        "backend": "exl3",
-        "identity": identity,
+    receipt = {
+        "worker": {"kind": "exl3", "identity": identity, "build_evidence": "reported_version"},
         "logical_prompt_tokens": prompt_tokens,
         "passes": passes,
-    }]
+    }
+    queue_wait = {key: value for key, value in (("worker_us", micros(worker_wait_s)),
+                                                 ("engine_us", micros(engine_wait_s)))
+                  if value is not None}
+    if queue_wait:
+        receipt["queue_wait"] = queue_wait
+    usage[INFERENCE_CALLS_KEY] = [receipt]
