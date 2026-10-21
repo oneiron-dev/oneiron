@@ -480,6 +480,7 @@ pub fn refresh_due_questions_with<A: GraphAnswerer>(
     refresh_due_as(
         vault,
         now,
+        &mut || true,
         |principal| principal_actor(vault, principal),
         answerer_for,
     )
@@ -497,11 +498,25 @@ pub fn refresh_due_questions_with<A: GraphAnswerer>(
 pub fn refresh_due_questions_by_role<A: GraphAnswerer>(
     vault: &Vault,
     now: u64,
+    answerer_for: impl FnMut(&QuestionRecord, WriteActor, AskTo) -> Result<A>,
+) -> Result<RefreshBatch> {
+    refresh_due_questions_by_role_while(vault, now, &mut || true, answerer_for)
+}
+
+/// [`refresh_due_questions_by_role`] under a host's pause (FIX 7376): no
+/// next due question starts once `may_start` says no. The one in flight
+/// finishes, and the batch so far returns as an ordinary pass. A question
+/// left unstarted is neither failed nor held: it stays due for the next pass.
+pub fn refresh_due_questions_by_role_while<A: GraphAnswerer>(
+    vault: &Vault,
+    now: u64,
+    may_start: &mut impl FnMut() -> bool,
     mut answerer_for: impl FnMut(&QuestionRecord, WriteActor, AskTo) -> Result<A>,
 ) -> Result<RefreshBatch> {
     refresh_due_as(
         vault,
         now,
+        may_start,
         |principal| role_runner(vault, &standing_ask_route(principal)),
         |record, actor| answerer_for(record, actor, standing_ask_route(record.principal)),
     )
@@ -542,15 +557,20 @@ fn role_runner(vault: &Vault, to: &AskTo) -> Result<WriteActor> {
 }
 
 /// Every due question, run by the writer `runner` names for its principal,
-/// through the answerer `answerer_for` makes once per question.
+/// through the answerer `answerer_for` makes once per question, until
+/// `may_start` says no before one starts (FIX 7376).
 fn refresh_due_as<A: GraphAnswerer>(
     vault: &Vault,
     now: u64,
+    may_start: &mut impl FnMut() -> bool,
     mut runner: impl FnMut(EntityId) -> Result<WriteActor>,
     mut answerer_for: impl FnMut(&QuestionRecord, WriteActor) -> Result<A>,
 ) -> Result<RefreshBatch> {
     let mut batch = RefreshBatch::default();
     for (principal, question, trigger) in due_work(vault, now)? {
+        if !may_start() {
+            break;
+        }
         let answered = runner(principal).and_then(|actor| {
             let mut answerer: Option<A> = None;
             refresh_with(

@@ -19,7 +19,7 @@ use oneiron::dreamer_consolidation::{
     CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE,
     DREAMER_ROLES, ResidentDreamModel, RoleBackend, RoleBackends, TASK_REALIZE_UNLENT_PARK_REASON,
     TaskRealizeModel, WEAVE_LENS_UNLENT_PARK_REASON, WeaveLensModel, resident_of_dream_input,
-    run_resident_dream, run_task_realize, run_weave_lens, settle_parked_conflicts,
+    run_resident_dream, run_task_realize, run_weave_lens, settle_parked_conflicts_while,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
@@ -617,6 +617,7 @@ impl ObservedFactory {
         if let Some(instruction) = &self.summary_instruction {
             factory = factory.with_scope_summary_instruction(instruction.clone());
         }
+        factory = factory.with_model_windows(self.windows.clone());
         if let Some(instruction) = &self.person_about_instruction {
             factory = factory.with_person_about_instruction(instruction.clone());
         }
@@ -843,7 +844,8 @@ impl PassExecutorFactory for ObservedFactory {
     /// block on the server's runtime, so they run on a thread of their own,
     /// off this pass's runtime; the pass waits for them. The host's pause
     /// starts neither once it holds (FIX 6909); one already started
-    /// finishes under the gate.
+    /// finishes under the gate, its unit in flight only, as the pass's
+    /// epoch stops each next one (FIX 7376).
     fn run_home_timer(
         &mut self,
         _vault: &Vault,
@@ -866,11 +868,13 @@ impl PassExecutorFactory for ObservedFactory {
         let joined = std::thread::scope(|scope| {
             scope
                 .spawn(|| {
-                    let pumped = crate::decision_graph::pump_due(&server, now_secs);
+                    let mut may_start = || !paused(epoch.as_ref());
+                    let pumped =
+                        crate::decision_graph::pump_due_while(&server, now_secs, &mut may_start);
                     let settled = if paused(epoch.as_ref()) {
                         after
                     } else {
-                        settle_parked(&server, dreamer, after, now_secs)
+                        settle_parked(&server, dreamer, after, now_secs, &mut may_start)
                     };
                     (pumped, settled)
                 })
@@ -887,17 +891,19 @@ impl PassExecutorFactory for ObservedFactory {
 }
 
 /// Asks the ladder to settle the parked conflicts (OF-023), on the home node
-/// only: `pump_due`'s home gate is its own. The Dreamer's review stands from
+/// only: `pump_due_while`'s home gate is its own. The Dreamer's review stands from
 /// birth; each settlement applies at once and the owner reverts it, and a
 /// conflict the owner holds or reverted is left out. A conflict the ladder
 /// leaves stays for the owner, and the next pass starts after the last one
 /// asked: the cursor this returns. A failure logs by kind only, since its
-/// text can quote the vault.
+/// text can quote the vault. No next conflict is asked once `may_start`
+/// says no (FIX 7376).
 fn settle_parked(
     server: &crate::server::SyncServer,
     dreamer: WriteActor,
     after: Option<oneiron::EntityId>,
     now_secs: u64,
+    may_start: &mut impl FnMut() -> bool,
 ) -> Option<oneiron::EntityId> {
     let vault = server.vault();
     match crate::decision_graph::at_home(server, now_secs) {
@@ -921,12 +927,13 @@ fn settle_parked(
         wording: CONFLICT_SETTLE_WORDING.to_owned(),
         deadline: &deadline,
     };
-    match settle_parked_conflicts(
+    match settle_parked_conflicts_while(
         &vault.memory(dreamer.entity_ref(), dreamer.actor_class()),
         &decisions,
         after,
         CONFLICT_SETTLE_LIMIT,
         now_secs.saturating_mul(1000),
+        may_start,
     ) {
         Ok(pass) => pass.last.or(after),
         Err(error) => {

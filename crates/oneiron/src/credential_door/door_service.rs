@@ -3,14 +3,14 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use super::binary_scan::ReceiveScanHit;
 use super::door_credential::DoorCredential;
 use super::door_policy::{DoorEffector, DoorPolicy};
 use super::door_types::{
     CredentialDoorError, DOOR_MAX_OID_BYTES, DOOR_MAX_PATH_BYTES, DOOR_RECEIVE_PACK_EFFECTOR,
-    DOOR_VERB_RECEIVE_PACK, DoorDenyReason, DoorResult, DoorScanVerdict, PushedBlob,
-    SecretLiftProposal, UNUSABLE_PATH, custody, repo_record,
+    DOOR_VERB_RECEIVE_PACK, DoorDenyReason, DoorResult, DoorScanVerdict, PushedBlob, UNUSABLE_PATH,
+    custody, repo_record,
 };
-use crate::batch::secret_scan::scan_file_content;
 use crate::codebase::RepoRef;
 use crate::secret_lease::VaultInstant;
 use crate::vault::Vault;
@@ -138,28 +138,25 @@ impl CredentialDoorService {
         )
     }
 
-    /// The pre-receive verdict over a push's added lines.
+    /// The pre-receive verdict over a push's blobs.
     ///
     /// Unconditional ([`DOOR_SCAN_ALWAYS_ON`]): there is no credential, dial,
     /// or caveat argument that could turn it off, because none is accepted.
-    /// Unscannable input never passes — binary content and scanner failure
-    /// both leave through the error surface, not through a verdict.
+    /// Every byte is scanned, binary included (G7-BINARY = A); a scan that
+    /// cannot run leaves through the error surface, and every hit goes to the
+    /// one disposition (`binary_scan::resolve_receive_scan_hits`).
     pub(crate) fn pre_receive_scan(
         &self,
         repo: &RepoRef,
         blobs: &[PushedBlob],
     ) -> DoorResult<DoorScanVerdict> {
-        let mut proposals = Vec::new();
+        let mut hits = Vec::new();
         for blob in blobs {
-            if let Some(reason) = scan_one_blob(blob)? {
-                proposals.push(SecretLiftProposal::new(repo, &blob.path, reason));
+            if let Some(hit) = scan_one_blob(blob)? {
+                hits.push(hit);
             }
         }
-        if proposals.is_empty() {
-            Ok(DoorScanVerdict::Clean)
-        } else {
-            Ok(DoorScanVerdict::Rejected { proposals })
-        }
+        super::binary_scan::resolve_receive_scan_hits(repo, blobs, hits)
     }
 }
 
@@ -183,14 +180,12 @@ impl CredentialDoorService {
     }
 }
 
-/// Scans one blob's added lines, returning the detector reason on a hit.
+/// Scans one blob's whole content, returning the detector's hit.
 ///
-/// Order is load-bearing: seam validation, then the binary check over EVERY
-/// added line, and only then the detector. The landed scanner is
-/// intentionally lossy (it classifies over `from_utf8_lossy`), so asking it
-/// about binary bytes would be asking a question it cannot answer — the door
-/// answers it first, and the answer is always rejection.
-fn scan_one_blob(blob: &PushedBlob) -> DoorResult<Option<&'static str>> {
+/// Order is load-bearing: seam validation first, then the scan over every
+/// byte. All bytes are scanned, binary included; a scan that fails refuses;
+/// a hit goes to the one disposition, never to a quiet pass.
+fn scan_one_blob(blob: &PushedBlob) -> DoorResult<Option<ReceiveScanHit>> {
     validate_seam_fields(blob)?;
     #[cfg(test)]
     {
@@ -201,27 +196,7 @@ fn scan_one_blob(blob: &PushedBlob) -> DoorResult<Option<&'static str>> {
             });
         }
     }
-    for line in blob.lines() {
-        reject_unscannable(&blob.path, line)?;
-    }
-    for line in blob.lines() {
-        if let Some(reason) = scan_file_content(&blob.path, line) {
-            return Ok(Some(reason));
-        }
-    }
-    Ok(None)
-}
-
-/// Binary is rejected, never skipped: a NUL byte or invalid UTF-8 anywhere in
-/// the added bytes ends the push. Entropy, magic bytes, and size do not enter
-/// — there is no allowlist to be wrong about.
-fn reject_unscannable(path: &str, line: &[u8]) -> DoorResult<()> {
-    if line.contains(&0) || std::str::from_utf8(line).is_err() {
-        return Err(CredentialDoorError::BinaryContentRejected {
-            path: path.to_owned(),
-        });
-    }
-    Ok(())
+    super::binary_scan::scan_receive_blob(blob)
 }
 
 /// Seam input the door cannot use is a scanner failure, which is a rejection.

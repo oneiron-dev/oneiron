@@ -9,7 +9,7 @@ use super::residency::{residency_deferral, waits_on_residency};
 use super::resources::document_version;
 use super::step_charge::StepChargeTally;
 use super::support::{DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE, invalid_consolidation};
-use super::turn_text::{collect_in, dreamer_read};
+use super::turn_text::{TurnText, collect_in, dreamer_read};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, DreamerAttemptExecutor,
@@ -24,12 +24,15 @@ use crate::llm::{
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
-use crate::scope_summary::{ComposedSummary, SummarySourceMessage, SummarySourceVersion};
+use crate::scope_summary::{
+    ComposedSummary, ScopeSummaryPlan, SummarySourceMessage, SummarySourceVersion,
+};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod chunks;
 mod output;
 
 /// Wraps an executor with the declared-summary arm. Every other attempt is
@@ -43,6 +46,9 @@ pub struct ScopeSummaryExecutor<'a, E> {
     inference: HostInferenceContext<'a>,
     /// The host's summary instruction; without one a declaration cannot run.
     instruction: Option<&'a str>,
+    /// The tokens one call's input may fill on `model`, as the host counts
+    /// them (FIX 7509 P7b); `None` reads the vault's own row for the model.
+    window_tokens: Option<u64>,
 }
 
 impl<'a, E> ScopeSummaryExecutor<'a, E> {
@@ -64,7 +70,16 @@ impl<'a, E> ScopeSummaryExecutor<'a, E> {
             model,
             inference,
             instruction,
+            window_tokens: None,
         }
+    }
+
+    /// The tokens one call's input may fill on the model, lent by the host
+    /// (FIX 7509 P7b): a sitting too big for one call pages its TURNs to it.
+    #[must_use]
+    pub fn with_window_tokens(mut self, window_tokens: Option<u64>) -> Self {
+        self.window_tokens = window_tokens;
+        self
     }
 }
 
@@ -158,6 +173,18 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 "properties": {"text": {"type": "string"}, "keep": {"type": "string"}}
             })
         };
+        // A sitting too big for one call on its model's known window pages
+        // its TURNs (FIX 7509 P7b, Rule 5); one that fits, or whose window
+        // is unknown, is the one call below, byte for byte.
+        if labels.is_some()
+            && let Some(window) = self.session_window(ctx.vault)
+            && chunks::framed_tokens(instruction, &summary_input(&plan, &evidence.text)?, &schema)?
+                > window
+        {
+            return self
+                .compose_pages(attempt, ctx, &plan, &evidence, instruction, window)
+                .await;
+        }
         let params = serde_json::to_vec(&(instruction, self.model.as_str(), &schema))
             .map_err(|_| invalid_consolidation("summary policy did not encode"))?;
         let params_hash = *blake3::hash(&params).as_bytes();
@@ -179,61 +206,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             }
             Err(error) => return Err(error),
         }
-        let locality = self
-            .inference
-            .selected_locality()
-            .ok_or_else(|| Error::InvalidConfig("summary host binding needs locality".into()))?;
-        let request = LlmRequest {
-            model: self.model.clone(),
-            envelope: CallEnvelope {
-                seat_effort: None,
-                // The call reads exactly the versions the Dreamer was admitted
-                // to read.
-                scope: crate::llm::Scope {
-                    readable: evidence.readable.clone(),
-                    ..crate::llm::Scope::default()
-                },
-                // The scope's transcript leaves the vault exactly as an
-                // extraction's does, so it passes the same egress gate.
-                purpose: CallPurpose::Extraction,
-                class: CallClass::BestEffort,
-                tier: TierPrecedence::for_purpose(
-                    &CallPurpose::Extraction,
-                    ModelTierRef("consolidation".into()),
-                ),
-                response_format: ResponseFormat::Json { schema },
-                locality,
-            }
-            .with_purpose_defaults(),
-            messages: vec![
-                LlmMessage {
-                    role: LlmMessageRole::System,
-                    content: vec![ContentPart::Text {
-                        text: instruction.to_owned(),
-                    }],
-                },
-                LlmMessage {
-                    role: LlmMessageRole::User,
-                    content: vec![ContentPart::Text {
-                        text: serde_json::to_string(&serde_json::json!({
-                            "purpose": plan.purpose,
-                            "keep": plan.keep,
-                            "editor_text": plan.editor_text,
-                            "records": evidence.text,
-                        }))
-                        .map_err(|_| invalid_consolidation("summary input encoding"))?,
-                    }],
-                },
-            ],
-            tools: Vec::new(),
-            params: BTreeMap::new(),
-            provider_options: BTreeMap::new(),
-        };
-        let mut request = ctx
-            .vault
-            .authorize_model_role(super::DREAMER_NARRATIVE_ROLE, request, &self.inference)?
-            .into_request();
-        super::roles::bind_reasoning(ctx.vault, self.backend, &mut request)?;
+        let request = self.summary_request(
+            ctx.vault,
+            &evidence,
+            schema,
+            instruction,
+            summary_input(&plan, &evidence.text)?,
+        )?;
         let step_hash = request
             .canonical_hash()
             .map_err(|_| invalid_consolidation("summary request did not hash"))?;
@@ -359,6 +338,79 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),
         }
     }
+
+    /// The summary call reading `user` under the host's `instruction`, in
+    /// the envelope every summary call goes out in: exactly the versions
+    /// `evidence` pins readable, authorized for the narrative role, its
+    /// reasoning bound.
+    fn summary_request(
+        &self,
+        vault: &Vault,
+        evidence: &ScopeSummaryEvidence,
+        schema: serde_json::Value,
+        instruction: &str,
+        user: String,
+    ) -> Result<LlmRequest> {
+        let locality = self
+            .inference
+            .selected_locality()
+            .ok_or_else(|| Error::InvalidConfig("summary host binding needs locality".into()))?;
+        let request = LlmRequest {
+            model: self.model.clone(),
+            envelope: CallEnvelope {
+                seat_effort: None,
+                // The call reads exactly the versions the Dreamer was admitted
+                // to read.
+                scope: crate::llm::Scope {
+                    readable: evidence.readable.clone(),
+                    ..crate::llm::Scope::default()
+                },
+                // The scope's transcript leaves the vault exactly as an
+                // extraction's does, so it passes the same egress gate.
+                purpose: CallPurpose::Extraction,
+                class: CallClass::BestEffort,
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::Extraction,
+                    ModelTierRef("consolidation".into()),
+                ),
+                response_format: ResponseFormat::Json { schema },
+                locality,
+            }
+            .with_purpose_defaults(),
+            messages: vec![
+                LlmMessage {
+                    role: LlmMessageRole::System,
+                    content: vec![ContentPart::Text {
+                        text: instruction.to_owned(),
+                    }],
+                },
+                LlmMessage {
+                    role: LlmMessageRole::User,
+                    content: vec![ContentPart::Text { text: user }],
+                },
+            ],
+            tools: Vec::new(),
+            params: BTreeMap::new(),
+            provider_options: BTreeMap::new(),
+        };
+        let mut request = vault
+            .authorize_model_role(super::DREAMER_NARRATIVE_ROLE, request, &self.inference)?
+            .into_request();
+        super::roles::bind_reasoning(vault, self.backend, &mut request)?;
+        Ok(request)
+    }
+}
+
+/// The input one summary call reads: the declaration's purpose, the editor's
+/// `keep`, the body it revises and the `records`, as one JSON object.
+fn summary_input(plan: &ScopeSummaryPlan, records: &str) -> Result<String> {
+    serde_json::to_string(&serde_json::json!({
+        "purpose": plan.purpose,
+        "keep": plan.keep,
+        "editor_text": plan.editor_text,
+        "records": records,
+    }))
+    .map_err(|_| invalid_consolidation("summary input encoding"))
 }
 
 /// How long a declaration whose scope moved waits before it composes again.
@@ -409,6 +461,10 @@ pub(crate) struct ScopeSummaryEvidence {
     pub(crate) messages: Vec<SummarySourceMessage>,
     pub(crate) source_versions: Vec<SummarySourceVersion>,
     readable: BTreeSet<ScopeResource>,
+    /// A sitting's TURNs as read, one beside each of `covers` (FIX 7509
+    /// P7b): the text a sitting too big for one call pages. Empty for every
+    /// other target.
+    turns: Vec<(EntityId, TurnText)>,
 }
 
 impl ScopeSummaryEvidence {
@@ -495,6 +551,9 @@ pub(crate) fn scope_summary_evidence_in_txn(
         };
         evidence.text.push_str(&format!("[{label}] {text}\n"));
         evidence.covers.push(*record);
+        if labelled {
+            evidence.turns.push((*record, turn.clone()));
+        }
         evidence.readable.insert(document_version(*record, &body));
         for (message, revision, version) in turn.message_pins() {
             evidence.messages.push(SummarySourceMessage {
