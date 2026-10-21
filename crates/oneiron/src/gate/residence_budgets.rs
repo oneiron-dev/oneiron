@@ -46,9 +46,10 @@ impl ResidenceBudgetPatch {
     /// Meets `other` field by field: a field both name takes the smaller
     /// value, a field one names takes that one.
     fn meet(&mut self, other: &Self) {
+        let this = self;
         macro_rules! meet {
             ($field:ident) => {
-                self.$field = match (self.$field, other.$field) {
+                this.$field = match (this.$field, other.$field) {
                     (Some(mine), Some(theirs)) => Some(mine.min(theirs)),
                     (mine, theirs) => mine.or(theirs),
                 };
@@ -59,9 +60,10 @@ impl ResidenceBudgetPatch {
 
     /// Replaces each field of `limits` this patch names.
     fn replace(&self, limits: &mut ResidenceOperationBudgetLimits) {
+        let this = self;
         macro_rules! replace {
             ($field:ident) => {
-                if let Some(value) = self.$field {
+                if let Some(value) = this.$field {
                     limits.$field = value;
                 }
             };
@@ -71,9 +73,10 @@ impl ResidenceBudgetPatch {
 
     /// Narrows each field of `limits` this patch names to its value.
     fn narrow(&self, limits: &mut ResidenceOperationBudgetLimits) {
+        let this = self;
         macro_rules! narrow {
             ($field:ident) => {
-                if let Some(value) = self.$field {
+                if let Some(value) = this.$field {
                     limits.$field = limits.$field.min(value);
                 }
             };
