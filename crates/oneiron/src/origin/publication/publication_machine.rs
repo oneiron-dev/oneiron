@@ -303,6 +303,7 @@ impl Vault {
             )?;
             Ok(())
         })?;
+        self.note_origin_ref_moved(owner.ref_name.as_str());
         Ok(owner)
     }
 
@@ -648,6 +649,7 @@ impl Vault {
             KEEP_OWNER.delete(&self.store, wtxn, &owner_key)?;
             Ok(terminal)
         })
+        .inspect(|finished| self.note_origin_publication_finished(finished))
     }
 
     /// Records a bounded refusal. The public ref is left exactly as it was.

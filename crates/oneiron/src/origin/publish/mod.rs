@@ -18,12 +18,28 @@
 //! strategy change leaves every pending or approved request as it stands.
 //! The store is LIVE with an actor scrub (`store`); a request whose commit a
 //! restore took is refused at dispatch.
+//!
+//! A `schedule` or `full_auto` mirror's whole-ref pushes (FIX 6866, part 2)
+//! reuse the same review, credential and outbound profile without an
+//! approval step: each run freezes a reviewed `MirrorPushPlan` before
+//! egress (`mirror_plan`, `mirror_review`), sends it in claimed, leased
+//! batches (`mirror_plan_dispatch`) and reconciles before any resend
+//! (`mirror_plan_reconcile`), in the LIVE store `ORIGIN_MIRROR_WORK`
+//! (`mirror_plan_store`).
 
 mod approval;
 mod authority;
 mod dispatch;
 mod inputs;
 mod lifecycle;
+mod mirror_plan;
+mod mirror_plan_dispatch;
+mod mirror_plan_reconcile;
+mod mirror_plan_remote;
+mod mirror_plan_run;
+mod mirror_plan_store;
+mod mirror_plan_types;
+mod mirror_review;
 mod reconcile;
 mod review;
 mod store;
@@ -36,6 +52,13 @@ pub use authority::{
     OriginPublishDenial, PublishAnswer,
 };
 pub use inputs::*;
+pub(crate) use mirror_plan::{MirrorRunScope, MirrorSelection};
+pub(crate) use mirror_plan_reconcile::MirrorReconcile;
+pub use mirror_plan_reconcile::{
+    AUTOMATIC_RECONCILE_UNREAD_BEFORE_RESEND, AUTOMATIC_UNREADABLE_RECONCILE_RESENDS_SAME_PLAN,
+};
+pub(crate) use mirror_plan_run::MirrorPlanSummary;
+pub(crate) use mirror_plan_store::erase_mirror_work_actor_in_txn;
 pub use reconcile::ORIGIN_PUBLISH_DISPATCH_SETTLE_SECS;
 pub use review::ORIGIN_PUBLISH_REVIEW_PAGE_ITEMS;
 pub(crate) use store::erase_publish_request_actor_in_txn;

@@ -194,8 +194,8 @@ pub struct OriginMirrorSetRequest {
     pub user: Option<String>,
     /// At least 60 seconds; the configured cadence is the mirror's RPO.
     pub every_secs: u64,
-    /// `ask_me` or `schedule`. Absent: the same URL keeps its strategy, and
-    /// a new mirror or URL asks first (`ask_me`).
+    /// `ask_me`, `schedule` or `full_auto`. Absent: the same URL keeps its
+    /// strategy, and a new mirror or URL asks first (`ask_me`).
     #[serde(default)]
     pub sync_strategy: Option<crate::origin::mirror_strategy::OriginMirrorSyncStrategy>,
 }

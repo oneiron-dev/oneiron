@@ -376,6 +376,20 @@ impl GitWire<'_> {
         Ok(self.run_read(repo, &argv)?.stdout)
     }
 
+    /// The head of one annotated tag too large to read whole: the bytes one
+    /// read captures, its `object`, `type` and `tag` header lines first.
+    /// Past the output bound the reader keeps the head and drains the rest,
+    /// so the child still exits on its own.
+    pub(super) fn read_tag_head(&self, repo: &GitWireRepo, tag: &GitOid) -> Result<Vec<u8>> {
+        let argv = FrozenGitArgv::read_object("tag", tag);
+        self.validate_repo_binding(repo)?;
+        let output = self.run_raw_at(&repo.repo_root, &argv)?;
+        if output.success || (output.truncated && output.exit_code == Some(0)) {
+            return Ok(output.stdout);
+        }
+        Err(classify_failure(&output).error(argv.operation()))
+    }
+
     /// Resolves a revision to the commit it names.
     pub fn resolve_commit(&self, repo: &GitWireRepo, revision: &str) -> GitWireResult<GitOid> {
         let argv = FrozenGitArgv::rev_parse_commit(revision)?;

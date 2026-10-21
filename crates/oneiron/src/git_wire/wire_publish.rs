@@ -298,6 +298,7 @@ impl GitWire<'_> {
         self.release_keep_refs(repo, &record)?;
         let applied = finish_state(record, GitWireRecordState::Applied, observed, now);
         let stored = self.transition(repo, applied)?;
+        self.vault.note_git_refs_moved(publications);
         Ok(GitWireCommitOutcome::Applied(receipt_from_stored(&stored)?))
     }
 
@@ -338,6 +339,7 @@ impl GitWire<'_> {
         }
         let applied = finish_state(record, GitWireRecordState::Applied, observed, now);
         let stored = self.transition(repo, applied)?;
+        self.vault.note_git_refs_moved(publications);
         Ok(GitWireCommitOutcome::Applied(receipt_from_stored(&stored)?))
     }
 

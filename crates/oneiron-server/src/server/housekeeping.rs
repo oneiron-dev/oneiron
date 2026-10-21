@@ -276,25 +276,6 @@ impl SyncServer {
         true
     }
 
-    /// Starts a pass over the served repositories' mirror targets on a task
-    /// of its own, held for the host's stop, unless the last pass is still
-    /// going or the host is stopping. The engine pushes only the targets that
-    /// are due and whose repository this host is the origin of.
-    pub(super) async fn start_mirror_pushes(self: &Arc<Self>, admit: &HousekeepingAdmission) {
-        if self.housekeeping_passes.stopping()
-            || !self.begin_lifecycle_job(LifecycleJobKind::MirrorPush).await
-        {
-            return;
-        }
-        let server = Arc::clone(self);
-        let admit = Arc::clone(admit);
-        let run = tokio::spawn(async move {
-            server.push_due_mirrors(admit).await;
-            server.end_lifecycle_job(LifecycleJobKind::MirrorPush).await;
-        });
-        self.housekeeping_passes.hold(run);
-    }
-
     /// Starts this vault's authority checkpoint upkeep on a task of its own
     /// (OF-469), held for the host's stop, unless the last run is still
     /// going, the host is stopping, or the host's gate refused it. The
@@ -386,44 +367,6 @@ impl SyncServer {
         self.vault().upkeep_authority_checkpoint(&issuer)
     }
 
-    /// Pushes every due mirror. Each push waits for a git exchange permit,
-    /// then takes the host's write gate, both held until it ends.
-    async fn push_due_mirrors(self: &Arc<Self>, admit: HousekeepingAdmission) {
-        let server = Arc::clone(self);
-        let run = tokio::task::spawn_blocking(move || {
-            server.vault().push_due_origin_mirrors(
-                || {
-                    let permit = server.wait_for_git_permit()?;
-                    let admission = admit()?;
-                    Some(Box::new((permit, admission)) as Box<dyn Send>)
-                },
-                || server.housekeeping_passes.stopping(),
-            )
-        })
-        .await;
-        match run {
-            Ok(Ok(run)) if run.pushed + run.failed > 0 => {
-                tracing::info!(
-                    targets = run.targets,
-                    pushed = run.pushed,
-                    skipped = run.skipped,
-                    failed = run.failed,
-                    "origin mirror pushes ran"
-                );
-            }
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => {
-                tracing::warn!(kind = ?error.kind(), "origin mirror pushes failed");
-            }
-            Err(error) => {
-                tracing::warn!(
-                    panicked = error.is_panic(),
-                    "origin mirror push task failed"
-                );
-            }
-        }
-    }
-
     /// Runs every engine sweep now, as the owner asked, on a pass the host
     /// holds: a caller that stops waiting does not end it, and stopping the
     /// host waits for it. `None` when the pass ended without a report.
@@ -511,7 +454,7 @@ impl SyncServer {
     /// Waits on this blocking thread for a git exchange permit, behind every
     /// exchange in line, each wait up to the queue deadline, until it is
     /// given one or the host stops.
-    fn wait_for_git_permit(&self) -> Option<Permit> {
+    pub(super) fn wait_for_git_permit(&self) -> Option<Permit> {
         loop {
             if self.housekeeping_passes.stopping() {
                 return None;
