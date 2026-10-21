@@ -158,9 +158,12 @@ pub(super) async fn campaign(
             plan_digest: plan_digest.clone(),
             config_digest: config_digest.clone(),
             engine,
-            role: "generative_reasoner".into(),
+            role: frozen["config"]["arms"][&cell.arm]["role"]
+                .as_str()
+                .unwrap_or("unattested")
+                .into(),
             models: frozen["config"]["arms"][&cell.arm]["routes"].clone(),
-            diagnostic_approximation: cell.arm != "B",
+            diagnostic_approximation: false,
             status: "assigned".into(),
             harness_stop: None,
             engine_stop: Value::Null,
@@ -305,7 +308,7 @@ async fn trial(
         let task = cell.public_task.replace(
             "{entry_url}",
             &format!(
-                "http://172.30.91.1:8765{}",
+                "http://127.0.0.1:8080{}",
                 reset["entry"].as_str().ok_or("reset_entry_missing")?
             ),
         );

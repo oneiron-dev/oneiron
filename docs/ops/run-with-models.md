@@ -2992,3 +2992,59 @@ Each call names what ran it in an `execution` receipt: `runtime` (`candle` or
 on every tagging trace the `vault.tagging.*` reads return, on the tag door's
 `tagged` result, and on a shadow trace. The receipt never enters the answer:
 parity and digests compare the spans, links and mood alone.
+
+## 15. Question-head training (`[models.training]`)
+
+An owner-authorized training run is dispatched through a trainer connector
+this host names. There is none by default: with no
+`[models.training.connectors]`, every authorized run holds with
+`training.no_connector` and nothing trains. The one trainer is the
+question-head worker, `scripts/training_pack/worker.py`, run as a local
+process on this server's own host. It trains one two-logit head for one
+exact detector question on the frozen Oneironer encoder, on this host's CUDA
+GPU, as `scripts/training_pack/README.md` describes.
+
+```toml
+[models.training.connectors.gpu-box]
+python = "/opt/oneiron/training-venv/bin/python"   # the pinned interpreter
+worker = "/opt/oneiron/checkout/scripts/training_pack/worker.py"
+jobs_root = "/var/lib/oneiron/training-jobs"       # private job directories
+revision = "<commit of that checkout>"             # immutable, never a branch
+unit_cost = 1                                      # per GPU wall second, in cost_unit
+cost_unit = "gpu_wall_second"                      # the run's budget-line unit
+service_unit = "gpu_wall_second"                   # the only unit the worker reports
+```
+
+`python`, `worker` and `jobs_root` are absolute paths. `service_unit` must be
+`gpu_wall_second`, the GPU wall seconds the worker measures, and a run's
+service quantity is the receipt's count of them. The connector's binding is
+keyless, local to this host and paid by no one per call (`payer = local`,
+`locality = own_server`, route `training-pack-worker` at `host`); `revision`
+is its catalog revision. A run pins that binding when it is prepared, so a
+changed entry refuses its dispatch (`training.refused`).
+
+Only a question run on the worker's recipe
+(`settings.recipe = "oneiron.frozen-encoder-binary-head/1"`) is sent to the
+worker. A role run, another recipe or a connector this host does not name
+holds with `training.no_connector`. The run's starting checkpoint must be an
+Oneironer bundle of exactly `oneironer.json`, `config.json`, `tokenizer.json`
+and `trunk.safetensors` from one source, and its corpus must carry the
+detector split and consent receipts; otherwise the run fails
+(`connector_failed`) before any process starts.
+
+Each run gets `jobs_root/<run hex>-<spec hex>/` (mode 0700). It holds the
+starting files read from custody, the run's training rows (no held-out row),
+`request.json`, `worker.stderr` and the worker's `output/`, whose
+`receipt.json` the engine reads. The worker runs
+`<python> -I <worker> --request <job>/request.json --output <job>/output`
+with no shell and no time limit. A directory that already holds a terminal
+receipt is read again; one without is an outstanding or unknown job, and no
+second GPU job starts for it. Job directories are kept whatever the outcome.
+
+A complete result returns both load sets and the probe measurements: the run
+is `Returned`. A finite export-parity failure returns too, with failed checks,
+so it is kept and never eligible. A failed or refused receipt, a non-finite
+one, or one that names another run, request or model fails the run
+(`connector_failed`). `Returned` is where a question run stops for now: no
+evaluator scores it and no loader serves its head, so it holds with
+`training.no_evaluator`, and a question head never binds a role.

@@ -34,7 +34,7 @@ pub struct ScopeSelector {
 pub struct ResolvedScope {
     /// Original selector.
     pub scope: ScopeSelector,
-    /// Complete result, or an error if the safety cap would truncate it.
+    /// Complete result: every record of the scope, never a truncated one.
     pub records: Vec<EntityId>,
 }
 
