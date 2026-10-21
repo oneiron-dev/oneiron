@@ -3622,7 +3622,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/authority_plane/tests.rs` | test | L | — | — | — |
 | `src/recovery/checkpoint/body_bind.rs` | src | s | 1 crate-vis | — | The binding pass a checkpoint runs before its snapshot (KS-2A, FIX 5683 part A): every body its rows will… |
 | `src/recovery/checkpoint/carried_bodies.rs` | src | m | 16 crate-vis | — | The bodies a checkpoint carries beside its rows (OF-597, FIX 3677, FIX 5348; KS-2A, FIX 5683 part A) |
-| `src/recovery/checkpoint/commitment.rs` | src | m | 1 fn · 1 re-export · 18 crate-vis | — | Hash-signed checkpoints (OF-570 (e)) |
+| `src/recovery/checkpoint/commitment.rs` | src | m | 1 fn · 1 re-export · 19 crate-vis | — | Hash-signed checkpoints (OF-570 (e)) |
 | `src/recovery/checkpoint/custody_head.rs` | src | m | 3 struct · 17 fn · 1 const · 1 re-export · 5 crate-vis | CustodyAnchorRoot, CustodyOutbox, CustodyRecovery | Custody heads at the vault's surface (KS-4A1/KS-4A2, FIX 5685): publishing a vault's exterior key custody to… |
 | `src/recovery/checkpoint/custody_head/status.rs` | src | m | 5 struct · 2 fn · 7 const · 4 crate-vis | CustodyPendingStep, CustodyRetirement, CustodyStatus, CustodyTargetState, DeclaredTarget | The status names of a vault's custody (KS-4A1/KS-4A2, FIX 5685), on the owner's status read (`doctor`, `GET… |
 | `src/recovery/checkpoint/decisions.rs` | src | s | 1 crate-vis | — | No decision the engine makes from rows a restore brings back permits more than it does now (ARCH-0038… |
@@ -3666,7 +3666,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/restore_class/vault_meta_m_r.rs` | src | s | 1 crate-vis | — | The restore class of every canonical `vault_meta`, `m` to `r` family, in declaration order |
 | `src/recovery/checkpoint/restore_class/vault_meta_s_z.rs` | src | m | 1 crate-vis | — | The restore class of every canonical `vault_meta`, `s` to `z` family, in declaration order |
 | `src/recovery/checkpoint/side_pads.rs` | src | s | 3 crate-vis | — | The live world key pad rows of a side restore's source (KS-5, FIX 5686 part 2): a live row keeps its own pad… |
-| `src/recovery/checkpoint/snapshot.rs` | src | s | 1 crate-vis | — | Taking one sealed checkpoint image: the snapshot behind [`Vault::snapshot_checkpoint`] and… |
+| `src/recovery/checkpoint/snapshot.rs` | src | m | 1 crate-vis | — | Taking one sealed checkpoint image: the snapshot behind [`Vault::snapshot_checkpoint`] and… |
 | `src/recovery/checkpoint/test_hooks.rs` | src | s | 5 crate-vis | — | Test hooks that fail or panic a restore at a chosen step |
 | `src/recovery/checkpoint/tests.rs` | test | XL | — | — | — |
 | `src/recovery/checkpoint/tiers.rs` | src | s | 1 enum · 1 fn · 1 crate-vis | StorageTier | Snapshot classification |
