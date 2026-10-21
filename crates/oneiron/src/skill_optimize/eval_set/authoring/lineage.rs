@@ -62,7 +62,9 @@ pub(in crate::skill_optimize::eval_set) struct ReceiptLineage {
     pub(in crate::skill_optimize::eval_set) off_record: bool,
     /// The rows the receipt's attempt read, when the receipt keeps a
     /// complete set of them (FIX 5761): the set its producers recorded while
-    /// it ran (FIX 6934). `None`, unknown, when they recorded none or any
+    /// it ran (FIX 6934), complete only once every producer its owner
+    /// declared reported (FIX 7073). `None`, unknown, when none was declared,
+    /// one never reported, an undeclared one reported or any reported an
     /// unknown set; the links above are inputs, not that set.
     pub(in crate::skill_optimize::eval_set) sources: Option<Vec<EntityId>>,
 }

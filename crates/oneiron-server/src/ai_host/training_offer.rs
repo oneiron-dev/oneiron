@@ -17,6 +17,7 @@
 //! closes as unverifiable, neither a pass nor a fail (FIX 6265, 6317, 6406,
 //! 6475, 6477).
 //! The check is fixed code: no model call.
+use oneiron::attempt_queue::{AttemptId, ReadSetProducer};
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::coach::coach_offer_check_target;
 use oneiron::learning::learning_estimate_with_sources;
@@ -82,6 +83,8 @@ const ESTIMATE_NOTE: &str = "The candidate's price is an estimate: it is priced 
     measured; the candidate's tokenizer may count the same work differently.";
 /// The offer skill's file the Coach runs; the seat goes as data.
 const SKILL_FILE: &str = "SKILL.md";
+/// The pass's key in its attempt's read set (FIX 7073).
+const OFFER_DRAFT: ReadSetProducer = ReadSetProducer::COACH_OFFER_DRAFT;
 
 /// Raises at most one offer for each served seat, the busiest first.
 pub(super) fn draft(
@@ -180,7 +183,18 @@ pub(super) fn draft(
         ),
         None => (serde_json::Value::Null, Vec::new()),
     };
+    // The pass is the one producer its attempt's read set waits on: declared
+    // before its first call reads anything, the set reads complete only once
+    // it reported, and stays unknown if it never does (FIX 7073).
     let mut read_set_lost = false;
+    if let Err(error) = vault.declare_attempt_read_producers(attempt.id, &[OFFER_DRAFT]) {
+        read_set_lost = true;
+        tracing::warn!(
+            attempt = ?attempt.id,
+            %error,
+            "the offer draft could not declare its read set; its pack receipt keeps it unknown"
+        );
+    }
     for (role, model, locality, usage) in seats {
         let Some(brief) = Brief::gather(
             vault,
@@ -200,19 +214,7 @@ pub(super) fn draft(
         // The attempt it runs on records that set before the model sees it,
         // and its pack receipt keeps the union of its calls' (FIX 6934).
         let read = union_source_rows([brief.sources.rows(), Some(vec![offer_skill.0])]);
-        // Capture only (FIX 7021): a storage error recording the set never
-        // ends the pass. The attempt's set goes unknown, as an unsourced
-        // inlet's, and later calls record nothing more.
-        if !read_set_lost && let Err(error) = vault.record_attempt_sources(attempt.id, read.clone())
-        {
-            read_set_lost = true;
-            tracing::warn!(
-                attempt = ?attempt.id,
-                %error,
-                "the offer draft could not record its read set; its pack receipt keeps it unknown"
-            );
-            let _ = vault.record_attempt_sources(attempt.id, None);
-        }
+        record_read(vault, attempt.id, read.clone(), &mut read_set_lost);
         let Some(text) = models.generate_sourced(
             models.coach(),
             vec![
@@ -231,6 +233,11 @@ pub(super) fn draft(
             continue;
         };
         pilot::ground(vault, &mut draft)?;
+        // The offer also reads the pilots it grounds on (FIX 7021): its set
+        // after ground, `None` when any grounding pilot's measurement set is
+        // unknown.
+        let grounded = draft.source_rows.clone();
+        record_read(vault, attempt.id, grounded, &mut read_set_lost);
         match vault.run_coach_training_offer(admitted, draft, now) {
             Ok(offer) => {
                 tracing::debug!(offer = %offer.id.to_hex(), "the Coach raised a training offer")
@@ -243,6 +250,25 @@ pub(super) fn draft(
         }
     }
     Ok(())
+}
+
+/// Records rows the pass read under the offer draft's key (FIX 6934, 7073).
+/// Capture only (FIX 7021): a storage error recording them never ends the
+/// pass. The attempt's set goes unknown, as an unsourced inlet's, and later
+/// reads of the pass record nothing more.
+fn record_read(vault: &Vault, attempt: AttemptId, rows: Option<Vec<EntityId>>, lost: &mut bool) {
+    if *lost {
+        return;
+    }
+    if let Err(error) = vault.record_attempt_sources(attempt, OFFER_DRAFT, rows) {
+        *lost = true;
+        tracing::warn!(
+            attempt = ?attempt,
+            %error,
+            "the offer draft could not record its read set; its pack receipt keeps it unknown"
+        );
+        let _ = vault.record_attempt_sources(attempt, OFFER_DRAFT, None);
+    }
 }
 
 /// One option fixed code priced for a seat.
