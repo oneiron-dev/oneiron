@@ -1888,6 +1888,9 @@ impl OneironClient {
                 "vault.code.export" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::CodeExportResult,
                 >(client, verb, &input),
+                "vault.code.import" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::CodeRepoImportView,
+                >(client, verb, &input),
                 "vault.code.origin.register" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::OriginRegistered,
                 >(client, verb, &input),
@@ -10900,6 +10903,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.export", value)
+    }
+    pub fn vault_code_import(
+        &self,
+        input: &oneiron::memory::origin_doors::CodeRepoImportRequest,
+    ) -> Result<oneiron::memory::origin_doors::CodeRepoImportView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.import", value)
     }
     pub fn vault_code_origin_register(
         &self,

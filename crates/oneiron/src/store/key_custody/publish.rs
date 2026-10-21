@@ -29,9 +29,10 @@ use crate::error::Result;
 use crate::store::Store;
 
 use super::anchor::{anchor_record, verified_position};
+use super::credential_faults::head_entry;
 use super::files::{EntryState, LocalCustody, read_whole, replace_file};
 use super::folder::FolderTarget;
-use super::head::{CustodyRecipients, HeadEntry, seal_head};
+use super::head::{CustodyRecipients, seal_head};
 use super::identity::CustodySubject;
 use super::log::{CustodyPosition, Journal, POSITION_LEN};
 use super::outbox::OutboxTarget;
@@ -291,12 +292,16 @@ impl Store {
             for (id, state) in &census {
                 match state {
                     // KS-5: a pad its world keeps off this member stays out
-                    // of its head.
+                    // of its head. KS-6: a credential key that does not read
+                    // stays local this pass, warned.
                     EntryState::Live if recipients.keeps_local(id) => {}
-                    EntryState::Live => entries.push(HeadEntry {
-                        secret: custody.read(id)?,
-                        id: id.clone(),
-                    }),
+                    EntryState::Live => entries.extend(head_entry(&custody, id)?),
+                    // KS-6: a credential key kept off this member keeps its
+                    // retirement fact off too; an owner-only compartment
+                    // seals to the root alone.
+                    EntryState::Retired
+                        if crate::store::credential_kind(id.kind())
+                            && recipients.keeps_local(id) => {}
                     EntryState::Retired => retired.push(id.clone()),
                     EntryState::Missing => {}
                 }

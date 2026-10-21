@@ -668,6 +668,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.results.slice", post(facade_route))
         .route("/vault.code.repo_diff", post(facade_route))
         .route("/vault.code.export", post(facade_route))
+        .route("/vault.code.import", post(facade_route))
         .route("/vault.code.origin.register", post(facade_route))
         .route("/vault.code.origin.mirror.get", post(facade_route))
         .route("/vault.code.origin.mirror.set", post(facade_route))

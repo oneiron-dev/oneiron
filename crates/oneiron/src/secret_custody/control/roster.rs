@@ -24,9 +24,8 @@
 //! whose key does not import get nothing, as before.
 
 use oneiron_crypto::HybridPublicKey;
-use zeroize::Zeroize;
 
-use super::super::doors::read_secret_custody_in_txn;
+use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::{CustodyTransition, custody_portable, held_transitions_in_txn};
 use super::super::types::SecretCustodyStatus;
 use super::permits::{permit_for, permitted_keys};
@@ -163,10 +162,9 @@ impl Vault {
         if held.status == SecretCustodyStatus::Revoked || fold.custody_revoked(&held.id) {
             return Ok(None);
         }
-        let Some(mut record) = read_secret_custody_in_txn(&self.store, txn, &held.id)? else {
+        let Some(record) = read_secret_custody_meta_in_txn(&self.store, txn, &held.id)? else {
             return Ok(None);
         };
-        record.value_bytes.zeroize();
         if !custody_portable(&record)
             || record.rotation_generation != held.generation
             || record.status != held.status
@@ -238,10 +236,9 @@ impl Vault {
         {
             return Ok(false);
         }
-        let Some(mut record) = read_secret_custody_in_txn(&self.store, txn, &rewrap.id)? else {
+        let Some(record) = read_secret_custody_meta_in_txn(&self.store, txn, &rewrap.id)? else {
             return Ok(false);
         };
-        record.value_bytes.zeroize();
         if record.rotation_generation != rewrap.generation
             || record.status == SecretCustodyStatus::Revoked
         {
