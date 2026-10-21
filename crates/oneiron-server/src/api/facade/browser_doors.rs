@@ -1,6 +1,7 @@
 //! Typed browser calls on the caller's own attached run and existing guest door.
 use std::sync::Arc;
 
+use axum::http::StatusCode;
 use oneiron::code_run::{HostSelfDispatcher, SelfAgentVerbCall};
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::runtime_hooks::InvocationId;
@@ -488,4 +489,19 @@ pub(crate) async fn self_browser_handover(
         input,
     )
     .await
+}
+
+/// FIX 7664: the HTTP status of a typed browser refusal, so a press the owner
+/// owes or a page that did not answer in time does not read as this server's
+/// fault. The codes are `oneiron_browser::BrowserError::code`'s; `None` leaves
+/// every other code to the facade's own mapping.
+pub(super) fn browser_refusal_status(code: &str) -> Option<StatusCode> {
+    Some(match code {
+        "needs_press" => StatusCode::CONFLICT,
+        "browser_timeout" => StatusCode::GATEWAY_TIMEOUT,
+        "browser_url_refused" | "browser_destination_refused" => StatusCode::FORBIDDEN,
+        "browser_input_invalid" => StatusCode::UNPROCESSABLE_ENTITY,
+        "browser_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
+        _ => return None,
+    })
 }
