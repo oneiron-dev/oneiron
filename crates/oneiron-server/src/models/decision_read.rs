@@ -294,7 +294,7 @@ impl DecisionReader {
     async fn answering(&self, answer: &JsonValue) -> Option<AnsweringIdentity> {
         let returned = answer.get("model").and_then(JsonValue::as_str);
         self.identities
-            .resolve(&self.http, returned, Some(&self.wire_model))
+            .resolve(&self.http, returned, Some(self.wire_model.as_str()))
             .await
     }
 

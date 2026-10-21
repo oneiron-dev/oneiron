@@ -97,7 +97,10 @@ pub(super) fn carry_chat_evidence(body: &mut JsonValue, answering: Option<&Answe
 
 /// A chat record's identity: what the answer's own alias names, with the
 /// reported build's digest as its runtime when no manifest names one.
-fn chat_identity(answering: Option<&AnsweringIdentity>, fingerprint: Option<&str>) -> CacheIdentity {
+fn chat_identity(
+    answering: Option<&AnsweringIdentity>,
+    fingerprint: Option<&str>,
+) -> CacheIdentity {
     let mut identity = answering
         .map(AnsweringIdentity::for_chat)
         .unwrap_or_default();
