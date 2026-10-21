@@ -21,6 +21,13 @@
 //! door records its own; [`connection_receipt`], outside the binding door,
 //! records what reached no door. A socket the server closes on a protocol
 //! rejection is one such refused call too ([`record_socket_close`], FIX 3303).
+//!
+//! The attempt a call ran inside (OF-568 L4): each door runs its call's
+//! execution under one request-scoped collector ([`attempt_witnessed`]); a
+//! live-run hold that succeeds inside it publishes the host's witness of the
+//! held try there ([`witness_attempt`]), and the receipt states that one
+//! attempt. A call that held none, or more than one, and every call no
+//! credential attributed, states none.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -29,7 +36,9 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue};
 use axum::middleware::Next;
 use axum::response::Response;
-use oneiron::receipt::{ActionInputs, CallOutcome, CallReceiptInput, CallTransport};
+use oneiron::receipt::{
+    ActionInputs, CallAttemptWitness, CallOutcome, CallReceiptInput, CallTransport,
+};
 use serde_json::{Map, Value};
 
 use crate::auth::CoreAuth;
@@ -39,6 +48,10 @@ tokio::task_local! {
     /// The id of the connection the call in flight arrived on: one per
     /// accepted socket, never derived from the peer's address.
     static CONNECTION_ID: u128;
+    /// Where a live-run hold inside the call in flight publishes the
+    /// attempt it held (OF-568 L4): one collector per door's execution
+    /// ([`attempt_witnessed`]).
+    static CALL_ATTEMPTS: std::sync::mpsc::Sender<CallAttemptWitness>;
 }
 
 /// Runs `call` as one connection's: every reply inside it that no credential
@@ -68,9 +81,35 @@ pub(crate) fn request_connection() -> String {
     format!("{:032x}", connection_id())
 }
 
+/// Runs `call`, one door's execution of one call, under its own collector,
+/// and returns beside its output the attempt it held a live run of (OF-568
+/// L4): the one witness its holds published, or `None` when they published
+/// none or more than one distinct attempt. The witness is the one taken at
+/// the hold, so a call that settles its own lease, or is refused after it,
+/// keeps it. Work `call` spawns sees no collector and publishes nothing; a
+/// door nested inside it collects its own.
+pub(crate) async fn attempt_witnessed<F: Future>(
+    call: F,
+) -> (F::Output, Option<CallAttemptWitness>) {
+    let (publish, published) = std::sync::mpsc::channel();
+    let output = CALL_ATTEMPTS.scope(publish, call).await;
+    let mut held = published.try_iter();
+    let witness = held
+        .next()
+        .filter(|first| held.all(|other| other == *first));
+    (output, witness)
+}
+
+/// Publishes `witness`, the try a live-run hold just held, to the call in
+/// flight's collector (OF-568 L4). Outside any collector it goes nowhere:
+/// capture never refuses a call.
+pub(crate) fn witness_attempt(witness: CallAttemptWitness) {
+    let _ = CALL_ATTEMPTS.try_with(|publish| publish.send(witness));
+}
+
 /// The receipt input of a reply no credential attributed (FIX 811): the
-/// connection is its actor, of class `connection`, with no credential and
-/// no captured inputs.
+/// connection is its actor, of class `connection`, with no credential, no
+/// captured inputs and no attempt.
 pub(crate) fn connection_call(
     transport: CallTransport,
     verb: String,
@@ -88,6 +127,7 @@ pub(crate) fn connection_call(
         request_digest,
         result_digest,
         inputs: None,
+        attempt: None,
         served: Vec::new(),
     }
 }

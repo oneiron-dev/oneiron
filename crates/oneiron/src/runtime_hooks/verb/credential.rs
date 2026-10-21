@@ -447,6 +447,8 @@ impl RefusalReceipt {
             // What the parked call read was not kept, and the drain cannot
             // recover it (OF-568).
             inputs: None,
+            // The saved call kept no live-run witness (OF-568 L4).
+            attempt: None,
             served: Vec::new(),
         }
     }

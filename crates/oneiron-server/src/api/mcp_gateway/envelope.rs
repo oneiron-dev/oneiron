@@ -710,19 +710,23 @@ pub(crate) async fn handle_mcp_request(
             // FIX 1085: the call counts once on the wire, under the caller
             // resolved above and the tool it names, before it is judged.
             super::wire::observe_tool_call(server, mode, &actor, &tool, anonymous);
-            let called: Result<Value, McpGatewayError> = async {
-                let params: McpToolCallParams = mcp_params(request.params, "params")?;
-                let actor = McpCallContext {
-                    invocation: params.invocation()?,
-                    hook_ask: params.hook_ask()?,
-                    ..actor.clone()
-                };
-                let args = mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
-                ensure_mcp_actor_matches(&args, &actor)?;
-                mcp_admit_scoped_call(server, &args, &actor)?;
-                execute_mcp_tool(server, args, &actor, headers, connection).await
-            }
-            .await;
+            // OF-568 L4: the attempt whose live run the call holds, as the
+            // hold witnessed it.
+            let (called, attempt): (Result<Value, McpGatewayError>, _) =
+                crate::api::call_receipt::attempt_witnessed(async {
+                    let params: McpToolCallParams = mcp_params(request.params, "params")?;
+                    let actor = McpCallContext {
+                        invocation: params.invocation()?,
+                        hook_ask: params.hook_ask()?,
+                        ..actor.clone()
+                    };
+                    let args =
+                        mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
+                    ensure_mcp_actor_matches(&args, &actor)?;
+                    mcp_admit_scoped_call(server, &args, &actor)?;
+                    execute_mcp_tool(server, args, &actor, headers, connection).await
+                })
+                .await;
             // ONE-1704 M4: ONE chokepoint. Everything inside that block happened
             // AFTER the credential resolved, so every refusal it can produce —
             // decode, validation, actor mismatch, bound-verb or scope refusal,
@@ -747,6 +751,7 @@ pub(crate) async fn handle_mcp_request(
                 tool,
                 request_digest,
                 inputs,
+                attempt,
                 anonymous,
                 called,
             )

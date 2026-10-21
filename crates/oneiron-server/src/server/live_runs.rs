@@ -527,7 +527,8 @@ impl ResolvedLiveRun {
     /// then rechecks that the run is still registered under its lease, which
     /// still holds, with this attachment. The guard is waited for on the
     /// runtime; the lease is read from the vault on a blocking thread, under
-    /// the guard.
+    /// the guard. A hold that succeeds publishes the try it holds to the
+    /// call in flight's receipt collector (OF-568 L4).
     pub(crate) async fn hold(
         &self,
         runs: &Arc<LiveRuns>,
@@ -547,6 +548,9 @@ impl ResolvedLiveRun {
         if lock(&self.entry.attached).as_ref() != Some(&self.binding) {
             return Ok(Err(LiveRunRefusal::Unavailable));
         }
+        // OF-568 L4: the call in flight holds this try now. Its receipt names
+        // the attempt as sealed here, even once the call settles the lease.
+        crate::api::call_receipt::witness_attempt(self.entry.proof.call_attempt_witness());
         Ok(Ok(HeldLiveRun {
             proof: self.entry.proof.clone(),
             _serial: serial,
