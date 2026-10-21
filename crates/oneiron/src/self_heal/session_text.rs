@@ -12,13 +12,21 @@
 //! legacy TURN that carries its own words is read beside the MESSAGE
 //! children. A row the reader may not read here is left out by authority;
 //! none is left out for its size.
+//!
+//! A MESSAGE's result attachment rides beside its words (FIX 6113), its
+//! whole body read through the MESSAGE's own result reads, page after page
+//! to the last, under each read's own checks; a MESSAGE that carries only a
+//! result is a line too. An attachment this reader cannot read whole now is
+//! marked unavailable on its line, which keeps its words.
 
 use std::collections::BTreeMap;
 
+use base64::Engine as _;
 use rmpv::Value;
 use serde::Serialize;
 
 use crate::claim::{CallerLocality, ClaimReadStatus, PointRead, ScopedRead};
+use crate::code_run::ResultFacet;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::memory::{MAX_TRANSCRIPT_PAGE_TURNS, MEMORY_CODE_NOT_FOUND, Memory, MemoryError};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
@@ -50,11 +58,39 @@ pub struct SessionLine {
     pub occurred: u64,
     /// What it says, whole.
     pub text: String,
+    /// The result attachment the message carries, whole or marked
+    /// unavailable (FIX 6113); `None` for a line that carries none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<SessionResult>,
 }
 
-/// One message's line while a turn is gathered: its 32-hex id, writer, time
-/// and words.
-type MessageWords = (String, Option<String>, u64, String);
+/// A message's result attachment as its session line carries it (FIX 6113):
+/// the whole body, or why this reader cannot read it whole now.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SessionResult {
+    /// A text body, whole.
+    Text {
+        /// The body, as its reads show text.
+        text: String,
+        /// Bytes of the body that are not UTF-8 are shown replaced.
+        lossy: bool,
+    },
+    /// A binary body, whole.
+    Binary {
+        /// The body's bytes, as base64.
+        base64: String,
+    },
+    /// Not readable whole by this reader now: withheld, refused or gone.
+    Unavailable {
+        /// The read's own code: a refusal's, a withholding's or an error's.
+        reason: String,
+    },
+}
+
+/// One message's line while a turn is gathered: its 32-hex id, writer,
+/// time, words and result attachment.
+type MessageWords = (String, Option<String>, u64, String, Option<SessionResult>);
 
 /// One turn's readable words while its conversation is gathered.
 #[derive(Default)]
@@ -92,7 +128,7 @@ impl Vault {
             lines.extend(self.conversation_lines(&memory, &lane, conversation)?);
         }
         for turn in loose {
-            lines.extend(self.loose_turn_lines(&lane, turn)?);
+            lines.extend(self.loose_turn_lines(&memory, &lane, turn)?);
         }
         Ok(SessionText { lines })
     }
@@ -187,16 +223,26 @@ impl Vault {
             for turn in page.turns {
                 let gathered = turns.entry(EntityId::from_hex(&turn.id)?).or_default();
                 gathered.occurred = turn.occurred_start;
-                gathered
-                    .messages
-                    .extend(turn.messages.into_iter().map(|message| {
-                        (
-                            message.id,
-                            Some(message.role),
-                            message.occurred,
-                            message.text,
+                for message in turn.messages {
+                    // The transcript showed a result: its whole body, or
+                    // unavailable when it is gone since.
+                    let result = if message.result.is_some() {
+                        let id = EntityId::from_hex(&message.id)?;
+                        Some(
+                            whole_result(memory, &id)
+                                .unwrap_or_else(|| unavailable(MEMORY_CODE_NOT_FOUND)),
                         )
-                    }));
+                    } else {
+                        None
+                    };
+                    gathered.messages.push((
+                        message.id,
+                        Some(message.role),
+                        message.occurred,
+                        message.text,
+                        result,
+                    ));
+                }
             }
             match page.next {
                 Some(next) => after = Some(next),
@@ -232,8 +278,14 @@ impl Vault {
 
     /// A TURN that belongs to no conversation, as the transcript would read
     /// it: its own words and its visible MESSAGE children, each through the
-    /// lane. None when the reader may not read the turn.
-    fn loose_turn_lines(&self, lane: &ScopedRead<'_>, turn: EntityId) -> Result<Vec<SessionLine>> {
+    /// lane, with the result a child carries. None when the reader may not
+    /// read the turn.
+    fn loose_turn_lines(
+        &self,
+        memory: &Memory<'_>,
+        lane: &ScopedRead<'_>,
+        turn: EntityId,
+    ) -> Result<Vec<SessionLine>> {
         let messages = {
             let txn = self.store.env.read_txn()?;
             self.neighbors_in(
@@ -260,8 +312,23 @@ impl Vault {
             if message.entity_type != ENTITY_TYPE_MESSAGE {
                 continue;
             }
-            if let Some((order, role, text)) = message.body.as_deref().and_then(message_words) {
-                said.push((order, message.id, role, message.occurred.start, text));
+            if let Some((order, role, text, metadata)) =
+                message.body.as_deref().and_then(message_words)
+            {
+                // Only a MESSAGE with metadata can carry a result.
+                let result = if metadata {
+                    whole_result(memory, &message.id)
+                } else {
+                    None
+                };
+                said.push((
+                    order,
+                    message.id,
+                    role,
+                    message.occurred.start,
+                    text,
+                    result,
+                ));
             }
         }
         said.sort_by_key(|(order, id, ..)| (*order, *id.as_bytes()));
@@ -270,7 +337,9 @@ impl Vault {
             said: row.body.as_deref().and_then(turn_words),
             messages: said
                 .into_iter()
-                .map(|(_, id, role, occurred, text)| (id.to_hex(), role, occurred, text))
+                .map(|(_, id, role, occurred, text, result)| {
+                    (id.to_hex(), role, occurred, text, result)
+                })
                 .collect(),
         };
         Ok(ordered(None, BTreeMap::from([(turn, gathered)])))
@@ -279,7 +348,7 @@ impl Vault {
 
 /// `turns` as lines, by when each occurred and then by id, as a transcript
 /// orders them: a turn's own words first, then its messages in order. A line
-/// with no words says nothing and is not one.
+/// with no words and no result says nothing and is not one.
 fn ordered(
     conversation: Option<EntityId>,
     turns: BTreeMap<EntityId, TurnText>,
@@ -300,10 +369,11 @@ fn ordered(
                 role,
                 occurred: gathered.occurred,
                 text,
+                result: None,
             });
         }
-        for (message, role, occurred, text) in gathered.messages {
-            if text.is_empty() {
+        for (message, role, occurred, text, result) in gathered.messages {
+            if text.is_empty() && result.is_none() {
                 continue;
             }
             lines.push(SessionLine {
@@ -313,6 +383,7 @@ fn ordered(
                 role,
                 occurred,
                 text,
+                result,
             });
         }
     }
@@ -350,8 +421,9 @@ fn turn_words(body: &[u8]) -> Option<(Option<String>, String)> {
 }
 
 /// A visible MESSAGE body's order, writer and words, as a transcript reads
-/// them; `None` for a hidden one.
-fn message_words(body: &[u8]) -> Option<(u64, Option<String>, String)> {
+/// them, and whether it carries metadata, where a result rides; `None` for a
+/// hidden one.
+fn message_words(body: &[u8]) -> Option<(u64, Option<String>, String, bool)> {
     let entries = entries_of(body)?;
     if field(&entries, &["is_visible"]).and_then(Value::as_bool) != Some(true) {
         return None;
@@ -366,7 +438,73 @@ fn message_words(body: &[u8]) -> Option<(u64, Option<String>, String)> {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    Some((order, role, text))
+    let metadata = field(&entries, &["metadata"]).is_some_and(|value| !value.is_nil());
+    Some((order, role, text, metadata))
+}
+
+/// The whole body of the result MESSAGE `message` carries, as `memory`
+/// reads it: its `slice` from the first byte, then each reply's `next`, to
+/// the reply that says it is done (FIX 6113). Every page passes that read's
+/// own admission, served-row and taint checks; nothing here reads around
+/// them, and nothing bounds the body. `None` when the first read finds no
+/// result this reader may read on the MESSAGE; a page withheld or refused,
+/// or a read that fails or stops moving, marks it unavailable by its code.
+fn whole_result(memory: &Memory<'_>, message: &EntityId) -> Option<SessionResult> {
+    let mut input = serde_json::json!({ "bytes": [0] });
+    let mut text = String::new();
+    let mut bytes = Vec::new();
+    let mut lossy = false;
+    let mut binary = false;
+    let mut first = true;
+    loop {
+        let reply = match memory.read_message_result(message, Some(ResultFacet::Slice), input) {
+            Ok(reply) => reply,
+            Err(error) if first && error.code == MEMORY_CODE_NOT_FOUND => return None,
+            Err(error) => return Some(unavailable(&error.code)),
+        };
+        first = false;
+        let Some(page) = reply.get("output") else {
+            let code = reply.get("denied").and_then(serde_json::Value::as_str);
+            return Some(unavailable(code.unwrap_or("denied")));
+        };
+        if let Some(withheld) = page.get("withheld") {
+            return Some(unavailable(withheld.as_str().unwrap_or("withheld")));
+        }
+        if let Some(shown) = page.get("text").and_then(serde_json::Value::as_str) {
+            text.push_str(shown);
+            lossy |= page.get("lossy").and_then(serde_json::Value::as_bool) == Some(true);
+        } else if let Some(shown) = page.get("base64").and_then(serde_json::Value::as_str) {
+            binary = true;
+            match base64::engine::general_purpose::STANDARD.decode(shown) {
+                Ok(decoded) => bytes.extend(decoded),
+                Err(_) => return Some(unavailable("undecodable")),
+            }
+        } else {
+            return Some(unavailable("unreadable"));
+        }
+        if page.get("done").and_then(serde_json::Value::as_bool) == Some(true) {
+            break;
+        }
+        let (start, end) = (page["start"].as_u64(), page["end"].as_u64());
+        match (page.get("next"), start, end) {
+            (Some(next), Some(start), Some(end)) if end > start => input = next.clone(),
+            _ => return Some(unavailable("no_progress")),
+        }
+    }
+    Some(if binary {
+        SessionResult::Binary {
+            base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        }
+    } else {
+        SessionResult::Text { text, lossy }
+    })
+}
+
+/// An attachment this reader cannot read whole now, by the read's code.
+fn unavailable(reason: &str) -> SessionResult {
+    SessionResult::Unavailable {
+        reason: reason.to_owned(),
+    }
 }
 
 /// A transcript refusal other than a withheld conversation, by its code

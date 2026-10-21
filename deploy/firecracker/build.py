@@ -14,8 +14,8 @@ this one reuses its pinning, ELF and kernel-archive checks.
   vault-disk  an empty ext4 vault disk with its encrypt feature and a fixed
               UUID: the vault_disk_uuid of the VM profile's provision binding
   manifest    every artifact's SHA256 and the engine revision, for the host's
-              image pin (the provision prelude's and the outbox carrier's
-              build floor)
+              image pin (the provision prelude's, the outbox carrier's and the
+              restore channel's build floor)
 """
 from __future__ import annotations
 
@@ -39,15 +39,20 @@ microvm = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(microvm)
 
 # The image's mountpoints and tool directories. /vault takes the vault disk,
-# /config the optional settings drive, /etc/oneiron the UID table's tmpfs.
+# /config the optional settings drive, /restore a cold restore's optional
+# source drive, /etc/oneiron the UID table's tmpfs.
 DIRECTORIES = ("bin", "sbin", "usr/bin", "lib", "lib64", "usr/lib", "proc", "sys",
-               "dev", "run", "tmp", "vault", "config", "etc/oneiron")
+               "dev", "run", "tmp", "vault", "config", "restore", "etc/oneiron")
 BINARIES = ("oneiron-server", "oneiron-broker", "oneiron-vm-init", "oneiron-vm-outbox")
 # What /sbin/oneiron-vault-init runs besides the engine's binaries.
 TOOLS = ("sh", "mount", "umount", "cat", "head", "sync", "reboot")
 PROVISION_REVISION = 1
 # The outbox carrier's wire revision (oneiron_vault_contract::vm_outbox).
 OUTBOX_WIRE_REVISION = 1
+# The restore channel's wire revision (oneiron_vault_contract::vm_restore):
+# every cold boot of this image dials it first, so a host pairs only with an
+# image whose manifest names it.
+RESTORE_WIRE_REVISION = 1
 
 
 def build_kernel(args):
@@ -189,6 +194,7 @@ def make_manifest(args):
         json.dump({"schema": 1, "engine_revision": args.engine_revision,
                    "contract_version": 3, "provision_revision": PROVISION_REVISION,
                    "outbox_wire_revision": OUTBOX_WIRE_REVISION,
+                   "restore_wire_revision": RESTORE_WIRE_REVISION,
                    "artifacts": artifacts, "rootfs_files": receipt["files"]},
                   stream, indent=2, sort_keys=True)
         stream.write("\n")

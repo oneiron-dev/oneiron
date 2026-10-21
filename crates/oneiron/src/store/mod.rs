@@ -209,6 +209,7 @@ pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
 pub use handle::*;
 pub(crate) use key_custody::ForkedCustodyDir;
 pub use key_custody::protocol as custody_protocol;
+pub use key_custody::sync_dir;
 pub(crate) use key_custody::{
     CUSTODY_COMPLETION_NEEDS_ANCHOR, CUSTODY_HEAD_WRAP_CONTEXT, CustodyBinding, CustodyKind,
     CustodyPlan, CustodyRecipients, CustodyRequirement, CustodyRoute, CustodySourceAt,
