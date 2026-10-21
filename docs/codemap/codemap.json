@@ -25678,6 +25678,7 @@
      "purpose": "Publisher share dial: explicit, install-profile, and compiled-default resolution",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -25706,6 +25707,7 @@
      "path": "src/edit_distance/publisher/mod.rs",
      "purpose": "ED-08 (ONE-1764, ARCH-0056 §9 · OF-401): the publisher loop's engine substrate — content-free issue…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "re-export": 7,
       "type": 1
@@ -29107,8 +29109,85 @@
       "crate-vis": 3,
       "enum": 3,
       "fn": 3,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReportDeliveryHold",
+      "ReportDeliveryKey",
+      "ReportDeliveryOutcome",
+      "ReportDeliveryPass",
+      "ReportDeliveryRecord",
+      "ReportFrozenSend",
+      "ReportFrozenSignature",
+      "ReportPublisherEndpoint",
+      "ReportSignatureTransport",
+      "ReportSignatureTransportRequest"
+     ],
+     "path": "src/feedback/report/delivery.rs",
+     "purpose": "Publisher delivery of content-free issue signatures (OF-420, FIX 739), keyed by `issue_ref`",
+     "surface": {
+      "const": 4,
+      "enum": 2,
+      "fn": 3,
+      "re-export": 2,
+      "struct": 7,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReportPublisherMetadata"
+     ],
+     "path": "src/feedback/report/delivery/metadata.rs",
+     "purpose": "The historical ED-08 metadata a report's subject names (OF-420, FIX 739)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReportDeliveryRun",
+      "ReportDeliveryRunRequest",
+      "ReportDeliveryStatus",
+      "ReportDeliveryStatusRequest",
+      "ReportPublisherBinding",
+      "ReportPublisherBindingRequest"
+     ],
+     "path": "src/feedback/report/delivery/owner.rs",
+     "purpose": "The owner's publisher delivery doors: run the delivery now, read one issue's delivery, and bind or unbind a…",
+     "surface": {
+      "fn": 3,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/report/delivery/participation.rs",
+     "purpose": "Participation for issue signatures (OF-420, FIX 739)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/report/delivery/wire.rs",
+     "purpose": "The wire side of an issue signature (OF-420, FIX 739): the canonical `oneiron.issue_signature.v1` body built…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -29123,7 +29202,7 @@
      "path": "src/feedback/report/routing.rs",
      "purpose": "Maker routing and disclosure",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 4,
       "struct": 2
@@ -42762,8 +42841,8 @@
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 12,
-      "re-export": 2
+      "crate-vis": 13,
+      "re-export": 3
      }
     },
     {
@@ -42788,6 +42867,19 @@
      "purpose": "Pending gate-outcome name and gate-vs-manifest policy-risk resolution",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PublisherSignatureAuthorization"
+     ],
+     "path": "src/outbound/dispatch_pipeline/publisher_signature.rs",
+     "purpose": "The typed authorization a content-free publisher issue signature carries into admission (OF-420, FIX 739)",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
      }
     },
     {
@@ -42927,7 +43019,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1,
       "re-export": 10
      }
@@ -68902,7 +68994,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 36,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69168,7 +69260,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69800,7 +69892,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4424,
+   "source_files": 4430,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82634,6 +82726,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/feedback_report_delivery.rs",
+     "purpose": "The Coach's publisher delivery on the host (OF-420, FIX 739; ARCH-0056 §9: \"reports are background\")",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/feedback_triage.rs",
      "purpose": "The Coach's feedback triage on the host (OF-420 T1; ARCH-0056: \"GitHub issues still work",
      "surface": {
@@ -90293,7 +90395,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FeedbackDeliveryConfig",
@@ -95323,7 +95425,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 69,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95528,7 +95630,7 @@
     "feedback_delivery": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Deployment-selected feedback transport"
     },
@@ -95780,7 +95882,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1046,
+   "source_files": 1047,
    "test_files": 182
   },
   "oneiron-spawn": {
