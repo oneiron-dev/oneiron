@@ -12334,6 +12334,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/served_forms/session.rs",
+     "purpose": "The served-form receipts a read in an off-record room keeps (WILL L11-01 S01-2b, OF-329): what it served of…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -26257,6 +26267,7 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "CohortProbe",
       "KindProbeCheck",
       "NotWorse",
       "PairedInterval",
@@ -26274,7 +26285,7 @@
       "crate-vis": 4,
       "enum": 4,
       "fn": 10,
-      "struct": 4,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -26297,13 +26308,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/embed/space_probe/ledger.rs",
      "purpose": "A space move check's probe cohort metadata (FIX 6744; ARCH-0053 `#eval-exposure`): the date-cut cohort each…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -35514,7 +35525,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/execute.rs",
@@ -35927,10 +35938,20 @@
      "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 14,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/asset_resolve/hydrated.rs",
+     "purpose": "Hydrate's half of OF-329, the forms it serves in place of image bodies, for every hydrate door: the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -46213,7 +46234,7 @@
      "path": "src/receipt/record.rs",
      "purpose": "First-class, replicated immutable terminal outbound receipt record, the served-form receipt record a read…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -67260,7 +67281,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 78,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67904,7 +67925,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 236,
+     "files": 237,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68583,9 +68604,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 185,
+   "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4325,
+   "source_files": 4327,
    "test_files": 902
   },
   "oneiron-android": {
@@ -88114,7 +88135,7 @@
       "OneironerRuntime"
      ],
      "path": "src/config/oneironer/runtime.rs",
-     "purpose": "The native runtime a local tagger runs on",
+     "purpose": "The runtime setting a local tagger's workers are chosen by (FIX 6755, Engine call 4)",
      "surface": {
       "enum": 1,
       "fn": 1
@@ -91501,13 +91522,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/dispatcher/eligibility.rs",
+     "purpose": "Which worker may run which call (FIX 6755 slice 2b)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/dispatcher/mod.rs",
      "purpose": "The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 18
      }
     },
     {
@@ -91521,13 +91552,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/dispatcher/worker.rs",
      "purpose": "One worker: a model loaded on one engine, or the one opaque endpoint, on its own thread",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 19
      }
     },
     {
@@ -91547,7 +91578,7 @@
      "path": "src/oneironer/engines/calibration.rs",
      "purpose": "The bundle's reference cases, the bar an engine's answers must clear, the measurement of one engine against…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 13
      }
     },
     {
@@ -91561,13 +91592,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/engines/rows.rs",
      "purpose": "This machine's measured engine rows: where they live, how they are read and written, and what keys them",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -91577,7 +91608,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 13
      }
     },
     {
@@ -91604,10 +91635,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/oneironer/local/window.rs",
+     "path": "src/oneironer/local/window/mod.rs",
      "purpose": "One causal window with byte-accurate message coordinates",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/local/window/ner.rs",
+     "purpose": "The full decode of a bundle with a character head (`oneironer-decode-v1`): BIO, the DATE snap, character…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -94064,7 +94105,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 26,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94192,7 +94233,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1016,
+   "source_files": 1018,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95052,6 +95093,7 @@
       "CodeWaitState",
       "CodeWaitTarget",
       "CodeWorkingView",
+      "CohortProbe",
       "CohortRetirement",
       "CohortSummary",
       "ColdAuthorityAuditRow",
@@ -98211,7 +98253,7 @@
      "purpose": "—",
      "surface": {
       "enum": 923,
-      "struct": 2894
+      "struct": 2895
      }
     },
     {
