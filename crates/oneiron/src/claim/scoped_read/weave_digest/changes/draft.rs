@@ -69,16 +69,19 @@ impl Basis {
 }
 
 impl Vault {
-    /// Marks this open vault as served by a host Coach whose model drafts its
-    /// digest settings steps (FIX 5609): from then on the digest timer queues
-    /// the Coach's job instead of running the closed-form rule. In memory
-    /// only: a reopened vault starts unmarked.
-    pub fn register_coach_weave_digest_host(&self) {
-        self.coach_weave_digest_host.store(true, Ordering::Release);
+    /// Says whether a host Coach whose model drafts this vault's digest
+    /// settings steps is serving it (FIX 5609, 6165): its worker says ready
+    /// after a round that served, and not ready after a round that erred or
+    /// when it ends. While ready the digest timer queues the Coach's job;
+    /// while not, the closed-form rule evaluates each owner whose evaluation
+    /// is due, as with no host. In memory only: a reopened vault starts not
+    /// ready.
+    pub fn set_coach_weave_digest_host_ready(&self, ready: bool) {
+        self.coach_weave_digest_host.store(ready, Ordering::Release);
     }
 
-    /// A host Coach drafts this vault's digest settings steps.
-    pub(super) fn coach_weave_digest_host_registered(&self) -> bool {
+    /// A host Coach serving this vault drafts its digest settings steps.
+    pub(super) fn coach_weave_digest_host_ready(&self) -> bool {
         self.coach_weave_digest_host.load(Ordering::Acquire)
     }
 
