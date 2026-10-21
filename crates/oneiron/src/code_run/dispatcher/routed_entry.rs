@@ -3,6 +3,8 @@
 //! first start its clock was frozen at. A session-bound run's are its
 //! room's, never base's, and the run's storage stays behind its dispatcher.
 
+use std::time::Instant;
+
 use super::HostSelfDispatcher;
 use crate::code_run::CodeRunDeterminism;
 use crate::llm::seat::{ModelSeat, SeatChoiceReceipt, SeatDecisions, SeatTask};
@@ -48,7 +50,8 @@ impl HostSelfDispatcher<'_> {
     /// Births `run`'s model seat, or loads the one it was born on, on this
     /// dispatcher's route: a session-bound run's pin is its room's alone.
     /// `vault`, the vault the route is on, lends the model catalog, manifest
-    /// and seat pool.
+    /// and seat pool. `parent_at`, the cutoff of the parent a child is born
+    /// under, bounds a fresh pick (FIX 8230).
     ///
     /// # Errors
     ///
@@ -60,9 +63,10 @@ impl HostSelfDispatcher<'_> {
         run: EntityId,
         task: &SeatTask,
         decisions: &SeatDecisions,
+        parent_at: Option<Instant>,
     ) -> Result<ModelSeat> {
         self.require_bound_run(run)?;
-        vault.birth_model_seat_on(&self.storage, run, task, decisions)
+        vault.birth_model_seat_on(&self.storage, run, task, decisions, parent_at)
     }
 
     fn require_bound_run(&self, run: EntityId) -> Result<()> {

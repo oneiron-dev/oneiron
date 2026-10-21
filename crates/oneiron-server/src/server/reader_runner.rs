@@ -25,7 +25,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use oneiron::agent_def::{birth_under_inherited_list, ensure_inherited_model_list};
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
@@ -714,7 +714,10 @@ impl Child {
     /// (`session_seat_or_seatless`). A read and a summary alike are held to
     /// the list their spawning run froze (`birth_under_inherited_list`, FIX
     /// 4539), and so is a seatless one's configured model
-    /// ([`Child::held_to_list`]).
+    /// ([`Child::held_to_list`]). Its pick runs inside its parent's clock
+    /// where that clock binds ([`Child::seat_parent_at`], FIX 8230), and a
+    /// canonical job whose birth fails under it ends at its cutoff
+    /// ([`Child::unseated`]).
     fn seat(
         &self,
         vault: &Vault,
@@ -723,8 +726,9 @@ impl Child {
         purpose: CallPurpose,
         min_context_tokens: u64,
         locality: ModelLocality,
-    ) -> Result<Option<ModelSeat>, String> {
+    ) -> Result<Option<ModelSeat>, Unseated> {
         let job = &self.job;
+        let parent_at = self.seat_parent_at();
         let born = || -> Result<Option<ModelSeat>, String> {
             let inherited = &job.binding.listed;
             let prior = if inherited.is_empty() {
@@ -752,17 +756,54 @@ impl Child {
                         override_effort: None,
                         listed,
                     };
+                    let provider = self.provider.as_ref();
                     match self.session {
-                        None => run_seat(vault, self.provider.as_ref(), job.run, seat_task),
-                        Some(_) => self.provider.run_seat_on(vault, bound, job.run, seat_task),
+                        None => run_seat(vault, provider, job.run, parent_at, seat_task),
+                        Some(_) => {
+                            provider.run_seat_on(vault, bound, job.run, parent_at, seat_task)
+                        }
                     }
                 },
             )
         };
         match self.session {
-            None => born(),
+            None => born().map_err(|error| self.unseated(parent_at.is_some(), error)),
             Some(_) => Ok(session_seat_or_seatless(job.task, born())),
         }
+    }
+
+    /// `seat_parent_at` (CALLS, open, FIX 8230): the cutoff a child's seat
+    /// pick runs inside, projected once per birth from what is left of its
+    /// time ([`Child::left_ms`]: its job's cutoff and its parent's live
+    /// clock, the fold reserve taken once, no new window), the monotonic
+    /// sample before the wall one. Only a parent due before one seat budget
+    /// ends lends it, so the pick's budget is min(seat budget, parent time
+    /// left) and the cap binds whenever it is lent; one already due lends
+    /// now. With more left, the pick runs on its own budget, as before. The
+    /// cutoff bounds how long the pick deliberates; no candidate is
+    /// filtered by it.
+    fn seat_parent_at(&self) -> Option<Instant> {
+        let origin = Instant::now();
+        let left = Duration::from_millis(self.left_ms(unix_millis_now()));
+        let budget = self.provider.seat_decisions()?.budget;
+        if left < budget {
+            Some(origin + left)
+        } else {
+            None
+        }
+    }
+
+    /// How a canonical job whose seat was not born ends (CALLS, open, FIX
+    /// 8230): at its cutoff when its parent's clock bound the pick
+    /// (`capped`: [`Child::seat_parent_at`] lent it) or is spent now, as its
+    /// run would end at its first entry; otherwise `reader_seat_failed`, as
+    /// before. A birth the parent's clock did not bind ends as it does today.
+    fn unseated(&self, capped: bool, error: String) -> Unseated {
+        if capped || self.left_ms(unix_millis_now()) == 0 {
+            tracing::info!(%error, task = %self.job.task.to_hex(), "a reader child's seat was not born inside its parent's clock; it ends at its cutoff");
+            return Unseated::Cutoff;
+        }
+        Unseated::Failed(error)
     }
 
     /// A seatless job runs its configured `model` only when the list its
@@ -829,7 +870,8 @@ impl Child {
             config.model_locality,
         ) {
             Ok(seat) => seat,
-            Err(error) => return failed("reader_seat_failed", &error),
+            Err(Unseated::Cutoff) => return ReaderRunEnd::Cutoff,
+            Err(Unseated::Failed(error)) => return failed("reader_seat_failed", &error),
         };
         // The seat binds its model and effort into the config and the
         // executor alike; a seatless child runs its configured model, held
@@ -1009,7 +1051,8 @@ impl Child {
             config.model_locality,
         ) {
             Ok(seat) => seat,
-            Err(error) => {
+            Err(Unseated::Cutoff) => return ReaderRunEnd::Cutoff,
+            Err(Unseated::Failed(error)) => {
                 tracing::warn!(%error, task = %job.task.to_hex(), "a summary's seat was not born");
                 return failed("reader_seat_failed");
             }
@@ -1108,6 +1151,15 @@ impl Child {
             }
         }
     }
+}
+
+/// Why a canonical job's seat was not born ([`Child::seat`]).
+enum Unseated {
+    /// Its parent's clock bound the pick, or is spent: the job ends at its
+    /// cutoff, as its run would ([`Child::unseated`], FIX 8230).
+    Cutoff,
+    /// Any other birth error: the job fails `reader_seat_failed`, as before.
+    Failed(String),
 }
 
 /// Default A (FIX 7507, Engine 10-21): a job in an off-record session whose

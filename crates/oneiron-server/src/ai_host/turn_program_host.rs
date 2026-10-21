@@ -148,7 +148,7 @@ impl TurnProgramRuntime for ServerTurnPrograms {
         };
         // Born once on the program's code run, as an engine-native run's
         // seat is, from the program's own task.
-        let seat = run_seat(vault, provider.as_ref(), code_run, |facet| SeatTask {
+        let seat = run_seat(vault, provider.as_ref(), code_run, None, |facet| SeatTask {
             kind: SeatKind::Attempt,
             warm_scope: format!("turn-program:{}", code_run.to_hex()),
             task: config.task.clone(),

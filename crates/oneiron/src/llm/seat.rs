@@ -1,6 +1,7 @@
 //! Seat-birth model routing above the raw LLM call seam.
 //! A host's ladder answers the typed pick; the engine owns eligibility, reuse and pinning.
 use std::collections::BTreeSet;
+use std::time::Instant;
 
 mod decisions;
 pub use decisions::{SeatDecisions, SeatNotes};
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use super::registry::ModelWireFormat;
 use super::{CallPurpose, LlmCapability, ModelId, ModelLocality, ReasoningEffort};
 use crate::agent_def::{AgentModel, list_admits, listed_entry, no_listed_model};
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
@@ -350,11 +352,18 @@ impl SeatPool {
         self.seats.iter().find(|seat| seat.id == id)
     }
 
+    /// Births a seat for `task`, or reuses a compatible warm one. A fresh
+    /// seat's pick and its note run on one clock: the seat budget, cut to
+    /// `parent_at` when the parent a child is born under is due before that
+    /// budget ends (FIX 8230), never enlarged. `None`: the seat budget alone.
+    /// The clock bounds only how long the pick deliberates; no candidate is
+    /// filtered by it.
     pub fn birth(
         &mut self,
         vault: &Vault,
         task: &SeatTask,
         decisions: &SeatDecisions,
+        parent_at: Option<Instant>,
     ) -> Result<ModelSeat> {
         if task.task.trim().is_empty()
             || task.facet.trim().is_empty()
@@ -505,7 +514,12 @@ impl SeatPool {
         {
             return Err(invalid("model or effort change requires an epoch fold"));
         }
-        let (index, picked) = decisions.pick(task, &candidates)?;
+        let started = Instant::now();
+        let budget = parent_at.map_or(decisions.budget, |at| {
+            decisions.budget.min(at.saturating_duration_since(started))
+        });
+        let deadline = RetrievalDeadline::hard(started, budget);
+        let (index, picked) = decisions.pick_before(task, &candidates, &deadline)?;
         let candidate = &candidates[index];
         let effort = policy.choose(
             composed,
@@ -519,7 +533,7 @@ impl SeatPool {
         }
         let why = decisions
             .notes
-            .why(task, &candidates, &candidate.model, effort)?;
+            .why(task, &candidates, &candidate.model, effort, &deadline)?;
         if why.trim().is_empty() {
             return Err(invalid("a seat pick needs its why"));
         }
@@ -570,7 +584,7 @@ impl SeatPool {
             return Err(invalid("epoch fold changes seat scope"));
         }
         self.seats[old].warm = false;
-        match self.birth(vault, task, decisions) {
+        match self.birth(vault, task, decisions, None) {
             Ok(seat) => Ok(seat),
             Err(error) => {
                 self.seats[old].warm = true;
