@@ -1,6 +1,9 @@
 //! The board stream registry: connections, subscriptions and event routing.
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::sync::Arc;
+
+use tokio::sync::Notify;
 
 use super::events::{
     BoardEvent, RouteObservation, SubscriptionError, SubscriptionReceipt, SubscriptionScope,
@@ -11,7 +14,8 @@ use super::frames::{
 };
 use super::wake::WakeEnvelope;
 
-/// Pending wakes one connection holds before the oldest is dropped.
+/// Pending wakes of one kind (TASK or review) one connection holds before
+/// the oldest of that kind is dropped.
 const PENDING_WAKES_CAP: usize = 256;
 
 #[derive(Debug)]
@@ -25,11 +29,34 @@ pub struct StreamConnectionState {
     pub(super) wakes: VecDeque<WakeEnvelope>,
 }
 
+impl StreamConnectionState {
+    /// Queues `wake` behind the others. Wakes wait for a host-side adapter
+    /// that may never come: past [`PENDING_WAKES_CAP`] wakes of its own kind
+    /// the oldest of that kind goes first, so a review never evicts a TASK
+    /// wake, nor a TASK wake a review.
+    fn queue_wake(&mut self, wake: WakeEnvelope) {
+        let review = wake.review_ref.is_some();
+        let same_kind = |queued: &WakeEnvelope| queued.review_ref.is_some() == review;
+        let held = self
+            .wakes
+            .iter()
+            .filter(|&queued| same_kind(queued))
+            .count();
+        if held >= PENDING_WAKES_CAP
+            && let Some(oldest) = self.wakes.iter().position(same_kind)
+        {
+            self.wakes.remove(oldest);
+        }
+        self.wakes.push_back(wake);
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct BoardStreamRegistry {
     pub(super) connections: HashMap<StreamConnectionId, StreamConnectionState>,
     pub(super) published_tasks: super::publish::PublishedTasks,
     pub(super) published_reviews: super::review::PublishedReviews,
+    attached: Arc<Notify>,
 }
 
 impl BoardStreamRegistry {
@@ -53,7 +80,9 @@ impl BoardStreamRegistry {
             .collect(),
             BoardRenderMode::Resident => allowed.clone(),
         };
-        // Re-attaching over a live connection replaces its state and queue.
+        // Re-attaching over a live connection replaces its state and queue,
+        // so the reviews queued for it are owed again.
+        self.published_reviews.forget(&c);
         self.connections.insert(
             c,
             StreamConnectionState {
@@ -66,11 +95,21 @@ impl BoardStreamRegistry {
                 wakes: VecDeque::new(),
             },
         );
+        self.attached.notify_one();
+    }
+
+    /// Signalled on each attach, so the host's review pass reaches a
+    /// connection that attaches while no commit lands (FIX 6957). A signal
+    /// sent while nobody waits is kept for the next wait.
+    #[must_use]
+    pub fn attach_notifier(&self) -> Arc<Notify> {
+        Arc::clone(&self.attached)
     }
 
     /// Teardown drops the connection together with its queued wakes.
     pub fn detach(&mut self, c: &StreamConnectionId) {
         self.connections.remove(c);
+        self.published_reviews.forget(c);
     }
 
     fn change(
@@ -232,12 +271,8 @@ impl BoardStreamRegistry {
             match e.clone() {
                 BoardEvent::ConsultArrived { event, line }
                 | BoardEvent::OwnTaskFailed { event, line } => {
-                    // Wakes wait for a host-side adapter that may never come.
-                    // The oldest goes first; the durable TASK still stands.
-                    if st.wakes.len() >= PENDING_WAKES_CAP {
-                        st.wakes.pop_front();
-                    }
-                    st.wakes.push_back(WakeEnvelope {
+                    // A dropped wake's durable TASK still stands.
+                    st.queue_wake(WakeEnvelope {
                         event_ref: event.event_ref().into(),
                         task_ref: event.task_ref().into(),
                         actor_ref: event.actor_ref().into(),
@@ -248,10 +283,7 @@ impl BoardStreamRegistry {
                 }
                 BoardEvent::DiaryReviewPending { event, line } => {
                     // The review row stays in the vault as the durable mailbox.
-                    if st.wakes.len() >= PENDING_WAKES_CAP {
-                        st.wakes.pop_front();
-                    }
-                    st.wakes.push_back(WakeEnvelope {
+                    st.queue_wake(WakeEnvelope {
                         event_ref: event.event_ref().into(),
                         task_ref: String::new(),
                         actor_ref: event.agent_ref().into(),
