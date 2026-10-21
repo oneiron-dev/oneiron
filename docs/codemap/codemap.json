@@ -1141,7 +1141,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -5384,13 +5384,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/archive_spool.rs",
      "purpose": "FIX 2766 (rule 5): the whole-vault archive is built through spool files and read member by member, so no…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 25,
       "fn": 1
      }
     },
@@ -27275,7 +27275,7 @@
      "path": "src/failure_signals/code_fix.rs",
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
-      "const": 4,
+      "const": 1,
       "crate-vis": 11,
       "enum": 9,
       "fn": 3,
@@ -30413,11 +30413,43 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "GitPlanPushReport",
+      "GitPlanRef",
+      "GitPlanRefOutcome"
+     ],
+     "path": "src/git_wire/mirror_plan_push.rs",
+     "purpose": "The outbound half of an automatic mirror push plan (FIX 6866 part 2): an authenticated read of a frozen…",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GitPeeledRef",
+      "GitRefEnd",
+      "GitRefTag"
+     ],
+     "path": "src/git_wire/mirror_plan_review.rs",
+     "purpose": "What a whole ref an automatic mirror plan pushes names beyond the commits it reaches (FIX 6866 part 2), and…",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/git_wire/mirror_push.rs",
      "purpose": "Fixed outbound push profile for an origin's mirror (ARCH-0068 RA8). https only, no redirects, no proxy, no…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -30428,8 +30460,8 @@
      "path": "src/git_wire/mod.rs",
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
-      "crate-vis": 4,
-      "re-export": 13
+      "crate-vis": 5,
+      "re-export": 15
      }
     },
     {
@@ -30500,6 +30532,7 @@
      "path": "src/git_wire/publish_push.rs",
      "purpose": "The outbound half of one exact publish (FIX 6866): an authenticated read of one branch at an https mirror…",
      "surface": {
+      "crate-vis": 2,
       "enum": 2,
       "fn": 3
      }
@@ -30513,6 +30546,7 @@
      "path": "src/git_wire/publish_review.rs",
      "purpose": "The full ancestry one exact publish would expose (FIX 6866): every commit the pushed commit reaches that the…",
      "surface": {
+      "crate-vis": 3,
       "enum": 1,
       "fn": 1
      }
@@ -30524,7 +30558,7 @@
      "path": "src/git_wire/publish_review_trees.rs",
      "purpose": "The tree-by-tree half of an exact publish's review (FIX 6866): one commit whose diff alone passed its output…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -30612,7 +30646,7 @@
      "path": "src/git_wire/wire_reads.rs",
      "purpose": "The `GitWire` handle, its constructors, the process seam, and the read path",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 16,
       "struct": 1
      }
@@ -38925,6 +38959,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/mirror_green.rs",
+     "purpose": "The merge queue's green evidence for an origin mirror (FIX 6866 part 2; CALLS \"FIX 6866 full-auto green\")",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "MergeQueue"
      ],
@@ -38981,7 +39025,7 @@
      "path": "src/merge_queue/storage.rs",
      "purpose": "Repo-scoped queue/batch rows; every transition is under the repo single writer",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 3
      }
     },
@@ -40556,10 +40600,29 @@
      "purpose": "Outbound mirror pushing (ARCH-0068 RA8)",
      "surface": {
       "const": 5,
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OriginMirrorAutomation",
+      "OriginMirrorHold",
+      "OriginMirrorHoldCause",
+      "OriginMirrorPendingCheck"
+     ],
+     "path": "src/origin/mirror_auto.rs",
+     "purpose": "Full-auto mirrors, and what every automatic push run shows on its mirror (FIX 6866 part 2)",
+     "surface": {
+      "const": 4,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -40570,6 +40633,26 @@
      "purpose": "The Git-LFS census behind a mirror run's readiness (FIX 6052, FIX 6331)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/mirror_run.rs",
+     "purpose": "One automatic whole-ref run of one mirror, and the passes over every mirror (FIX 6866 part 2)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/mirror_status.rs",
+     "purpose": "What every automatic mirror push run shows on its mirror row, and the hold of a run that failed before…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -40593,11 +40676,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/origin/mirror_wake.rs",
+     "purpose": "The vault-owned wake of the origin mirror pushes (FIX 6866 part 2; CALLS \"FIX 6866 full-auto trigger\" and…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "crate-vis": 2,
-      "mod": 13,
+      "crate-vis": 3,
+      "mod": 14,
       "re-export": 1
      }
     },
@@ -40771,12 +40865,93 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/origin/publish/mirror_plan.rs",
+     "purpose": "Freezing one automatic mirror push plan (FIX 6866 part 2; CALLS \"FIX 6866 automatic review record\" and \"FIX…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/mirror_plan_dispatch.rs",
+     "purpose": "Sending one frozen automatic mirror push plan (FIX 6866 part 2; CALLS \"FIX 6866 automatic retry\")",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/mirror_plan_reconcile.rs",
+     "purpose": "Reconciling an automatic mirror push plan before any resend (FIX 6866 part 2; CALLS \"FIX 6866 automatic…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/mirror_plan_remote.rs",
+     "purpose": "The remote half of an automatic mirror push plan (FIX 6866 part 2): the authenticated read of what the…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/mirror_plan_run.rs",
+     "purpose": "One automatic run over a mirror's plans (FIX 6866 part 2): the mirror's open plan settles first, and only a…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/mirror_plan_store.rs",
+     "purpose": "The one store of automatic mirror push work (`ORIGIN_MIRROR_WORK`, LIVE; FIX 6866 part 2)",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/mirror_plan_types.rs",
+     "purpose": "The shapes of one automatic mirror push plan (FIX 6866 part 2; CALLS \"FIX 6866 automatic review record\")…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/mirror_review.rs",
+     "purpose": "The review section of one whole ref an automatic mirror plan pushes (FIX 6866 part 2; CALLS \"FIX 6866…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/origin/publish/mod.rs",
      "purpose": "Exact-commit publication to a repository's mirror (FIX 6866, part 1): a public mirror changes only when we…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 10,
       "fn": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -40787,7 +40962,7 @@
      "purpose": "An exact publish's outbound IO and its settlement (FIX 6866; CALLS \"FIX 6866 retry\" and \"FIX 6866 unknown…",
      "surface": {
       "const": 1,
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -40798,7 +40973,7 @@
      "purpose": "The full-ancestry review of one exact publish (FIX 6866; CALLS \"FIX 6866 review scope\"): what the push would…",
      "surface": {
       "const": 1,
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {
@@ -49312,7 +49487,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 5
      }
     },
@@ -49572,16 +49747,17 @@
       "DetectorDecisions",
       "DetectorPolicy",
       "ProposedDiagnostic",
-      "ProposedTier"
+      "ProposedTier",
+      "WindowGrade"
      ],
      "path": "src/self_heal/tiered.rs",
      "purpose": "Model-graded detection over ARCH-0037 runs",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
-      "fn": 4,
-      "struct": 3
+      "fn": 7,
+      "struct": 4
      }
     },
     {
@@ -57654,19 +57830,84 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "TaggingBackoff",
-      "TaggingPass",
-      "TaggingReconciler"
-     ],
+     "notable": [],
      "path": "src/tagging/reconciler.rs",
-     "purpose": "The drain pass a host worker drives: claim ready markers, read each turn, call the tagger outside any write…",
+     "purpose": "The tagging reconciler (FIX 6755): the engine half of the drain",
      "surface": {
       "crate-vis": 1,
-      "fn": 11,
-      "struct": 3
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/reconciler/call.rs",
+     "purpose": "The call (FIX 6755): a prepared marker's one tagger call, made on the caller's thread by the synchronous…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/reconciler/claim.rs",
+     "purpose": "The claim (FIX 6755): a ready live marker before any bulk one, read outside the writer and leased under it…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PreparedTagging",
+      "TaggingBackoff",
+      "TaggingPass",
+      "TaggingPreparation",
+      "TaggingReconciler"
+     ],
+     "path": "src/tagging/reconciler/coordinator.rs",
+     "purpose": "The reconciler's state, built once per vault, its builders, the passes a host worker drives through it, and…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 15,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/reconciler/history.rs",
+     "purpose": "The trace history's upkeep at the start of a pass: trimming to the per-turn bound in force, and expiry by age",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/reconciler/recovery.rs",
+     "purpose": "Recovery: the start scan for leases a stopped worker left, the rehome of markers an earlier build left below…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/reconciler/settle.rs",
+     "purpose": "Settlement (FIX 6755): a marker completed, skipped, failed or retried with its trace, each in one transaction",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -67038,7 +67279,7 @@
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 30,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67234,8 +67475,8 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 9,
-     "impl_vault": false,
+     "files": 10,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Durable batched speculation over real detached worktrees"
@@ -67269,7 +67510,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 81,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67717,7 +67958,7 @@
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 15,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67906,9 +68147,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 185,
+   "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4270,
+   "source_files": 4291,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81674,9 +81915,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/context_board/chat_emit.rs",
-     "purpose": "What a live chat answer's context leaves on record (FIX 6921): the emit receipt `ai.reply` keeps, and the…",
+     "purpose": "What a chat answer's context leaves on record (FIX 6921), a live turn's or a queued Continue or Retry's (FIX…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -90695,13 +90936,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/dispatcher/capacity.rs",
+     "purpose": "Room in the dispatcher's pending caps, as owned claims (FIX 6755)",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/dispatcher/mod.rs",
      "purpose": "The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -90811,7 +91062,7 @@
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 24
      }
     },
     {
@@ -91777,6 +92028,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/mirror_pushes.rs",
+     "purpose": "The host's half of the origin mirror pushes (ARCH-0068 RA8; FIX 6866)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
@@ -91980,6 +92241,16 @@
      "notable": [],
      "path": "src/server/tagging.rs",
      "purpose": "The tagging worker: the one thing that drives the engine's tagging reconciler",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/tagging/coordinator.rs",
+     "purpose": "The tagging coordinator (FIX 6755): one loop per vault that keeps live and bulk markers in flight through…",
      "surface": {
       "crate-vis": 3
      }
@@ -93188,7 +93459,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93244,7 +93515,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 48,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93316,7 +93587,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 997,
+   "source_files": 1000,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95734,9 +96005,13 @@
       "OriginAuthority",
       "OriginAuthoritySetRequest",
       "OriginAuthorityView",
+      "OriginMirrorAutomation",
       "OriginMirrorCleared",
+      "OriginMirrorHold",
+      "OriginMirrorHoldCause",
       "OriginMirrorLfsObject",
       "OriginMirrorNotReadyReason",
+      "OriginMirrorPendingCheck",
       "OriginMirrorReadiness",
       "OriginMirrorRun",
       "OriginMirrorSetRequest",
@@ -97317,8 +97592,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 917,
-      "struct": 2883
+      "enum": 918,
+      "struct": 2886
      }
     },
     {

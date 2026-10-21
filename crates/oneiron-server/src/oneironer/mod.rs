@@ -9,7 +9,10 @@
 //! Every call goes through the slot's one dispatcher ([`dispatcher`]) to a
 //! ready worker, live calls before bulk ones, and comes back with the facts
 //! of the worker that ran it. Every worker in a slot serves the same
-//! checkpoint, stack, capabilities and decode.
+//! checkpoint, stack, capabilities and decode. The tagging coordinator
+//! reaches the same dispatcher through [`ProviderTagger::claim_room`] and
+//! [`ProviderTagger::submit`] (FIX 6755), so its markers queue beside every
+//! other call.
 
 #[cfg(test)]
 use std::collections::VecDeque;
@@ -23,7 +26,9 @@ use oneiron::tagging::{TaggingOutcome, TaggingTrace};
 use oneiron::{ModelId, embed::EmbedderLocality};
 
 use crate::config::{OneironerConfig, OneironerProvider};
-use dispatcher::{Dispatcher, WorkerSpec};
+use dispatcher::{Completion, Dispatcher, WorkerSpec};
+
+pub(crate) use dispatcher::DispatchClaim;
 
 mod dispatcher;
 pub(crate) mod endpoint;
@@ -104,6 +109,29 @@ impl ProviderTagger {
             Provider::Endpoint(tagger) => tagger.probe(),
             Provider::Local { card, .. } => Ok(endpoint::ProbeOutcome::Ready(card.clone())),
         }
+    }
+
+    /// Room for one call in `work`'s class on the slot's dispatcher, awaited
+    /// with nothing held: the tagging coordinator's claim (FIX 6755). It
+    /// shares the pending caps every other call takes room in, and never
+    /// refuses; dropped unused, the claim gives its room back.
+    pub(crate) fn claim_room(
+        &self,
+        work: ExtractionWork,
+    ) -> impl std::future::Future<Output = DispatchClaim> + Send + 'static {
+        self.dispatcher.claim_async(work)
+    }
+
+    /// Queues `input` under `claim`, never waiting; the answer comes back
+    /// through the returned completion.
+    pub(crate) fn submit(&self, claim: DispatchClaim, input: EncoderInput) -> Completion {
+        claim.submit(input)
+    }
+
+    /// The dispatcher's pending cap of `work`'s class, from its policy: the
+    /// bound the tagging coordinator also keeps its resident markers in.
+    pub(crate) fn pending_cap(&self, work: ExtractionWork) -> usize {
+        dispatcher::pending_cap(work)
     }
 
     /// The decoder revision a native tagger runs; `None` for an endpoint,

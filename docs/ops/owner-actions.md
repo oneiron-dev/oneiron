@@ -545,6 +545,13 @@ Each repository names one https mirror (GitHub, GitLab, a Gitea), and the mirror
 - `schedule`: the origin pushes every published ref on the cadence you set, as below. **That
   cadence is the repository's real RPO**: a promoted replica or the mirror holds what the last
   push carried, and nothing newer.
+- `full_auto`: each new green head goes out as soon as the published refs move, with no waiting
+  and no cadence. "Green" means the repository's merge queue advanced green on exactly that
+  commit (every speculative path passed its fast check, and its slow check passed on the landed
+  commit and tree). A ref whose tip is not green goes out at its newest green ancestor, or waits;
+  the mirror's status names each waiting head under `pending_checks`. A head that never passes
+  through the merge queue (a direct receive-pack push, a conflict export) is never green: publish
+  it with an exact request (below) or use `schedule`.
 
 Put the mirror's push token into custody first, bound to `origin:mirror-push`, then name the
 mirror:
@@ -560,7 +567,7 @@ oneiron api raw POST /v1/owner/origin-mirror --data '{"repo": "demo",
 oneiron api raw GET '/v1/owner/origin-mirror?repo=demo'    # the target, its strategy and last push
 oneiron api raw POST /v1/owner/origin-mirror/strategy \
   --data '{"repo": "demo", "sync_strategy": "ask_me"}'      # change the strategy alone
-oneiron api raw POST /v1/owner/origin-mirror/push --data '{"repo": "demo"}'   # push now (schedule)
+oneiron api raw POST /v1/owner/origin-mirror/push --data '{"repo": "demo"}'   # push now
 oneiron api raw DELETE '/v1/owner/origin-mirror?repo=demo' # stop; the mirror keeps what it has
 ```
 
@@ -585,11 +592,52 @@ changes the strategy and its `strategy_revision` and nothing else: never the URL
 cadence or what was pushed. A change of URL, user, custody record or served name gives the
 mirror a fresh `target_generation` id instead, one no earlier mirror of the repo held, cleared or
 not. Only the live owner sets either; `every_secs` is still
-stored and checked on an `ask_me` mirror, and only `schedule` reads it.
+stored and checked on an `ask_me` or `full_auto` mirror, and only `schedule` reads it. A switch
+to `ask_me` (or to the other automatic strategy, or a new destination, or clearing the mirror)
+pauses automatic work not yet sent: a push already running finishes and is settled first, and
+nothing more goes out whole. Clearing the mirror also settles its open plan at once, as cleared:
+refs whose push may already have gone out are recorded as unknown, and a push still running
+records its result against that plan.
+
+### What every automatic push records
+
+Every `schedule` and `full_auto` push freezes a reviewed **push plan** before anything goes out.
+There is no approval step: the strategy you chose is the standing authority, and the plan is its
+record. The engine reads every ref it would touch at the mirror with the mirror's own token, then
+records the destination and its generation, the strategy and its revision, the exact list of
+`(ref, commit)` updates and deletions, the tip it saw at each ref, the batches (at most 256 refs a
+push, updates before deletions), the full-ancestry review of each update (as an exact publish's,
+below: every commit the push would add, with every merge parent and each path it introduces; an
+annotated tag's own object and message, or a tag too large to read whole by its id and size;
+every path of a tree a ref names) and one digest over all of it. Each ref is pushed **leased** on the tip read for it, forced and with deletions as before,
+and with no `+` overriding the lease: a mirror whose ref moved since refuses that ref.
+
+- **No blind retry.** A ref whose push did not prove its outcome is read again at the mirror
+  before anything is sent again: at its new commit it is settled and never resent; still at the
+  tip leased on, it gets the same-plan resend (same ref, same commit, same lease); at neither, the
+  plan names it under `remote_moved` and the next push plans it afresh. A same-plan resend the
+  mirror refuses again ends that ref (`refused`). Nothing is widened: a new plan waits until the
+  open one has settled, and the run that settled it reports that plan; the next interval or event
+  plans afresh.
+- **Unreadable mirror.** When the tip cannot be read before a push, that ref goes as the scheduled
+  mirror always sent it (forced, unleased) and its review covers its whole history. When the read
+  after an unproven push fails, the plan stays frozen and the status shows
+  `reconcile_unavailable`; from the second failed read in a row, each run resends that same frozen
+  plan, never a newer one.
+- **Review failure = hold.** A push whose review or plan cannot be read or stored sends nothing.
+  The status shows `review_unavailable` with its cause (`storage`, `decode`, `review`) and when it
+  was last seen, a warning names it, and the next interval (`full_auto`: the next wake or tick)
+  reviews again from scratch.
+
+`GET /v1/owner/origin-mirror` (and `vault.code.origin.mirror.get`) shows this under `automation`:
+the newest plan's id and digest and whether it settled, the holds above, `pending_checks`,
+`remote_moved` and `refused`. The plans themselves are kept as the live vault holds them through
+a restore (LIVE), with the latest 16 settled plans per mirror; erasing an actor scrubs it from the
+plans its push-now made.
 
 ### Publish one exact commit
 
-On any mirror, of either strategy, an exact publish pushes one commit to one branch, once. The
+On any mirror, of any strategy, an exact publish pushes one commit to one branch, once. The
 verbs are `vault.code.origin.publish.request`, `.review`, `.get`, `.approve`, `.execute` and
 `.cancel` (SDK, MCP, code mode, or `POST /v1/core/facade/<verb>`):
 
@@ -1251,16 +1299,22 @@ consecutive = 3            # runs a window needs; for t2, positives in a row tha
 window_secs = 3600         # one window of time; for session, how long a conversation is quiet
 ```
 
-Every five minutes the server reads the newest 1,024 runs and asks each detector's question of
-each window it has not graded yet, up to 8 windows a pass, on the decision ladder's local and big
-rungs (never a person). `t3` judges each completed window of time at once. `t2` asks once per
-run. `session` judges one conversation's runs once it has been quiet for `window_secs`. A raised
-window becomes a proposed diagnostic: nothing is repaired. Changing a prompt or rubric grades
-windows again.
+Every five minutes the server reads every stored run and asks each detector's question of each
+window it has not graded yet. A long window is asked in parts of up to 64 runs. A pass asks about
+8 parts, but it always finishes a window it started, and a window counts as graded only once
+every part has been asked. Each question starts at the first rung your decision ladder staffs (your
+rule rows first, then the local rung or the first model rung you run) and goes no higher than the
+big rung (never a person). `t3` judges each completed window of time, and a long window raises
+when any of its parts does. `t2` asks once per run and raises on `consecutive` positives in a
+row, even when the row crosses parts. `session` judges one conversation's runs once it has been
+quiet for `window_secs`. A prompt and rubric of any length are used whole: past the room of one
+question they reach the model beside the telemetry. A raised window becomes a proposed
+diagnostic: nothing is repaired. Changing a prompt or rubric grades windows again.
 
-`GET /v1/owner/self-heal/findings?family=<family>` lists one detector's raised `t3` findings,
-newest first, each with your label. `POST /v1/owner/self-heal/findings/label` with
-`{"family", "event", "positive"}` labels one finding; a label never changes. Once a family has
+`GET /v1/owner/self-heal/findings?family=<family>` lists every one of a detector's raised `t3`
+findings, newest first, each with your label; add `&limit=N` for the newest N only.
+`POST /v1/owner/self-heal/findings/label` with `{"family", "event", "positive"}` labels one
+finding; a label never changes. Once a family has
 `consecutive` positive labels and one negative, a `t2` detector of that family asks with the
 labeled findings. For a `t3` detector, the next pass registers a T2 of the family: it grades each
 window's runs one by one, shown the labeled findings' run facts, beside the `t3`, which keeps

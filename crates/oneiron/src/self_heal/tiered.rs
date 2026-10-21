@@ -12,15 +12,19 @@ use crate::llm::decision::{
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
 use rmpv::Value;
+use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
-/// A decision question's text bound. A detector's holds its prompt, its rubric and up to
-/// `QUESTION_FRAMING` bytes of separators and evidence line.
+/// A decision question's text room (the ladder's typed-question bound). A detector's
+/// question holds its prompt, its rubric and up to `QUESTION_FRAMING` bytes of separators
+/// and evidence line; wording past that room rides whole in the state (OF-418 L7).
 const QUESTION_TEXT_MAX: usize = 16_384;
 const QUESTION_FRAMING: usize = 256;
 
-/// The dial a detector's questions run under unless the host picks another. It ends below
-/// Human: a telemetry classifier never pages a person per run.
+/// The dial a detector's questions run under. It ends below Human: a telemetry classifier
+/// never pages a person per run. The host starts it at its own first staffed rung, up to
+/// this ceiling and in this band (OF-418 L9); `Local` is the first rung only where no host
+/// picks one.
 pub const DETECTOR_DIAL: DecisionDial = DecisionDial {
     first: DecisionRung::Local,
     ceiling: DecisionRung::Big,
@@ -60,19 +64,16 @@ pub struct DetectorPolicy {
 }
 impl DetectorPolicy {
     /// A positive `consecutive` is the host's to set: the Vault entry points
-    /// ask past `limits.detector_consecutive`. The prompt and rubric must fit
-    /// the decision question's text room.
+    /// ask past `limits.detector_consecutive`. The prompt and rubric go whole
+    /// at any length: past the question's text room they ride in the state
+    /// (OF-418 L7), measured at `limits.maintenance_text_bytes`.
     pub(super) fn validate(&self) -> Result<()> {
         validate_token(&self.family, "detector family is not a token")?;
         validate_token(
             &format!("session_judge.{}", self.family),
             "detector id is too long",
         )?;
-        if self.prompt.is_empty()
-            || self.rubric.is_empty()
-            || self.consecutive == 0
-            || self.prompt.len() + self.rubric.len() > QUESTION_TEXT_MAX - QUESTION_FRAMING
-        {
+        if self.prompt.is_empty() || self.rubric.is_empty() || self.consecutive == 0 {
             return Err(Error::InvalidConfig("invalid detector policy".into()));
         }
         Ok(())
@@ -87,6 +88,15 @@ impl DetectorPolicy {
         tier: ProposedTier,
         examples: (usize, usize),
     ) -> Result<DecisionQuestion> {
+        Ok(self.asked(tier, examples)?.question)
+    }
+
+    /// [`Self::question`] with the wording it leaves to the state. Wording within the text
+    /// room is the question's own text, as it always was, so its question and bands stand.
+    /// Past the room the question is short and keyed by the wording's digest, so changed
+    /// wording is still a new question, and the prompt and rubric ride whole as the state's
+    /// `detector` field (OF-418 L7).
+    fn asked(&self, tier: ProposedTier, examples: (usize, usize)) -> Result<Asked> {
         self.validate()?;
         let evidence_line = if examples == (0, 0) {
             String::new()
@@ -96,13 +106,51 @@ impl DetectorPolicy {
                 examples.0, examples.1
             )
         };
-        let text = format!("{}\n\nRubric:\n{}{evidence_line}", self.prompt, self.rubric);
-        TELEMETRY_ANOMALY.question(
-            &[tier.token().as_bytes(), self.family.as_bytes()],
-            text,
-            AnswerContract::Noul,
-        )
+        if self.prompt.len() + self.rubric.len() <= QUESTION_TEXT_MAX - QUESTION_FRAMING {
+            let text = format!("{}\n\nRubric:\n{}{evidence_line}", self.prompt, self.rubric);
+            return Ok(Asked {
+                question: TELEMETRY_ANOMALY.question(
+                    &[tier.token().as_bytes(), self.family.as_bytes()],
+                    text,
+                    AnswerContract::Noul,
+                )?,
+                wording: None,
+            });
+        }
+        let mut hasher = blake3::Hasher::new();
+        for part in [self.prompt.as_str(), self.rubric.as_str()] {
+            hasher.update(&(part.len() as u64).to_be_bytes());
+            hasher.update(part.as_bytes());
+        }
+        let digest = hasher.finalize();
+        let text = format!(
+            "Does this telemetry show the anomaly the detector's prompt describes, judged by \
+             its rubric? The prompt and the rubric are the state's `detector` field, whole.\
+             {evidence_line}"
+        );
+        Ok(Asked {
+            question: TELEMETRY_ANOMALY.question(
+                &[
+                    tier.token().as_bytes(),
+                    self.family.as_bytes(),
+                    digest.as_bytes().as_slice(),
+                ],
+                text,
+                AnswerContract::Noul,
+            )?,
+            wording: Some(serde_json::json!({
+                "prompt": self.prompt,
+                "rubric": self.rubric,
+            })),
+        })
     }
+}
+
+/// A detector's question as asked: the typed question and, for wording past the question's
+/// text room, the prompt and rubric that ride whole in every call's state (OF-418 L7).
+struct Asked {
+    question: DecisionQuestion,
+    wording: Option<serde_json::Value>,
 }
 
 /// The shared decision path a detector's questions go through: the host's ladder, the
@@ -123,17 +171,9 @@ pub struct DetectorDecisions<'a> {
 }
 
 impl DetectorDecisions<'_> {
-    /// Abstaining fails the whole call, as a failed judge call did. A person the host's dial
-    /// queues keeps that ask's own receipt; nothing here waits on them.
-    fn raised(
-        &self,
-        question: &DecisionQuestion,
-        evidence: &[EntityId],
-    ) -> Result<(bool, DecisionReceipt)> {
-        self.raised_with_state(question, evidence, self.state)
-    }
-
-    /// [`Self::raised`] over a state the question was given in place of the host's.
+    /// One question over `state`, the host's or one built from it. Abstaining fails the
+    /// whole call, as a failed judge call did. A person the host's dial queues keeps that
+    /// ask's own receipt; nothing here waits on them.
     fn raised_with_state(
         &self,
         question: &DecisionQuestion,
@@ -164,11 +204,16 @@ fn run_ids(runs: &[RetrievalRunRecord]) -> Result<Vec<EntityId>> {
 }
 
 /// The host's state with the one run a question grades named as its `target` (FIX 2481):
-/// its id and its whole record. The window and the reviewed examples stay whole beside it.
-fn targeted(state: &serde_json::Value, run: &RetrievalRunRecord) -> Result<serde_json::Value> {
+/// its id and its whole record. The window and the reviewed examples stay whole beside it,
+/// and so does the wording the question left to the state.
+fn targeted(
+    state: &serde_json::Value,
+    run: &RetrievalRunRecord,
+    wording: Option<&serde_json::Value>,
+) -> Result<serde_json::Value> {
     let record = serde_json::to_value(run)
         .map_err(|_| Error::InvariantViolation("retrieval telemetry encode"))?;
-    let mut state = state.clone();
+    let mut state = with_wording(state, wording)?.into_owned();
     let Some(fields) = state.as_object_mut() else {
         return Err(Error::InvalidConfig("invalid decision state".into()));
     };
@@ -177,6 +222,23 @@ fn targeted(state: &serde_json::Value, run: &RetrievalRunRecord) -> Result<serde
         serde_json::json!({ "run": run.run_id.to_hex(), "record": record }),
     );
     Ok(state)
+}
+
+/// The host's state with the wording a question left to it (OF-418 L7) as its `detector`
+/// field, whole; the host's own state when the question holds its wording.
+fn with_wording<'s>(
+    state: &'s serde_json::Value,
+    wording: Option<&serde_json::Value>,
+) -> Result<Cow<'s, serde_json::Value>> {
+    let Some(wording) = wording else {
+        return Ok(Cow::Borrowed(state));
+    };
+    let mut state = state.clone();
+    let Some(fields) = state.as_object_mut() else {
+        return Err(Error::InvalidConfig("invalid decision state".into()));
+    };
+    fields.insert("detector".into(), wording.clone());
+    Ok(Cow::Owned(state))
 }
 
 /// A proposed-only output. No conversion from this type to SignedDetectorRun exists.
@@ -276,6 +338,26 @@ pub(super) fn valid_runs(
     Ok(())
 }
 
+/// One logical window a detector grades in parts (OF-418 L6). The window is validated whole
+/// when it opens, so `consecutive` and its sufficiency are the window's, not a part's. The
+/// host then asks each part in turn, oldest first, over that part's state, and the window
+/// has one verdict once every part is asked. A T2b streak runs on across parts; a T3 or
+/// session window raises when any of its parts raised.
+pub struct WindowGrade<'w> {
+    policy: &'w DetectorPolicy,
+    tier: ProposedTier,
+    asked: Asked,
+    /// The reviewed positive, then negative, findings a T2b's questions carry as evidence.
+    examples: Vec<EntityId>,
+    window: &'w [RetrievalRunRecord],
+    /// Runs of the window asked so far, oldest first.
+    graded: usize,
+    /// T2b: the receipts of the raised runs in a row that end at the newest run asked.
+    streak: Vec<DecisionReceipt>,
+    /// T3 and session: the receipts of the parts that raised.
+    raised: Vec<DecisionReceipt>,
+}
+
 impl Vault {
     /// T2b spends model calls after the cheaper centroid rung did not match.
     /// Supply a strictly oldest-first telemetry window; `retrieval_runs` returns
@@ -286,50 +368,8 @@ impl Vault {
         decisions: &DetectorDecisions<'_>,
         runs: &[RetrievalRunRecord],
     ) -> Result<Option<ProposedDiagnostic>> {
-        let _ = self.measure_limit(EngineLimit::DetectorConsecutive, policy.consecutive as u64);
-        self.classify_prompt_with_examples(policy, decisions, runs, (&[], &[]))
-    }
-
-    /// `examples` are reviewed positive and negative diagnostic events, asked as evidence
-    /// after each run. Each run's question carries that run as the state's one `target`.
-    pub(super) fn classify_prompt_with_examples(
-        &self,
-        policy: &DetectorPolicy,
-        decisions: &DetectorDecisions<'_>,
-        runs: &[RetrievalRunRecord],
-        examples: (&[EntityId], &[EntityId]),
-    ) -> Result<Option<ProposedDiagnostic>> {
-        let question = policy.question(
-            ProposedTier::PromptClassifier,
-            (examples.0.len(), examples.1.len()),
-        )?;
-        valid_runs(self, runs, policy.consecutive)?;
-        let mut streak = Vec::new();
-        for run in runs {
-            let mut evidence = run_ids(std::slice::from_ref(run))?;
-            evidence.extend(examples.0.iter().chain(examples.1));
-            let state = targeted(decisions.state, run)?;
-            // The state goes whole: past `limits.maintenance_text_bytes` it asks.
-            let bytes = serde_json::to_vec(&state).map_or(0, |bytes| bytes.len());
-            let _ = self.measure_limit(EngineLimit::MaintenanceTextBytes, bytes as u64);
-            let (raised, receipt) = decisions.raised_with_state(&question, &evidence, &state)?;
-            if raised {
-                streak.push(receipt);
-            } else {
-                streak.clear();
-            }
-        }
-        if streak.len() < policy.consecutive {
-            return Ok(None);
-        }
-        propose(
-            self,
-            ProposedTier::PromptClassifier,
-            policy,
-            &runs[runs.len() - streak.len()..],
-            None,
-            streak,
-        )
+        let grade = self.open_window_grade(policy, ProposedTier::PromptClassifier, runs)?;
+        self.grade_in_one(grade, decisions)
     }
 
     /// T3 receives an oldest-first bounded trace window and finds open anomalies.
@@ -339,14 +379,8 @@ impl Vault {
         decisions: &DetectorDecisions<'_>,
         runs: &[RetrievalRunRecord],
     ) -> Result<Option<ProposedDiagnostic>> {
-        let question = policy.question(ProposedTier::Judge, (0, 0))?;
-        let _ = self.measure_limit(EngineLimit::DetectorConsecutive, policy.consecutive as u64);
-        valid_runs(self, runs, policy.consecutive)?;
-        let (raised, receipt) = decisions.raised(&question, &run_ids(runs)?)?;
-        if !raised {
-            return Ok(None);
-        }
-        propose(self, ProposedTier::Judge, policy, runs, None, vec![receipt])
+        let grade = self.open_window_grade(policy, ProposedTier::Judge, runs)?;
+        self.grade_in_one(grade, decisions)
     }
 
     /// Session quality is a T2/T3 model grade, never a BEAM score or auto arm.
@@ -357,29 +391,168 @@ impl Vault {
         decisions: &DetectorDecisions<'_>,
         runs: &[RetrievalRunRecord],
     ) -> Result<Option<ProposedDiagnostic>> {
-        let question = policy.question(ProposedTier::SessionJudge, (0, 0))?;
+        let grade = self.open_window_grade(policy, ProposedTier::SessionJudge, runs)?;
+        self.grade_in_one(grade, decisions)
+    }
+
+    /// Opens an oldest-first `window` to grade in parts at `tier`: T2b, T3 or session (one
+    /// episode's runs). The whole window is validated here, every run of it.
+    ///
+    /// # Errors
+    ///
+    /// The centroid tier, which asks no model question; an invalid policy or window; a
+    /// session window with a run of no session or of another one.
+    pub fn open_window_grade<'w>(
+        &self,
+        policy: &'w DetectorPolicy,
+        tier: ProposedTier,
+        window: &'w [RetrievalRunRecord],
+    ) -> Result<WindowGrade<'w>> {
         let _ = self.measure_limit(EngineLimit::DetectorConsecutive, policy.consecutive as u64);
-        valid_runs(self, runs, policy.consecutive)?;
-        let Some(turn) = runs[0].turn else {
-            return Err(Error::InvalidConfig("missing session identity".into()));
+        self.window_grade(policy, tier, window, (&[], &[]))
+    }
+
+    /// [`Self::open_window_grade`] asked with reviewed positive and negative `examples`,
+    /// which a T2b question carries as evidence after each run.
+    pub(super) fn window_grade<'w>(
+        &self,
+        policy: &'w DetectorPolicy,
+        tier: ProposedTier,
+        window: &'w [RetrievalRunRecord],
+        examples: (&[EntityId], &[EntityId]),
+    ) -> Result<WindowGrade<'w>> {
+        let asked = match tier {
+            ProposedTier::Centroid => {
+                return Err(Error::InvalidConfig(
+                    "a centroid window asks no question".into(),
+                ));
+            }
+            ProposedTier::PromptClassifier => {
+                policy.asked(tier, (examples.0.len(), examples.1.len()))?
+            }
+            ProposedTier::Judge | ProposedTier::SessionJudge => policy.asked(tier, (0, 0))?,
         };
-        if runs
-            .iter()
-            .any(|run| run.turn.is_none_or(|t| t.episode_id != turn.episode_id))
-        {
-            return Err(Error::InvalidConfig("mixed sessions".into()));
+        // The wording goes whole: past `limits.maintenance_text_bytes` it asks.
+        let wording = policy.prompt.len() + policy.rubric.len();
+        let _ = self.measure_limit(EngineLimit::MaintenanceTextBytes, wording as u64);
+        valid_runs(self, window, policy.consecutive)?;
+        if tier == ProposedTier::SessionJudge {
+            let Some(turn) = window.first().and_then(|run| run.turn) else {
+                return Err(Error::InvalidConfig("missing session identity".into()));
+            };
+            if window
+                .iter()
+                .any(|run| run.turn.is_none_or(|t| t.episode_id != turn.episode_id))
+            {
+                return Err(Error::InvalidConfig("mixed sessions".into()));
+            }
         }
-        let (raised, receipt) = decisions.raised(&question, &run_ids(runs)?)?;
-        if !raised {
-            return Ok(None);
-        }
-        propose(
-            self,
-            ProposedTier::SessionJudge,
+        Ok(WindowGrade {
             policy,
-            runs,
-            None,
-            vec![receipt],
-        )
+            tier,
+            asked,
+            examples: examples.0.iter().chain(examples.1).copied().collect(),
+            window,
+            graded: 0,
+            streak: Vec::new(),
+            raised: Vec::new(),
+        })
+    }
+
+    /// Asks the window's next `runs` runs, one part, under `decisions`, whose state the
+    /// host built from that part. T2b asks each run in turn, its state naming that run as
+    /// its `target`, and carries its streak on; T3 and session ask the part once.
+    ///
+    /// # Errors
+    ///
+    /// An empty part or one past the window's end, or a question that failed or abstained.
+    pub fn grade_window_part(
+        &self,
+        grade: &mut WindowGrade<'_>,
+        decisions: &DetectorDecisions<'_>,
+        runs: usize,
+    ) -> Result<()> {
+        let end = grade
+            .graded
+            .checked_add(runs)
+            .filter(|end| runs > 0 && *end <= grade.window.len())
+            .ok_or_else(|| Error::InvalidConfig("invalid detector window part".into()))?;
+        let part = &grade.window[grade.graded..end];
+        let wording = grade.asked.wording.as_ref();
+        match grade.tier {
+            ProposedTier::PromptClassifier => {
+                for run in part {
+                    let mut evidence = run_ids(std::slice::from_ref(run))?;
+                    evidence.extend(&grade.examples);
+                    let state = targeted(decisions.state, run, wording)?;
+                    // The state goes whole: past `limits.maintenance_text_bytes` it asks.
+                    let bytes = serde_json::to_vec(&state).map_or(0, |bytes| bytes.len());
+                    let _ = self.measure_limit(EngineLimit::MaintenanceTextBytes, bytes as u64);
+                    let (raised, receipt) =
+                        decisions.raised_with_state(&grade.asked.question, &evidence, &state)?;
+                    if raised {
+                        grade.streak.push(receipt);
+                    } else {
+                        grade.streak.clear();
+                    }
+                }
+            }
+            ProposedTier::Judge | ProposedTier::SessionJudge | ProposedTier::Centroid => {
+                let state = with_wording(decisions.state, wording)?;
+                let (raised, receipt) =
+                    decisions.raised_with_state(&grade.asked.question, &run_ids(part)?, &state)?;
+                if raised {
+                    grade.raised.push(receipt);
+                }
+            }
+        }
+        grade.graded = end;
+        Ok(())
+    }
+
+    /// The window's one verdict once every part is asked. A T2b raises on `consecutive`
+    /// raised runs in a row that end the window, across any part boundary, and its finding
+    /// names those runs. A T3 or session window raises when any part raised; its finding
+    /// names every run of the window and carries the raising parts' receipts.
+    ///
+    /// # Errors
+    ///
+    /// A window not asked to its end, or storage errors.
+    pub fn finish_window_grade(
+        &self,
+        grade: WindowGrade<'_>,
+    ) -> Result<Option<ProposedDiagnostic>> {
+        if grade.graded != grade.window.len() {
+            return Err(Error::InvalidConfig(
+                "detector window not asked whole".into(),
+            ));
+        }
+        let (runs, decisions) = match grade.tier {
+            ProposedTier::PromptClassifier => {
+                if grade.streak.len() < grade.policy.consecutive {
+                    return Ok(None);
+                }
+                let start = grade.window.len() - grade.streak.len();
+                (&grade.window[start..], grade.streak)
+            }
+            ProposedTier::Judge | ProposedTier::SessionJudge | ProposedTier::Centroid => {
+                if grade.raised.is_empty() {
+                    return Ok(None);
+                }
+                (grade.window, grade.raised)
+            }
+        };
+        propose(self, grade.tier, grade.policy, runs, None, decisions)
+    }
+
+    /// `grade`'s whole window asked as one part: the single-call detector doors.
+    pub(super) fn grade_in_one(
+        &self,
+        mut grade: WindowGrade<'_>,
+        decisions: &DetectorDecisions<'_>,
+    ) -> Result<Option<ProposedDiagnostic>> {
+        let runs = grade.window.len();
+        self.grade_window_part(&mut grade, decisions, runs)?;
+        self.finish_window_grade(grade)
     }
 }
