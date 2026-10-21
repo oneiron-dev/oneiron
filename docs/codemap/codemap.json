@@ -21983,10 +21983,30 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/nightly_links.rs",
+     "purpose": "Semantic links across one night's children, PROPOSALS ONLY (OF-498d)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/nightly_links/pairs.rs",
+     "purpose": "Which cross-child pairs a night's link continuations judge, how one call asks about them, and what each…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/nightly_merge.rs",
      "purpose": "Nightly fan-in over child proposals",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 16
      }
     },
     {
@@ -21997,6 +22017,16 @@
      "purpose": "Which unlisted siblings a nightly merge fans in beside its listed children (FIX 7495, FIX 7524): a retry of…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/nightly_merge/write.rs",
+     "purpose": "The nightly writer (OF-498d): how the merge and each of its link continuations land",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -35613,7 +35643,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 44,
+      "const": 45,
       "fn": 1,
       "struct": 1
      }
@@ -69982,7 +70012,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 116,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71027,7 +71057,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4522,
+   "source_files": 4525,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72366,7 +72396,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/drift.rs",
@@ -72386,7 +72416,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/drift_plan.rs",
@@ -72400,9 +72430,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/cua/fixture.rs",
-     "purpose": "PRIVATE S1 lifecycle",
+     "purpose": "PRIVATE S1 lifecycle and the frozen PUBLIC-only served forward",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -72436,13 +72466,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/provider_gate.rs",
      "purpose": "Pass-through only: exact wire identities and durable campaign cash reservations",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/readiness.rs",
+     "purpose": "FIX 8326 readiness through the shipped served engine, never a CDP sidecar",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -72476,23 +72516,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/run.rs",
      "purpose": "One assigned trial, one original deadline and no failure retries",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/served.rs",
      "purpose": "Shipped binary lifecycle and official MCP stdio",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -73387,9 +73427,9 @@
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
     "cua": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "Synthetic browser bench: engine outcomes are not oracle passes"
     },
@@ -73487,7 +73527,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 140,
+   "source_files": 141,
    "test_files": 18
   },
   "oneiron-broker": {
