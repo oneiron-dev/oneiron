@@ -45,6 +45,18 @@ pub struct WakeRecipePolicy {
     pub arc_child_calls_per_wake: u32,
     /// What the expensive path is asked of an unflagged window.
     pub audit_window_instruction: String,
+    /// Whether a planned thing's branch runs as one scoped code-mode agent
+    /// (FIX 7508): its slices go through the agent's lent extract and decide
+    /// ports. A logical attempt that already ran as an agent keeps running
+    /// as one when this is turned off; either way its slices are the same
+    /// durable steps, so no checkpoint is lost to the switch.
+    pub thing_child_code_mode: bool,
+    /// What a thing's agent is asked to do with what it is lent.
+    pub thing_child_instruction: String,
+    /// The share of the agent model's input window one lent input piece may
+    /// fill: one part in this many. A slice past it is split into pieces,
+    /// every piece lent. At least one.
+    pub thing_child_input_window_divisor: u32,
 }
 
 impl WakeRecipePolicy {
@@ -58,6 +70,8 @@ impl WakeRecipePolicy {
             || self.novelty_instruction.trim().is_empty()
             || self.typing_instruction.trim().is_empty()
             || self.narrative_instruction.trim().is_empty()
+            || self.thing_child_instruction.trim().is_empty()
+            || self.thing_child_input_window_divisor == 0
             || (self.audit_window_share > 0
                 && (self.audit_window_bytes == 0
                     || self.audit_window_instruction.trim().is_empty()))

@@ -56060,6 +56060,12 @@ pub struct WakeRecipePolicy {
     pub arc_child_calls_per_wake: u32,
     #[serde(rename = "audit_window_instruction")]
     pub audit_window_instruction: String,
+    #[serde(rename = "thing_child_code_mode")]
+    pub thing_child_code_mode: bool,
+    #[serde(rename = "thing_child_instruction")]
+    pub thing_child_instruction: String,
+    #[serde(rename = "thing_child_input_window_divisor")]
+    pub thing_child_input_window_divisor: u32,
 }
 
 /// `oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest`.

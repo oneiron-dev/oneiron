@@ -14292,6 +14292,28 @@
       "section": false
     },
     {
+      "name": "self.dreamer.thing.extract",
+      "description": "Runs one lent slice's extraction on the parent's own wake and stages its draft, answering one engine-issued proposal ref per drafted candidate.",
+      "input": "crate::dreamer_consolidation::ThingExtractInput",
+      "output": "crate::dreamer_consolidation::ThingExtractOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.dreamer.thing.extract\", &input)?",
+      "scope": "Write",
+      "context": "scoped_child",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.dreamer.thing.decide",
+      "description": "Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt.",
+      "input": "crate::dreamer_consolidation::ThingDecideInput",
+      "output": "crate::dreamer_consolidation::ThingDecideOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.dreamer.thing.decide\", &input)?",
+      "scope": "Write",
+      "context": "scoped_child",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "vault.commit",
       "description": "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted.",
       "refs": [

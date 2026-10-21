@@ -18297,6 +18297,9 @@ class WakeRecipePolicy(TypedDict):
     arc_min_new_statements: int
     arc_child_calls_per_wake: int
     audit_window_instruction: str
+    thing_child_code_mode: bool
+    thing_child_instruction: str
+    thing_child_input_window_divisor: int
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
 class SieveLeaseRequest(TypedDict):

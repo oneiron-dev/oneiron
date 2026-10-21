@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1179 code-mode rows (1139 host rows, 40 run rows), 3981 declarations.
-// Replies: 1059 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1181 code-mode rows (1141 host rows, 40 run rows), 3986 declarations.
+// Replies: 1061 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -3155,6 +3155,11 @@ declare namespace Sdk {
   type WindowInput = { window: string };
   type HandoverInput = { reason: string };
   type HandoverOutput = { reason: string; asked_at_ms: number };
+  type ThingExtractInput = { input: string };
+  type ThingProposalRef = { child_run: string; output_path: string; candidate_id: string };
+  type ThingExtractOutput = { input: string; state: string; proposals: ThingProposalRef[]; persons: number; fallback: boolean };
+  type ThingDecideInput = { pack: string };
+  type ThingDecideOutput = { pack: string; state: string; questions: number; missing: string[] };
   type ScopedCommitRequest = { claims: ScopedClaimInput[] };
   type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
   type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string };
@@ -3640,7 +3645,7 @@ declare namespace Sdk {
   type SievePolicyRequest = Record<string, never>;
   type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: number; max_text_bytes_per_pass: number; date_interest: number; name_interest: number; absolute_date_confidence: number; relative_date_confidence: number; vague_date_confidence: number; name_confidence: number; initial_name_confidence: number; katakana_name_confidence: number; uncertain_low: number; uncertain_high: number };
   type SievePolicySetRequest = { policy: SievePolicy };
-  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; audit_window_instruction: string };
+  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; audit_window_instruction: string; thing_child_code_mode: boolean; thing_child_instruction: string; thing_child_input_window_divisor: number };
   type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy };
   type SieveLeaseRequest = { budget_id: string };
   type SieveLeaseCounter = { total_units: number; remaining_units: number; reserved_units: number; updated_at: number };
@@ -4332,6 +4337,14 @@ declare namespace self {
     windows(input: Sdk.WindowsInput): Promise<Sdk.DesktopAnswer<Sdk.WindowsOutput> | StoredResult>;
     /** Zooms into a rectangle of a held image. */
     zoom(input: Sdk.ZoomInput): Promise<Sdk.DesktopAnswer<Sdk.ImageOutput> | StoredResult>;
+  };
+  const dreamer: {
+    thing: {
+      /** Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt. */
+      decide(input: Sdk.ThingDecideInput): Promise<Sdk.ThingDecideOutput | StoredResult>;
+      /** Runs one lent slice's extraction on the parent's own wake and stages its draft, answering one engine-issued proposal ref per drafted candidate. */
+      extract(input: Sdk.ThingExtractInput): Promise<Sdk.ThingExtractOutput | StoredResult>;
+    };
   };
   const focus: {
     /** Re-renders the run's context board as one frame, at the frame epoch the caller last saw. */
