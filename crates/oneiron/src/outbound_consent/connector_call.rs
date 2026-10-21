@@ -54,7 +54,7 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::connector_key::{
     ConnectorCallRoute, ConnectorKeyRecord, ConnectorKeyStatus, ScopedCapabilityProvenance,
-    SlateDataClass, canonical_scoped_server_segment,
+    SlateDataClass, SlateDisposition, canonical_scoped_server_segment,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -474,6 +474,7 @@ pub enum ConnectorToolSchema {
 /// The tool beneath one grant, for a schema read: the governing key the
 /// grant mints and the tool's approved schema there.
 struct GoverningTool {
+    key_id: EntityId,
     key: ConnectorKeyRecord,
     schema: Value,
 }
@@ -857,6 +858,13 @@ impl Vault {
             Ok(governed) => governed,
             Err(stop) => return Ok(unavailable(stop)),
         };
+        // A tool its setting removes (FIX 990), its holder's own narrow
+        // included (FIX 987), is not callable: there is no schema to call by.
+        if self.connector_tool_setting(&governed.key_id, tool)? == SlateDisposition::NeverAllow {
+            return Ok(unavailable(refused(escalation_code(
+                ScopedMcpEscalationReason::ConnectorSlateNeverAllow,
+            ))));
+        }
         let (_, destructive_hint, _) =
             self.connector_tool_class(&governed.key, &route, tool, &mut Vec::new())?;
         Ok(ConnectorToolSchema::Approved {
@@ -1192,7 +1200,8 @@ impl Vault {
         let Some(capability) = ScopedCapabilityProvenance::mint(server, &grant_id) else {
             return Ok(Err(refused("connector_name_not_scoped")));
         };
-        let Some((_, key)) = self.connector_key_for(capability.connector(), Some(&actor))? else {
+        let Some((key_id, key)) = self.connector_key_for(capability.connector(), Some(&actor))?
+        else {
             return Ok(Err(held("connector_key_unregistered")));
         };
         match key.status {
@@ -1216,7 +1225,11 @@ impl Vault {
                 refused("connector_tool_unknown")
             }));
         };
-        Ok(Ok(GoverningTool { key, schema }))
+        Ok(Ok(GoverningTool {
+            key_id,
+            key,
+            schema,
+        }))
     }
 
     /// The principal's live scoped grant for exactly this server and tool:

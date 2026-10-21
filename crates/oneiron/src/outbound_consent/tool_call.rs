@@ -467,6 +467,7 @@ impl crate::Vault {
             let setting = crate::connector_key::connector_tool_setting_in_txn(
                 &self.store,
                 &txn,
+                key_ref,
                 &key,
                 &call.tool,
             )?;

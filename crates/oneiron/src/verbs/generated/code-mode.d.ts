@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1188 code-mode rows (1148 host rows, 40 run rows), 4023 declarations.
-// Replies: 1068 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1190 code-mode rows (1150 host rows, 40 run rows), 4027 declarations.
+// Replies: 1070 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1133,6 +1133,10 @@ declare namespace Sdk {
   type ConnectorSlateView = { id: string; revision: number; stamped: boolean; facet_limit?: string[] | null; manifest: SlateToolManifest[]; rows: SlateRow[]; reach: ShapePlanReach };
   type ProxyConnectorRegistration = { connector: string; key: ConnectorKeyView; slate: ConnectorSlateView };
   type ProxyConnectorRevokeWriteRequest = { actor: string; key: string; revision: number };
+  type ConnectorSlateRedraftRequest = { slate_ref: string; expected_revision: number; instruction: string };
+  type ConnectorSlateRedraftReply = { status: "proposed"; slate_ref: string; expected_revision: number; proposed: Record<string, SlateDisposition>; rationale: Record<string, string> } | { status: "unavailable"; code: string; reason: string };
+  type ConnectorSlateNarrowRequest = { key_ref: string; expected_revision: number; narrows?: Record<string, SlateDisposition>; facets?: string[] | null };
+  type ConnectorSlateNarrowView = { key_ref: string; slate_ref: string; slate_revision: number; settings: Record<string, SlateDisposition>; facets?: string[] | null; narrows: Record<string, SlateHolderNarrow> };
   type ChannelSubscriptionRequest = { agent: string; channel: string };
   type ChannelMessageSubscription = { subscription: string; connector_key: string; connector: string; agent: string; existing: boolean };
   type ChannelSubscriptionsRequest = { agent: string };
@@ -5248,6 +5252,12 @@ declare const vault: Sdk.VaultHost & {
       admit(input: Sdk.ProxyConnectorAdmitRequest): Promise<Sdk.ProxyConnectorRegistration | StoredResult>;
       /** The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact. */
       revoke_write(input: Sdk.ProxyConnectorRevokeWriteRequest): Promise<Sdk.ProxyConnectorRegistration | StoredResult>;
+    };
+    slates: {
+      /** The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it. */
+      narrow(input: Sdk.ConnectorSlateNarrowRequest): Promise<Sdk.ConnectorSlateNarrowView | StoredResult>;
+      /** The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable. */
+      redraft(input: Sdk.ConnectorSlateRedraftRequest): Promise<Sdk.ConnectorSlateRedraftReply | StoredResult>;
     };
     subscriptions: {
       /** An agent's connector event subscriptions, standing and revoked, for the owner. */

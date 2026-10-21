@@ -162,6 +162,7 @@ fn setting_in_txn(
     Ok(crate::connector_key::connector_tool_setting_in_txn(
         &vault.store,
         txn,
+        key_ref,
         &key,
         &record.tool,
     )?)

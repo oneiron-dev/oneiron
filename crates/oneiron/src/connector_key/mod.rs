@@ -23,6 +23,7 @@ mod record;
 mod setup;
 mod slate;
 mod slate_draft;
+mod slate_holder;
 mod slate_setting;
 mod txn;
 
@@ -117,6 +118,7 @@ pub use slate_draft::{
     ConnectorSlateDelta, ConnectorSlateDrafter, ConnectorSlateRedraft, SlatePastRulings,
     SlateTrait, draft_connector_slate, rule_draft_row,
 };
+pub use slate_holder::ConnectorKeySlateNarrowed;
 pub(crate) use slate_setting::{
     connector_tool_setting_in_txn, effect_slate_always_allows, governing_slate_in_txn,
 };

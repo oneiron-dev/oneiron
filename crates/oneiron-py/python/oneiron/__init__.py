@@ -2101,6 +2101,9 @@ class Oneiron:
         def proxy(self) -> "Oneiron._VaultConnectorsProxyVerbs":
             return Oneiron._VaultConnectorsProxyVerbs(self._client)
         @property
+        def slates(self) -> "Oneiron._VaultConnectorsSlatesVerbs":
+            return Oneiron._VaultConnectorsSlatesVerbs(self._client)
+        @property
         def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs":
             return Oneiron._VaultConnectorsSubscriptionsVerbs(self._client)
         @property
@@ -2115,6 +2118,15 @@ class Oneiron:
         def revoke_write(self, spec):
             """The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact."""
             return json.loads(_translate(lambda: self._client.vault_connectors_proxy_revoke_write(json.dumps(spec))))
+    class _VaultConnectorsSlatesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def redraft(self, spec):
+            """The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_slates_redraft(json.dumps(spec))))
+        def narrow(self, spec):
+            """The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_slates_narrow(json.dumps(spec))))
     class _VaultConnectorsSubscriptionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

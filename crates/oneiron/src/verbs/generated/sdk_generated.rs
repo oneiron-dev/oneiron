@@ -1325,6 +1325,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ProxyConnectorRevokeWriteRequest>(),
             ),
             (
+                "vault.connectors.slates.redraft",
+                crate::code_run::vault_read::request_schema::<ConnectorSlateRedraftRequest>(),
+            ),
+            (
+                "vault.connectors.slates.narrow",
+                crate::code_run::vault_read::request_schema::<ConnectorSlateNarrowRequest>(),
+            ),
+            (
                 "vault.connectors.subscriptions.put",
                 crate::code_run::vault_read::request_schema::<ChannelSubscriptionRequest>(),
             ),
@@ -6749,6 +6757,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.chat.completions",
     "vault.connectors.proxy.admit",
     "vault.connectors.proxy.revoke_write",
+    "vault.connectors.slates.redraft",
+    "vault.connectors.slates.narrow",
     "vault.authority.history.export",
     "vault.authority.history.import",
     "vault.wire_health.thresholds.get",
@@ -7918,6 +7928,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.connectors.proxy.revoke_write" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ProxyConnectorRegistration,
+        >(),
+        "vault.connectors.slates.redraft" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorSlateRedraftReply,
+        >(),
+        "vault.connectors.slates.narrow" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorSlateNarrowView,
         >(),
         "vault.authority.history.export" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SignedAuthorityHistory,
@@ -11608,6 +11624,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.connectors.proxy.revoke_write" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.slates.redraft" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.slates.narrow" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -18565,6 +18595,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.connectors.proxy.revoke_write" => {
             let _input: ProxyConnectorRevokeWriteRequest = decode(value.clone())?;
         }
+        "vault.connectors.slates.redraft" => {
+            let _input: ConnectorSlateRedraftRequest = decode(value.clone())?;
+        }
+        "vault.connectors.slates.narrow" => {
+            let _input: ConnectorSlateNarrowRequest = decode(value.clone())?;
+        }
         "vault.connectors.subscriptions.put" => {
             let _input: ChannelSubscriptionRequest = decode(value.clone())?;
         }
@@ -22168,6 +22204,12 @@ pub fn invoke(
         }
         "vault.connectors.proxy.revoke_write" => {
             encode(vault_connectors_proxy_revoke_write(memory, decode(value)?)?)
+        }
+        "vault.connectors.slates.redraft" => {
+            encode(vault_connectors_slates_redraft(memory, decode(value)?)?)
+        }
+        "vault.connectors.slates.narrow" => {
+            encode(vault_connectors_slates_narrow(memory, decode(value)?)?)
         }
         "vault.connectors.subscriptions.put" => {
             encode(vault_connectors_subscriptions_put(memory, decode(value)?)?)
@@ -26273,6 +26315,18 @@ pub fn vault_connectors_proxy_revoke_write(
     input: ProxyConnectorRevokeWriteRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ProxyConnectorRegistration> {
     crate::task_verb::sdk::host_only(memory, "vault.connectors.proxy.revoke_write", &input)
+}
+pub fn vault_connectors_slates_redraft(
+    memory: &Memory<'_>,
+    input: ConnectorSlateRedraftRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorSlateRedraftReply> {
+    crate::task_verb::sdk::host_only(memory, "vault.connectors.slates.redraft", &input)
+}
+pub fn vault_connectors_slates_narrow(
+    memory: &Memory<'_>,
+    input: ConnectorSlateNarrowRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorSlateNarrowView> {
+    crate::task_verb::sdk::narrow_connector_slate_embedded(memory, input)
 }
 pub fn vault_connectors_subscriptions_put(
     memory: &Memory<'_>,

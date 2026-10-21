@@ -624,8 +624,13 @@ pub(crate) fn evaluate_external_effect_policy(
                 Some(ApprovalTarget::ScopedMcp(_))
             );
         if charter_wall.is_none() {
-            match connector_key::connector_tool_setting_in_txn(store, &*wtxn, &key, manifest_verb)?
-            {
+            match connector_key::connector_tool_setting_in_txn(
+                store,
+                &*wtxn,
+                &_key_id,
+                &key,
+                manifest_verb,
+            )? {
                 connector_key::SlateDisposition::NeverAllow => {
                     charter_wall = Some(
                         GateDecision::deny(GateReasonCode::DenyCharterNeverList)

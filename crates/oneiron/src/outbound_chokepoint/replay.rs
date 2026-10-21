@@ -473,8 +473,13 @@ pub(super) fn recovery_governance(
     // FIX 990: a scoped call meets its tool's setting now, as the Gate met
     // it at admission (a per-grant key's catalog slate included).
     if record.capability_provenance().is_some() {
-        match connector_key::connector_tool_setting_in_txn(&vault.store, &txn, &key, &record.tool)?
-        {
+        match connector_key::connector_tool_setting_in_txn(
+            &vault.store,
+            &txn,
+            key_ref,
+            &key,
+            &record.tool,
+        )? {
             SlateDisposition::NeverAllow => return Ok(RecoveryGovernance::NeverAllow),
             SlateDisposition::AlwaysAsk => return Ok(RecoveryGovernance::AlwaysAsk),
             SlateDisposition::Auto | SlateDisposition::AlwaysAllow => {}

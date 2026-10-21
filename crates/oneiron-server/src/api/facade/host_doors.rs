@@ -189,6 +189,7 @@ pub(crate) use super::coordination_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
+pub(crate) use super::connector_slate_doors::*;
 pub(crate) use super::proxy_doors::*;
 pub(crate) use crate::api::openai_proxy::ai_chat_completions;
 // The secret use door, whose connector.call sends (OF-560), likewise.
@@ -1619,6 +1620,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.policy.owner.row.change"
         | "vault.consent.approve_once"
         | "vault.connectors.calls.approve_once"
+        | "vault.connectors.slates.redraft"
         | "vault.consent.deny"
         | "vault.consent.failure_signals_held"
         | "vault.consent.create_standing_grant"

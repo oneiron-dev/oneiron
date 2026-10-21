@@ -272,6 +272,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/ai.chat.completions", post(facade_route))
         .route("/vault.connectors.proxy.admit", post(facade_route))
         .route("/vault.connectors.proxy.revoke_write", post(facade_route))
+        .route("/vault.connectors.slates.redraft", post(facade_route))
+        .route("/vault.connectors.slates.narrow", post(facade_route))
         .route("/vault.connectors.subscriptions.put", post(facade_route))
         .route("/vault.connectors.subscriptions.list", post(facade_route))
         .route("/vault.connectors.subscriptions.revoke", post(facade_route))

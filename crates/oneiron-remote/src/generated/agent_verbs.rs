@@ -842,6 +842,12 @@ impl OneironClient {
                 "vault.connectors.proxy.revoke_write" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ProxyConnectorRegistration,
                 >(client, verb, &input),
+                "vault.connectors.slates.redraft" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorSlateRedraftReply,
+                >(client, verb, &input),
+                "vault.connectors.slates.narrow" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorSlateNarrowView,
+                >(client, verb, &input),
                 "vault.connectors.subscriptions.put" => remote_agent_verb_output::<
                     oneiron::connector_key::ChannelMessageSubscription,
                 >(client, verb, &input),
@@ -6824,6 +6830,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.connectors.proxy.revoke_write", value)
+    }
+    pub fn vault_connectors_slates_redraft(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorSlateRedraftRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorSlateRedraftReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.slates.redraft", value)
+    }
+    pub fn vault_connectors_slates_narrow(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorSlateNarrowRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorSlateNarrowView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.slates.narrow", value)
     }
     pub fn vault_connectors_subscriptions_put(
         &self,
