@@ -36729,18 +36729,24 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ContextLink",
       "CorefLink",
+      "EncoderAttempt",
+      "EncoderExecution",
       "EncoderGolden",
       "EncoderInput",
       "EncoderMessage",
       "EncoderOutput",
       "EncoderParity",
       "EncoderTurn",
+      "ExecutionCompute",
+      "ExecutionPick",
+      "ExecutionRuntime",
       "ExtractionEncoder",
+      "ExtractionWork",
       "NerSpan",
       "ShadowTrace",
       "SpeakerLink",
@@ -36751,9 +36757,9 @@
      "path": "src/memory/extraction/types.rs",
      "purpose": "Typed serving payloads and observable extraction receipts",
      "surface": {
-      "enum": 2,
-      "fn": 5,
-      "struct": 12,
+      "enum": 6,
+      "fn": 10,
+      "struct": 14,
       "trait": 1
      }
     },
@@ -57460,7 +57466,7 @@
      "path": "src/tagging/trace.rs",
      "purpose": "One trace per settled marker attempt",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "struct": 1
      }
@@ -86986,16 +86992,29 @@
       "OneironerConfigOverride",
       "OneironerMode",
       "OneironerProvider",
-      "OneironerRuntime",
       "OneironerTier"
      ],
      "path": "src/config/oneironer.rs",
      "purpose": "The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity, native runtime and label table",
      "surface": {
       "crate-vis": 2,
-      "enum": 4,
-      "fn": 10,
+      "enum": 3,
+      "fn": 9,
+      "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OneironerRuntime"
+     ],
+     "path": "src/config/oneironer/runtime.rs",
+     "purpose": "The native runtime a local tagger runs on",
+     "surface": {
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -90233,20 +90252,70 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/oneironer/endpoint.rs",
-     "purpose": "The `endpoint` provider: a tagger server on this machine that speaks the slot's contract",
+     "path": "src/oneironer/dispatcher/mod.rs",
+     "purpose": "The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/dispatcher/policy.rs",
+     "purpose": "The dispatcher's policy (Engine 10-21, FIX 6755 rulings 3 and 4): the one definition of each hold, batch cap…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/dispatcher/worker.rs",
+     "purpose": "One worker: a model loaded on one engine, or the one opaque endpoint, on its own thread",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/oneironer/engines.rs",
+     "path": "src/oneironer/endpoint.rs",
+     "purpose": "The `endpoint` provider: a tagger server on this machine that speaks the slot's contract",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/engines/calibration.rs",
+     "purpose": "The bundle's reference cases, the bar an engine's answers must clear, the measurement of one engine against…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/engines/mod.rs",
      "purpose": "The slot's engines, and which one serves on this machine (ARCH-0036, \"Several engines, one default per…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/engines/rows.rs",
+     "purpose": "This machine's measured engine rows: where they live, how they are read and written, and what keys them",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -90256,7 +90325,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -92418,7 +92487,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92663,7 +92732,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 13,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92791,7 +92860,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 979,
+   "source_files": 985,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -94120,6 +94189,7 @@
       "EmbeddingSpaceProbes",
       "EmbeddingSpaceRequest",
       "EmbeddingSpacesView",
+      "EncoderExecution",
       "EncoderOutput",
       "EngineSwitchRecord",
       "EntityMentionRequest",
@@ -94222,6 +94292,9 @@
       "EvidenceVerdict",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
+      "ExecutionCompute",
+      "ExecutionPick",
+      "ExecutionRuntime",
       "ExpectInput",
       "ExpectOutput",
       "ExpectedSpend",
@@ -96733,8 +96806,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 913,
-      "struct": 2828
+      "enum": 916,
+      "struct": 2829
      }
     },
     {
