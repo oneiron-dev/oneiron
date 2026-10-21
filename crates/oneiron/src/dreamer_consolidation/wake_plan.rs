@@ -29,6 +29,8 @@ pub struct PreparedConsolidationAttempt {
     retry_budget: crate::gate::retry_source_policy::ResolvedRetryBudget,
     /// The known entities its turns name, read at the wake's snapshot.
     neighbourhood: super::neighbourhood::Neighbourhood,
+    /// The entity its queued payload names as its thing (FIX 7497).
+    thing: Option<EntityId>,
     /// A selection retry whose source budget left admissible sources out:
     /// it runs every original and the oldest others that fit; more exist,
     /// owed as sibling chunks of the same size (`chunks`).
@@ -286,6 +288,8 @@ impl PreparedWake {
                 source_versions: BTreeMap::new(),
                 retry_budget: budget,
                 neighbourhood: Default::default(),
+                thing: super::partition::decode_partition_thing(&payload.input)
+                    .and_then(|thing| thing.entity),
                 sources_truncated: false,
             };
             preparations.insert(*attempt.id.as_bytes(), AttemptPreparation::Ready(prepared));
@@ -721,6 +725,7 @@ fn neighbourhood_in(
         turns: &turns,
         axes: axes.as_ref(),
         bound,
+        thing: plan.thing,
     };
     super::neighbourhood::discover_in(vault, txn, read, plan.attempt_id, &passage)
 }
