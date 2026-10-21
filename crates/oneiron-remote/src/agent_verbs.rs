@@ -2040,6 +2040,12 @@ impl OneironClient {
                 "vault.agents.grants.revoke" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AgentGrantRevoked,
                 >(client, verb, &input),
+                "vault.repo.git_push.mint" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::GitPushGrantMintOutput,
+                >(client, verb, &input),
+                "vault.repo.git_push.revoke" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::GitPushGrantRevokeOutput,
+                >(client, verb, &input),
                 "vault.agents.base" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BaseAgentList,
                 >(client, verb, &input),
@@ -11423,6 +11429,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.agents.grants.revoke", value)
+    }
+    pub fn vault_repo_git_push_mint(
+        &self,
+        input: &oneiron::task_verb::sdk::GitPushGrantMintInput,
+    ) -> Result<oneiron::task_verb::sdk::GitPushGrantMintOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.git_push.mint", value)
+    }
+    pub fn vault_repo_git_push_revoke(
+        &self,
+        input: &oneiron::task_verb::sdk::GitPushGrantRevokeInput,
+    ) -> Result<oneiron::task_verb::sdk::GitPushGrantRevokeOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.git_push.revoke", value)
     }
     pub fn vault_agents_base(
         &self,

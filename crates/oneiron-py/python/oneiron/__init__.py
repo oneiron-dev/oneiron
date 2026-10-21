@@ -685,6 +685,9 @@ class Oneiron:
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
         @property
+        def repo(self) -> "Oneiron._VaultRepoVerbs":
+            return Oneiron._VaultRepoVerbs(self._client)
+        @property
         def standing_blocks(self) -> "Oneiron._VaultStandingBlocksVerbs":
             return Oneiron._VaultStandingBlocksVerbs(self._client)
         @property
@@ -3798,6 +3801,21 @@ class Oneiron:
         def get(self, spec):
             """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
             return json.loads(_translate(lambda: self._client.vault_agents_spawn_get(json.dumps(spec))))
+    class _VaultRepoVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def git_push(self) -> "Oneiron._VaultRepoGitPushVerbs":
+            return Oneiron._VaultRepoGitPushVerbs(self._client)
+    class _VaultRepoGitPushVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mint(self, spec):
+            """The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it."""
+            return json.loads(_translate(lambda: self._client.vault_repo_git_push_mint(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_repo_git_push_revoke(json.dumps(spec))))
     class _VaultStandingBlocksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
