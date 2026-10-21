@@ -108,8 +108,7 @@ fn require_sources_unchanged_in_txn(
             .get(&vault.store, wtxn, &expected.id)?
             .ok_or(Error::EntityNotFound)?;
         if stored.repo != expected.repo
-            || stored.path != expected.path
-            || stored.content != expected.content
+            || stored.files != expected.files
             || stored.pre_action_fork_hash != expected.pre_action_fork_hash
             || stored.actor != expected.actor
             || stored.status != expected.status

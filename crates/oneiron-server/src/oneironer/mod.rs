@@ -166,6 +166,27 @@ impl ProviderTagger {
     }
 }
 
+/// The slot's close, held apart from the slot by a teardown that outlives
+/// its borrow (FIX 7383). Serve and managed teardown close the slot once
+/// tagging has ended, so each platform child is shut down and reaped before
+/// the process exits, not left to the OS.
+pub(crate) struct SlotClose(Arc<ProviderTagger>);
+
+impl SlotClose {
+    /// Closes the slot's dispatcher on a blocking unit, which waits for each
+    /// supervised child's shutdown and reap.
+    pub(crate) async fn close(self) {
+        let tagger = self.0;
+        let closed = tokio::task::spawn_blocking(move || tagger.dispatcher.close()).await;
+        if let Err(error) = closed {
+            tracing::warn!(
+                panicked = error.is_panic(),
+                "oneironer slot close ended early"
+            );
+        }
+    }
+}
+
 impl ExtractionEncoder for ProviderTagger {
     fn model_id(&self) -> &ModelId {
         &self.model
@@ -206,6 +227,11 @@ pub(crate) struct TaggerSlot {
 impl TaggerSlot {
     pub(crate) fn config(&self) -> &OneironerConfig {
         &self.config
+    }
+
+    /// The slot's close, for teardown ([`SlotClose`]).
+    pub(crate) fn closer(&self) -> SlotClose {
+        SlotClose(Arc::clone(&self.tagger))
     }
 
     pub(crate) fn tagger(&self) -> &Arc<ProviderTagger> {
