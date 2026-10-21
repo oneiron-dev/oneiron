@@ -83255,6 +83255,19 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BrowserPlannerRuns"
+     ],
+     "path": "src/ai_host/browser_planner.rs",
+     "purpose": "A code-mode run's browser planner (CUA E5, DESIGN-2 §4): the role each step's model call runs on while the…",
+     "surface": {
+      "crate-vis": 7,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -83626,7 +83639,7 @@
      "surface": {
       "crate-vis": 36,
       "fn": 22,
-      "mod": 2,
+      "mod": 3,
       "re-export": 1,
       "struct": 2
      }
@@ -90196,6 +90209,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/config/models/browser_planner.rs",
+     "purpose": "`[models.roles.browser_planner]`: the mid planner a browser subgoal's next code-mode step runs on (CUA E5…",
+     "surface": {
+      "const": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CompactionSettings"
      ],
@@ -90297,7 +90321,7 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 2,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 7
      }
     },
@@ -93087,7 +93111,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 7,
       "struct": 1
      }
@@ -96293,7 +96317,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 71,
+     "files": 72,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96377,7 +96401,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96750,7 +96774,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1053,
+   "source_files": 1055,
    "test_files": 182
   },
   "oneiron-spawn": {
