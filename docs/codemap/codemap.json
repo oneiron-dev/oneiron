@@ -21926,6 +21926,36 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/follower_attempt/mod.rs",
+     "purpose": "The follower's attempt (FIX 7510): one queued per session, on the extraction role's route and the wake's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/follower_attempt/output.rs",
+     "purpose": "The follower's reply and receipts (FIX 7510): a suffix's batch readings read back through its call's labels…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/follower_attempt/request.rs",
+     "purpose": "The follower's requests (FIX 7510): a suffix's call over the retained prefix, and a keyframe's fold call",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "GapQueueDelta",
       "ReflectionGap",
@@ -22433,7 +22463,7 @@
      "surface": {
       "const": 4,
       "crate-vis": 3,
-      "fn": 4,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -25309,6 +25339,47 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/follower/keyframe.rs",
+     "purpose": "The follower's keyframe (FIX 7510): how a session sizes its calls and how it folds its retained frames when…",
+     "surface": {
+      "crate-vis": 13,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/follower/log.rs",
+     "purpose": "The follower's log (FIX 7510): the ordered feed of newly admitted source observations, read forward from the…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/follower/mod.rs",
+     "purpose": "The Dreamer's cheap arm as a follower session over the admitted log (ARCH-0026 #cheap-arm, FIX 7510)",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/follower/state.rs",
+     "purpose": "A follower session's rows (FIX 7510), each through a typed side table in the caller's transaction: the…",
+     "surface": {
+      "crate-vis": 35
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -25342,7 +25413,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 1,
       "re-export": 15
      }
@@ -25666,6 +25737,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/follower.rs",
+     "purpose": "The sieve's half of its follower session (FIX 7510): what the follower captures of a TURN the sieve reads…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -25681,7 +25762,7 @@
      "path": "src/dreamer_wake/sieve/mod.rs",
      "purpose": "The continuous sieve (ARCH-0026, the Continuous recipe): the cheap check that tags what is new on the local…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 4,
       "fn": 2,
       "mod": 1,
@@ -25724,7 +25805,7 @@
      "path": "src/dreamer_wake/sieve/recipes.rs",
      "purpose": "Durable model-rung inputs, queue spending and unbiased retained-span samples",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 7,
       "struct": 2
@@ -27396,7 +27477,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EmbeddingDevice",
@@ -27406,9 +27487,9 @@
      "path": "src/embed/device.rs",
      "purpose": "Which device and runtime computed a stored vector (ARCH-0036, owner 2026-10-11)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 7,
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -27459,7 +27540,8 @@
       "crate-vis": 18,
       "fn": 3,
       "struct": 2,
-      "trait": 1
+      "trait": 1,
+      "type": 1
      }
     },
     {
@@ -27488,9 +27570,9 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 4,
-      "crate-vis": 39,
+      "crate-vis": 44,
       "enum": 1,
-      "fn": 16,
+      "fn": 17,
       "struct": 3
      }
     },
@@ -27551,7 +27633,7 @@
      "path": "src/embed/space_probe.rs",
      "purpose": "The vault's own retrieval probes, which a space version move runs paired on its incumbent and its candidate…",
      "surface": {
-      "const": 4,
+      "const": 3,
       "crate-vis": 3,
       "fn": 6,
       "struct": 2,
@@ -70157,7 +70239,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 119,
+     "files": 122,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70199,7 +70281,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 49,
+     "files": 54,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71202,7 +71284,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4535,
+   "source_files": 4543,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92182,7 +92264,7 @@
      "path": "src/embedder/endpoint.rs",
      "purpose": "The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -92340,7 +92422,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
