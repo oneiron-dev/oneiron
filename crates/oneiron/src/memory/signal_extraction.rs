@@ -157,7 +157,7 @@ impl Memory<'_> {
                 "job is not a signal extraction partition",
             ));
         }
-        let (_, turns, _) = decode_partition_payload(&status.payload.input)?;
+        let turns = decode_partition_payload(&status.payload.input)?.turn_ids();
         if !lane.all_refs_readable(&turns)? {
             return Err(Error::EntityNotFound.into());
         }
