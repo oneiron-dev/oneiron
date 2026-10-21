@@ -350,7 +350,7 @@ pub(super) fn serve_request(
         };
     // A body that stalls here ends at the idle limit, as it would mid-exchange.
     let mut commands = if request.is_receive_pack() {
-        read_command_section(body, door_root, spill_floor).map_err(stall_as_idle)?
+        read_command_section(body, door_root, spill_floor.clone()).map_err(stall_as_idle)?
     } else {
         HeldBytes::new(0, None)
     };
@@ -379,6 +379,7 @@ pub(super) fn serve_request(
                 seam,
                 admission: admission.as_ref(),
                 scan,
+                spill_floor: spill_floor.as_ref(),
             },
             repo_dir: &repo_dir,
             hooks: &hooks,
