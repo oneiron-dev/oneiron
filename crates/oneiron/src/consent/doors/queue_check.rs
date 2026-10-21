@@ -94,10 +94,4 @@ impl QueuedCheckApproval {
         }
         Ok(true)
     }
-
-    /// The owner who approved.
-    #[must_use]
-    pub(crate) const fn actor(&self) -> EntityId {
-        self.actor
-    }
 }
