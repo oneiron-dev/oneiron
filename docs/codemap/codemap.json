@@ -80395,7 +80395,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "fn": 22,
       "mod": 1,
       "re-export": 1,
@@ -80681,7 +80681,7 @@
      "path": "src/ai_host/turn_actions.rs",
      "purpose": "The turn-action worker: runs each queued Continue and Retry (`vault.conversations.turn.continue` / `.retry`)…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -81383,7 +81383,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -81434,6 +81434,16 @@
      "purpose": "Standing blocks are pinned before Context Board retrieval can fill the session",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/turn_actions.rs",
+     "purpose": "The context board a queued Continue or Retry reads (FIX 6920), as a live chat turn reads its own…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -83909,7 +83919,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 47
+      "crate-vis": 48
      }
     },
     {
@@ -92331,7 +92341,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 486,
+     "files": 487,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92781,7 +92791,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 978,
+   "source_files": 979,
    "test_files": 182
   },
   "oneiron-spawn": {
