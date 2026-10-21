@@ -19,7 +19,14 @@
 //! or, for the tagging coordinator, as an awaited future on its class's own
 //! signal ([`capacity`]), holding no scheduler lock and no store transaction.
 //! Nothing is refused for a backlog: a call fails without a worker only when
-//! no worker is ready or coming.
+//! no worker that can run it is ready or coming.
+//!
+//! A worker runs only the calls its qualified window holds ([`eligibility`]):
+//! each call's window is counted once as it is submitted, outside every
+//! lock, and a window longer than a short worker's goes to Candle, whose
+//! window is the configured maximum. A worker that leaves Ready gives its
+//! routed live calls back to routing, and each owner publishes its worker's
+//! calibrated rank under the scheduler lock ([`Dispatcher::publish_rank`]).
 //!
 //! The dispatcher belongs to its slot, one per server process: no static
 //! holds a worker.
@@ -28,28 +35,37 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use oneiron::memory::extraction::{
-    EncoderAttempt, EncoderExecution, EncoderInput, ExecutionPick, ExtractionWork,
-};
+use oneiron::memory::extraction::{EncoderAttempt, EncoderInput, ExecutionPick, ExtractionWork};
 use tokio::sync::{Notify, oneshot};
 
+use super::local::WindowCounter;
+
 mod capacity;
+mod eligibility;
 mod policy;
 mod worker;
 
-use policy::{BULK_BATCH_CAP, Candidate, LIVE_BATCH_CAP};
+use policy::{BULK_BATCH_CAP, LIVE_BATCH_CAP};
 use worker::WorkerState;
 
 pub(crate) use capacity::{Completion, DispatchClaim, pending_cap};
-pub(crate) use worker::WorkerSpec;
+pub(crate) use worker::{Worker, WorkerDescriptor, WorkerSpec};
 
 /// Tool name on every failure the dispatcher reports itself.
 const DISPATCH_TOOL: &str = "oneironer-dispatcher";
+/// Why a call no worker can run is answered.
+const NO_WORKER: &str = "no oneironer worker is ready";
+/// The rank of a worker no owner has ranked yet: below every ranked one.
+const UNRANKED: usize = usize::MAX;
 
 /// One call, from its claim to its answer.
 pub(super) struct Job {
     pub(super) input: EncoderInput,
     work: ExtractionWork,
+    /// Its live window in tokens with specials, counted once as it was
+    /// submitted: which workers may run it. 0 in a slot that counts none,
+    /// whose one worker runs every call.
+    window: usize,
     /// When it was queued: its wait is measured from here.
     pub(super) queued_at: Instant,
     reply: oneshot::Sender<EncoderAttempt>,
@@ -58,11 +74,11 @@ pub(super) struct Job {
 /// One unit a worker runs: its calls, each with why the worker runs it.
 pub(super) type Unit = Vec<(Job, ExecutionPick)>;
 
-/// The dispatcher's handle on one worker: what it runs as, how far up it is,
-/// its rank, and the live calls routed to it.
+/// The dispatcher's handle on one worker: what it is, how far up it is, its
+/// rank, and the live calls routed to it.
 struct WorkerHandle {
-    /// Its engine id, as receipts and logs name it.
-    engine: String,
+    /// What it runs as and the longest window it may run, fixed.
+    descriptor: WorkerDescriptor,
     /// Its place in the calibrated rank: 0 is preferred.
     rank: usize,
     /// Inputs one unit of its may hold.
@@ -102,112 +118,44 @@ impl Scheduler {
         }
     }
 
-    fn ready(&self) -> bool {
-        self.workers
-            .iter()
-            .any(|worker| worker.state == WorkerState::Ready)
-    }
-
-    fn coming(&self) -> bool {
-        self.workers.iter().any(|worker| worker.state.coming())
-    }
-
-    /// Queues `job`, or hands it back when no worker is ready or coming to
-    /// run it, or the dispatcher has closed.
+    /// Queues `job`, or hands it back when no worker that can run it is
+    /// ready or coming, or the dispatcher has closed.
     fn queue(&mut self, job: Job) -> Result<(), Job> {
         if self.closed {
             return Err(job);
         }
         match job.work {
-            ExtractionWork::Live => {
-                let candidates: Vec<Candidate> = self
-                    .workers
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, worker)| worker.state == WorkerState::Ready)
-                    .map(|(index, worker)| Candidate {
-                        index,
-                        rank: worker.rank,
-                        free: !worker.busy && worker.live.is_empty(),
-                        waiting: worker.live.len(),
-                    })
-                    .collect();
-                if let Some((index, rule)) = policy::route_live(&candidates, &mut self.cursor) {
-                    self.workers[index].live.push_back((job, rule));
-                } else if self.coming() {
-                    self.unrouted.push_back(job);
-                } else {
-                    return Err(job);
-                }
+            ExtractionWork::Live => self.route(job),
+            ExtractionWork::Bulk if self.served(job.window) => {
+                self.bulk.push_back(job);
+                Ok(())
             }
-            ExtractionWork::Bulk if self.ready() || self.coming() => self.bulk.push_back(job),
-            ExtractionWork::Bulk => return Err(job),
+            ExtractionWork::Bulk => Err(job),
         }
-        Ok(())
     }
 
     /// The next unit worker `index` runs: live calls first, else up to its
-    /// batch of the shared bulk queue.
+    /// batch of the shared bulk queue, each a call its window holds.
     fn take(&mut self, index: usize) -> Option<Unit> {
         let mut unit = Vec::new();
         while unit.len() < LIVE_BATCH_CAP
             && let Some((job, rule)) = self.next_live(index)
         {
-            unit.push((job, self.reason(index, rule)));
+            let pick = self.reason(index, rule, job.window);
+            unit.push((job, pick));
         }
         if unit.is_empty() {
-            let pick = self.reason(index, ExecutionPick::Free);
-            let count = BULK_BATCH_CAP
-                .min(self.workers[index].batch)
-                .min(self.bulk.len());
-            unit.extend(self.bulk.drain(..count).map(|job| (job, pick)));
+            let count = BULK_BATCH_CAP.min(self.workers[index].batch);
+            for job in self.take_bulk(index, count) {
+                let pick = self.reason(index, ExecutionPick::Free, job.window);
+                unit.push((job, pick));
+            }
         }
         if unit.is_empty() {
             return None;
         }
         self.workers[index].busy = true;
         Some(unit)
-    }
-
-    /// The live call worker `index` takes next: its own queue's, else the
-    /// oldest waiting anywhere, which a worker that frees up takes before any
-    /// bulk call.
-    fn next_live(&mut self, index: usize) -> Option<(Job, ExecutionPick)> {
-        if let Some(routed) = self.workers[index].live.pop_front() {
-            return Some(routed);
-        }
-        let mut oldest = self.unrouted.front().map(|job| (None, job.queued_at));
-        for (other, worker) in self.workers.iter().enumerate() {
-            if let Some((job, _)) = worker.live.front()
-                && oldest.is_none_or(|(_, at)| job.queued_at < at)
-            {
-                oldest = Some((Some(other), job.queued_at));
-            }
-        }
-        let job = match oldest?.0 {
-            None => self.unrouted.pop_front()?,
-            Some(other) => self.workers[other].live.pop_front()?.0,
-        };
-        Some((job, ExecutionPick::Free))
-    }
-
-    /// Why worker `index` runs a call a routing `rule` gave it.
-    fn reason(&self, index: usize, rule: ExecutionPick) -> ExecutionPick {
-        let rank = self.workers[index].rank;
-        let preferred_away = self
-            .workers
-            .iter()
-            .any(|worker| worker.rank < rank && worker.state != WorkerState::Ready);
-        policy::reason(self.pinned, preferred_away, rule)
-    }
-
-    /// Every queued call, once no worker is ready or coming to run it, with
-    /// its room given back.
-    fn stranded(&mut self) -> Vec<Job> {
-        if self.ready() || self.coming() {
-            return Vec::new();
-        }
-        self.drain_queued()
     }
 
     /// Every queued call, taken off its queue with its room given back.
@@ -228,6 +176,8 @@ impl Scheduler {
 /// every claim.
 pub(super) struct Shared {
     scheduler: Mutex<Scheduler>,
+    /// How a call's window is counted; `None` in a slot that counts none.
+    windows: Option<WindowCounter>,
     /// A worker may have a unit to take, or the dispatcher closed.
     work: Condvar,
     /// Room was given back: a blocking claim may have room.
@@ -245,15 +195,29 @@ impl Shared {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// `input`'s window in tokens, counted with no lock held; 0 in a slot
+    /// that counts none. A window that cannot be built fails its call as
+    /// that call's infer would.
+    pub(super) fn count(&self, input: &EncoderInput) -> oneiron::Result<usize> {
+        self.windows
+            .as_ref()
+            .map_or(Ok(0), |windows| windows.count(input))
+    }
+
     /// Blocks worker `index`'s thread until it has a unit; `None` once the
-    /// dispatcher has closed.
+    /// dispatcher has closed or the worker has left for good. A worker out
+    /// of Ready takes nothing, whatever woke it.
     pub(super) fn next_unit(&self, index: usize) -> Option<Unit> {
         let mut scheduler = self.lock();
         loop {
-            if scheduler.closed {
+            let state = scheduler.workers[index].state;
+            let left = matches!(state, WorkerState::Unavailable | WorkerState::Failed);
+            if scheduler.closed || left {
                 return None;
             }
-            if let Some(unit) = scheduler.take(index) {
+            if state == WorkerState::Ready
+                && let Some(unit) = scheduler.take(index)
+            {
                 return Some(unit);
             }
             scheduler = self
@@ -281,16 +245,22 @@ impl Shared {
         }
     }
 
-    /// Moves worker `index` to `state`. A worker that leaves for good, with
-    /// no other ready or coming, answers every queued call: no worker is
-    /// left to run it.
+    /// Moves worker `index` to `state`, under the scheduler lock. A worker
+    /// out of Ready gives its routed live calls back to routing, their room
+    /// and replies kept; every queued call no worker that can run it is
+    /// ready or coming for is answered: no worker is left to run it.
     pub(super) fn settle(&self, index: usize, state: WorkerState, why: Option<&str>) {
         let (engine, stranded) = {
             let mut scheduler = self.lock();
             scheduler.workers[index].state = state;
+            if state != WorkerState::Ready {
+                scheduler.reroute(index);
+            }
             let stranded = scheduler.stranded();
-            (scheduler.workers[index].engine.clone(), stranded)
+            (scheduler.workers[index].descriptor.engine(), stranded)
         };
+        // A rerouted call may wait for a worker that is free now.
+        self.work.notify_all();
         if let Some(why) = why {
             tracing::warn!(engine = %engine, state = state.as_str(), why, "oneironer worker");
         } else {
@@ -298,19 +268,31 @@ impl Shared {
         }
         if !stranded.is_empty() {
             self.room_freed(stranded.iter().map(|job| job.work));
-            unrun(stranded, "no oneironer worker is ready");
+            unrun(stranded, NO_WORKER);
         }
+    }
+
+    /// Publishes worker `index`'s rank under the scheduler lock: routing and
+    /// receipts read it from the next call on.
+    pub(super) fn publish_rank(&self, index: usize, rank: usize) {
+        self.lock().workers[index].rank = rank;
     }
 }
 
 /// Answers calls no worker ran: no execution, and the failure says why.
 fn unrun(jobs: Vec<Job>, why: &str) {
     for job in jobs {
-        let _ = job.reply.send(EncoderAttempt {
-            execution: None,
-            result: Err(failure(DISPATCH_TOOL, why)),
-        });
+        answer(job, failure(DISPATCH_TOOL, why));
     }
+}
+
+/// Answers a call no worker ran with `error`. A caller that stopped waiting
+/// has nothing to hear.
+fn answer(job: Job, error: oneiron::Error) {
+    let _ = job.reply.send(EncoderAttempt {
+        execution: None,
+        result: Err(error),
+    });
 }
 
 /// A failure that carries its class and never any text a call read.
@@ -321,6 +303,10 @@ pub(super) fn failure(tool: &'static str, code: &str) -> oneiron::Error {
     }
 }
 
+/// One worker of a dispatcher, as its owner names it to rank it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct WorkerId(usize);
+
 /// The slot's dispatcher and the workers it owns.
 pub(crate) struct Dispatcher {
     shared: Arc<Shared>,
@@ -329,9 +315,12 @@ pub(crate) struct Dispatcher {
 impl Dispatcher {
     /// A dispatcher with no worker yet. `pinned` says the slot serves one
     /// configured worker, a named device or an endpoint: its receipts say so.
-    pub(crate) fn new(pinned: bool) -> Self {
+    /// `windows` counts each call's window, the one every worker of the slot
+    /// builds; `None` for a slot whose one worker runs every call.
+    pub(crate) fn new(pinned: bool, windows: Option<WindowCounter>) -> Self {
         Self {
             shared: Arc::new(Shared {
+                windows,
                 scheduler: Mutex::new(Scheduler {
                     workers: Vec::new(),
                     unrouted: VecDeque::new(),
@@ -350,17 +339,19 @@ impl Dispatcher {
         }
     }
 
-    /// Starts one worker on its own thread, Loading; it takes work once it is
-    /// Ready. Callable at any time: a worker whose load is slow starts after
-    /// the listener binds, and the workers already ready serve meanwhile.
-    pub(crate) fn add(&self, spec: WorkerSpec) -> anyhow::Result<()> {
-        let engine = EncoderExecution::engine_id(spec.runtime, spec.compute);
+    /// Starts one worker on its own thread, Loading and unranked; it takes
+    /// work once it is Ready. Callable at any time: a worker whose load is
+    /// slow starts after the listener binds, and the workers already ready
+    /// serve meanwhile.
+    pub(crate) fn add(&self, spec: WorkerSpec) -> anyhow::Result<WorkerId> {
+        let descriptor = spec.descriptor().clone();
+        let engine = descriptor.engine();
         let index = {
             let mut scheduler = self.shared.lock();
             scheduler.workers.push(WorkerHandle {
-                engine: engine.clone(),
-                rank: spec.rank,
-                batch: spec.batch.max(1),
+                descriptor,
+                rank: UNRANKED,
+                batch: spec.batch().max(1),
                 state: WorkerState::Loading,
                 busy: false,
                 live: VecDeque::new(),
@@ -374,13 +365,22 @@ impl Dispatcher {
         match spawned {
             // The thread outlives this handle and ends when the dispatcher
             // closes.
-            Ok(_detached) => Ok(()),
+            Ok(_detached) => Ok(WorkerId(index)),
             Err(error) => {
                 let why = Some("its thread did not start");
                 self.shared.settle(index, WorkerState::Failed, why);
                 Err(error.into())
             }
         }
+    }
+
+    /// Publishes `worker`'s calibrated rank, 0 preferred, under the
+    /// scheduler lock (FIX 6755). Its owner calls it once the worker is
+    /// measured: the slot for the Candle baseline its rows chose, and a
+    /// platform runtime's admission for its own row. A slower ready worker
+    /// stays in the pool, ranked below.
+    pub(crate) fn publish_rank(&self, worker: WorkerId, rank: usize) {
+        self.shared.publish_rank(worker.0, rank);
     }
 
     /// One call in `work`'s class: claims room, queues the call, and waits
