@@ -37,12 +37,12 @@ use tokio::sync::{broadcast, watch};
 use super::payer_funding::room_launch_funding;
 use super::resident_craft::{join_craft, snapshot_craft_scoped};
 use super::{AiHandle, CHAT_ROLE};
+use crate::api::action_board;
 use crate::api::ai::chat::{
     Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, ChatReuse, TurnCredential, after_turn,
     begin_answer, chat_request, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint,
     text_message, turn_generate_pre, witness_turn,
 };
-use crate::api::context_board::action_board;
 use crate::server::{SyncServer, blocking};
 
 const LEASE_OWNER: &str = "oneiron-server-turn-actions";
