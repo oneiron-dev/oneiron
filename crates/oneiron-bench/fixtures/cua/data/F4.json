@@ -1,0 +1,33 @@
+{
+  "note_topic": "wemibexo workshop methods",
+  "profiles": [
+    {
+      "firm": "Bexoqemi Pelupelu Works Annex",
+      "id": "person-01",
+      "location": "Voroqemi District",
+      "name": "Wemivoro Zavubexo",
+      "title": "Wemivoro coordinator"
+    },
+    {
+      "firm": "Wemiqemi Jovuqemi Works",
+      "id": "person-02",
+      "location": "Voroqemi District",
+      "name": "Wemivoro Zavubexo",
+      "title": "Wemivoro coordinator"
+    },
+    {
+      "firm": "Wemiqemi Jovuqemi Works",
+      "id": "person-03",
+      "location": "Zavubexo Quarter",
+      "name": "Wemivoro Zavubexo",
+      "title": "Wemivoro coordinator"
+    }
+  ],
+  "target": {
+    "firm": "Wemiqemi Jovuqemi Works",
+    "id": "person-02",
+    "location": "Voroqemi District",
+    "name": "Wemivoro Zavubexo",
+    "title": "Wemivoro coordinator"
+  }
+}

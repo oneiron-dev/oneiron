@@ -1,0 +1,34 @@
+{
+  "amount_bands": [
+    "Under 10000",
+    "10000 to 49999",
+    "50000 to 99999",
+    "100000 or more"
+  ],
+  "company": {
+    "amount_band": "100000 or more",
+    "audience": "jovubexo workshops",
+    "brand": "Nuxalumi",
+    "company_name": "Nuxalumi Pelupelu",
+    "division": "Pelupelu",
+    "product": "nuxadaxi planning tools",
+    "sector": "Tools",
+    "website": "https://company-20261021.example.org"
+  },
+  "sectors": [
+    "Materials",
+    "Tools",
+    "Packaging",
+    "Software",
+    "Logistics",
+    "Energy",
+    "Textiles",
+    "Food systems",
+    "Water systems"
+  ],
+  "wrong_fact": {
+    "field": "website",
+    "source": "Unverified sample, not company facts",
+    "value": "https://sample-20261021-9003.example.com"
+  }
+}

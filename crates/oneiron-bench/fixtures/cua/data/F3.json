@@ -1,0 +1,94 @@
+{
+  "recipients": [
+    {
+      "email": "recipient-20261021-01@example.com",
+      "firm": "Bexopelu Tazuwemi Works",
+      "hook": "your voropelu workshop exhibit",
+      "id": "recipient-01",
+      "link": "https://notes.example.org/20261021/recipient-01",
+      "name": "Rivubexo Bexolumi",
+      "scheduled_time": "2027-02-01T09:30"
+    },
+    {
+      "email": "recipient-20261021-02@example.com",
+      "firm": "Peluqemi Vorobexo Works",
+      "hook": "your daxirivu workshop exhibit",
+      "id": "recipient-02",
+      "link": "https://notes.example.org/20261021/recipient-02",
+      "name": "Rivuwemi Qemiqemi",
+      "scheduled_time": "2027-02-02T09:30"
+    },
+    {
+      "email": "recipient-20261021-03@example.com",
+      "firm": "Daxiwemi Jovuzavu Works",
+      "hook": "your wemidaxi workshop exhibit",
+      "id": "recipient-03",
+      "link": "https://notes.example.org/20261021/recipient-03",
+      "name": "Zavutazu Daxivoro",
+      "scheduled_time": "2027-02-03T09:30"
+    },
+    {
+      "email": "recipient-20261021-04@example.com",
+      "firm": "Voropelu Zavubexo Works",
+      "hook": "your nuxavoro workshop exhibit",
+      "id": "recipient-04",
+      "link": "https://notes.example.org/20261021/recipient-04",
+      "name": "Pelujovu Lumirivu",
+      "scheduled_time": "2027-02-04T09:30"
+    },
+    {
+      "email": "recipient-20261021-05@example.com",
+      "firm": "Bexovoro Qemitazu Works",
+      "hook": "your qemizavu workshop exhibit",
+      "id": "recipient-05",
+      "link": "https://notes.example.org/20261021/recipient-05",
+      "name": "Rivurivu Zavutazu",
+      "scheduled_time": "2027-02-05T09:30"
+    },
+    {
+      "email": "recipient-20261021-06@example.com",
+      "firm": "Bexopelu Wemidaxi Works",
+      "hook": "your jovuqemi workshop exhibit",
+      "id": "recipient-06",
+      "link": "https://notes.example.org/20261021/recipient-06",
+      "name": "Daxirivu Jovutazu",
+      "scheduled_time": "2027-02-06T09:30"
+    },
+    {
+      "email": "recipient-20261021-07@example.com",
+      "firm": "Lumivoro Wemirivu Works",
+      "hook": "your jovubexo workshop exhibit",
+      "id": "recipient-07",
+      "link": "https://notes.example.org/20261021/recipient-07",
+      "name": "Qemivoro Daxidaxi",
+      "scheduled_time": "2027-02-07T09:30"
+    },
+    {
+      "email": "recipient-20261021-08@example.com",
+      "firm": "Peluwemi Vorobexo Works",
+      "hook": "your lumirivu workshop exhibit",
+      "id": "recipient-08",
+      "link": "https://notes.example.org/20261021/recipient-08",
+      "name": "Jovuvoro Nuxadaxi",
+      "scheduled_time": "2027-02-08T09:30"
+    },
+    {
+      "email": "recipient-20261021-09@example.com",
+      "firm": "Lumijovu Rivulumi Works",
+      "hook": "your nuxavoro workshop exhibit",
+      "id": "recipient-09",
+      "link": "https://notes.example.org/20261021/recipient-09",
+      "name": "Rivuwemi Pelutazu",
+      "scheduled_time": "2027-02-09T09:30"
+    },
+    {
+      "email": "recipient-20261021-10@example.com",
+      "firm": "Jovuqemi Qemibexo Works",
+      "hook": "your qemilumi workshop exhibit",
+      "id": "recipient-10",
+      "link": "https://notes.example.org/20261021/recipient-10",
+      "name": "Tazudaxi Qemibexo",
+      "scheduled_time": "2027-02-10T09:30"
+    }
+  ]
+}

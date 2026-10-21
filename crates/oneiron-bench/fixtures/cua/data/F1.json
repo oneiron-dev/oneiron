@@ -1,0 +1,224 @@
+{
+  "profiles": [
+    {
+      "category": "Software",
+      "country": "Synthetic territory Jovuwemi",
+      "description": "Makes wemizavu modules for nuxazavu workshops.",
+      "employees": 280,
+      "id": "exhibitor-01",
+      "name": "Rivuzavu Wemiwemi Works",
+      "revenue_millions": 35,
+      "stand": "Hall 3 / 753",
+      "website": "https://exhibitor-20261021-01.example.com"
+    },
+    {
+      "category": "Tools",
+      "country": "Synthetic territory Qemipelu",
+      "description": "Makes bexopelu modules for vorovoro workshops.",
+      "employees": 8,
+      "id": "exhibitor-02",
+      "name": "Rivubexo Zavuqemi Works",
+      "revenue_millions": 80,
+      "stand": "Hall 4 / 518",
+      "website": "https://exhibitor-20261021-02.example.com"
+    },
+    {
+      "category": "Logistics",
+      "country": "Synthetic territory Vorodaxi",
+      "description": "Makes lumilumi modules for zavurivu workshops.",
+      "employees": 24,
+      "id": "exhibitor-03",
+      "name": "Bexozavu Qemilumi Works",
+      "revenue_millions": 1,
+      "stand": "Hall 1 / 852",
+      "website": "https://exhibitor-20261021-03.example.com"
+    },
+    {
+      "category": "Food systems",
+      "country": "Synthetic territory Qemiqemi",
+      "description": "Makes rivunuxa modules for rivuwemi workshops.",
+      "employees": 280,
+      "id": "exhibitor-04",
+      "name": "Pelutazu Qemivoro Works",
+      "revenue_millions": 12,
+      "stand": "Hall 1 / 410",
+      "website": "https://exhibitor-20261021-04.example.com"
+    },
+    {
+      "category": "Energy",
+      "country": "Synthetic territory Tazubexo",
+      "description": "Makes bexopelu modules for bexolumi workshops.",
+      "employees": 650,
+      "id": "exhibitor-05",
+      "name": "Wemiwemi Nuxabexo Works",
+      "revenue_millions": 1,
+      "stand": "Hall 1 / 260",
+      "website": "https://exhibitor-20261021-05.example.com"
+    },
+    {
+      "category": "Energy",
+      "country": "Synthetic territory Peludaxi",
+      "description": "Makes lumivoro modules for zavutazu workshops.",
+      "employees": 280,
+      "id": "exhibitor-06",
+      "name": "Zavuqemi Lumipelu Works",
+      "revenue_millions": 80,
+      "stand": "Hall 5 / 347",
+      "website": "https://exhibitor-20261021-06.example.com"
+    },
+    {
+      "category": "Water systems",
+      "country": "Synthetic territory Nuxapelu",
+      "description": "Makes bexonuxa modules for nuxazavu workshops.",
+      "employees": 65,
+      "id": "exhibitor-07",
+      "name": "Qemitazu Daxilumi Works",
+      "revenue_millions": 12,
+      "stand": "Hall 1 / 721",
+      "website": "https://exhibitor-20261021-07.example.com"
+    },
+    {
+      "category": "Water systems",
+      "country": "Synthetic territory Jovutazu",
+      "description": "Makes daxivoro modules for tazupelu workshops.",
+      "employees": 8,
+      "id": "exhibitor-08",
+      "name": "Jovunuxa Vorovoro Works",
+      "revenue_millions": 80,
+      "stand": "Hall 2 / 839",
+      "website": "https://exhibitor-20261021-08.example.com"
+    },
+    {
+      "category": "Packaging",
+      "country": "Synthetic territory Weminuxa",
+      "description": "Makes pelupelu modules for vorodaxi workshops.",
+      "employees": 140,
+      "id": "exhibitor-09",
+      "name": "Jovurivu Tazudaxi Works",
+      "revenue_millions": 4,
+      "stand": "Hall 4 / 158",
+      "website": "https://exhibitor-20261021-09.example.com"
+    },
+    {
+      "category": "Software",
+      "country": "Synthetic territory Daxizavu",
+      "description": "Makes nuxadaxi modules for bexolumi workshops.",
+      "employees": 140,
+      "id": "exhibitor-10",
+      "name": "Pelujovu Bexodaxi Works",
+      "revenue_millions": 1,
+      "stand": "Hall 2 / 852",
+      "website": "https://exhibitor-20261021-10.example.com"
+    },
+    {
+      "category": "Software",
+      "country": "Synthetic territory Qemipelu",
+      "description": "Makes zavutazu modules for qemilumi workshops.",
+      "employees": 650,
+      "id": "exhibitor-11",
+      "name": "Tazuzavu Tazubexo Works",
+      "revenue_millions": 12,
+      "stand": "Hall 2 / 877",
+      "website": "https://exhibitor-20261021-11.example.com"
+    },
+    {
+      "category": "Water systems",
+      "country": "Synthetic territory Daxirivu",
+      "description": "Makes wemidaxi modules for tazupelu workshops.",
+      "employees": 24,
+      "id": "exhibitor-12",
+      "name": "Qemiqemi Lumiwemi Works",
+      "revenue_millions": 80,
+      "stand": "Hall 5 / 992",
+      "website": "https://exhibitor-20261021-12.example.com"
+    },
+    {
+      "category": "Software",
+      "country": "Synthetic territory Jovulumi",
+      "description": "Makes pelurivu modules for nuxazavu workshops.",
+      "employees": 65,
+      "id": "exhibitor-13",
+      "name": "Qemizavu Peluzavu Works",
+      "revenue_millions": 12,
+      "stand": "Hall 5 / 486",
+      "website": "https://exhibitor-20261021-13.example.com"
+    },
+    {
+      "category": "Tools",
+      "country": "Synthetic territory Zavuvoro",
+      "description": "Makes tazuvoro modules for qemirivu workshops.",
+      "employees": 65,
+      "id": "exhibitor-14",
+      "name": "Bexowemi Qemiqemi Works",
+      "revenue_millions": 80,
+      "stand": "Hall 1 / 229",
+      "website": "https://exhibitor-20261021-14.example.com"
+    },
+    {
+      "category": "Software",
+      "country": "Synthetic territory Zavuvoro",
+      "description": "Makes bexojovu modules for weminuxa workshops.",
+      "employees": 65,
+      "id": "exhibitor-15",
+      "name": "Jovuvoro Lumizavu Works",
+      "revenue_millions": 35,
+      "stand": "Hall 3 / 536",
+      "website": "https://exhibitor-20261021-15.example.com"
+    },
+    {
+      "category": "Packaging",
+      "country": "Synthetic territory Tazuwemi",
+      "description": "Makes daxiqemi modules for bexojovu workshops.",
+      "employees": 24,
+      "id": "exhibitor-16",
+      "name": "Jovunuxa Rivurivu Works",
+      "revenue_millions": 35,
+      "stand": "Hall 3 / 218",
+      "website": "https://exhibitor-20261021-16.example.com"
+    },
+    {
+      "category": "Logistics",
+      "country": "Synthetic territory Wemidaxi",
+      "description": "Makes tazunuxa modules for bexobexo workshops.",
+      "employees": 24,
+      "id": "exhibitor-17",
+      "name": "Daxiwemi Rivuqemi Works",
+      "revenue_millions": 35,
+      "stand": "Hall 2 / 852",
+      "website": "https://exhibitor-20261021-17.example.com"
+    },
+    {
+      "category": "Water systems",
+      "country": "Synthetic territory Pelupelu",
+      "description": "Makes tazurivu modules for qeminuxa workshops.",
+      "employees": 280,
+      "id": "exhibitor-18",
+      "name": "Peluqemi Vorobexo Works",
+      "revenue_millions": 1,
+      "stand": "Hall 1 / 497",
+      "website": "https://exhibitor-20261021-18.example.com"
+    },
+    {
+      "category": "Materials",
+      "country": "Synthetic territory Qemibexo",
+      "description": "Makes wemivoro modules for peluzavu workshops.",
+      "employees": 280,
+      "id": "exhibitor-19",
+      "name": "Nuxabexo Tazutazu Works",
+      "revenue_millions": 80,
+      "stand": "Hall 5 / 665",
+      "website": "https://exhibitor-20261021-19.example.com"
+    },
+    {
+      "category": "Energy",
+      "country": "Synthetic territory Tazubexo",
+      "description": "Makes rivuqemi modules for nuxawemi workshops.",
+      "employees": 140,
+      "id": "exhibitor-20",
+      "name": "Qemirivu Jovulumi Works",
+      "revenue_millions": 12,
+      "stand": "Hall 3 / 697",
+      "website": "https://exhibitor-20261021-20.example.com"
+    }
+  ]
+}

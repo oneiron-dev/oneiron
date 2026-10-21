@@ -1,0 +1,92 @@
+{
+  "drafts": {
+    "recipient-01": {
+      "body": "Hello Rivubexo Bexolumi,\nI enjoyed your voropelu workshop exhibit. Here is a short workshop note for Bexopelu Tazuwemi Works.\nRegards,\nWorkshop desk",
+      "link": "https://notes.example.org/20261021/recipient-01",
+      "saved": true,
+      "scheduled_time": "2027-02-01T09:30",
+      "subject": "A workshop note for Bexopelu Tazuwemi Works",
+      "to": "recipient-20261021-01@example.com"
+    },
+    "recipient-02": {
+      "body": "Hello Rivuwemi Qemiqemi,\nI enjoyed your daxirivu workshop exhibit. Here is a short workshop note for Peluqemi Vorobexo Works.\nRegards,\nWorkshop desk",
+      "link": "https://notes.example.org/20261021/recipient-02",
+      "saved": true,
+      "scheduled_time": "2027-02-02T09:30",
+      "subject": "A workshop note for Peluqemi Vorobexo Works",
+      "to": "recipient-20261021-02@example.com"
+    },
+    "recipient-03": {
+      "body": "Hello Zavutazu Daxivoro,\nI enjoyed your wemidaxi workshop exhibit. Here is a short workshop note for Daxiwemi Jovuzavu Works.\nRegards,\nWorkshop desk",
+      "link": "https://notes.example.org/20261021/recipient-03",
+      "saved": true,
+      "scheduled_time": "2027-02-03T09:30",
+      "subject": "A workshop note for Daxiwemi Jovuzavu Works",
+      "to": "recipient-20261021-03@example.com"
+    },
+    "recipient-04": {
+      "body": "Hello Pelujovu Lumirivu,\nI enjoyed your nuxavoro workshop exhibit. Here is a short workshop note for Voropelu Zavubexo Works.\nRegards,\nWorkshop desk",
+      "link": "https://notes.example.org/20261021/recipient-04",
+      "saved": true,
+      "scheduled_time": "2027-02-04T09:30",
+      "subject": "A workshop note for Voropelu Zavubexo Works",
+      "to": "recipient-20261021-04@example.com"
+    },
+    "recipient-05": {
+      "body": "Hello Rivurivu Zavutazu,\nI enjoyed your qemizavu workshop exhibit. Here is a short workshop note for Bexovoro Qemitazu Works.\nRegards,\nWorkshop desk",
+      "link": "https://notes.example.org/20261021/recipient-05",
+      "saved": true,
+      "scheduled_time": "2027-02-05T09:30",
+      "subject": "A workshop note for Bexovoro Qemitazu Works",
+      "to": "recipient-20261021-05@example.com"
+    },
+    "recipient-06": {
+      "body": "Hello Daxirivu Jovutazu,\nI enjoyed your jovuqemi workshop exhibit. Here is a short workshop note for Bexopelu Wemidaxi Works.\nRegards,\nWorkshop desk",
+      "link": "https://notes.example.org/20261021/recipient-06",
+      "saved": true,
+      "scheduled_time": "2027-02-06T09:30",
+      "subject": "A workshop note for Bexopelu Wemidaxi Works",
+      "to": "recipient-20261021-06@example.com"
+    },
+    "recipient-07": {
+      "body": "Hello Qemivoro Daxidaxi,\nI enjoyed your jovubexo workshop exhibit. Here is a short workshop note for Lumivoro Wemirivu Works.\nRegards,\nWorkshop desk",
+      "link": "https://notes.example.org/20261021/recipient-07",
+      "saved": true,
+      "scheduled_time": "2027-02-07T09:30",
+      "subject": "A workshop note for Lumivoro Wemirivu Works",
+      "to": "recipient-20261021-07@example.com"
+    },
+    "recipient-08": {
+      "body": "Hello Jovuvoro Nuxadaxi,\nI enjoyed your lumirivu workshop exhibit. Here is a short workshop note for Peluwemi Vorobexo Works.\nRegards,\nWorkshop desk",
+      "link": "https://notes.example.org/20261021/recipient-08",
+      "saved": true,
+      "scheduled_time": "2027-02-08T09:30",
+      "subject": "A workshop note for Peluwemi Vorobexo Works",
+      "to": "recipient-20261021-08@example.com"
+    },
+    "recipient-09": {
+      "body": "Hello Rivuwemi Pelutazu,\nI enjoyed your nuxavoro workshop exhibit. Here is a short workshop note for Lumijovu Rivulumi Works.\nRegards,\nWorkshop desk",
+      "link": "https://notes.example.org/20261021/recipient-09",
+      "saved": true,
+      "scheduled_time": "2027-02-09T09:30",
+      "subject": "A workshop note for Lumijovu Rivulumi Works",
+      "to": "recipient-20261021-09@example.com"
+    },
+    "recipient-10": {
+      "body": "Hello Tazudaxi Qemibexo,\nI enjoyed your qemilumi workshop exhibit. Here is a short workshop note for Jovuqemi Qemibexo Works.\nRegards,\nWorkshop desk",
+      "link": "https://notes.example.org/20261021/recipient-10",
+      "saved": true,
+      "scheduled_time": "2027-02-10T09:30",
+      "subject": "A workshop note for Jovuqemi Qemibexo Works",
+      "to": "recipient-20261021-10@example.com"
+    }
+  },
+  "send_count": 0,
+  "template": {
+    "body": "Hello {name},\nI enjoyed {hook}. Here is a short workshop note for {firm}.\nRegards,\nWorkshop desk",
+    "link": "{link}",
+    "scheduled_time": "{scheduled_time}",
+    "subject": "A workshop note for {firm}"
+  },
+  "timezone": "UTC"
+}

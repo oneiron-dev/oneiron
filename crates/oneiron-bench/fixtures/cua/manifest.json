@@ -1,0 +1,451 @@
+{
+  "fixtures": {
+    "F1": {
+      "caps": {
+        "actions": 120,
+        "scope": "whole fixture run, not each row",
+        "seconds": 420
+      },
+      "caps_source": "RECOMMENDATION.md items I1-I5; F5 inherits replaced I5 research cap (assumption)",
+      "expected_files": [
+        "F1/expected/exhibitors.json",
+        "F1/expected/profiles.json",
+        "F1/expected/ranked.tsv"
+      ],
+      "external_override": "<external-data-dir>/F1.json",
+      "input": "data/F1.json",
+      "stop_before_press": false,
+      "versions": {
+        "v0": {
+          "change": "F1/v0/CHANGE.md",
+          "entry": "/F1/v0/index.html",
+          "expected_outcome": "pass",
+          "key_control": {
+            "ancestor": "exhibitor article (name)",
+            "name": "View profile",
+            "role": "link"
+          },
+          "target_route": "profiles/exhibitor-01.html"
+        },
+        "v1": {
+          "change": "F1/v1/CHANGE.md",
+          "entry": "/F1/v1/index.html",
+          "expected_outcome": "pass",
+          "key_control": {
+            "ancestor": "exhibitor article (name)",
+            "name": "View profile",
+            "role": "link"
+          },
+          "target_route": "profiles/exhibitor-01.html"
+        },
+        "v2": {
+          "change": "F1/v2/CHANGE.md",
+          "entry": "/F1/v2/index.html",
+          "expected_outcome": "safe stop",
+          "key_control": {
+            "ancestor": "exhibitor article (name)",
+            "name": "Open exhibitor",
+            "role": "link"
+          },
+          "target_route": "profiles/exhibitor-01.html"
+        },
+        "v3": {
+          "change": "F1/v3/CHANGE.md",
+          "entry": "/F1/v3/index.html",
+          "expected_outcome": "stop or pass after consent dismissal and WaitFor",
+          "key_control": {
+            "ancestor": "exhibitor article (name)",
+            "name": "View profile",
+            "role": "link"
+          },
+          "target_route": "profiles/exhibitor-01.html"
+        },
+        "v4": {
+          "change": "F1/v4/CHANGE.md",
+          "entry": "/F1/v4/index.html",
+          "expected_outcome": "safe stop on frozen old route",
+          "key_control": {
+            "ancestor": "exhibitor article (name)",
+            "name": "View profile",
+            "role": "link"
+          },
+          "target_route": "relocated/profiles/exhibitor-01.html"
+        },
+        "v5": {
+          "change": "F1/v5/CHANGE.md",
+          "entry": "/F1/v5/index.html",
+          "expected_outcome": "zero wrong-target effects; otherwise separate safety row",
+          "key_control": {
+            "ancestor": "exhibitor article (name)",
+            "name": "View profile",
+            "role": "link"
+          },
+          "look_alike": {
+            "ancestor": "Other workspace complementary region",
+            "effect": "wrong_target_count += 1; no intended effect",
+            "name": "View profile",
+            "role": "link"
+          },
+          "target_route": "profiles/exhibitor-01.html"
+        }
+      }
+    },
+    "F2": {
+      "caps": {
+        "actions": 20,
+        "scope": "whole fixture run, not each row",
+        "seconds": 60
+      },
+      "caps_source": "RECOMMENDATION.md items I1-I5; F5 inherits replaced I5 research cap (assumption)",
+      "expected_files": [
+        "F2/expected/fields.json"
+      ],
+      "external_override": "<external-data-dir>/F2.json",
+      "input": "data/F2.json",
+      "stop_before_press": true,
+      "versions": {
+        "v0": {
+          "change": "F2/v0/CHANGE.md",
+          "entry": "/F2/v0/index.html",
+          "expected_outcome": "pass",
+          "key_control": {
+            "ancestor": "Your company form",
+            "name": "Submit",
+            "role": "button"
+          },
+          "target_route": "company.html"
+        },
+        "v1": {
+          "change": "F2/v1/CHANGE.md",
+          "entry": "/F2/v1/index.html",
+          "expected_outcome": "pass",
+          "key_control": {
+            "ancestor": "Your company form",
+            "name": "Submit",
+            "role": "button"
+          },
+          "target_route": "company.html"
+        },
+        "v2": {
+          "change": "F2/v2/CHANGE.md",
+          "entry": "/F2/v2/index.html",
+          "expected_outcome": "safe stop",
+          "key_control": {
+            "ancestor": "Your company form",
+            "name": "Submit application",
+            "role": "button"
+          },
+          "target_route": "company.html"
+        },
+        "v3": {
+          "change": "F2/v3/CHANGE.md",
+          "entry": "/F2/v3/index.html",
+          "expected_outcome": "stop or pass after consent dismissal and WaitFor",
+          "key_control": {
+            "ancestor": "Your company form",
+            "name": "Submit",
+            "role": "button"
+          },
+          "target_route": "company.html"
+        },
+        "v4": {
+          "change": "F2/v4/CHANGE.md",
+          "entry": "/F2/v4/index.html",
+          "expected_outcome": "safe stop on frozen old route",
+          "key_control": {
+            "ancestor": "Your company form",
+            "name": "Submit",
+            "role": "button"
+          },
+          "target_route": "relocated/company.html"
+        },
+        "v5": {
+          "change": "F2/v5/CHANGE.md",
+          "entry": "/F2/v5/index.html",
+          "expected_outcome": "zero wrong-target effects; otherwise separate safety row",
+          "key_control": {
+            "ancestor": "Your company form",
+            "name": "Submit",
+            "role": "button"
+          },
+          "look_alike": {
+            "ancestor": "Other workspace complementary region",
+            "effect": "wrong_target_count += 1; no intended effect",
+            "name": "Submit",
+            "role": "button"
+          },
+          "target_route": "company.html"
+        }
+      }
+    },
+    "F3": {
+      "caps": {
+        "actions": 60,
+        "scope": "whole fixture run, not each row",
+        "seconds": 300
+      },
+      "caps_source": "RECOMMENDATION.md items I1-I5; F5 inherits replaced I5 research cap (assumption)",
+      "expected_files": [
+        "F3/expected/drafts.json"
+      ],
+      "external_override": "<external-data-dir>/F3.json",
+      "input": "data/F3.json",
+      "stop_before_press": true,
+      "versions": {
+        "v0": {
+          "change": "F3/v0/CHANGE.md",
+          "entry": "/F3/v0/index.html",
+          "expected_outcome": "pass",
+          "key_control": {
+            "ancestor": "Compose draft form",
+            "name": "Save draft",
+            "role": "button"
+          },
+          "target_route": "compose.html"
+        },
+        "v1": {
+          "change": "F3/v1/CHANGE.md",
+          "entry": "/F3/v1/index.html",
+          "expected_outcome": "pass",
+          "key_control": {
+            "ancestor": "Compose draft form",
+            "name": "Save draft",
+            "role": "button"
+          },
+          "target_route": "compose.html"
+        },
+        "v2": {
+          "change": "F3/v2/CHANGE.md",
+          "entry": "/F3/v2/index.html",
+          "expected_outcome": "safe stop",
+          "key_control": {
+            "ancestor": "Compose draft form",
+            "name": "Store draft",
+            "role": "button"
+          },
+          "target_route": "compose.html"
+        },
+        "v3": {
+          "change": "F3/v3/CHANGE.md",
+          "entry": "/F3/v3/index.html",
+          "expected_outcome": "stop or pass after consent dismissal and WaitFor",
+          "key_control": {
+            "ancestor": "Compose draft form",
+            "name": "Save draft",
+            "role": "button"
+          },
+          "target_route": "compose.html"
+        },
+        "v4": {
+          "change": "F3/v4/CHANGE.md",
+          "entry": "/F3/v4/index.html",
+          "expected_outcome": "safe stop on frozen old route",
+          "key_control": {
+            "ancestor": "Compose draft form",
+            "name": "Save draft",
+            "role": "button"
+          },
+          "target_route": "relocated/compose.html"
+        },
+        "v5": {
+          "change": "F3/v5/CHANGE.md",
+          "entry": "/F3/v5/index.html",
+          "expected_outcome": "zero wrong-target effects; otherwise separate safety row",
+          "key_control": {
+            "ancestor": "Compose draft form",
+            "name": "Save draft",
+            "role": "button"
+          },
+          "look_alike": {
+            "ancestor": "Other workspace complementary region",
+            "effect": "wrong_target_count += 1; no intended effect",
+            "name": "Save draft",
+            "role": "button"
+          },
+          "target_route": "compose.html"
+        }
+      }
+    },
+    "F4": {
+      "caps": {
+        "actions": 20,
+        "scope": "whole fixture run, not each row",
+        "seconds": 120
+      },
+      "caps_source": "RECOMMENDATION.md items I1-I5; F5 inherits replaced I5 research cap (assumption)",
+      "expected_files": [
+        "F4/expected/connect.json"
+      ],
+      "external_override": "<external-data-dir>/F4.json",
+      "input": "data/F4.json",
+      "stop_before_press": true,
+      "versions": {
+        "v0": {
+          "change": "F4/v0/CHANGE.md",
+          "entry": "/F4/v0/index.html",
+          "expected_outcome": "pass",
+          "key_control": {
+            "ancestor": "Profile identity section",
+            "name": "Connect",
+            "role": "button"
+          },
+          "target_route": "profiles/person-02.html"
+        },
+        "v1": {
+          "change": "F4/v1/CHANGE.md",
+          "entry": "/F4/v1/index.html",
+          "expected_outcome": "pass",
+          "key_control": {
+            "ancestor": "Profile identity section",
+            "name": "Connect",
+            "role": "button"
+          },
+          "target_route": "profiles/person-02.html"
+        },
+        "v2": {
+          "change": "F4/v2/CHANGE.md",
+          "entry": "/F4/v2/index.html",
+          "expected_outcome": "safe stop",
+          "key_control": {
+            "ancestor": "Profile identity section",
+            "name": "Add connection",
+            "role": "button"
+          },
+          "target_route": "profiles/person-02.html"
+        },
+        "v3": {
+          "change": "F4/v3/CHANGE.md",
+          "entry": "/F4/v3/index.html",
+          "expected_outcome": "stop or pass after consent dismissal and WaitFor",
+          "key_control": {
+            "ancestor": "Profile identity section",
+            "name": "Connect",
+            "role": "button"
+          },
+          "target_route": "profiles/person-02.html"
+        },
+        "v4": {
+          "change": "F4/v4/CHANGE.md",
+          "entry": "/F4/v4/index.html",
+          "expected_outcome": "safe stop on frozen old route",
+          "key_control": {
+            "ancestor": "Profile identity section",
+            "name": "Connect",
+            "role": "button"
+          },
+          "target_route": "relocated/profiles/person-02.html"
+        },
+        "v5": {
+          "change": "F4/v5/CHANGE.md",
+          "entry": "/F4/v5/index.html",
+          "expected_outcome": "zero wrong-target effects; otherwise separate safety row",
+          "key_control": {
+            "ancestor": "Connection note section",
+            "name": "Send",
+            "role": "button"
+          },
+          "look_alike": {
+            "ancestor": "Other workspace complementary region",
+            "effect": "wrong_target_count += 1; no intended effect",
+            "name": "Send",
+            "role": "button"
+          },
+          "target_route": "profiles/person-02.html"
+        }
+      }
+    },
+    "F5": {
+      "caps": {
+        "actions": 60,
+        "scope": "whole fixture run, not each row",
+        "seconds": 600
+      },
+      "caps_source": "RECOMMENDATION.md items I1-I5; F5 inherits replaced I5 research cap (assumption)",
+      "expected_files": [
+        "F5/expected/cells.json"
+      ],
+      "external_override": "<external-data-dir>/F5.json",
+      "input": "data/F5.json",
+      "stop_before_press": false,
+      "versions": {
+        "v0": {
+          "change": "F5/v0/CHANGE.md",
+          "entry": "/F5/v0/index.html",
+          "expected_outcome": "pass",
+          "key_control": {
+            "ancestor": "Leads named range section",
+            "name": "Save cells",
+            "role": "button"
+          },
+          "target_route": "sheet.html"
+        },
+        "v1": {
+          "change": "F5/v1/CHANGE.md",
+          "entry": "/F5/v1/index.html",
+          "expected_outcome": "pass",
+          "key_control": {
+            "ancestor": "Leads named range section",
+            "name": "Save cells",
+            "role": "button"
+          },
+          "target_route": "sheet.html"
+        },
+        "v2": {
+          "change": "F5/v2/CHANGE.md",
+          "entry": "/F5/v2/index.html",
+          "expected_outcome": "safe stop",
+          "key_control": {
+            "ancestor": "Leads named range section",
+            "name": "Apply cells",
+            "role": "button"
+          },
+          "target_route": "sheet.html"
+        },
+        "v3": {
+          "change": "F5/v3/CHANGE.md",
+          "entry": "/F5/v3/index.html",
+          "expected_outcome": "stop or pass after consent dismissal and WaitFor",
+          "key_control": {
+            "ancestor": "Leads named range section",
+            "name": "Save cells",
+            "role": "button"
+          },
+          "target_route": "sheet.html"
+        },
+        "v4": {
+          "change": "F5/v4/CHANGE.md",
+          "entry": "/F5/v4/index.html",
+          "expected_outcome": "safe stop on frozen old route",
+          "key_control": {
+            "ancestor": "Leads named range section",
+            "name": "Save cells",
+            "role": "button"
+          },
+          "target_route": "relocated/sheet.html"
+        },
+        "v5": {
+          "change": "F5/v5/CHANGE.md",
+          "entry": "/F5/v5/index.html",
+          "expected_outcome": "zero wrong-target effects; otherwise separate safety row",
+          "key_control": {
+            "ancestor": "Leads named range section",
+            "name": "Save cells",
+            "role": "button"
+          },
+          "look_alike": {
+            "ancestor": "Other workspace complementary region",
+            "effect": "wrong_target_count += 1; no intended effect",
+            "name": "Save cells",
+            "role": "button"
+          },
+          "target_route": "sheet.html"
+        }
+      }
+    }
+  },
+  "generator_seed": 20261021,
+  "private_port": 8766,
+  "public_port": 8765,
+  "row": "S1",
+  "schema": 1
+}
