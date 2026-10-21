@@ -34,9 +34,12 @@ impl From<CleanupRunReport> for CleanupRunView {
                 .map(|byte| format!("{byte:02x}"))
                 .collect(),
             posture: report.posture,
-            candidates: report.candidates,
+            // The owner door mints a fresh run each call, so its report is
+            // made here and never read from a stored row: no slot in it is
+            // erased (FIX 7517).
+            candidates: report.candidates.into_iter().flatten().collect(),
             proposal: report.proposal,
-            archived: report.archived,
+            archived: report.archived.into_iter().flatten().collect(),
             digest: report.digest,
         }
     }
