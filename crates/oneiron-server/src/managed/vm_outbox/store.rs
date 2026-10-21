@@ -5,9 +5,10 @@
 //! name, written whole: a temporary sibling, synced, renamed, the directory
 //! synced. It holds no member bytes: the agreed version's digest, the last
 //! transfer taken from the other end, the transfer sent and not yet acked,
-//! and a digest cache keyed by the local file's stamp. A record outlives its
-//! member as a tombstone, so a late replay never brings a retired file back;
-//! none is aged out or evicted. The next transfer id is `next-transfer`.
+//! the highest revision this end ever sent, and a digest cache keyed by the
+//! local file's stamp. A record outlives its member as a tombstone, so a
+//! late replay never brings a retired file back; none is aged out or
+//! evicted. The next transfer id is `next-transfer`.
 //! Every record is read into memory when the end starts.
 //!
 //! The host also keeps `backup-label.json` (FIX 7046): the backup label the
@@ -63,6 +64,11 @@ pub(super) struct MemberRecord {
     pub(super) revision: u64,
     /// The version both ends hold at `revision`; `None` once it is removed.
     pub(super) agreed: Option<Version>,
+    /// The highest revision this end recorded on a transfer it sent, kept
+    /// once that transfer is acked, refused or passed: a new change goes
+    /// past it, so no revision is given twice. Written with the pending
+    /// transfer that raises it.
+    pub(super) floor: u64,
     #[serde(default)]
     pub(super) cached: Option<Cached>,
     #[serde(default)]

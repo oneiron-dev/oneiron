@@ -4,109 +4,19 @@
 //! durable or why it is not. Each end holds only its own local locks, and
 //! only for a local commit, never across a round trip.
 
+pub(super) use super::link::Link;
 use super::local::{self, Staged};
 use super::scan::{OutOp, OutSet};
 use super::store::{Cached, Received, Version};
 use super::{Carrier, Mode};
 use oneiron_vault_contract::vm_outbox::{
-    MAX_VM_OUTBOX_LINE, VM_OUTBOX_CHUNK_BYTES, VM_OUTBOX_WIRE_REVISION, VmOutboxAck,
-    VmOutboxDeferral, VmOutboxDescriptor, VmOutboxFrame, VmOutboxKind, VmOutboxMember,
-    VmOutboxOperation, VmOutboxOutcome, VmOutboxRefusal, VmOutboxSide, decode_vm_outbox_frame,
-    encode_vm_outbox_frame, vm_outbox_chunk_header, vm_outbox_chunk_len,
+    VM_OUTBOX_WIRE_REVISION, VmOutboxAck, VmOutboxDeferral, VmOutboxDescriptor, VmOutboxFrame,
+    VmOutboxKind, VmOutboxMember, VmOutboxOperation, VmOutboxOutcome, VmOutboxRefusal,
+    VmOutboxSide,
 };
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{Read, Write};
 use std::sync::Arc;
-
-/// One connection, read and written through its own buffers.
-pub(super) struct Link<S: Read + Write> {
-    reader: BufReader<S>,
-    writer: BufWriter<S>,
-}
-
-impl<S: Read + Write> Link<S> {
-    /// The connection whose two handles are `reader` and `writer`.
-    pub(super) fn new(reader: S, writer: S) -> Self {
-        Self {
-            reader: BufReader::new(reader),
-            writer: BufWriter::new(writer),
-        }
-    }
-
-    fn send(&mut self, frame: &VmOutboxFrame) -> anyhow::Result<()> {
-        self.writer
-            .write_all(encode_vm_outbox_frame(frame)?.as_bytes())?;
-        Ok(())
-    }
-
-    fn flush(&mut self) -> anyhow::Result<()> {
-        Ok(self.writer.flush()?)
-    }
-
-    /// The next frame, or `None` once the other end closed the connection.
-    fn read(&mut self) -> anyhow::Result<Option<VmOutboxFrame>> {
-        let mut line = Vec::new();
-        let bound = MAX_VM_OUTBOX_LINE as u64;
-        if (&mut self.reader)
-            .take(bound)
-            .read_until(b'\n', &mut line)?
-            == 0
-        {
-            return Ok(None);
-        }
-        anyhow::ensure!(
-            line.last() == Some(&b'\n'),
-            "an outbox frame ran past its line bound or the connection"
-        );
-        Ok(Some(decode_vm_outbox_frame(std::str::from_utf8(&line)?)?))
-    }
-
-    /// `length` bytes of `file`, from its start, in data chunks.
-    fn send_data(&mut self, mut file: &File, length: u64) -> anyhow::Result<()> {
-        let mut buffer = vec![0u8; VM_OUTBOX_CHUNK_BYTES];
-        let mut left = length;
-        while left > 0 {
-            let want = usize::try_from(left).map_or(buffer.len(), |left| left.min(buffer.len()));
-            let read = file.read(&mut buffer[..want])?;
-            anyhow::ensure!(read > 0, "a member shrank while it was sent");
-            let header = vm_outbox_chunk_header(read)
-                .ok_or_else(|| anyhow::anyhow!("a data chunk outside its bounds"))?;
-            self.writer.write_all(&header)?;
-            self.writer.write_all(&buffer[..read])?;
-            left -= read as u64;
-        }
-        Ok(())
-    }
-
-    /// Reads a transfer's `length` bytes of data chunks, written into
-    /// `staged` when there is one. A write that fails stops the writing, not
-    /// the reading, and is returned.
-    fn read_data(
-        &mut self,
-        length: u64,
-        mut staged: Option<&mut Staged>,
-    ) -> anyhow::Result<Option<std::io::Error>> {
-        let mut buffer = vec![0u8; VM_OUTBOX_CHUNK_BYTES];
-        let mut left = length;
-        let mut failed = None;
-        while left > 0 {
-            let mut header = [0u8; 4];
-            self.reader.read_exact(&mut header)?;
-            let len = vm_outbox_chunk_len(header)
-                .filter(|len| *len as u64 <= left)
-                .ok_or_else(|| anyhow::anyhow!("a data chunk outside its transfer"))?;
-            self.reader.read_exact(&mut buffer[..len])?;
-            if failed.is_none()
-                && let Some(staged) = staged.as_deref_mut()
-                && let Err(error) = staged.write(&buffer[..len])
-            {
-                failed = Some(error);
-            }
-            left -= len as u64;
-        }
-        Ok(failed)
-    }
-}
 
 /// One transfer the other end sent, taken and waiting for its set.
 struct Taken {
@@ -239,12 +149,16 @@ impl Carrier {
         }
     }
 
-    /// Sends each set this end has; `true` when any went.
+    /// Sends each set this end has; `true` when any went. Once a set's
+    /// records do not write, its kind's later sets wait with it.
     fn send_sets<S: Read + Write>(&mut self, link: &mut Link<S>) -> anyhow::Result<bool> {
         let mut sent = false;
-        for set in self.outgoing()? {
+        for set in self.outgoing() {
             if !self.gate.proceed() {
                 break;
+            }
+            if self.record_waits(set.kind).is_some() {
+                continue;
             }
             sent |= self.send_set(link, set)?;
         }
@@ -252,7 +166,9 @@ impl Carrier {
     }
 
     /// One set: each put's file held first, identities recorded before a
-    /// byte goes, then the transfers, then one ack each.
+    /// byte goes, then the transfers, then one ack each. When an identity
+    /// does not record, none of the set goes: what was recorded is kept, the
+    /// set is paced and its kind waits on its records.
     fn send_set<S: Read + Write>(
         &mut self,
         link: &mut Link<S>,
@@ -275,45 +191,16 @@ impl Carrier {
                 ready.push((op, Some(file)));
             }
         }
-        let Some(last) = ready.len().checked_sub(1) else {
+        if ready.is_empty() {
             return Ok(false);
-        };
-        let gate = Arc::clone(&self.gate);
-        let held = gate.hold();
-        let fresh = ready.iter().filter(|(op, _)| op.replay.is_none()).count() as u64;
-        let mut next = if fresh > 0 {
-            self.store.allocate(fresh)?
-        } else {
-            0
-        };
-        let mut transfers = Vec::with_capacity(ready.len());
-        for (index, (op, file)) in ready.into_iter().enumerate() {
-            let transfer_id = op.replay.unwrap_or_else(|| {
-                next += 1;
-                next - 1
-            });
-            let descriptor = VmOutboxDescriptor {
-                wire_revision: VM_OUTBOX_WIRE_REVISION,
-                transfer_id,
-                kind: set.kind,
-                member: op.member,
-                revision: op.revision,
-                length: if file.is_some() { op.version.length } else { 0 },
-                blake3: op.version.blake3,
-                operation: op.operation,
-                expected_digest: op.expected,
-                set_id: set.set.clone(),
-                commit_set: index == last,
-            };
-            let mut record = self.store.get(set.kind, &descriptor.member);
-            record.pending = Some(VmOutboxDescriptor {
-                commit_set: false,
-                ..descriptor.clone()
-            });
-            self.store.put(set.kind, &descriptor.member, record)?;
-            transfers.push((descriptor, file));
         }
-        drop(held);
+        let transfers = match self.prepare(set.kind, &set.set, ready) {
+            Ok(transfers) => transfers,
+            Err(error) => {
+                self.records_failed(set.kind, Some(&set.set), &error);
+                return Ok(false);
+            }
+        };
         for (descriptor, file) in &transfers {
             link.send(&VmOutboxFrame::Transfer(descriptor.clone()))?;
             if let Some(file) = file {
@@ -338,9 +225,64 @@ impl Carrier {
         Ok(true)
     }
 
+    /// Records `ready`, the members of `kind`'s `set` in their order, under
+    /// this end's gate: fresh transfer ids reserved first, then each one's
+    /// transfer as sent and not acked, before any goes. A reservation or
+    /// record that does not write is returned, and what was written before
+    /// it is kept: a reserved id is not handed out again, and a recorded
+    /// transfer is replayed with its identity.
+    fn prepare(
+        &mut self,
+        kind: VmOutboxKind,
+        set: &str,
+        ready: Vec<(OutOp, Option<File>)>,
+    ) -> std::io::Result<Vec<(VmOutboxDescriptor, Option<File>)>> {
+        let gate = Arc::clone(&self.gate);
+        let held = gate.hold();
+        let last = ready.len().saturating_sub(1);
+        let fresh = ready.iter().filter(|(op, _)| op.replay.is_none()).count() as u64;
+        let mut next = if fresh > 0 {
+            self.store.allocate(fresh)?
+        } else {
+            0
+        };
+        let mut transfers = Vec::with_capacity(ready.len());
+        for (index, (op, file)) in ready.into_iter().enumerate() {
+            let transfer_id = op.replay.unwrap_or_else(|| {
+                next += 1;
+                next - 1
+            });
+            let descriptor = VmOutboxDescriptor {
+                wire_revision: VM_OUTBOX_WIRE_REVISION,
+                transfer_id,
+                kind,
+                member: op.member,
+                revision: op.revision,
+                length: if file.is_some() { op.version.length } else { 0 },
+                blake3: op.version.blake3,
+                operation: op.operation,
+                expected_digest: op.expected,
+                set_id: set.to_owned(),
+                commit_set: index == last,
+            };
+            let mut record = self.store.get(kind, &descriptor.member);
+            record.floor = record.floor.max(descriptor.revision);
+            record.pending = Some(VmOutboxDescriptor {
+                commit_set: false,
+                ..descriptor.clone()
+            });
+            self.store.put(kind, &descriptor.member, record)?;
+            transfers.push((descriptor, file));
+        }
+        drop(held);
+        Ok(transfers)
+    }
+
     /// Records the other end's answer to `transfer`: a durable one is the
     /// agreed version and retires the retransmission state, a deferral keeps
-    /// it, a refusal drops it and is not sent again until the member changes.
+    /// it and writes nothing, a refusal drops it and is not sent again until
+    /// the member changes. A durable or refused answer that does not record
+    /// is returned: the answer stands, and the transfer is replayed later.
     fn take_ack(&mut self, transfer: &VmOutboxDescriptor, ack: VmOutboxAck) -> anyhow::Result<()> {
         let (kind, member) = (transfer.kind, transfer.member.as_str());
         let gate = Arc::clone(&self.gate);
@@ -367,6 +309,7 @@ impl Carrier {
                     member,
                     &format!("deferred ({code:?}) on {bound}: {detail}"),
                 );
+                return Ok(());
             }
             VmOutboxOutcome::Refused { code, detail } => {
                 self.say(kind, member, &format!("refused ({code:?}): {detail}"));
@@ -490,7 +433,8 @@ impl Carrier {
     /// The answer `transfer` gets without a change here, if it gets one: a
     /// replay of one taken before, one a newer change already passed, or one
     /// with nowhere to go yet, a backup set's while the label the guest
-    /// last named is not kept included.
+    /// last named is not kept and one of a kind waiting on this end's
+    /// carrier records included.
     fn decide(
         &self,
         transfer: &VmOutboxDescriptor,
@@ -504,7 +448,10 @@ impl Carrier {
                 "this end carries no backup of that label yet",
             ));
         }
-        if let Some(waits) = self.backup_waits(transfer.kind) {
+        if let Some(waits) = self
+            .backup_waits(transfer.kind)
+            .or_else(|| self.record_waits(transfer.kind))
+        {
             return Some(waits.clone());
         }
         let record = self.store.get(transfer.kind, &transfer.member);
@@ -540,22 +487,30 @@ impl Carrier {
 
     /// A local failure as a deferral naming its bound.
     fn io_outcome(&self, kind: VmOutboxKind, error: &std::io::Error) -> VmOutboxOutcome {
-        let side = match self.side {
+        let side = self.side_name();
+        local_deferral(
+            error,
+            &format!("free space on the {side}'s {kind} filesystem"),
+            &format!("the {side}'s {kind} root"),
+        )
+    }
+
+    /// A carrier record that did not write, as a deferral naming this end's
+    /// record store, not a kind's root.
+    pub(super) fn records_outcome(&self, error: &std::io::Error) -> VmOutboxOutcome {
+        let side = self.side_name();
+        local_deferral(
+            error,
+            &format!("free space on the {side}'s carrier record filesystem"),
+            &format!("the {side}'s carrier records"),
+        )
+    }
+
+    fn side_name(&self) -> &'static str {
+        match self.side {
             VmOutboxSide::Guest => "guest",
             VmOutboxSide::Host => "host",
-        };
-        if matches!(error.raw_os_error(), Some(libc::ENOSPC | libc::EDQUOT)) {
-            return VmOutboxOutcome::deferred(
-                VmOutboxDeferral::Capacity,
-                &format!("free space on the {side}'s {kind} filesystem"),
-                "the filesystem is full; the work is kept",
-            );
         }
-        VmOutboxOutcome::deferred(
-            VmOutboxDeferral::Io,
-            &format!("the {side}'s {kind} root"),
-            &error.to_string(),
-        )
     }
 
     /// Publishes a taken set whole, in its order, under this end's gate and,
@@ -712,6 +667,19 @@ impl Carrier {
             Err(error) => self.io_outcome(transfer.kind, &error),
         }
     }
+}
+
+/// `error` as a deferral: on `full` when its filesystem is full, else on
+/// `bound`.
+fn local_deferral(error: &std::io::Error, full: &str, bound: &str) -> VmOutboxOutcome {
+    if matches!(error.raw_os_error(), Some(libc::ENOSPC | libc::EDQUOT)) {
+        return VmOutboxOutcome::deferred(
+            VmOutboxDeferral::Capacity,
+            full,
+            "the filesystem is full; the work is kept",
+        );
+    }
+    VmOutboxOutcome::deferred(VmOutboxDeferral::Io, bound, &error.to_string())
 }
 
 /// The bytes a transfer's line says follow it: none for a remove.
