@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1129 facade rows, 3904 generated types.
+// UniFFI census: 1129 facade rows, 3910 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1081.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -1413,6 +1413,8 @@ pub enum AgentHealthCounter {
     FewRuns,
     #[serde(rename = "environment_cause")]
     EnvironmentCause,
+    #[serde(rename = "other_session_active")]
+    OtherSessionActive,
 }
 
 /// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthMove`.
@@ -1673,6 +1675,48 @@ pub struct HealthCauseSource {
     pub displaced_by: Option<String>,
 }
 
+/// `oneiron::dreamer_runner::maintenance::agent_health::silence::HealthOtherSession`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HealthOtherSession {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "generation")]
+    pub generation: u32,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::dreamer_runner::maintenance::agent_health::silence::HealthSilenceActivity`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HealthSilenceActivity {
+    #[serde(
+        rename = "own_call_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub own_call_at: Option<u64>,
+    #[serde(
+        rename = "own_step_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub own_step_at: Option<u64>,
+    #[serde(
+        rename = "actor_only_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub actor_only_at: Option<u64>,
+    #[serde(
+        rename = "other_session",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub other_session: Option<HealthOtherSession>,
+}
+
 /// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCard`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -1753,6 +1797,8 @@ pub struct AgentHealthCard {
     pub review_outcomes: Vec<HealthReviewReceipt>,
     #[serde(rename = "causes")]
     pub causes: Vec<HealthCauseSource>,
+    #[serde(rename = "silence", default, skip_serializing_if = "Option::is_none")]
+    pub silence: Option<HealthSilenceActivity>,
 }
 
 /// `oneiron::run_tree::types::RunTreeStatus`.
@@ -4798,6 +4844,8 @@ pub struct ExpectInput {
     pub name: Option<String>,
     #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
     #[serde(rename = "absent", default, skip_serializing_if = "Option::is_none")]
     pub absent: Option<bool>,
 }
@@ -44591,6 +44639,8 @@ pub enum LlmCapability {
     AssistantPrefill,
     #[serde(rename = "audio_input")]
     AudioInput,
+    #[serde(rename = "reasoning_content_history")]
+    ReasoningContentHistory,
 }
 
 /// `oneiron_model::llm::error::UnsupportedCapability`.
@@ -59807,6 +59857,41 @@ pub struct RowFieldGap {
     pub reason: RowGapReason,
 }
 
+/// `oneiron_browser::secret_fields::SecretKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SecretKind {
+    #[serde(rename = "card")]
+    Card,
+    #[serde(rename = "cvv")]
+    Cvv,
+    #[serde(rename = "otp")]
+    Otp,
+    #[serde(rename = "password")]
+    Password,
+}
+
+/// `oneiron_browser::secret_fields::SecretNote`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SecretNote {
+    #[serde(rename = "concealed")]
+    Concealed,
+    #[serde(rename = "no_custody")]
+    NoCustody,
+    #[serde(rename = "refused")]
+    Refused,
+}
+
+/// `oneiron_browser::secret_fields::RowSecret`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RowSecret {
+    #[serde(rename = "kind")]
+    pub kind: SecretKind,
+    #[serde(rename = "handle", default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<SecretNote>,
+}
+
 /// `oneiron_browser::row::Row`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct Row {
@@ -59836,6 +59921,8 @@ pub struct Row {
         skip_serializing_if = "Option::is_none"
     )]
     pub unavailable: Option<Vec<RowFieldGap>>,
+    #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<RowSecret>,
 }
 
 /// `oneiron_browser::observation::Rebound`.
@@ -60192,6 +60279,16 @@ pub struct EffectReceipt {
     pub duration_ms: u64,
 }
 
+/// `oneiron_browser::library::secret_slots::SecretParam`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretParam {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "kind")]
+    pub kind: SecretKind,
+}
+
 /// `oneiron_browser::library::admission::RecentCounts`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RecentCounts {
@@ -60234,6 +60331,12 @@ pub struct LibraryCard {
     pub type_ref: String,
     #[serde(rename = "params")]
     pub params: Vec<String>,
+    #[serde(
+        rename = "secret_params",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub secret_params: Option<Vec<SecretParam>>,
     #[serde(rename = "runs")]
     pub runs: u32,
     #[serde(rename = "failures")]
@@ -60464,8 +60567,10 @@ pub struct LiveRunRequestPointInput {
 pub struct TypeInput {
     #[serde(rename = "ref")]
     pub r#ref: String,
-    #[serde(rename = "text")]
-    pub text: String,
+    #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
     #[serde(rename = "clear", default, skip_serializing_if = "Option::is_none")]
     pub clear: Option<bool>,
     #[serde(rename = "base", default, skip_serializing_if = "Option::is_none")]
@@ -60822,6 +60927,8 @@ pub struct DecideStep {
     pub locate: Option<bool>,
     #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
     #[serde(rename = "clear", default, skip_serializing_if = "Option::is_none")]
     pub clear: Option<bool>,
     #[serde(rename = "option", default, skip_serializing_if = "Option::is_none")]
@@ -60846,8 +60953,10 @@ pub enum BatchStep {
     Type {
         #[serde(rename = "ref")]
         r#ref: String,
-        #[serde(rename = "text")]
-        text: String,
+        #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+        secret: Option<String>,
         #[serde(rename = "clear", default, skip_serializing_if = "Option::is_none")]
         clear: Option<bool>,
     },
@@ -60883,6 +60992,8 @@ pub enum BatchStep {
         name: Option<String>,
         #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
         value: Option<String>,
+        #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+        secret: Option<String>,
         #[serde(rename = "absent", default, skip_serializing_if = "Option::is_none")]
         absent: Option<bool>,
     },
@@ -61147,6 +61258,8 @@ pub enum WorkflowCheck {
     Solved,
     #[serde(rename = "replay")]
     Replay,
+    #[serde(rename = "secret_replay")]
+    SecretReplay,
     #[serde(rename = "held_out")]
     HeldOut,
     #[serde(rename = "fresh_guest")]
@@ -61198,6 +61311,11 @@ pub enum AdmissionRefusal {
         workflow: String,
         #[serde(rename = "why")]
         why: SupersedeRefusal,
+    },
+    #[serde(rename = "secret_replay")]
+    SecretReplay {
+        #[serde(rename = "slots")]
+        slots: Vec<String>,
     },
 }
 

@@ -1,7 +1,9 @@
 # Forked dependencies
 
-Two third-party crates carry changes of ours. Neither is vendored: each is a git dependency on a
-fork under `github.com/oneiron-dev`, pinned by a full commit `rev`, never by a branch or a tag.
+Two third-party crates carry changes of ours as git forks. Neither is vendored: each is a git
+dependency on a fork under `github.com/oneiron-dev`, pinned by a full commit `rev`, never by a
+branch or a tag. lopdf carries changes of ours as a vendored snapshot instead; see
+[Vendored, modified snapshots](#vendored-modified-snapshots).
 The fork branch holds upstream's release commit plus our commits, one per change, each message
 saying what it changes and why. Upstream licence files and copyright notices stay untouched on
 the fork. A third org fork, `oneiron-dev/iroh`, is pinned by rev in
@@ -83,6 +85,19 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.13), over `362becff`:
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
 `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.13`.
+
+## Vendored, modified snapshots
+
+A git fork keeps our changes in another repository, pinned by rev. A vendored snapshot keeps a
+crates.io archive in this repository, beside the crate that needs it, and a `[patch.crates-io]`
+path entry redirects the exact pin to it; its `Cargo.lock` entry has no `source` or `checksum`.
+The `README.md` in the vendor directory records the archive's checksum, what was left out of it
+and every local source change.
+
+- `lopdf` 0.44.0, `crates/oneiron-seal/vendor/lopdf-0.44.0` (MIT): an additive `DecodeAdmission`
+  hook, so a decode can ask for memory before it grows a buffer (FIX 7654). Provenance and the
+  patch list are in `crates/oneiron-seal/vendor/README.md`. The `pkix-chain` 0.4.1 snapshot
+  beside it is unmodified.
 
 ## Licences and attribution
 
