@@ -12,6 +12,11 @@
 //! character vocabulary and width, and the decode revision; the head's
 //! weights ride in the trunk as `char_head.*`. With it, names take the full
 //! decode (BIO, the DATE snap, character refinement); without it, BIO alone.
+//!
+//! The Core ML worker decodes here too (FIX 6755 slice 2c): it loads the
+//! same character head ([`character_model`]), runs the head's tail on the
+//! projection its model returns, and takes the same decode and the same
+//! assembly of the current turn's spans ([`current_message_spans`]).
 
 mod backbone;
 mod heads;
@@ -22,7 +27,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use candle_core::{Device, Module};
-use candle_nn::{Linear, linear};
+use candle_nn::{Linear, VarBuilder, linear};
 use oneiron::ModelId;
 use oneiron::memory::extraction::{EncoderInput, EncoderOutput, NerSpan};
 use tokenizers::Tokenizer;
@@ -32,11 +37,15 @@ use super::endpoint::{CONTRACT_VERSION, ModelCard, Returns};
 use crate::config::{EmbedderDevice, OneironerConfig};
 use backbone::{Backbone, Config};
 use heads::{Affect, CharacterBoundary, Coreference};
-use window::{
-    CharacterFeatures, Characters, DecodeLayers, Named, conversation_tokenizer, decode, decode_ner,
+use window::{Named, Span, conversation_tokenizer, decode};
+
+pub(super) use window::{
+    CHAR_REFINE_K, CHAR_REFINE_TAU, CharacterFeatures, Characters, DecodeLayers,
+    ONEIRONER_DECODE_REVISION, Window, decode_ner,
 };
 
-pub(super) use window::{CHAR_REFINE_K, CHAR_REFINE_TAU, ONEIRONER_DECODE_REVISION, Window};
+/// A span's place in its window: its segment, then its start and end bytes.
+type Coordinates = (usize, usize, usize);
 
 struct Network {
     backbone: Backbone,
@@ -124,6 +133,127 @@ fn bundle_tokenizer(manifest: &Manifest, dir: &Path) -> anyhow::Result<Tokenizer
     Ok(tokenizer)
 }
 
+/// A bundle's character head as a runtime decodes with it: its trained
+/// weights, its vocabulary, and the width of the projected token states its
+/// tail reads (FIX 6755 slice 2c).
+pub(in crate::oneironer) struct CharacterModel {
+    pub(in crate::oneironer) boundary: CharacterBoundary,
+    pub(in crate::oneironer) vocab: HashMap<char, u32>,
+    /// `char_dim`.
+    pub(in crate::oneironer) width: usize,
+}
+
+/// `manifest`'s character head, its weights the trunk's `char_head.*` from
+/// `weights` over a `hidden`-wide encoder, on their device: what Candle
+/// loads beside its encoder and the Core ML worker loads alone, on the CPU
+/// in F32. Its decode revision must be this build's and its config must
+/// declare the head. `None` for a bundle that ships none.
+pub(in crate::oneironer) fn character_model(
+    manifest: &Manifest,
+    dir: &Path,
+    weights: &VarBuilder<'_>,
+    hidden: usize,
+) -> anyhow::Result<Option<CharacterModel>> {
+    let Some(head) = &manifest.characters else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        head.decode_revision == ONEIRONER_DECODE_REVISION,
+        "oneironer bundle names a decode revision this build does not run"
+    );
+    let options: CharacterConfig = serde_json::from_slice(&head.config.read(dir)?)?;
+    anyhow::ensure!(
+        options.char_head,
+        "oneironer character config declares no character head"
+    );
+    let (vocab, rows) = character_vocab(options.char_vocab)?;
+    let width = options.char_dim as usize;
+    let boundary = CharacterBoundary::load(weights.pp("char_head"), hidden, width, rows)?;
+    Ok(Some(CharacterModel {
+        boundary,
+        vocab,
+        width,
+    }))
+}
+
+/// The spans a call returns, by their window coordinates, and each mention
+/// a name moved off with the name's coordinates. Every returned mention is
+/// kept, then every returned name over it: a typed NER label wins over a
+/// generic mention label at the same coordinates; a pronoun retains its
+/// proposer label. A name the DATE snap or refinement moved still wins the
+/// mention proposed where BIO put it, and that mention's links resolve to
+/// the name.
+fn returned_spans<'s>(
+    named: &'s [Named],
+    mentioned: &'s [Span],
+    returned: impl Fn(usize) -> bool,
+) -> (BTreeMap<Coordinates, &'s Span>, Vec<(Coordinates, Coordinates)>) {
+    let mut spans = BTreeMap::new();
+    for span in mentioned {
+        if returned(span.segment) {
+            spans.insert((span.segment, span.start, span.end), span);
+        }
+    }
+    let mut names = BTreeSet::new();
+    let mut moved = Vec::new();
+    for name in named {
+        let span = &name.span;
+        if returned(span.segment) {
+            let key = (span.segment, span.start, span.end);
+            let decoded = (span.segment, name.decoded.0, name.decoded.1);
+            let left = decoded != key && !names.contains(&decoded);
+            if left && spans.remove(&decoded).is_some() {
+                moved.push((decoded, key));
+            }
+            names.insert(key);
+            spans.insert(key, span);
+        }
+    }
+    (spans, moved)
+}
+
+/// `spans` in their messages' UTF-8 bytes, in window order, and each one's
+/// place among them by its window coordinates. In the conversation window a
+/// segment's index is its flattened message ordinal; in the live window a
+/// span names its message in the current turn.
+fn message_spans(
+    window: &Window<'_>,
+    spans: BTreeMap<Coordinates, &Span>,
+    conversation: bool,
+) -> (Vec<NerSpan>, BTreeMap<Coordinates, usize>) {
+    let mut placed = Vec::with_capacity(spans.len());
+    let mut coordinates = BTreeMap::new();
+    for (key, span) in spans {
+        let segment = &window.segments[span.segment];
+        let message = if conversation {
+            span.segment
+        } else {
+            segment.message_index
+        };
+        coordinates.insert(key, placed.len());
+        placed.push(NerSpan {
+            message,
+            start: span.start - segment.base + segment.source_offset,
+            end: span.end - segment.base + segment.source_offset,
+            label: span.label.clone(),
+            confidence: span.confidence,
+        });
+    }
+    (placed, coordinates)
+}
+
+/// The current turn's names as a live call returns them, by Candle's own
+/// assembly with no mention beside them: what the Core ML worker answers
+/// from its decode (FIX 6755 slice 2c).
+pub(in crate::oneironer) fn current_message_spans(
+    window: &Window<'_>,
+    named: &[Named],
+) -> Vec<NerSpan> {
+    let current = |segment: usize| window.segments[segment].current;
+    let (spans, _) = returned_spans(named, &[], current);
+    message_spans(window, spans, false).0
+}
+
 /// The failure of a native call, by class alone: never a tensor dump or any
 /// part of a conversation.
 fn extraction_failed() -> oneiron::Error {
@@ -197,26 +327,9 @@ impl LocalTagger {
             manifest.ner_labels.len(),
             weights.pp("classifier"),
         )?;
-        let (characters, char_vocab) = match &manifest.characters {
-            Some(head) => {
-                anyhow::ensure!(
-                    head.decode_revision == ONEIRONER_DECODE_REVISION,
-                    "oneironer bundle names a decode revision this build does not run"
-                );
-                let options: CharacterConfig = serde_json::from_slice(&head.config.read(dir)?)?;
-                anyhow::ensure!(
-                    options.char_head,
-                    "oneironer character config declares no character head"
-                );
-                let (vocab, rows) = character_vocab(options.char_vocab)?;
-                let boundary = CharacterBoundary::load(
-                    weights.pp("char_head"),
-                    body.hidden_size,
-                    options.char_dim as usize,
-                    rows,
-                )?;
-                (Some(boundary), vocab)
-            }
+        let characters = character_model(&manifest, dir, &weights, body.hidden_size)?;
+        let (characters, char_vocab) = match characters {
+            Some(model) => (Some(model.boundary), model.vocab),
             None => (None, HashMap::new()),
         };
         let mentions = manifest
@@ -404,58 +517,16 @@ impl LocalTagger {
         if let Some(head) = &self.manifest.mentions {
             mentioned.retain(|span| !head.ignored_labels.contains(&span.label));
         }
-        let mut spans = BTreeMap::new();
-        for span in &mentioned {
-            if returned(span.segment) {
-                spans.insert((span.segment, span.start, span.end), span);
-            }
-        }
-        // A typed NER label wins over a generic mention label at the same
-        // coordinates; a pronoun retains its proposer label. A name the DATE
-        // snap or refinement moved still wins the mention proposed where BIO
-        // put it, and that mention's links resolve to the name.
-        let mut names = BTreeSet::new();
-        let mut moved = Vec::new();
-        for name in &named {
-            let span = &name.span;
-            if returned(span.segment) {
-                let key = (span.segment, span.start, span.end);
-                let decoded = (span.segment, name.decoded.0, name.decoded.1);
-                let left = decoded != key && !names.contains(&decoded);
-                if left && spans.remove(&decoded).is_some() {
-                    moved.push((decoded, key));
-                }
-                names.insert(key);
-                spans.insert(key, span);
-            }
-        }
-        let mut coordinates = BTreeMap::new();
+        let (spans, moved) = returned_spans(&named, &mentioned, returned);
+        let (spans, mut coordinates) = message_spans(&window, spans, conversation);
         let mut output = EncoderOutput {
-            spans: Vec::new(),
+            spans,
             links: Vec::new(),
             vad: None,
             context_links: Vec::new(),
             speaker_links: Vec::new(),
             stack_sha16: self.card.stack_sha16.clone(),
         };
-        for (key, span) in spans {
-            let segment = &window.segments[span.segment];
-            // The conversation window keeps every message's segment in
-            // order, so a segment's index is its flattened message ordinal.
-            let message = if conversation {
-                span.segment
-            } else {
-                segment.message_index
-            };
-            coordinates.insert(key, output.spans.len());
-            output.spans.push(NerSpan {
-                message,
-                start: span.start - segment.base + segment.source_offset,
-                end: span.end - segment.base + segment.source_offset,
-                label: span.label.clone(),
-                confidence: span.confidence,
-            });
-        }
         for (decoded, key) in moved {
             if let Some(&index) = coordinates.get(&key) {
                 coordinates.entry(decoded).or_insert(index);
