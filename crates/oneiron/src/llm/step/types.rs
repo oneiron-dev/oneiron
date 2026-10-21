@@ -236,8 +236,8 @@ impl StepEffectBinding {
 
 pub type DurableStepResult<T> = std::result::Result<T, DurableStepError>;
 
-/// A caller's own check of a reply its request asks for without a schema.
-/// The error is the reason, as a schema miss carries its errors.
+/// A caller's own check of a reply, run after the schema's when the request
+/// has one. The error is the reason, as a schema miss carries its errors.
 pub type ReplyCheck =
     dyn Fn(&super::super::LlmResponse) -> std::result::Result<(), String> + Send + Sync;
 

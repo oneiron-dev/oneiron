@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1118 facade rows, 3839 declarations.
+Census: 1118 facade rows, 3840 declarations.
 Inputs: 1053 of 1118 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1005 of 1118 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -2523,8 +2523,8 @@ class TaggingMarkerView(TypedDict):
     created_at: int
     updated_at: int
 TaggingFailureView = TypedDict("TaggingFailureView", {"class": str, "code": NotRequired[str | None], "refusal": NotRequired[str | None]})
-ExecutionRuntime = Literal["candle", "endpoint"]
-ExecutionCompute = Literal["cpu", "metal", "cuda", "opaque"]
+ExecutionRuntime = Literal["candle", "endpoint", "mlx", "coreml"]
+ExecutionCompute = Literal["cpu", "metal", "cuda", "cpu_and_ne", "opaque"]
 ExecutionPick = Literal["calibrated", "free", "shorter_queue", "fallback", "pinned"]
 class EncoderExecution(TypedDict):
     runtime: ExecutionRuntime
@@ -8232,6 +8232,7 @@ class PairedInterval(TypedDict):
     low: float
     high: float
 NotWorse = Literal["not_worse", "worse", "unknown"]
+CohortProbe = TypedDict("CohortProbe", {"probe": str, "source": EntityId, "from": int, "until": int})
 class KindProbeCheck(TypedDict):
     kind: InputKind
     probes: int
@@ -8245,10 +8246,12 @@ class KindProbeCheck(TypedDict):
     set_version: NotRequired[str | None]
     rubric: NotRequired[str | None]
     card: NotRequired[SufficiencyCard | None]
+    cohort_members: NotRequired[list[CohortProbe]]
 class SpaceMoveCheck(TypedDict):
     checked_at: int
     kinds: list[KindProbeCheck]
     verdict: NotWorse
+    cohort_check: NotRequired[str | None]
 class SpaceMove(TypedDict):
     candidate: str
     incumbent: SpaceRef

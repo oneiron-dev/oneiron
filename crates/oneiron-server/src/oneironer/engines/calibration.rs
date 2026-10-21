@@ -6,8 +6,14 @@
 //! whose clocks fall between turns pays for waking on every one, which cases
 //! run back to back would hide. A live call keeps exact span parity: the bar
 //! moves scores only. An engine is held to the cases whose live window fits
-//! its row's max window, and only those are warmed on and timed (FIX 6755);
-//! a longer case is skipped, never failed, and that is the only skip.
+//! its row's max window, and only those are warmed on and checked (FIX
+//! 6755); a longer case is skipped, never failed, and that is the only skip.
+//! Of those, the cases whose window fits the row's timing cohort are timed,
+//! and two engines contest only on one cohort.
+//!
+//! A worker is measured as it is loaded, on its own thread, by
+//! [`measure_loaded`]: whatever its runtime, it answers directly, never
+//! through the dispatcher. [`measure`] loads a Candle engine for it.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -17,7 +23,8 @@ use oneiron::memory::extraction::{
 };
 use serde::Deserialize;
 
-use super::super::local::LocalTagger;
+use super::super::dispatcher::{Worker, WorkerDescriptor};
+use super::super::local::{LocalTagger, WindowCounter};
 use super::Engine;
 use super::rows::{Row, RowKey, sha16};
 use crate::config::OneironerConfig;
@@ -232,19 +239,29 @@ fn pairs<T>(a: &[T], b: &[T], same: impl Fn(&T, &T) -> bool) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same(a, b))
 }
 
-/// An engine's latency on the reference cases, each timed after
+/// The reference cases a timing was taken on: the held cases whose window
+/// fits `max_window_tokens`, `cases` of them. Timings of two cohorts are two
+/// workloads and never contest.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct Cohort {
+    pub(super) max_window_tokens: usize,
+    pub(super) cases: usize,
+}
+
+/// An engine's latency on its cohort's reference cases, each timed after
 /// [`CALIBRATION_IDLE`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Timing {
     pub(super) mean_ms: f64,
     pub(super) p50_ms: f64,
     pub(super) p95_ms: f64,
+    pub(super) cohort: Cohort,
 }
 
 impl Timing {
-    /// The mean and the nearest-rank median and 95th percentile; `None` for
-    /// no sample.
-    fn of(mut samples: Vec<f64>) -> Option<Self> {
+    /// The mean and the nearest-rank median and 95th percentile of the
+    /// cases of windows up to `max_window_tokens`; `None` for no sample.
+    fn of(mut samples: Vec<f64>, max_window_tokens: usize) -> Option<Self> {
         if samples.is_empty() {
             return None;
         }
@@ -258,59 +275,99 @@ impl Timing {
             mean_ms: samples.iter().sum::<f64>() / count as f64,
             p50_ms: at(0.5),
             p95_ms: at(0.95),
+            cohort: Cohort {
+                max_window_tokens,
+                cases: count,
+            },
         })
     }
 }
 
-/// Whether `candidate` is preferred over `incumbent`: its median at least
-/// [`PREFERRED_P50_GAIN`] faster AND its 95th percentile at most
-/// [`PREFERRED_P95_SLACK`] slower. A candidate that is faster only in the
-/// median, and slower in the tail, does not replace the incumbent.
+/// Whether `candidate` is preferred over `incumbent`: timed on the same
+/// cohort, its median at least [`PREFERRED_P50_GAIN`] faster AND its 95th
+/// percentile at most [`PREFERRED_P95_SLACK`] slower. A candidate that is
+/// faster only in the median, and slower in the tail, does not replace the
+/// incumbent, and neither does one timed on other cases.
 pub(super) fn prefers(candidate: Timing, incumbent: Timing) -> bool {
-    candidate.p50_ms <= incumbent.p50_ms * (1.0 - PREFERRED_P50_GAIN)
+    candidate.cohort == incumbent.cohort
+        && candidate.p50_ms <= incumbent.p50_ms * (1.0 - PREFERRED_P50_GAIN)
         && candidate.p95_ms <= incumbent.p95_ms * (1.0 + PREFERRED_P95_SLACK)
 }
 
-/// What measuring one engine left.
-pub(super) struct Measured {
+/// What measuring one worker left.
+pub(super) struct MeasuredRow {
     pub(super) row: Row,
     /// Whether the rows file keeps the row: only a measurement that answered
     /// every case. A cold or broken load, or a call that failed, is no
     /// parity result, and the next start measures again.
     pub(super) keep: bool,
+}
+
+/// What measuring one Candle engine left.
+pub(super) struct Measured {
+    pub(super) row: Row,
+    /// As [`MeasuredRow::keep`].
+    pub(super) keep: bool,
     /// The engine's tagger, once it answered every case.
     pub(super) tagger: Option<LocalTagger>,
 }
 
-/// Loads the bundle on one engine and times the reference cases its row
-/// holds, each after [`CALIBRATION_IDLE`]. A case is held when its live
-/// window, tokens with specials, fits the key's max window; a longer one is
-/// skipped. A case whose window cannot be built fails the measurement, and
-/// a row that holds no case is never kept and never clears.
+/// Loads the bundle on one Candle engine, `candidate`, and measures it
+/// ([`measure_loaded`]). A load that fails keeps no row.
 pub(super) fn measure(
     config: &OneironerConfig,
     engine: Engine,
+    candidate: &WorkerDescriptor,
     key: &RowKey,
     reference: &Reference,
 ) -> Measured {
-    let unkept = |row: Row| Measured {
-        row,
-        keep: false,
-        tagger: None,
-    };
-    let tagger = match LocalTagger::load(&engine.configured(config)) {
+    let mut tagger = match LocalTagger::load(&engine.configured(config)) {
         Ok(tagger) => tagger,
         Err(error) => {
             let row = Row::unmeasured(key, 0, 0);
             tracing::warn!(engine = %row.engine, %error, "oneironer engine could not load the bundle");
-            return unkept(row);
+            return Measured {
+                row,
+                keep: false,
+                tagger: None,
+            };
         }
     };
+    let windows = tagger.window_counter();
+    let MeasuredRow { row, keep } =
+        measure_loaded(&windows, candidate, &mut tagger, key, reference);
+    Measured {
+        row,
+        keep,
+        tagger: keep.then_some(tagger),
+    }
+}
+
+/// Measures a loaded `worker`, `candidate`, against the reference cases its
+/// row holds, calling it directly on this thread, never through the
+/// dispatcher. A case is held when its live window, tokens with specials,
+/// counted by `windows` as every runtime of the slot builds it, fits the
+/// candidate's qualified window; a longer one is skipped. Each held case is
+/// checked against the bar; those whose window fits the key's timing cohort
+/// are timed, each after [`CALIBRATION_IDLE`]. A case whose window cannot be
+/// built fails the measurement, and a row that holds no case is never kept
+/// and never clears.
+pub(super) fn measure_loaded(
+    windows: &WindowCounter,
+    candidate: &WorkerDescriptor,
+    worker: &mut dyn Worker,
+    key: &RowKey,
+    reference: &Reference,
+) -> MeasuredRow {
+    let unkept = |row: Row| MeasuredRow { row, keep: false };
     let mut held = Vec::with_capacity(reference.cases.len());
     for (input, expected) in &reference.cases {
-        match tagger.window_tokens(input) {
-            Ok(tokens) if tokens <= key.max_window_tokens() => held.push((input, expected)),
-            // Longer than the row's window: skipped, the only skip.
+        match windows.count(input) {
+            Ok(tokens) if tokens <= candidate.max_window_tokens() => {
+                let timed = tokens <= key.timing_max_window_tokens();
+                held.push((input, expected, timed));
+            }
+            // Longer than the worker's window: skipped, the only skip.
             Ok(_) => {}
             Err(_) => {
                 let row = Row::unmeasured(key, 0, 0);
@@ -322,21 +379,26 @@ pub(super) fn measure(
     let mut row = Row::unmeasured(key, held.len(), reference.cases.len() - held.len());
     // One warm-up call, untimed, on a held case: the first forward pays for
     // kernels and caches no later call does.
-    let Some(&(first, _)) = held.first() else {
+    let Some(&(first, _, _)) = held.first() else {
         tracing::warn!(engine = %row.engine, "no oneironer reference case fits the engine's window");
         return unkept(row);
     };
-    if tagger.infer(first).is_err() {
+    if worker.run(first).is_err() {
         tracing::warn!(engine = %row.engine, "oneironer engine failed a reference case");
         return unkept(row);
     }
     let mut clear = true;
     let mut samples = Vec::with_capacity(held.len());
-    for (input, expected) in held {
-        std::thread::sleep(CALIBRATION_IDLE);
+    for (input, expected, timed) in held {
+        // A case outside the cohort is checked, untimed, with no idle.
+        if timed {
+            std::thread::sleep(CALIBRATION_IDLE);
+        }
         let started = Instant::now();
-        let answer = tagger.infer(input);
-        samples.push(started.elapsed().as_secs_f64() * 1000.0);
+        let answer = worker.run(input);
+        if timed {
+            samples.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
         match answer {
             Ok(answer) => clear &= clears(reference.bar, expected, &answer),
             Err(_) => {
@@ -345,15 +407,12 @@ pub(super) fn measure(
             }
         }
     }
-    if let Some(timing) = Timing::of(samples) {
+    row.timing_cases = samples.len();
+    if let Some(timing) = Timing::of(samples, key.timing_max_window_tokens()) {
         row.mean_ms = Some(timing.mean_ms);
         row.p50_ms = Some(timing.p50_ms);
         row.p95_ms = Some(timing.p95_ms);
     }
     row.clears = clear;
-    Measured {
-        row,
-        keep: true,
-        tagger: Some(tagger),
-    }
+    MeasuredRow { row, keep: true }
 }

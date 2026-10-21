@@ -40,7 +40,7 @@ pub(crate) use space::{
     embedding_setup_rests_on_sibling, install_replicated_embedding_setup_in_txn,
 };
 pub use space_move::{
-    KindProbeCheck, NotWorse, PairedInterval, SPACE_MOVE_FILL_DEADLINE_SECS,
+    CohortProbe, KindProbeCheck, NotWorse, PairedInterval, SPACE_MOVE_FILL_DEADLINE_SECS,
     SPACE_MOVE_NOTE_PRODUCER, SPACE_MOVE_UNDO_WINDOW_SECS, SPACE_PROBE_DEPTH,
     SPACE_PROBE_MIN_FAMILIES, SpaceMove, SpaceMoveCheck, SpaceMoveOutcome, SpaceMoveState,
     SpaceProbeEncoder, SpaceRef,

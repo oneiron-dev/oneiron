@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1168 code-mode rows (1128 host rows, 40 run rows), 3892 declarations.
+// Census: 1168 code-mode rows (1128 host rows, 40 run rows), 3893 declarations.
 // Replies: 1048 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -518,8 +518,8 @@ declare namespace Sdk {
   type TaggingMarkerState = "unconfigured" | "absent" | "pending" | "retrying" | "settled" | "failed";
   type TaggingMarkerView = { attempt_ref: string; state: string; checkpoint?: string | null; stack?: string | null; attempt_count: number; retry_of?: string | null; scheduled_at?: number | null; last_error?: string | null; created_at: number; updated_at: number };
   type TaggingFailureView = { class: string; code?: string | null; refusal?: string | null };
-  type ExecutionRuntime = "candle" | "endpoint";
-  type ExecutionCompute = "cpu" | "metal" | "cuda" | "opaque";
+  type ExecutionRuntime = "candle" | "endpoint" | "mlx" | "coreml";
+  type ExecutionCompute = "cpu" | "metal" | "cuda" | "cpu_and_ne" | "opaque";
   type ExecutionPick = "calibrated" | "free" | "shorter_queue" | "fallback" | "pinned";
   type EncoderExecution = { runtime: ExecutionRuntime; compute: ExecutionCompute; engine: string; pick: ExecutionPick; queue_ms: number; infer_ms: number };
   type TaggingOutcomeView = { outcome: "saved"; spans: number; links: number; mood: boolean; linked: number; minted: number; context_links: number; speaker_links: number; unresolved_context_links: number; unresolved_speaker_links: number; surprise?: number | null } | { outcome: "shadowed"; spans: number; links: number; mood: boolean; mapped_spans: number; context_links: number; speaker_links: number } | { outcome: "imported"; spans: number; links: number; mood: boolean } | { outcome: "skipped"; reason: string } | { outcome: "superseded"; retry_at: number } | { outcome: "deferred"; retry_at: number } | { outcome: "failed"; failure: TaggingFailureView; retry_at: number } | { outcome: "rekeyed" } | { outcome: "handed_back"; reason: string; retry_at: number } | { outcome: "unreadable" };
@@ -1687,8 +1687,9 @@ declare namespace Sdk {
   type SpaceMoveState = "open" | { swapped_in: { at: number; by_owner: boolean } } | { kept: { at: number; timed_out: boolean } } | { undone: { at: number } };
   type PairedInterval = { mean: number; low: number; high: number };
   type NotWorse = "not_worse" | "worse" | "unknown";
-  type KindProbeCheck = { kind: InputKind; probes: number; families: number; difference?: PairedInterval | null; retest?: PairedInterval | null; tolerance?: number | null; verdict: NotWorse; canary?: PairedInterval | null; canary_verdict?: NotWorse | null; set_version?: string | null; rubric?: string | null; card?: SufficiencyCard | null };
-  type SpaceMoveCheck = { checked_at: number; kinds: KindProbeCheck[]; verdict: NotWorse };
+  type CohortProbe = { probe: string; source: EntityId; from: number; until: number };
+  type KindProbeCheck = { kind: InputKind; probes: number; families: number; difference?: PairedInterval | null; retest?: PairedInterval | null; tolerance?: number | null; verdict: NotWorse; canary?: PairedInterval | null; canary_verdict?: NotWorse | null; set_version?: string | null; rubric?: string | null; card?: SufficiencyCard | null; cohort_members?: CohortProbe[] };
+  type SpaceMoveCheck = { checked_at: number; kinds: KindProbeCheck[]; verdict: NotWorse; cohort_check?: string | null };
   type SpaceMove = { candidate: string; incumbent: SpaceRef; kinds: InputKind[]; margin?: number | null; started_at: number; state: SpaceMoveState; last_check?: SpaceMoveCheck | null };
   type EmbeddingSpacesView = { spaces: EmbeddingSpace[]; text_index: EmbeddingSpace; slots: Record<string, string>; moves: SpaceMove[]; probes: Record<string, number> };
   type EmbeddingSpaceDeclareRequest = EmbeddingSpace;
