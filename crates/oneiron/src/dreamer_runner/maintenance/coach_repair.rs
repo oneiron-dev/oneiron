@@ -2,8 +2,9 @@
 //! case's or a blocked report's route question answers `skill_edit`, the
 //! Coach drafts a revision of the skill the failure names, or else of the one
 //! skill the failing run's pack loaded, through the optimizer's exact-target
-//! door, aimed at the failure (FIX 2495), and the heal carries it as a
-//! `SkillEdit` repair for the owner to review. The revision is a gated
+//! door, aimed at the failure (FIX 2495) and at what the engine recorded of
+//! its cause (OF-418 L10), and the heal carries it as a `SkillEdit` repair
+//! for the owner to review. The revision is a gated
 //! candidate like any optimizer draft: the Dreamer's optimize pass scores it,
 //! and nothing here admits it. A draft that went stale before the heal's
 //! write leaves that heal route-only, saying why (FIX 2497). The other
@@ -12,13 +13,15 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, ManifestEntry, ManifestKind}
 use crate::claim::ClaimApprovalStatus;
 use crate::failure_ladder::{HealerCase, HealerRepairRoute};
 use crate::registry::ENTITY_TYPE_SKILL;
+use crate::self_heal::HealEvidenceContext;
 use crate::self_heal::blocked_reports::BlockedIssue;
 use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{
-    SkillEditCycle, SkillEditDraft, SkillFailureContext, SkillOptimizeAuthor, SkillOptimizeBrief,
-    SkillRepairStamp, propose_skill_repair_in_txn, proven_cycle, skill_repair_brief,
-    validate_skill_draft,
+    SkillEditCycle, SkillEditDraft, SkillFailureContext, SkillOptimizeBrief, SkillRepairStamp,
+    propose_skill_repair_in_txn, proven_cycle, skill_repair_brief, validate_skill_draft,
 };
+
+use super::coach_heal::CoachHealAuthor;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Result, Vault};
@@ -136,25 +139,28 @@ fn run_target(vault: &Vault, attempt: AttemptId) -> Result<Option<EntityId>> {
 }
 
 /// What one `skill_edit` heal drafts for: the skill it repairs, `None`
-/// when no single one resolves, the agent and diagnosis its route names, and
-/// the failure the draft is aimed at.
+/// when no single one resolves, the agent and diagnosis its route names, the
+/// failure the draft is aimed at, and what was recorded of its cause (OF-418
+/// L10), which the author reads as data beside the brief.
 struct RepairAim {
     skill: Option<EntityId>,
     agent_ref: String,
     diagnosis_ref: String,
     failure: SkillFailureContext,
+    cause: HealEvidenceContext,
 }
 
 impl Vault {
     /// Drafts the revision a case's `skill_edit` heal carries, aimed at
-    /// `failure`, bound to the failing attempt's agent and its pre-fail
-    /// context. `attempt` is the Coach's heal lease the candidate is born
-    /// under.
+    /// `failure` and its recorded `cause`, bound to the failing attempt's
+    /// agent and its pre-fail context. `attempt` is the Coach's heal lease
+    /// the candidate is born under.
     pub(super) fn draft_coach_skill_repair(
         &self,
         case: &HealerCase,
         failure: SkillFailureContext,
-        author: &dyn SkillOptimizeAuthor,
+        cause: HealEvidenceContext,
+        author: &dyn CoachHealAuthor,
         attempt: AttemptId,
         now: u64,
     ) -> Result<SkillRepairDraft> {
@@ -163,6 +169,7 @@ impl Vault {
             agent_ref: case.scope.agent_ref.clone(),
             diagnosis_ref: case.evidence_ref.clone(),
             failure,
+            cause,
         };
         let bound = |route: &HealerRepairRoute| {
             EntityId::from_hex(&case.pre_fail_checkpoint_ref).is_ok_and(|checkpoint| {
@@ -179,9 +186,10 @@ impl Vault {
     }
 
     /// Drafts the revision a blocked report's `skill_edit` heal carries
-    /// (FIX 2496), aimed at `failure`: of the one active skill the report's
-    /// run loaded, bound to the agent the report was witnessed for, which
-    /// must be the agent that run dispatched. A report with no durable run,
+    /// (FIX 2496), aimed at `failure` and its recorded `cause`: of the one
+    /// active skill the report's run loaded, bound to the agent the report
+    /// was witnessed for, which must be the agent that run dispatched. A
+    /// report with no durable run,
     /// or whose run loaded no single skill, stays route-only. No failed case
     /// or pre-fail checkpoint stands behind a report, and none is made up: a
     /// skill edit forks nothing.
@@ -189,7 +197,8 @@ impl Vault {
         &self,
         issue: &BlockedIssue,
         failure: SkillFailureContext,
-        author: &dyn SkillOptimizeAuthor,
+        cause: HealEvidenceContext,
+        author: &dyn CoachHealAuthor,
         attempt: AttemptId,
         now: u64,
     ) -> Result<SkillRepairDraft> {
@@ -205,6 +214,7 @@ impl Vault {
             agent_ref: issue.reporter.to_hex(),
             diagnosis_ref: issue.diagnostic.to_hex(),
             failure,
+            cause,
         };
         let bound = |_: &HealerRepairRoute| {
             run.and_then(|run| AttemptQueue::new(self).get(run).ok().flatten())
@@ -218,14 +228,14 @@ impl Vault {
     /// Drafts the revision a `skill_edit` heal carries, outside any storage
     /// transaction: the target's DEV-only brief with the failure it is aimed
     /// at, and the route's binding (`bound`) to the failing agent, then the
-    /// author. A target that does not resolve, one the optimizer may not
+    /// author, which reads the recorded cause beside the brief. A target that does not resolve, one the optimizer may not
     /// revise, an unbound route, a decline, a failed author and an unusable
     /// draft each leave the heal route-only.
     fn draft_skill_repair(
         &self,
         aim: RepairAim,
         bound: impl FnOnce(&HealerRepairRoute) -> bool,
-        author: &dyn SkillOptimizeAuthor,
+        author: &dyn CoachHealAuthor,
         attempt: AttemptId,
         now: u64,
     ) -> Result<SkillRepairDraft> {
@@ -260,7 +270,7 @@ impl Vault {
         if !bound(&route) {
             return skipped("unbound_agent");
         }
-        let (desc, rationale) = match author.draft(&brief) {
+        let (desc, rationale) = match author.draft_skill(&brief, &aim.cause) {
             Ok(SkillEditDraft::Edit { desc, rationale }) => (desc, rationale),
             Ok(_) => return skipped("declined"),
             Err(_) => return skipped("author_failed"),

@@ -136,8 +136,9 @@ pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, ReadWorldUnknown, read_world_snapshot_in_txn,
 };
 pub(crate) use self::storage::{
-    StagedSinks, code_run_body_file_of_row, code_run_body_row_key, code_run_inline_body_of_row,
-    deliver_wait_in_txn, deliver_wait_listing_in_txn, settled_wait_reply_in_txn,
+    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
+    code_run_inline_body_of_row, code_run_row_inline, deliver_wait_in_txn,
+    deliver_wait_listing_in_txn, lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StoredRunContinuation, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
