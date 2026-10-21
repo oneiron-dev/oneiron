@@ -11369,6 +11369,7 @@
         "/what/context_refs/*/claim",
         "/what/context_refs/*/turn"
       ],
+      "refs_check": "crate::task_verb::ask_world_hold::admit_ask_references",
       "input": "crate::task_verb::sdk::TaskAskRequest",
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input.into_spec()?)?",
@@ -11416,6 +11417,7 @@
         "/word/provenance_refs/*/claim",
         "/word/provenance_refs/*/turn"
       ],
+      "refs_check": "crate::task_verb::ask_world_hold::admit_ask_references",
       "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
       "mcp_served": "[input.handle.group_ref]",

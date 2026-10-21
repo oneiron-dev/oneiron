@@ -311,6 +311,18 @@ pub(super) fn put<T: Serialize>(
     Ok(())
 }
 
+/// An ask group as its handle's verbs read it: readable, or kept by a world
+/// setting at `row`, the first of the rows it answers from that the `kept`
+/// worlds keep from the reader's destination.
+pub(super) enum AskGroupRead {
+    Readable(AskGroup),
+    Held {
+        group: AskGroup,
+        row: EntityId,
+        kept: std::collections::BTreeSet<EntityId>,
+    },
+}
+
 impl crate::memory::Memory<'_> {
     /// The ask group `id`, read as its handle's verbs read it (DEC-0005):
     /// each member TASK, the TASK its class came from and its question and
@@ -324,6 +336,20 @@ impl crate::memory::Memory<'_> {
         txn: &heed::RoTxn<'_>,
         id: EntityId,
     ) -> Result<Option<AskGroup>> {
+        Ok(match self.ask_group_read_in(txn, id)? {
+            Some(AskGroupRead::Readable(group)) => Some(group),
+            Some(AskGroupRead::Held { .. }) | None => None,
+        })
+    }
+
+    /// [`Self::ask_group_in`]'s read, naming the row a world setting keeps
+    /// rather than reading the group as none (FIX 7463a). A group never
+    /// stored, or whose class source it never recorded, is none.
+    pub(super) fn ask_group_read_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+    ) -> Result<Option<AskGroupRead>> {
         let Some(group) = read_group(self.vault(), txn, id)? else {
             return Ok(None);
         };
@@ -345,12 +371,12 @@ impl crate::memory::Memory<'_> {
         if group.class_source_unrecorded() {
             return Ok(None);
         }
-        for row in &rows {
-            if crate::settings::device_local_keeps_among(store, txn, &kept, row)? {
-                return Ok(None);
+        for row in rows {
+            if crate::settings::device_local_keeps_among(store, txn, &kept, &row)? {
+                return Ok(Some(AskGroupRead::Held { group, row, kept }));
             }
         }
-        Ok(Some(group))
+        Ok(Some(AskGroupRead::Readable(group)))
     }
 }
 

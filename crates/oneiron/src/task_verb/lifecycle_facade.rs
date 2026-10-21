@@ -411,7 +411,7 @@ impl Memory<'_> {
         let owner = self.answer_owner_proof();
         let answer = self.with_verified_actor_write_txn(|txn| {
             let group = self
-                .ask_group_in(txn, handle.group_ref)?
+                .ask_group_named_in(txn, handle.group_ref)?
                 .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
             let now = self.vault().store.clock.now_recorded_at();
             let answer = super::ask_record::admit_word(
@@ -507,7 +507,7 @@ impl Memory<'_> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let group = self
-            .ask_group_in(&txn, handle.group_ref)?
+            .ask_group_named_in(&txn, handle.group_ref)?
             .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
         if group.owner != self.actor().to_hex()
             && person != self.actor()
