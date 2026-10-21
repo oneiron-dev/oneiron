@@ -322,14 +322,6 @@ pub(super) fn receipt_executor(receipt: &ReceiptRecord) -> Option<&str> {
 /// (`AttemptState::Completed`'s wire string, as stamped on the pack receipt).
 pub(super) const ATTEMPT_OUTCOME_COMPLETED: &str = "completed";
 
-/// Upper bound on the receipts one reliability claim cites.
-///
-/// α and β count EVERY attributed outcome; the citation list is the trace, and
-/// a trace that grows without bound turns a hot claim body into a ledger. The
-/// most recent [`SKILL_RELIABILITY_MAX_CITED_RECEIPTS`] are kept — the outcome
-/// keyspace remains the complete record.
-pub const SKILL_RELIABILITY_MAX_CITED_RECEIPTS: usize = 64;
-
 // ---------------------------------------------------------------------------
 // Outcome ledger
 // ---------------------------------------------------------------------------
@@ -523,9 +515,9 @@ pub(super) struct OutcomeTally {
     /// The summed `skill_defect` shares of amended attempts. Each amended attempt is ONE record,
     /// a loss weighted by its share (ARCH-0056 §5).
     shares: f32,
-    /// The most recent [`SKILL_RELIABILITY_MAX_CITED_RECEIPTS`] receipt ids, in
-    /// ledger order. Pack receipt ids embed the UUIDv7 attempt id, so key order
-    /// IS mint order.
+    /// Every counted receipt id, in ledger order: α and β count each one, so
+    /// the trace cites each one (FIX 8987). Pack receipt ids embed the UUIDv7
+    /// attempt id, so key order IS mint order.
     pub(super) cited: Vec<String>,
 }
 
@@ -727,7 +719,7 @@ pub(super) fn tally_outcomes(
             .into_iter()
             .map(|(receipt, share)| (receipt, Counted::Share(share))),
     );
-    // Ledger order is receipt order, so the citation trace keeps the newest receipts.
+    // Ledger order is receipt order, so the citation trace runs oldest to newest.
     records.sort_by(|left, right| left.0.cmp(&right.0));
     let mut tally = OutcomeTally::default();
     for (receipt, counted) in records {
@@ -737,9 +729,6 @@ pub(super) fn tally_outcomes(
             Counted::Share(share) => tally.shares += share,
         }
         tally.cited.push(receipt);
-        if tally.cited.len() > SKILL_RELIABILITY_MAX_CITED_RECEIPTS {
-            tally.cited.remove(0);
-        }
     }
     Ok(tally)
 }

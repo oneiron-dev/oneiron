@@ -3270,6 +3270,8 @@ export class Oneiron {
       /** Schedules one send through a granted outbound connector, gated and held for delivery. */
       schedule: (input: Facade.OutboundScheduleRequest): Facade.OutboundIntentReceipt => this.#call(() => this.#client.connectorOutboundSchedule(input) as Facade.OutboundIntentReceipt),
     },
+    /** Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data. */
+    answer: (input: Facade.ConnectorAnswerRequest): Facade.ConnectorCallReply => this.#call(() => this.#client.connectorAnswer(input) as Facade.ConnectorCallReply),
   }
   readonly calendar = {
     /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */

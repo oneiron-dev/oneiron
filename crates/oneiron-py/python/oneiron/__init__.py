@@ -5801,6 +5801,9 @@ class Oneiron:
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs":
             return Oneiron._ConnectorOutboundVerbs(self._client)
+        def answer(self, spec):
+            """Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."""
+            return json.loads(_translate(lambda: self._client.connector_answer(json.dumps(spec))))
     class _ConnectorOutboundVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
