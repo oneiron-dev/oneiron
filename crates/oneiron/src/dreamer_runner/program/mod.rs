@@ -20,7 +20,9 @@
 //! PR3a reads it (`read`): what a turn's wakes admitted, where a program's
 //! run stands and a settled step's exact result, each for the program's
 //! waking actor or the verified owner, on the caller's own read lane; PR3b
-//! adds the checkpoint its restarter resumes from.
+//! adds the checkpoint its restarter resumes from. A hold no condition
+//! returns is the owner's to stop or, once its checkpoint validates, to
+//! resume (`release`, FIX 5880).
 
 mod admit;
 mod arm;
@@ -28,6 +30,7 @@ mod authority;
 mod bodies;
 mod lease;
 mod read;
+mod release;
 mod resume;
 mod run;
 mod types;
@@ -49,14 +52,18 @@ pub(crate) use self::bodies::{
     program_run_actor_in_txn, program_step_carriage, program_step_owners,
 };
 pub use self::read::{
-    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointHeadView,
-    ProgramCheckpointRequest, ProgramCheckpointView, ProgramCheckpointWaitView,
-    ProgramFrontierView, ProgramHeldView, ProgramQueueView, ProgramResultAvailability,
-    ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView, ProgramRunView,
-    ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
+    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointConsentView,
+    ProgramCheckpointHeadView, ProgramCheckpointRequest, ProgramCheckpointView,
+    ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
+    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
+    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
     SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
     TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_checkpoint, program_run,
     settled_program_step, turn_program_admission,
+};
+pub use self::release::{
+    ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
+    release_turn_program_hold_as_owner,
 };
 pub(crate) use self::resume::ProgramHold;
 pub(crate) use self::run::{

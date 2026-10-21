@@ -26,6 +26,7 @@ mod doors;
 mod kit;
 mod machine;
 mod owner_work;
+mod pad_custody;
 mod pads;
 mod page_seal;
 mod reassert;
@@ -70,13 +71,21 @@ pub use self::owner_work::{
     PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics, ReassertKey,
     ReassertKeyState, ReassertUnread, RelayObservation,
 };
+pub(crate) use self::pad_custody::{
+    admit_pad_put_in_txn, image_pad_row, live_route_row, pad_row_erased_in_txn,
+    stage_pad_row_erase_in_txn,
+};
+#[cfg(feature = "sync")]
+pub(crate) use self::pad_custody::{
+    pad_echo_equal, pad_reference_waits_in_txn, pad_row_held_in_txn,
+};
 #[cfg(feature = "sync")]
 pub use self::pads::PromotedWorldPad;
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
 pub(crate) use self::pads::{
     destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, note_world_deleted_in_txn,
-    pad_body_world, pad_world_in_body, reject_held_pad_world_in_txn, validate_pad_put_in_txn,
-    world_keys_destroyed_in_txn, world_pad_scope_exists_in_txn, world_pad_windows_in_txn,
+    pad_body_world, pad_world_in_body, reject_held_pad_world_in_txn, world_keys_destroyed_in_txn,
+    world_pad_scope_exists_in_txn, world_pad_windows_in_txn,
 };
 pub(crate) use self::page_seal::{
     OpenedDataKey, admit_new_vault, page_seal_open_error, read_sealed, seal_read_only,

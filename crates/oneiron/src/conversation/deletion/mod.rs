@@ -76,12 +76,21 @@ pub(crate) fn record_author(body: &[u8]) -> Result<Option<EntityId>> {
         .map_err(|_| invalid("invalid room author"))
 }
 
+/// The TURN's author for a delete: a PERSON, or an id this store does not
+/// know yet. A witnessing agent's stamp names no author here, so no agent
+/// deletes as one (FIX 7129).
 fn author_in(vault: &Vault, txn: &heed::RoTxn<'_>, record: EntityId) -> Result<Option<EntityId>> {
     match crate::vault::live_entity_row_in_txn(&vault.store, txn, &record)? {
         crate::vault::LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_TURN,
             body,
-        } => record_author(&body),
+        } => {
+            let Some(author) = record_author(&body)? else {
+                return Ok(None);
+            };
+            let kind = crate::batch::stored_entity_type(&vault.store, txn, &author)?;
+            Ok(matches!(kind, None | Some(ENTITY_TYPE_PERSON)).then_some(author))
+        }
         crate::vault::LiveEntityRow::DeletedShell => Ok(
             crate::conversation_dag::redacted_record_pin(&vault.store, txn, &record)?
                 .and_then(|pin| pin.author),
@@ -326,15 +335,15 @@ pub(crate) fn replay_room_message_tombstone(
             .flatten()
         {
             // Admission keeps an unknown author id (its PERSON row may never
-            // arrive); only a known non-PERSON author is a bad binding.
+            // arrive). A known non-PERSON author, such as the agent a witness
+            // TURN stamps (FIX 7129), reads as no author.
             Some(person)
                 if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &person)?
                     .is_none_or(|row| row.first() == Some(&ENTITY_TYPE_PERSON)) =>
             {
                 Some(person)
             }
-            Some(_) => return Err(denied()),
-            None => None,
+            Some(_) | None => None,
         }
     };
     let mut cursor = None;

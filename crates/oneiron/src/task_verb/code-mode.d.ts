@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1162 code-mode rows (1122 host rows, 40 run rows), 3868 declarations.
-// Replies: 1042 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1163 code-mode rows (1123 host rows, 40 run rows), 3872 declarations.
+// Replies: 1043 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -3462,10 +3462,14 @@ declare namespace Sdk {
   type ProgramResultAvailability = "readable" | "withheld" | "absent";
   type SettledProgramStepView = { root: string; attempt: string; actor: EntityId; code_run: string; step_ref: string; issue: ProgramStepIssueView; settled_at: number; result_digest: string; result_ref?: string | null; availability: ProgramResultAvailability; model_step?: SettledStepView | null; body_base64?: string | null };
   type ProgramCheckpointRequest = { root: string; cursor?: string | null; limit?: number | null };
-  type ProgramCheckpointWaitView = { row: number; wait_id: string; generation: number; delivered: boolean };
+  type ProgramCheckpointConsentView = { binding_digest: string; effect_digest: string; state: string; ask?: string | null; choice?: string | null; word?: string | null; answer_receipt?: string | null; outcome?: string | null; settlement_receipt?: string | null; consumption_receipt?: string | null; settlement_facts_digest?: string | null; consumption_facts_digest?: string | null };
+  type ProgramCheckpointWaitView = { row: number; wait_id: string; generation: number; delivered: boolean; consent?: ProgramCheckpointConsentView | null };
   type ProgramCheckpointHeadView = { committed_by: string; content_hash: string; contract_digest: string; entries: number; entry_start: number; bridge_calls: number; state_hash: string; applied: number; injected: number; wait?: ProgramCheckpointWaitView | null; at: number };
   type ProgramCheckpointCallView = { index: number; result_ref: string; row: number; request_digest: string; answered_by_wait?: string | null; injected: boolean };
   type ProgramCheckpointView = { root: string; actor: EntityId; code_run: string; definition?: ProgramRecipePin | null; checkpoint?: ProgramCheckpointHeadView | null; frontier?: ProgramFrontierView | null; calls: ProgramCheckpointCallView[]; next_cursor?: string | null; withheld: string[] };
+  type ProgramHoldReleaseAction = "stop" | "resume_validated";
+  type ReleaseTurnProgramHoldRequest = { attempt: string; reason: string; parked_at: number; action: ProgramHoldReleaseAction; note?: string | null };
+  type ProgramHoldReleaseView = { attempt: string; action: ProgramHoldReleaseAction; released: string; state: string; effected: boolean };
   type ConsolidationHomeNode = { node_id: string; class: string; elected_at: number };
   type ConsolidationHomeCandidate = { node_id: string; class?: string | null; cloud: boolean; attached: boolean; always_on_local: boolean; primary_device: boolean };
   type ConsolidationHomePickHead = { act_ref: string; machine: EntityId; node_id?: string | null; at: number };
@@ -3560,7 +3564,7 @@ declare namespace Sdk {
   type FreeTimeCycleRequest = { agent: string; cycle: string };
   type FreeTimeKind = "for_human" | "own_time";
   type FreeTimeItemOutcome = "completed" | "rested" | "failed" | "cancelled";
-  type FreeTimeItemReceiptView = { outcome: FreeTimeItemOutcome; policy_revision: number; attempt?: string | null; proposal?: string | null; at: number };
+  type FreeTimeItemReceiptView = { outcome: FreeTimeItemOutcome; policy_revision: number; attempt?: string | null; proposal?: string | null; context_unread?: string | null; at: number };
   type FreeTimeItemView = { item: string; kind: FreeTimeKind; purpose: string; attempt?: string | null; spend_scope?: string | null; receipt?: FreeTimeItemReceiptView | null };
   type FreeTimeNoteView = { author: string; at: number; text: string };
   type FreeTimeLabelSpend = { purpose?: string | null; settlements: RunRungSettlement[] };
@@ -6259,6 +6263,10 @@ declare const vault: Sdk.VaultHost & {
     program(input: Sdk.ProgramRunRequest): Promise<Sdk.ProgramRunView | null | StoredResult>;
     /** Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it. */
     program_checkpoint(input: Sdk.ProgramCheckpointRequest): Promise<Sdk.ProgramCheckpointView | null | StoredResult>;
+    program_hold: {
+      /** The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out. */
+      release(input: Sdk.ReleaseTurnProgramHoldRequest): Promise<Sdk.ProgramHoldReleaseView | StoredResult>;
+    };
     /** Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body. */
     program_step(input: Sdk.SettledProgramStepRequest): Promise<Sdk.SettledProgramStepView | null | StoredResult>;
     /** Resumes one paused branch of a run by its attempt id: the vault owner resumes any branch, any other caller only a branch of a TASK it owns. A repeat answers already_resumed. */

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1112 facade rows, 3797 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1064.
+// UniFFI census: 1113 facade rows, 3801 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1065.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -52765,6 +52765,55 @@ pub struct ProgramCheckpointRequest {
     pub limit: Option<u32>,
 }
 
+/// `oneiron::dreamer_runner::program::read::views::ProgramCheckpointConsentView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramCheckpointConsentView {
+    #[serde(rename = "binding_digest")]
+    pub binding_digest: String,
+    #[serde(rename = "effect_digest")]
+    pub effect_digest: String,
+    #[serde(rename = "state")]
+    pub state: String,
+    #[serde(rename = "ask", default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<String>,
+    #[serde(rename = "choice", default, skip_serializing_if = "Option::is_none")]
+    pub choice: Option<String>,
+    #[serde(rename = "word", default, skip_serializing_if = "Option::is_none")]
+    pub word: Option<String>,
+    #[serde(
+        rename = "answer_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub answer_receipt: Option<String>,
+    #[serde(rename = "outcome", default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+    #[serde(
+        rename = "settlement_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub settlement_receipt: Option<String>,
+    #[serde(
+        rename = "consumption_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub consumption_receipt: Option<String>,
+    #[serde(
+        rename = "settlement_facts_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub settlement_facts_digest: Option<String>,
+    #[serde(
+        rename = "consumption_facts_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub consumption_facts_digest: Option<String>,
+}
+
 /// `oneiron::dreamer_runner::program::read::views::ProgramCheckpointWaitView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProgramCheckpointWaitView {
@@ -52776,6 +52825,8 @@ pub struct ProgramCheckpointWaitView {
     pub generation: u64,
     #[serde(rename = "delivered")]
     pub delivered: bool,
+    #[serde(rename = "consent", default, skip_serializing_if = "Option::is_none")]
+    pub consent: Option<ProgramCheckpointConsentView>,
 }
 
 /// `oneiron::dreamer_runner::program::read::views::ProgramCheckpointHeadView`.
@@ -52859,6 +52910,46 @@ pub struct ProgramCheckpointView {
     pub next_cursor: Option<String>,
     #[serde(rename = "withheld")]
     pub withheld: Vec<String>,
+}
+
+/// `oneiron::dreamer_runner::program::release::ProgramHoldReleaseAction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ProgramHoldReleaseAction {
+    #[serde(rename = "stop")]
+    Stop,
+    #[serde(rename = "resume_validated")]
+    ResumeValidated,
+}
+
+/// `oneiron::dreamer_runner::program::release::ReleaseTurnProgramHoldRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseTurnProgramHoldRequest {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "parked_at")]
+    pub parked_at: u64,
+    #[serde(rename = "action")]
+    pub action: ProgramHoldReleaseAction,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// `oneiron::dreamer_runner::program::release::ProgramHoldReleaseView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramHoldReleaseView {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "action")]
+    pub action: ProgramHoldReleaseAction,
+    #[serde(rename = "released")]
+    pub released: String,
+    #[serde(rename = "state")]
+    pub state: String,
+    #[serde(rename = "effected")]
+    pub effected: bool,
 }
 
 /// `oneiron::dreamer_runner::owner_doors::ConsolidationHomeNode`.
@@ -54348,6 +54439,12 @@ pub struct FreeTimeItemReceiptView {
     pub attempt: Option<String>,
     #[serde(rename = "proposal", default, skip_serializing_if = "Option::is_none")]
     pub proposal: Option<String>,
+    #[serde(
+        rename = "context_unread",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub context_unread: Option<String>,
     #[serde(rename = "at")]
     pub at: u64,
 }

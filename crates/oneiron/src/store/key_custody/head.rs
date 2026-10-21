@@ -118,6 +118,24 @@ pub(crate) struct CustodyRecipients {
     /// The vault data key's [`CUSTODY_HEAD_WRAP_CONTEXT`] subkey: the
     /// control compartment and host-readable ones.
     pub(crate) data_key: Option<Zeroizing<[u8; 32]>>,
+    /// The worlds (16-byte ids) whose pads the head leaves out: their
+    /// settings keep their pads off where the head goes (KS-5 pad head
+    /// eligibility). They stay in this machine's custody.
+    pub(crate) pad_worlds_kept_local: BTreeSet<[u8; 16]>,
+}
+
+impl CustodyRecipients {
+    /// Whether the head leaves the live entry `id` out: a world pad of a
+    /// world [`Self::pad_worlds_kept_local`] names.
+    pub(crate) fn keeps_local(&self, id: &CustodyId) -> bool {
+        id.kind() == CustodyKind::WorldPad
+            && id
+                .subject()
+                .item()
+                .get(..16)
+                .and_then(|world| <[u8; 16]>::try_from(world).ok())
+                .is_some_and(|world| self.pad_worlds_kept_local.contains(&world))
+    }
 }
 
 /// What a restore opens a head with. The kit's root opens every
