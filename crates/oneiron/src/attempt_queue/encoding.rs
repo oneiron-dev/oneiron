@@ -17,7 +17,7 @@ use super::validate::{
     ERR_LANDING_WITHOUT_LEASE, ERR_LANDING_WITHOUT_RECORD, validate_attempt_events,
     validate_attempt_manifest, validate_cancel_state, validate_kind, validate_lease_owner,
     validate_optional_dedupe, validate_optional_dedupe_actor_ref, validate_optional_failure_reason,
-    validate_optional_result_ref, validate_optional_run_id,
+    validate_optional_result_ref, validate_optional_run_id, validate_planned_binding,
 };
 use crate::error::ArtifactError;
 
@@ -313,6 +313,7 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
     validate_cancel_state(&record.cancel_state)?;
     crate::run_tree::validate_signal_rows(&record)?;
     validate_optional_result_ref(record.result_ref.as_ref())?;
+    validate_planned_binding(&record)?;
     if let Some(lease_owner) = record.lease_owner.as_deref() {
         validate_lease_owner(lease_owner)?;
     }
