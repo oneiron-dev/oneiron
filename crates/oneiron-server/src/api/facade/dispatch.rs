@@ -19166,6 +19166,86 @@ async fn vault_code_export(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_code_export_preview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.export.preview")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.export.preview", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.code.export.preview", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_export_preview(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_export_preview_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.export.preview.read")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.export.preview.read", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.code.export.preview.read", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_export_preview_read(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_import(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -36194,6 +36274,10 @@ pub(crate) async fn call_verb(
         "vault.results.slice" => vault_results_slice(server, call, input).await,
         "vault.code.repo_diff" => vault_code_repo_diff(server, call, input).await,
         "vault.code.export" => vault_code_export(server, call, input).await,
+        "vault.code.export.preview" => vault_code_export_preview(server, call, input).await,
+        "vault.code.export.preview.read" => {
+            vault_code_export_preview_read(server, call, input).await
+        }
         "vault.code.import" => vault_code_import(server, call, input).await,
         "vault.code.repos.get" => vault_code_repos_get(server, call, input).await,
         "vault.code.forks.get" => vault_code_forks_get(server, call, input).await,

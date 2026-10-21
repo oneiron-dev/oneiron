@@ -2794,8 +2794,8 @@ class Oneiron:
         @property
         def waits(self) -> "Oneiron._VaultCodeWaitsVerbs": ...
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
-        def export(self, spec: Facade.CodeExportRequest) -> Facade.CodeExportResult:
-            """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
+        @property
+        def export(self) -> "Oneiron._VaultCodeExportVerbs": ...
         def import_(self, spec: Facade.CodeRepoImportRequest) -> Facade.CodeRepoImportView:
             """Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only."""
         @property
@@ -2834,6 +2834,16 @@ class Oneiron:
             """Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."""
         def receipt(self, spec: Facade.CodeWaitReceiptRequest) -> Facade.CodeWaitReceiptView | None:
             """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
+    class _VaultCodeExportVerbs:
+        def __call__(self, spec: Facade.CodeExportRequest) -> Facade.CodeExportResult:
+            """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
+        @property
+        def preview(self) -> "Oneiron._VaultCodeExportPreviewVerbs": ...
+    class _VaultCodeExportPreviewVerbs:
+        def __call__(self, spec: Facade.CodeExportPreviewRequest) -> Facade.CodeExportPreviewAnswer:
+            """Read the complete raw-byte and Git-mode delta for one explicit sealed export revision and ref expectation. Live owner or a caller under one covering Grant. Missing, withheld or masked sources return a typed hold; no export or ref is written."""
+        def read(self, spec: Facade.CodeExportFileReadRequest) -> Facade.CodeExportFileReadAnswer:
+            """Read the exact bytes and mode of one changed preview side by its recomputed handle. Live owner or a caller under one covering preview Grant. Missing, withheld or masked sources return a typed hold; no caller-selected host file is read."""
     class _VaultCodeReposVerbs:
         def get(self, spec: Facade.CodeRepoGetRequest) -> Facade.CodeRepoView | None:
             """Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work."""

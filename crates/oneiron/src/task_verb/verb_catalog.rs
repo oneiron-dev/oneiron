@@ -607,6 +607,8 @@ pub enum AgentVerb {
     VaultResultsSlice,
     VaultCodeRepoDiff,
     VaultCodeExport,
+    VaultCodeExportPreview,
+    VaultCodeExportPreviewRead,
     VaultCodeImport,
     VaultCodeReposGet,
     VaultCodeForksGet,
@@ -1757,6 +1759,8 @@ impl AgentVerb {
         Self::VaultResultsSlice,
         Self::VaultCodeRepoDiff,
         Self::VaultCodeExport,
+        Self::VaultCodeExportPreview,
+        Self::VaultCodeExportPreviewRead,
         Self::VaultCodeImport,
         Self::VaultCodeReposGet,
         Self::VaultCodeForksGet,
@@ -2928,6 +2932,8 @@ impl AgentVerb {
             Self::VaultResultsSlice => "vault.results.slice",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultCodeExport => "vault.code.export",
+            Self::VaultCodeExportPreview => "vault.code.export.preview",
+            Self::VaultCodeExportPreviewRead => "vault.code.export.preview.read",
             Self::VaultCodeImport => "vault.code.import",
             Self::VaultCodeReposGet => "vault.code.repos.get",
             Self::VaultCodeForksGet => "vault.code.forks.get",
@@ -4090,6 +4096,8 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeExportPreview
+                | Self::VaultCodeExportPreviewRead
                 | Self::VaultCodeImport
                 | Self::VaultCodeReposGet
                 | Self::VaultCodeForksGet
@@ -5268,6 +5276,8 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeExportPreview
+                | Self::VaultCodeExportPreviewRead
                 | Self::VaultCodeImport
                 | Self::VaultCodeReposGet
                 | Self::VaultCodeForksGet
@@ -5934,6 +5944,8 @@ impl AgentVerb {
                 | Self::GraphFsHead
                 | Self::GraphFsWc
                 | Self::ExecuteCode
+                | Self::VaultCodeExportPreview
+                | Self::VaultCodeExportPreviewRead
                 | Self::VaultRepoSnapshotsGet
                 | Self::VaultRepoSnapshotsRead
                 | Self::VaultRepoSymbolsDefinitions
@@ -8379,6 +8391,8 @@ impl AgentVerb {
             Self::VaultResultsSlice => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeExportPreview => &["spec"],
+            Self::VaultCodeExportPreviewRead => &["spec"],
             Self::VaultCodeImport => &["spec"],
             Self::VaultCodeReposGet => &["spec"],
             Self::VaultCodeForksGet => &["spec"],
@@ -9530,6 +9544,8 @@ impl AgentVerb {
             Self::VaultResultsSlice => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeExportPreview => &["spec"],
+            Self::VaultCodeExportPreviewRead => &["spec"],
             Self::VaultCodeImport => &["spec"],
             Self::VaultCodeReposGet => &["spec"],
             Self::VaultCodeForksGet => &["spec"],
@@ -11855,6 +11871,12 @@ impl AgentVerb {
             }
             Self::VaultCodeExport => {
                 "Export one already-finalized and reviewed document revision through the existing origin publication protocol."
+            }
+            Self::VaultCodeExportPreview => {
+                "Read the complete raw-byte and Git-mode delta for one explicit sealed export revision and ref expectation. Live owner or a caller under one covering Grant. Missing, withheld or masked sources return a typed hold; no export or ref is written."
+            }
+            Self::VaultCodeExportPreviewRead => {
+                "Read the exact bytes and mode of one changed preview side by its recomputed handle. Live owner or a caller under one covering preview Grant. Missing, withheld or masked sources return a typed hold; no caller-selected host file is read."
             }
             Self::VaultCodeImport => {
                 "Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only."

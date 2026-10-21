@@ -1980,7 +1980,13 @@ export class Oneiron {
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
       /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
-      export: (input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult),
+      export: Object.assign((input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult), {
+        /** Read the complete raw-byte and Git-mode delta for one explicit sealed export revision and ref expectation. Live owner or a caller under one covering Grant. Missing, withheld or masked sources return a typed hold; no export or ref is written. */
+        preview: Object.assign((input: Facade.CodeExportPreviewRequest): Facade.CodeExportPreviewAnswer => this.#call(() => this.#client.vaultCodeExportPreview(input) as Facade.CodeExportPreviewAnswer), {
+          /** Read the exact bytes and mode of one changed preview side by its recomputed handle. Live owner or a caller under one covering preview Grant. Missing, withheld or masked sources return a typed hold; no caller-selected host file is read. */
+          read: (input: Facade.CodeExportFileReadRequest): Facade.CodeExportFileReadAnswer => this.#call(() => this.#client.vaultCodeExportPreviewRead(input) as Facade.CodeExportFileReadAnswer),
+        }),
+      }),
       /** Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only. */
       import: (input: Facade.CodeRepoImportRequest): Facade.CodeRepoImportView => this.#call(() => this.#client.vaultCodeImport(input) as Facade.CodeRepoImportView),
       repos: {

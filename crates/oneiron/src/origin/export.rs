@@ -1,9 +1,9 @@
 //! Export finalized engine commits through GitWire objects and the origin CAS protocol.
+use super::export_input::{ExportPromotion, VerifiedEngineExport, export_message};
 use super::publication::{OriginPublicationReceipt, OriginPublicationRequest};
 use super::residence::OriginAuthorityLease;
 use super::tree::OriginTreeFile;
 use crate::Vault;
-use crate::claim::ClaimLifecycleStatus;
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -11,7 +11,6 @@ use crate::git_wire::{
     GitCommitRequest, GitOid, GitRefName, GitTreeEntry, GitWire, GitWirePlan, GitWireRepo,
     lock_repository,
 };
-use crate::repo_mutation::REPO_PROVENANCE_TRAILER_KEY;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::temporal::TimeRange;
 use std::collections::BTreeMap;
@@ -102,43 +101,15 @@ impl Vault {
         authority: Option<&OriginAuthorityLease>,
     ) -> Result<OriginPublicationReceipt> {
         let _guard = lock_repository(repo.common_dir())?;
-        let revision = self
-            .get_code_revision(&request.revision_id)?
-            .ok_or(Error::EntityNotFound)?;
-        // Recheck the complete fold trace, including the stored session frontier.
-        if !self
-            .code_revisions_for_session(&revision.session_id)?
-            .contains(&revision)
-        {
-            return Err(Error::InvariantViolation(
-                "engine export revision is not finalized",
-            ));
-        }
-        // Session membership authenticates history, not independent approval.
-        // Recheck the immutable promotion receipt before creating any Git object.
-        self.require_code_revision_promotion(request.revision_id)?;
-        let metadata = revision
-            .commit_metadata
-            .as_ref()
-            .ok_or(Error::InvariantViolation(
-                "engine commit has no canonical authorship/message",
-            ))?;
-        let provenance = revision
-            .provenance_claim_id
-            .ok_or(Error::InvariantViolation(
-                "engine commit export requires provenance",
-            ))?;
-        if self
-            .get_claim(&provenance)?
-            .is_none_or(|body| body.lifecycle != ClaimLifecycleStatus::Active)
-        {
-            return Err(Error::InvariantViolation(
-                "engine commit export provenance is not active",
-            ));
-        }
-        if self.get_entity_type(&metadata.author)?.is_none() {
-            return Err(Error::EntityNotFound);
-        }
+        // The shared eligibility (G4 PR3): the stored promotion is judged
+        // again before any Git object is created, at its original point.
+        let VerifiedEngineExport {
+            revision,
+            metadata,
+            provenance,
+            ..
+        } = self.load_engine_export_revision(request.revision_id, ExportPromotion::Stored)?;
+        let metadata = &metadata;
         let files = match &revision.tested_queue {
             // A tested queue revision renders its complete tree, documents
             // and untouched blobs, in its own object store (G2 PR3), through
@@ -172,16 +143,7 @@ impl Vault {
                 "the rebuilt tree differs from the checked tree",
             ));
         }
-        if crate::repo_mutation::parse_repo_provenance_trailer(&metadata.message)?.is_some() {
-            return Err(Error::InvariantViolation(
-                "export message must not supply its own provenance trailer",
-            ));
-        }
-        let message = format!(
-            "{}\n\n{REPO_PROVENANCE_TRAILER_KEY}: {}\n",
-            metadata.message.trim_end(),
-            provenance.to_hex()
-        );
+        let message = export_message(metadata, provenance)?;
         let oid = write_commit(
             git,
             repo,

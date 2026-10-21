@@ -1888,6 +1888,12 @@ impl OneironClient {
                 "vault.code.export" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::CodeExportResult,
                 >(client, verb, &input),
+                "vault.code.export.preview" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::CodeExportPreviewAnswer,
+                >(client, verb, &input),
+                "vault.code.export.preview.read" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::CodeExportFileReadAnswer,
+                >(client, verb, &input),
                 "vault.code.import" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::CodeRepoImportView,
                 >(client, verb, &input),
@@ -10921,6 +10927,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.export", value)
+    }
+    pub fn vault_code_export_preview(
+        &self,
+        input: &oneiron::memory::origin_doors::CodeExportPreviewRequest,
+    ) -> Result<oneiron::memory::origin_doors::CodeExportPreviewAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.export.preview", value)
+    }
+    pub fn vault_code_export_preview_read(
+        &self,
+        input: &oneiron::memory::origin_doors::CodeExportFileReadRequest,
+    ) -> Result<oneiron::memory::origin_doors::CodeExportFileReadAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.export.preview.read", value)
     }
     pub fn vault_code_import(
         &self,

@@ -635,6 +635,8 @@ vaultResultsRead(input: unknown): unknown
 vaultResultsSlice(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
+vaultCodeExportPreview(input: unknown): unknown
+vaultCodeExportPreviewRead(input: unknown): unknown
 vaultCodeImport(input: unknown): unknown
 vaultCodeReposGet(input: unknown): unknown
 vaultCodeForksGet(input: unknown): unknown
