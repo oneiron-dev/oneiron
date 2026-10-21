@@ -17,17 +17,31 @@
 //! shared model root's layout. It is the self-hosted and supervisor-side
 //! fetch: a managed engine never downloads a bundle; its supervisor places
 //! one in the shared root.
+//!
+//! A format-2 release (FIX 6755) also pins its platform rows' archives. A
+//! fetch places the common files and the archives [`Platforms`] selects,
+//! each extracted beside itself in staging before the bundle is renamed into
+//! place whole. Selection never touches the manifest or the stack, and a
+//! placed bundle is never added to: more platforms go under a fresh root.
 
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
 use reqwest::header::HeaderValue;
 
+use super::bundle::archive::ArchiveError;
+use super::bundle::{self, MANIFEST_FILE, Manifest};
 use crate::embedder::model_manager::{self, PinnedArtifact, ResumableFetch};
 
 mod catalogue;
+mod platforms;
 
 use catalogue::ONEIRONER_RELEASES;
+pub(crate) use platforms::{Placement, Platforms};
+
+/// The stack of the catalogue's default release: the one a bundle of
+/// another format is told to fetch.
+pub(crate) const DEFAULT_STACK: &str = ONEIRONER_RELEASES[0].stack_sha16;
 
 /// The Hugging Face model repo releases are fetched from unless the fetch
 /// names another. Private until the owner calls the model final.
@@ -69,7 +83,17 @@ pub(crate) struct OneironerRelease {
     pub(crate) licence: &'static str,
     /// Every file of the bundle, flat under its directory, smallest first so
     /// an unpublished or private release is known before the weights move.
-    pub(crate) files: &'static [PinnedArtifact],
+    pub(crate) files: &'static [ReleaseFile],
+}
+
+/// One file of a release: its pin, and the platform row it installs when it
+/// is an archive a fetch may leave out.
+#[derive(Debug)]
+pub(crate) struct ReleaseFile {
+    pub(crate) artifact: PinnedArtifact,
+    /// The manifest's platform row name; `None` for a file every bundle
+    /// holds.
+    pub(crate) platform: Option<&'static str>,
 }
 
 /// The release `stack` names, or the default when it names none.
@@ -207,7 +231,11 @@ fn plain_repo(repo: &str) -> bool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum OneironerFetchOutcome {
     /// The bundle was already in place, and verified whole.
-    Reused { dir: PathBuf },
+    Reused {
+        dir: PathBuf,
+        /// The platform rows it holds and those it does not.
+        platforms: Placement,
+    },
     /// The bundle was fetched, verified and placed. `bytes` came over the
     /// network on this run; `resumed_bytes` were on disk from an earlier
     /// one, in partial or staged files.
@@ -215,6 +243,7 @@ pub(crate) enum OneironerFetchOutcome {
         dir: PathBuf,
         bytes: u64,
         resumed_bytes: u64,
+        platforms: Placement,
     },
     /// The repo has no such file at the release's ref (`404`): the release
     /// is not published yet. Nothing was placed.
@@ -238,7 +267,15 @@ impl OneironerFetchOutcome {
     /// The bundle's directory, when the fetch left it in place.
     pub(crate) fn placed(&self) -> Option<&Path> {
         match self {
-            Self::Reused { dir } | Self::Downloaded { dir, .. } => Some(dir.as_path()),
+            Self::Reused { dir, .. } | Self::Downloaded { dir, .. } => Some(dir.as_path()),
+            Self::NotPublished { .. } | Self::Unauthorized { .. } => None,
+        }
+    }
+
+    /// The platform rows the placed bundle holds and those it does not.
+    pub(crate) fn platforms(&self) -> Option<&Placement> {
+        match self {
+            Self::Reused { platforms, .. } | Self::Downloaded { platforms, .. } => Some(platforms),
             Self::NotPublished { .. } | Self::Unauthorized { .. } => None,
         }
     }
@@ -305,6 +342,18 @@ pub(crate) enum OneironerFetchError {
     Transfer { file: String, reason: String },
     #[error("{dir} is not the pinned release ({reason}); it was left as it is")]
     ExistingInvalid { dir: String, reason: String },
+    #[error("the release's pinned {MANIFEST_FILE} does not match the catalogue: {reason}")]
+    Manifest { reason: String },
+    #[error("release file {file}: {error}")]
+    Archive {
+        file: String,
+        /// The archive reader's refusal.
+        error: ArchiveError,
+    },
+    #[error(
+        "{dir} is placed without platform {row}, and a placed bundle is never added to: fetch it into a fresh --into root and point oneironer.model_dir there"
+    )]
+    PlatformNotPlaced { dir: String, row: &'static str },
     #[error("{action} {path}: {reason}")]
     Io {
         action: &'static str,
@@ -315,25 +364,29 @@ pub(crate) enum OneironerFetchError {
 
 /// Places `release` under `models_root` as `<root>/oneironer/<stack>/`.
 ///
-/// A bundle already there is verified whole, every file's size and then its
-/// SHA-256, and reused; one that fails is an error, and it is never replaced
-/// or removed. Otherwise the files are staged in
-/// `<root>/oneironer/.staging-<stack>/`, under the lock file beside it. Each
-/// is fetched to `<file>.partial`, resuming what an earlier run left there,
-/// checked for size and then SHA-256, and renamed to its own name. Once every
-/// file is staged, the directory is renamed into place whole, directories
-/// `0755` and files `0644` on Unix. A transfer that fails keeps its partial
-/// for the next run; a file of the wrong size or digest loses it. A second
-/// fetch of the same stack waits on the lock, then finds the bundle placed.
+/// A bundle already there is verified whole ([`verify_placed`]) and reused;
+/// one that fails is an error, and it is never replaced, removed or added
+/// to. Otherwise the files are staged in `<root>/oneironer/.staging-<stack>/`,
+/// under the lock file beside it: the common files first, then the archives
+/// `selected` takes among the rows the staged manifest names. Each is
+/// fetched to `<file>.partial`, resuming what an earlier run left there,
+/// checked for size and then SHA-256, and renamed to its own name. Each
+/// archive is then extracted beside itself. Once all of it is staged, the
+/// directory is renamed into place whole, directories `0755` and files
+/// `0644` on Unix, an extracted tree keeping its entries' modes. A transfer
+/// that fails keeps its partial for the next run; a file of the wrong size
+/// or digest loses it. A second fetch of the same stack waits on the lock,
+/// then finds the bundle placed.
 pub(crate) fn fetch_release(
     release: &OneironerRelease,
     source: &ReleaseSource,
     models_root: &Path,
+    selected: Platforms,
 ) -> Result<OneironerFetchOutcome, OneironerFetchError> {
     let dir = bundle_dir(models_root, release);
     if dir.symlink_metadata().is_ok() {
-        verify_placed(release, &dir)?;
-        return Ok(OneironerFetchOutcome::Reused { dir });
+        let platforms = verify_placed(release, &dir, selected)?;
+        return Ok(OneironerFetchOutcome::Reused { dir, platforms });
     }
     std::fs::create_dir_all(models_root).map_err(io_error("creating", models_root))?;
     let class = models_root.join(CLASS_DIR);
@@ -342,29 +395,86 @@ pub(crate) fn fetch_release(
     let _lock = lock(&class.join(format!(".staging-{stack}.lock")))?;
     // A fetch that held the lock first may have placed it meanwhile.
     if dir.symlink_metadata().is_ok() {
-        verify_placed(release, &dir)?;
-        return Ok(OneironerFetchOutcome::Reused { dir });
+        let platforms = verify_placed(release, &dir, selected)?;
+        return Ok(OneironerFetchOutcome::Reused { dir, platforms });
     }
     let staging = class.join(format!(".staging-{stack}"));
     ensure_dir(&staging)?;
-    let (mut bytes, mut resumed_bytes) = (0_u64, 0_u64);
-    for artifact in release.files {
-        let file = artifact.file.to_string();
-        match stage(release, source, &staging, artifact)? {
-            Staged::Ready { kept, fetched } => {
-                resumed_bytes += kept;
-                bytes += fetched;
-            }
-            Staged::NotPublished => return Ok(OneironerFetchOutcome::NotPublished { file }),
-            Staged::Unauthorized => return Ok(OneironerFetchOutcome::Unauthorized { file }),
-        }
+    // Bytes on disk from an earlier run, and bytes fetched on this one.
+    let mut moved = (0_u64, 0_u64);
+    let mut placed: Vec<&ReleaseFile> = release
+        .files
+        .iter()
+        .filter(|file| file.platform.is_none())
+        .collect();
+    if let Some(refused) = stage_all(release, source, &staging, &placed, &mut moved)? {
+        return Ok(refused);
     }
-    commit(release, &staging, &dir)?;
+    // The staged manifest names the platform rows, and so which archives
+    // this fetch takes.
+    let manifest = staged_manifest(&staging)?;
+    let (chosen, left): (Vec<_>, Vec<_>) = catalogue::platform_rows(release, &manifest)?
+        .into_iter()
+        .partition(|(_, _, row)| selected.selects(row));
+    for (_, file, row) in &left {
+        platforms::clear(&staging, file, row)?;
+    }
+    let archives: Vec<&ReleaseFile> = chosen.iter().map(|(_, file, _)| *file).collect();
+    if let Some(refused) = stage_all(release, source, &staging, &archives, &mut moved)? {
+        return Ok(refused);
+    }
+    for (_, file, row) in &chosen {
+        platforms::install(&staging, file, row)?;
+    }
+    placed.extend(archives);
+    commit(&staging, &dir, &placed)?;
+    let platforms = Placement {
+        installed: chosen.iter().map(|(name, ..)| *name).collect(),
+        skipped: left.iter().map(|(name, ..)| *name).collect(),
+    };
     Ok(OneironerFetchOutcome::Downloaded {
         dir,
-        bytes,
-        resumed_bytes,
+        bytes: moved.1,
+        resumed_bytes: moved.0,
+        platforms,
     })
+}
+
+/// Stages `files` in order: the refusal that stopped one, if any. `moved`
+/// counts the bytes kept from an earlier run and those fetched.
+fn stage_all(
+    release: &OneironerRelease,
+    source: &ReleaseSource,
+    staging: &Path,
+    files: &[&ReleaseFile],
+    moved: &mut (u64, u64),
+) -> Result<Option<OneironerFetchOutcome>, OneironerFetchError> {
+    for file in files {
+        let name = file.artifact.file.to_string();
+        match stage(release, source, staging, &file.artifact)? {
+            Staged::Ready { kept, fetched } => {
+                moved.0 += kept;
+                moved.1 += fetched;
+            }
+            Staged::NotPublished => {
+                return Ok(Some(OneironerFetchOutcome::NotPublished { file: name }));
+            }
+            Staged::Unauthorized => {
+                return Ok(Some(OneironerFetchOutcome::Unauthorized { file: name }));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// The manifest in `dir`, read as every runtime reads it. Its pin has
+/// verified, so a failure here is a catalogue fault.
+fn staged_manifest(dir: &Path) -> Result<Manifest, OneironerFetchError> {
+    bundle::read_manifest(dir)
+        .map(|read| read.manifest)
+        .map_err(|error| OneironerFetchError::Manifest {
+            reason: format!("{error:#}"),
+        })
 }
 
 /// What staging one file came to.
@@ -453,9 +563,14 @@ fn check(path: &Path, artifact: &PinnedArtifact) -> Result<(), OneironerFetchErr
     Ok(())
 }
 
-/// Checks a placed bundle whole without touching it: a directory, each file
-/// a plain file of its pinned size, then each file's SHA-256.
-fn verify_placed(release: &OneironerRelease, dir: &Path) -> Result<(), OneironerFetchError> {
+/// Checks a placed bundle whole without touching it: a directory, each
+/// common file a plain file of its pinned size, then each one's SHA-256,
+/// then its platform rows ([`platforms::verify`]).
+fn verify_placed(
+    release: &OneironerRelease,
+    dir: &Path,
+    selected: Platforms,
+) -> Result<Placement, OneironerFetchError> {
     let invalid = |reason: String| OneironerFetchError::ExistingInvalid {
         dir: dir.display().to_string(),
         reason,
@@ -466,7 +581,14 @@ fn verify_placed(release: &OneironerRelease, dir: &Path) -> Result<(), Oneironer
     if !is_dir {
         return Err(invalid("not a directory".to_owned()));
     }
-    for artifact in release.files {
+    let common = || {
+        release
+            .files
+            .iter()
+            .filter(|file| file.platform.is_none())
+            .map(|file| &file.artifact)
+    };
+    for artifact in common() {
         let file: &str = &artifact.file;
         let pinned = artifact.bytes;
         let held = match dir.join(file).symlink_metadata() {
@@ -477,7 +599,7 @@ fn verify_placed(release: &OneironerRelease, dir: &Path) -> Result<(), Oneironer
             return Err(invalid(format!("{file} is {held} bytes, pinned {pinned}")));
         }
     }
-    for artifact in release.files {
+    for artifact in common() {
         let file: &str = &artifact.file;
         let pinned = artifact.sha256;
         let path = dir.join(file);
@@ -488,25 +610,23 @@ fn verify_placed(release: &OneironerRelease, dir: &Path) -> Result<(), Oneironer
             )));
         }
     }
-    Ok(())
+    let manifest = staged_manifest(dir)?;
+    platforms::verify(release, dir, &manifest, selected)
 }
 
-/// Sets the staged files' and directory's modes, then renames the directory
-/// into place whole.
-fn commit(
-    release: &OneironerRelease,
-    staging: &Path,
-    dir: &Path,
-) -> Result<(), OneironerFetchError> {
+/// Sets the staged flat files' and the directory's modes, then renames the
+/// directory into place whole. An extracted tree keeps the modes its
+/// archive's entries gave it.
+fn commit(staging: &Path, dir: &Path, files: &[&ReleaseFile]) -> Result<(), OneironerFetchError> {
     #[cfg(unix)]
     {
-        for artifact in release.files {
-            set_mode(&staging.join(artifact.file.as_ref()), FILE_MODE)?;
+        for file in files {
+            set_mode(&staging.join(file.artifact.file.as_ref()), FILE_MODE)?;
         }
         set_mode(staging, DIR_MODE)?;
     }
     #[cfg(not(unix))]
-    let _ = release;
+    let _ = files;
     std::fs::rename(staging, dir).map_err(io_error("placing", staging))
 }
 

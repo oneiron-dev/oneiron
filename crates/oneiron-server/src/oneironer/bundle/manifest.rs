@@ -1,11 +1,15 @@
 //! The manifest's common rows: the trunk, its config and tokenizer, the
-//! label table and the optional heads.
+//! label table and the optional heads. Their checks that need no setting
+//! run as the manifest parses, for every reader: the label tables, each
+//! artifact row's shape, each head's parameters and trunk binding, and the
+//! platform rows. What a section pins is checked by the loader.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde::Deserialize;
 
-use super::Artifact;
+use super::platform::{self, Platform};
+use super::{Artifact, FORMAT_VERSION};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,6 +61,7 @@ pub(crate) struct CharacterConfig {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Manifest {
+    /// 2: another format is refused before this parse.
     pub(crate) format_version: u32,
     pub(crate) trunk: Artifact,
     pub(crate) config: Artifact,
@@ -66,6 +71,58 @@ pub(crate) struct Manifest {
     pub(crate) coref: Option<CorefHead>,
     pub(crate) vad: Option<VadHead>,
     pub(crate) characters: Option<CharacterHead>,
+    /// The runtime rows, required and possibly empty; each is checked on
+    /// every OS, whether or not this machine runs it.
+    pub(crate) platforms: Vec<Platform>,
+}
+
+impl Manifest {
+    pub(super) fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.format_version == FORMAT_VERSION,
+            "unsupported local oneironer manifest version"
+        );
+        validate_labels(&self.ner_labels)?;
+        let mut artifacts = vec![&self.trunk, &self.config, &self.tokenizer];
+        artifacts.extend(self.mentions.as_ref().map(|head| &head.weights));
+        artifacts.extend(self.coref.as_ref().map(|head| &head.weights));
+        artifacts.extend(self.vad.as_ref().map(|head| &head.weights));
+        artifacts.extend(self.characters.as_ref().map(|head| &head.config));
+        for artifact in artifacts {
+            artifact.validate()?;
+        }
+        let trunk = &self.trunk.sha256[..16];
+        if let Some(head) = &self.mentions {
+            anyhow::ensure!(
+                head.trunk_sha16 == trunk,
+                "mention head belongs to another trunk"
+            );
+            anyhow::ensure!(head.o_bias.is_finite(), "invalid mention O bias");
+            validate_labels(&head.labels)?;
+        }
+        if let Some(head) = &self.coref {
+            anyhow::ensure!(
+                head.trunk_sha16 == trunk && head.repr_dim > 0 && head.tau.is_finite(),
+                "invalid coreference head or trunk binding"
+            );
+            anyhow::ensure!(
+                self.mentions.is_some(),
+                "coreference requires a mention proposer"
+            );
+        }
+        if let Some(head) = &self.vad {
+            anyhow::ensure!(
+                head.trunk_sha16 == trunk && head.hidden_size > 0,
+                "invalid affect head or trunk binding"
+            );
+        }
+        platform::validate_rows(&self.platforms)
+    }
+
+    /// The platform row named `name`.
+    pub(crate) fn platform(&self, name: &str) -> Option<&Platform> {
+        self.platforms.iter().find(|row| row.name() == name)
+    }
 }
 
 /// The character vocabulary as the head reads it, and the embedding rows it
@@ -94,7 +151,7 @@ pub(crate) fn character_vocab(
     Ok((table, rows))
 }
 
-pub(crate) fn validate_labels(labels: &[String]) -> anyhow::Result<()> {
+fn validate_labels(labels: &[String]) -> anyhow::Result<()> {
     anyhow::ensure!(
         labels.first().map(String::as_str) == Some("O"),
         "local extraction BIO table must start with O"

@@ -1,13 +1,12 @@
 //! Native extraction on candle, with no HTTP server or second runtime.
 //!
-//! A model directory contains `oneironer.json`: format_version 1, hashed
-//! `trunk`, `config` and `tokenizer` artifacts, `ner_labels` in classifier
-//! order, and optional `mentions`, `coref`, `vad` and `characters` heads.
-//! Artifact rows have `file` and full `sha256` fields. Head rows name their
-//! `trunk_sha16`. The SHA-256 prefix of this manifest is the served stack
-//! identity, binding the tokenizer, backbone config, all weights, label
-//! tables and decode knobs. Weights retain the model repository's state-dict
-//! names in safetensors.
+//! A model directory is a format-2 bundle ([`super::bundle`]): its
+//! `oneironer.json` names the hashed trunk, config and tokenizer, the label
+//! table in classifier order and the optional heads, each head naming its
+//! `trunk_sha16`, and its SHA-256 prefix is the served stack, binding every
+//! file, table and decode knob. Candle reads the common rows only; the
+//! platform rows are other runtimes'. Weights retain the model repository's
+//! state-dict names in safetensors.
 //!
 //! `characters` names the checkpoint's own training config, which holds the
 //! character vocabulary and width, and the decode revision; the head's
@@ -25,10 +24,9 @@ use candle_core::{Device, Module};
 use candle_nn::{Linear, linear};
 use oneiron::ModelId;
 use oneiron::memory::extraction::{EncoderInput, EncoderOutput, NerSpan};
-use sha2::{Digest, Sha256};
 use tokenizers::Tokenizer;
 
-use super::bundle::{CharacterConfig, Manifest, character_vocab, validate_labels};
+use super::bundle::{CharacterConfig, Manifest, ReadManifest, character_vocab, read_manifest};
 use super::endpoint::{CONTRACT_VERSION, ModelCard, Returns};
 use crate::config::{EmbedderDevice, OneironerConfig};
 use backbone::{Backbone, Config};
@@ -86,19 +84,16 @@ impl LocalTagger {
             .model_dir
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("oneironer.model_dir is required"))?;
-        let manifest_bytes = std::fs::read(dir.join("oneironer.json"))?;
-        let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
-        anyhow::ensure!(
-            manifest.format_version == 1,
-            "unsupported local oneironer manifest version"
-        );
-        validate_labels(&manifest.ner_labels)?;
+        // The format, every closed row and every check no setting decides.
+        let ReadManifest {
+            manifest,
+            stack_sha16: stack,
+        } = read_manifest(dir)?;
         let checkpoint = config.checkpoint_sha16.as_deref().unwrap_or_default();
         anyhow::ensure!(
-            manifest.trunk.sha256.len() == 64 && manifest.trunk.sha256.starts_with(checkpoint),
+            manifest.trunk.sha256.starts_with(checkpoint),
             "local oneironer checkpoint does not match checkpoint_sha16"
         );
-        let stack = format!("{:x}", Sha256::digest(&manifest_bytes))[..16].to_owned();
         anyhow::ensure!(
             config
                 .stack_sha16
@@ -163,12 +158,6 @@ impl LocalTagger {
             .mentions
             .as_ref()
             .map(|head| -> anyhow::Result<Linear> {
-                anyhow::ensure!(
-                    head.trunk_sha16 == checkpoint,
-                    "mention head belongs to another trunk"
-                );
-                anyhow::ensure!(head.o_bias.is_finite(), "invalid mention O bias");
-                validate_labels(&head.labels)?;
                 Ok(linear(
                     body.hidden_size,
                     head.labels.len(),
@@ -180,14 +169,6 @@ impl LocalTagger {
             .coref
             .as_ref()
             .map(|head| -> anyhow::Result<Coreference> {
-                anyhow::ensure!(
-                    head.trunk_sha16 == checkpoint && head.repr_dim > 0 && head.tau.is_finite(),
-                    "invalid coreference head or trunk binding"
-                );
-                anyhow::ensure!(
-                    mentions.is_some(),
-                    "coreference requires a mention proposer"
-                );
                 Ok(Coreference::load(
                     head.weights.weights(dir, &device)?,
                     body.hidden_size,
@@ -200,10 +181,6 @@ impl LocalTagger {
             .vad
             .as_ref()
             .map(|head| -> anyhow::Result<Affect> {
-                anyhow::ensure!(
-                    head.trunk_sha16 == checkpoint && head.hidden_size > 0,
-                    "invalid affect head or trunk binding"
-                );
                 Ok(Affect::load(
                     head.weights.weights(dir, &device)?,
                     body.hidden_size,
@@ -275,6 +252,15 @@ impl LocalTagger {
                 tool: "oneironer-local",
                 code: "native extraction failed".to_owned(),
             })
+    }
+
+    /// The tokens of `input`'s live window, special tokens included: the
+    /// window [`Self::infer`] tags it in (`Window::new`), its context joined
+    /// and cut to the live budget, whichever window this tagger tags in.
+    /// Calibration holds a reference case to a row's max window by it.
+    pub(crate) fn window_tokens(&self, input: &EncoderInput) -> anyhow::Result<usize> {
+        let window = Window::new(input, &self.tokenizer, self.cap, self.live)?;
+        Ok(window.encoding.len())
     }
 
     /// The revision of this build's decoder: what a bundle's character head
