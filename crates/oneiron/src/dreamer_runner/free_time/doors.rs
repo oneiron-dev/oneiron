@@ -160,6 +160,10 @@ pub struct FreeTimeItemReceiptView {
     pub attempt: Option<String>,
     /// The Proposed claim a for-human item landed, 32 hex.
     pub proposal: Option<String>,
+    /// The code of a for-human item's read of its human's context that
+    /// failed: the item ran on its own records. `None` when that context
+    /// read, or there was none to read.
+    pub context_unread: Option<String>,
     /// Vault clock seconds.
     pub at: u64,
 }
@@ -452,6 +456,7 @@ fn receipt_view(receipt: &FreeTimeItemReceipt) -> FreeTimeItemReceiptView {
         policy_revision: receipt.policy_revision,
         attempt: receipt.attempt.map(|attempt| bytes_to_hex_lower(&attempt)),
         proposal: receipt.proposal.map(|proposal| proposal.to_hex()),
+        context_unread: receipt.context_unread.clone(),
         at: receipt.at,
     }
 }

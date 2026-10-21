@@ -331,4 +331,96 @@ impl CodeRunBridgeCall {
             _ => None,
         })
     }
+
+    /// The answer this settled row keeps, as its call was answered (FIX
+    /// 5837): a verb's JSON output, exactly as the row stores it, so a value
+    /// the side-row wall masked stays masked. `None` for any other outcome:
+    /// a refusal, a failure, a wait, or an answer an erase took. No live call
+    /// is matched and no secret is read back.
+    ///
+    /// # Errors
+    ///
+    /// An outcome that does not decode.
+    pub(crate) fn program_stored_answer(&self) -> Result<Option<serde_json::Value>> {
+        Ok(match decode_self_dispatch_outcome(&self.outcome)? {
+            SelfDispatchOutcome::AgentVerb(answer) => Some(answer.output),
+            _ => None,
+        })
+    }
+}
+
+impl Vault {
+    /// Whether `run`'s resume checkpoint lines up with its code run's record
+    /// at `txn`'s revision, as a pinned entry of `skill` at `content_hash`
+    /// and `contract_digest` finds it before it answers a call (FIX 5880):
+    /// with no head, the record holds no call; with one, the head's frontier
+    /// is the record's, its pin is this one, every call its pages list is the
+    /// record row it names, and the row it parked on holds a wait. `None`
+    /// when it does; otherwise the first disagreement. Read-only: nothing is
+    /// repaired, resumed or answered here, and a head behind its record stays
+    /// behind (its repair is FIX 5881's).
+    ///
+    /// # Errors
+    ///
+    /// Storage; a head, a page or a row's outcome that does not decode, or a
+    /// page missing.
+    pub(crate) fn validate_program_resume_checkpoint_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        run: EntityId,
+        skill: EntityId,
+        content_hash: &str,
+        contract_digest: &[u8; 32],
+    ) -> Result<Option<&'static str>> {
+        let record = self.get_code_run_replay_record_in_txn(txn, &run)?;
+        let Some(head) = program_resume_head_in_txn(self, txn, run)? else {
+            let unlisted = record
+                .as_ref()
+                .is_some_and(|record| !record.bridge_calls.is_empty());
+            return Ok(unlisted.then_some("the run's record holds calls no checkpoint lists"));
+        };
+        let Some(record) = record else {
+            return Ok(Some("the checkpoint names a code run with no record"));
+        };
+        let state_hash = record
+            .step_checkpoints
+            .last()
+            .map_or([0; 32], |checkpoint| checkpoint.state_hash);
+        if u64::try_from(record.bridge_calls.len()).ok() != Some(head.bridge_calls)
+            || head.state_hash != state_hash
+        {
+            return Ok(Some(
+                "the checkpoint is not the frontier its run's record holds",
+            ));
+        }
+        if head.skill != skill
+            || head.content_hash != content_hash
+            || head.contract_digest != *contract_digest
+        {
+            return Ok(Some("the checkpoint replays another pinned program"));
+        }
+        let row_at = |seq: u64| {
+            usize::try_from(seq)
+                .ok()
+                .and_then(|index| record.bridge_calls.get(index))
+                .filter(|row| row.seq == seq)
+        };
+        for listed in program_resume_calls_in_txn(self, txn, run, 0, head.applied)? {
+            if row_at(listed.row).is_none() {
+                return Ok(Some("a settled call's record row is missing"));
+            }
+        }
+        if let Some(wait) = head.wait {
+            let parks = match row_at(wait.row) {
+                Some(row) => row.program_durable_wait()?.is_some(),
+                None => false,
+            };
+            if !parks {
+                return Ok(Some(
+                    "the record row the checkpoint parked on holds no wait",
+                ));
+            }
+        }
+        Ok(None)
+    }
 }

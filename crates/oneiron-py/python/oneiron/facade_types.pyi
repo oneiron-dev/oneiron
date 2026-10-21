@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1096 facade rows, 3777 declarations.
-Inputs: 1031 of 1096 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 983 of 1096 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1113 facade rows, 3818 declarations.
+Inputs: 1048 of 1113 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1000 of 1113 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -11043,6 +11043,173 @@ class GitPushGrantRevokeOutput(TypedDict):
     changed: bool
     member: NotRequired[EntityId | None]
     act_ref: NotRequired[str | None]
+class RepoAnchorBindInput(TypedDict):
+    repo: str
+    project: EntityId
+class RepoAnchorBindOutput(TypedDict):
+    repo: str
+    anchor: GitPushRepo
+    changed: bool
+class RepoSnapshotsGetInput(TypedDict):
+    repo: EntityId
+    ref: str
+    snapshot: str
+class RepoSnapshotView(TypedDict):
+    repo: EntityId
+    ref: str
+    commit: str
+    snapshot: str
+    artifact: EntityId
+    files: list[CodeSnapshotFile]
+RepoSnapshotsGetOutput = RepoSnapshotView
+class RepoSnapshotsReadInput(TypedDict):
+    repo: EntityId
+    ref: str
+    snapshot: str
+    path: str
+class RepoSnapshotsReadOutput(TypedDict):
+    repo: EntityId
+    ref: str
+    snapshot: str
+    file: CodeSnapshotFile
+    content: str
+    text_sha256: str
+class RepoSymbolsDefinitionsInput(TypedDict):
+    repo: EntityId
+    ref: str
+    snapshot: str
+    name: str
+class RepoSymbolsDefinitionsOutput(TypedDict):
+    repo: EntityId
+    ref: str
+    snapshot: str
+    definitions: list[CodeSnapshotDefinition]
+class RepoViewsGetInput(TypedDict):
+    work: EntityId
+class RepoWorkFile(TypedDict):
+    path: str
+    content_hash_blake3: str
+class RepoWorkView(TypedDict):
+    work: EntityId
+    repo: EntityId
+    ref: str
+    base_green: str
+    base_snapshot: str
+    fork_hash: str
+    files: list[RepoWorkFile]
+RepoViewsGetOutput = RepoWorkView
+class RepoViewsReadInput(TypedDict):
+    work: EntityId
+    path: str
+class RepoViewsReadOutput(TypedDict):
+    work: EntityId
+    path: str
+    bytes: list[int]
+    sha256: str
+class RepoMergeQueueObserveInput(TypedDict):
+    work: EntityId
+class RepoQueueEntryView(TypedDict):
+    batch: str
+    work: EntityId
+    proposals: list[EntityId]
+    declaration: NotRequired[EntityId | None]
+    state: BatchState
+    base_green: str
+    expected_head: str
+    landed_head: NotRequired[str | None]
+    blockers: list[EntityId]
+class RepoMergeQueueObserveOutput(TypedDict):
+    work: EntityId
+    repo: EntityId
+    ref: str
+    base_green: str
+    head_commit: str
+    green_commit: str
+    green_moved: bool
+    entries: list[RepoQueueEntryView]
+class RepoSnapshotsIngestInput(TypedDict):
+    repo: EntityId
+    ref: str
+RepoSnapshotsIngestOutput = RepoSnapshotView
+class RepoWorkOpenInput(TypedDict):
+    repo: EntityId
+    ref: str
+RepoWorkOpenOutput = RepoWorkView
+class RepoSymbolsDeclareInput(TypedDict):
+    work: EntityId
+    symbols: list[EntityId]
+    ttl_seconds: int
+class RepoSymbolDeclarationView(TypedDict):
+    work: EntityId
+    declaration: EntityId
+    task: EntityId
+    symbols: list[EntityId]
+    expires_at: int
+    held: bool
+    blockers: list[EntityId]
+RepoSymbolsDeclareOutput = RepoSymbolDeclarationView
+class RepoSymbolsRenewInput(TypedDict):
+    work: EntityId
+    declaration: EntityId
+RepoSymbolsRenewOutput = RepoSymbolDeclarationView
+class RepoSymbolsReleaseInput(TypedDict):
+    work: EntityId
+    declaration: EntityId
+class RepoSymbolsReleaseOutput(TypedDict):
+    work: EntityId
+    declaration: EntityId
+    task: EntityId
+class RepoProposalSubmitInput(TypedDict):
+    work: EntityId
+    path: str
+    content: list[int]
+    message: str
+    declaration: NotRequired[EntityId | None]
+class RepoProposalSubmitOutput(TypedDict):
+    proposal: EntityId
+    work: EntityId
+    path: str
+    base_green: str
+    base_snapshot: str
+    session: EntityId
+    provenance_claim: EntityId
+    declaration: NotRequired[EntityId | None]
+    status: RepoProposalStatus
+class RepoMergeQueueEnqueueInput(TypedDict):
+    work: EntityId
+    proposals: list[EntityId]
+    declaration: NotRequired[EntityId | None]
+RepoMergeQueueEnqueueOutput = RepoQueueEntryView
+class RepoCheckoutBindInput(TypedDict):
+    repo: EntityId
+    ref: str
+    checkout: str
+    epoch: int
+    endpoint: NotRequired[str | None]
+class RepoCheckoutBindOutput(TypedDict):
+    repo: EntityId
+    ref: str
+    checkout: str
+    epoch: int
+    remote_url: NotRequired[str | None]
+class RepoExportInput(TypedDict):
+    repo: EntityId
+    ref: str
+    checkout: str
+    epoch: int
+    revision: EntityId
+    expected_old_oid: NotRequired[str | None]
+class RepoExportOutput(TypedDict):
+    repo: EntityId
+    ref: str
+    revision: EntityId
+    git_commit: str
+    receipt: EntityId
+    status: OriginPublicationState
+    grant: EntityId
+    ref_was_already_applied: bool
+    wire_replayed: bool
+    wire_rejected: bool
 class BaseAgentPrincipal(TypedDict):
     name: str
     id: EntityId
@@ -12457,7 +12624,7 @@ class TaskAskReceipt(TypedDict):
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "ConsultResult", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "WorldPrivacySet", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team", "WorkflowDispatch", "RepoSnapshotsGet", "RepoSnapshotsRead", "RepoSymbolsDefinitions", "RepoViewsGet", "RepoViewsRead", "RepoMergeQueueObserve", "RepoSnapshotsIngest", "RepoWorkOpen", "RepoSymbolsDeclare", "RepoSymbolsRenew", "RepoSymbolsRelease", "RepoProposalSubmit", "RepoMergeQueueEnqueue"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "ConsultResult", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "WorldPrivacySet", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team", "WorkflowDispatch", "RepoSnapshotsGet", "RepoSnapshotsRead", "RepoSymbolsDefinitions", "RepoViewsGet", "RepoViewsRead", "RepoMergeQueueObserve", "RepoSnapshotsIngest", "RepoWorkOpen", "RepoSymbolsDeclare", "RepoSymbolsRenew", "RepoSymbolsRelease", "RepoProposalSubmit", "RepoMergeQueueEnqueue", "RepoCheckoutBind", "RepoExport"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId
@@ -17079,11 +17246,25 @@ class ProgramCheckpointRequest(TypedDict):
     root: str
     cursor: NotRequired[str | None]
     limit: NotRequired[int | None]
+class ProgramCheckpointConsentView(TypedDict):
+    binding_digest: str
+    effect_digest: str
+    state: str
+    ask: NotRequired[str | None]
+    choice: NotRequired[str | None]
+    word: NotRequired[str | None]
+    answer_receipt: NotRequired[str | None]
+    outcome: NotRequired[str | None]
+    settlement_receipt: NotRequired[str | None]
+    consumption_receipt: NotRequired[str | None]
+    settlement_facts_digest: NotRequired[str | None]
+    consumption_facts_digest: NotRequired[str | None]
 class ProgramCheckpointWaitView(TypedDict):
     row: int
     wait_id: str
     generation: int
     delivered: bool
+    consent: NotRequired[ProgramCheckpointConsentView | None]
 class ProgramCheckpointHeadView(TypedDict):
     committed_by: str
     content_hash: str
@@ -17113,6 +17294,19 @@ class ProgramCheckpointView(TypedDict):
     calls: list[ProgramCheckpointCallView]
     next_cursor: NotRequired[str | None]
     withheld: list[str]
+ProgramHoldReleaseAction = Literal["stop", "resume_validated"]
+class ReleaseTurnProgramHoldRequest(TypedDict):
+    attempt: str
+    reason: str
+    parked_at: int
+    action: ProgramHoldReleaseAction
+    note: NotRequired[str | None]
+class ProgramHoldReleaseView(TypedDict):
+    attempt: str
+    action: ProgramHoldReleaseAction
+    released: str
+    state: str
+    effected: bool
 ConsolidationHomeNode = TypedDict("ConsolidationHomeNode", {"node_id": str, "class": str, "elected_at": int})
 ConsolidationHomeCandidate = TypedDict("ConsolidationHomeCandidate", {"node_id": str, "class": NotRequired[str | None], "cloud": bool, "attached": bool, "always_on_local": bool, "primary_device": bool})
 class ConsolidationHomePickHead(TypedDict):
@@ -17571,6 +17765,7 @@ class FreeTimeItemReceiptView(TypedDict):
     policy_revision: int
     attempt: NotRequired[str | None]
     proposal: NotRequired[str | None]
+    context_unread: NotRequired[str | None]
     at: int
 class FreeTimeItemView(TypedDict):
     item: str
