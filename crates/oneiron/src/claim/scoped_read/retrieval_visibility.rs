@@ -1,5 +1,6 @@
 //! The retrieval authority floor for graph channels on a scoped read.
 
+use super::access_gate::HeldAuthority;
 use super::*;
 
 pub(crate) struct RetrievalVisibility<'read, 'vault> {
@@ -33,13 +34,33 @@ impl<'vault> ScopedRead<'vault> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
     ) -> Result<bool> {
+        self.is_entity_retrievable_held_in(txn, policy, filter, id, &HeldAuthority::default())
+    }
+
+    /// [`Self::is_entity_retrievable_with_policy_in`] under the authority one
+    /// serving txn holds for all its rows (FIX 7462).
+    pub(super) fn is_entity_retrievable_held_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+        authority: &HeldAuthority<'vault>,
+    ) -> Result<bool> {
         // Audience, NOTE privacy, relationship grants, credential scope and
         // type/scalar ceilings all live in the shared row predicate; graph
         // traversal must not fork it.
         let Some(row) = self.entity_record_in(txn, id)? else {
             return Ok(false);
         };
-        if !self.is_entity_raw_readable_with_filter_in(txn, policy, id, &row.encode(), filter)? {
+        if !self.is_entity_raw_readable_held_in(
+            txn,
+            policy,
+            id,
+            &row.encode(),
+            filter,
+            authority,
+        )? {
             return Ok(false);
         }
         if row.entity_type != crate::registry::ENTITY_TYPE_TURN {

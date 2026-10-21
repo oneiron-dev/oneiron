@@ -2,9 +2,10 @@
 //! threads, an unbound agent's own entry, a room turn's ceiling and the
 //! explicit audience and peer reads every admission path applies.
 
+use super::super::access_gate::HeldAuthority;
 use super::*;
 
-impl ScopedRead<'_> {
+impl<'v> ScopedRead<'v> {
     /// The audience conjunct every admission path applies, over the current
     /// row. Paths that serve a known revision use [`Self::audience_readable_raw_in`].
     pub(in crate::claim::scoped_read) fn audience_readable_in(
@@ -32,7 +33,7 @@ impl ScopedRead<'_> {
         let Some(record) = self.entity_record_in(txn, id)? else {
             return Ok(false);
         };
-        self.audience_readable_raw_in(txn, id, &record.encode())
+        self.audience_readable_raw_in(txn, id, &record.encode(), &HeldAuthority::default())
     }
 
     /// An unbound agent's or the system's read of the revision `raw` of
@@ -71,12 +72,14 @@ impl ScopedRead<'_> {
     /// own read of that same revision, so the turn reads inside the room's
     /// Scope (ARCH-0067 §8). The roster is
     /// read in this snapshot, so a member who joined after the key was built
-    /// binds this row too.
+    /// binds this row too. Each peer's read shares `authority`'s Grants for
+    /// this serving txn (FIX 7462), each reading its own.
     pub(in crate::claim::scoped_read) fn audience_readable_raw_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         if self.device_withholds_in(txn, id, Some(raw))? {
             return Ok(false);
@@ -87,7 +90,7 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         if self.actor_key.room_turn.is_none() && self.actor_key.worlds.is_none() {
-            return self.audience_conjunct_in(txn, id, raw);
+            return self.audience_conjunct_in(txn, id, raw, authority);
         }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -134,11 +137,11 @@ impl ScopedRead<'_> {
             // The room reads only what every member may read: a row private
             // to the caller is not the room's. Its peers stand in private
             // threads as its roster does.
-            if !self.peers_read_raw_in(txn, &room.peers, id, raw, room.personal)? {
+            if !self.peers_read_raw_in(txn, &room.peers, id, raw, room.personal, authority)? {
                 return Ok(false);
             }
         }
-        self.audience_conjunct_in(txn, id, raw)
+        self.audience_conjunct_in(txn, id, raw, authority)
     }
 
     /// Whether the caller this read authenticates stands in each private
@@ -240,6 +243,7 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         let own = self
             .actor_key
@@ -255,6 +259,6 @@ impl ScopedRead<'_> {
         {
             return Ok(false);
         }
-        self.peers_read_raw_in(txn, &self.peer_reads, id, raw, false)
+        self.peers_read_raw_in(txn, &self.peer_reads, id, raw, false, authority)
     }
 }
