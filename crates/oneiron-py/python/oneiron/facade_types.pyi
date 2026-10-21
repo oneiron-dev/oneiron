@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1129 facade rows, 3921 declarations.
+Census: 1129 facade rows, 3922 declarations.
 Inputs: 1064 of 1129 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1016 of 1129 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -422,7 +422,7 @@ class ConcernCardRequest(TypedDict):
 AgentHealthSignal = Literal["loop", "failed_check_repeat", "cost_spike", "long_wait", "silent", "duplicate_work", "unsupported_done", "misalignment"]
 AgentHealthTone = Literal["struggling", "off_course", "concern"]
 AgentHealthConfidence = Literal["high", "low"]
-AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs"]
+AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs", "environment_cause"]
 AgentHealthMove = Literal["note", "steer", "budget", "reassign", "ask_coach", "hold"]
 AgentHealthOutcome = Literal["open", "confirmed", "dismissed", "unresolved"]
 class HealthBriefPin(TypedDict):
@@ -493,6 +493,14 @@ class HealthReviewReceipt(TypedDict):
     observed_brief: NotRequired[HealthBriefPin | None]
     label: NotRequired[bool | None]
     projected: bool
+class HealthCauseSource(TypedDict):
+    source: EntityId
+    receipt: str
+    skill: NotRequired[EntityId | None]
+    label: str
+    share: float
+    judge_revision: NotRequired[str | None]
+    displaced_by: NotRequired[str | None]
 class AgentHealthCard(TypedDict):
     subject: EntityId
     signal: AgentHealthSignal
@@ -523,6 +531,7 @@ class AgentHealthCard(TypedDict):
     observed_brief: NotRequired[HealthBriefPin | None]
     reviewer: str
     review_outcomes: list[HealthReviewReceipt]
+    causes: list[HealthCauseSource]
 RunTreeStatus = Literal["queued", "running", "paused", "completed", "failed", "cancelled", "abandoned"]
 class RunTreeTimestamps(TypedDict):
     created_at: int
