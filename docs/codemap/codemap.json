@@ -92234,7 +92234,57 @@
      "path": "src/oneironer/bundle/platform.rs",
      "purpose": "The manifest's runtime rows (contract rev 3, B1-B2): the Core ML model and the MLX worker, one archive each",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 29
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/coreml/arrays.rs",
+     "purpose": "One Core ML prediction's arrays (FIX 6755 slice 2c, contract rev 3 B2), built on macOS aarch64 only",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/coreml/decode.rs",
+     "purpose": "The Core ML worker's answer from its outputs (FIX 6755 slice 2c, contract rev 3 B2), on every target",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/coreml/inputs.rs",
+     "purpose": "The Core ML worker's inputs (FIX 6755 slice 2c, contract rev 3 B2), on every target: the trunk's raw word…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/coreml/mod.rs",
+     "purpose": "The native Core ML worker (FIX 6755 slice 2c, contract rev 3 B2): the bundle's `coreml-ane` row, its…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/coreml/model.rs",
+     "purpose": "The compiled model's functions on Core ML (FIX 6755 slice 2c, contract rev 3 B2), built on macOS aarch64 only",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -92312,7 +92362,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/engines/admission.rs",
-     "purpose": "The background admission of a slot's platform runtimes (FIX 6755 slice 3, Engine calls 3-5): on a Mac, the…",
+     "purpose": "The background admission of a slot's platform runtimes (FIX 6755 slices 3 and 2c, Engine calls 3-5): on a…",
      "surface": {
       "crate-vis": 3
      }
@@ -92332,9 +92382,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/engines/candidate.rs",
-     "purpose": "A platform runtime's candidate on this machine (FIX 6755 slice 3): the bundle's `mlx-worker` row, found…",
+     "purpose": "A platform runtime's candidate on this machine (FIX 6755 slices 3 and 2c): the bundle's `mlx-worker` or…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -92364,7 +92414,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -92384,7 +92434,7 @@
      "path": "src/oneironer/local/heads.rs",
      "purpose": "The trained coreference ranker, turn-affect MLP and character edge head",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -92414,7 +92464,7 @@
      "path": "src/oneironer/local/window/platform.rs",
      "purpose": "The window as a platform worker tags it (FIX 6755 slice 3): the text it is sent, the current turn's byte…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -94921,7 +94971,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 36,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95049,7 +95099,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1031,
+   "source_files": 1036,
    "test_files": 182
   },
   "oneiron-spawn": {
