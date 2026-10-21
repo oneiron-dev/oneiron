@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "package": "@tsrs/wasm",
+  "version": "0.18.0-ts7.1.0-dev.20260929",
+  "tarball": "https://registry.npmjs.org/@tsrs/wasm/-/wasm-0.18.0-ts7.1.0-dev.20260929.tgz",
+  "integrity": "sha512-1Wv0GU3OIsY1x37cUykxrDLTeCWb81lWS/BCuw2ZfYcB6E7cno3mgfZvOA/3uV1hKs6fBN94LEntmMjULNaRTw==",
+  "shasum": "dce3aafcffa8ea81c578752d728f7384f7821f74",
+  "repository": "https://github.com/oxc-project/tsrs.git",
+  "tag": "v0.18.0",
+  "commit": "5f92808bc92bb97b06212153ab73d28d551c0b9b",
+  "typescript_version": "7.1.0-dev.20260929",
+  "typescript_commit": "b85298b6a81f772d080b0455de0ca9d744cd6fd6",
+  "license": "Apache-2.0",
+  "module": "tsrs.wasm",
+  "sha256": "bb070f1416dccc5956d177f527b81534a86032efd4d94898dfc20aae1a5c4d18",
+  "bytes": 9766093,
+  "notices": {
+    "LICENSE": "a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47",
+    "NOTICE.txt": "1a4f42d83bf205aaf1b474e1a8c133cc5365003a188ba5f257d8aa4741355118"
+  },
+  "imports": {
+    "tsrs_host.fs": "(i32,i32,i32)->(i32)",
+    "tsrs_host.fs_take": "(i32)->()",
+    "wasi_snapshot_preview1.clock_time_get": "(i32,i64,i32)->(i32)",
+    "wasi_snapshot_preview1.environ_get": "(i32,i32)->(i32)",
+    "wasi_snapshot_preview1.environ_sizes_get": "(i32,i32)->(i32)",
+    "wasi_snapshot_preview1.fd_close": "(i32)->(i32)",
+    "wasi_snapshot_preview1.fd_fdstat_get": "(i32,i32)->(i32)",
+    "wasi_snapshot_preview1.fd_filestat_get": "(i32,i32)->(i32)",
+    "wasi_snapshot_preview1.fd_prestat_dir_name": "(i32,i32,i32)->(i32)",
+    "wasi_snapshot_preview1.fd_prestat_get": "(i32,i32)->(i32)",
+    "wasi_snapshot_preview1.fd_read": "(i32,i32,i32,i32)->(i32)",
+    "wasi_snapshot_preview1.fd_write": "(i32,i32,i32,i32)->(i32)",
+    "wasi_snapshot_preview1.path_filestat_get": "(i32,i32,i32,i32,i32)->(i32)",
+    "wasi_snapshot_preview1.path_open": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)",
+    "wasi_snapshot_preview1.path_readlink": "(i32,i32,i32,i32,i32,i32)->(i32)",
+    "wasi_snapshot_preview1.poll_oneoff": "(i32,i32,i32,i32)->(i32)",
+    "wasi_snapshot_preview1.proc_exit": "(i32)->()",
+    "wasi_snapshot_preview1.random_get": "(i32,i32)->(i32)",
+    "wasi_snapshot_preview1.sched_yield": "()->(i32)"
+  },
+  "exports": [
+    "memory",
+    "tsrs_input",
+    "tsrs_output",
+    "tsrs_output_len",
+    "tsrs_run"
+  ],
+  "sources": {
+    "vendor-tsrs.py": "a5e9a5dedc5faefecd9e0cc59e2718f8e0124d65e85d7857380a9df7f9167df2"
+  }
+}

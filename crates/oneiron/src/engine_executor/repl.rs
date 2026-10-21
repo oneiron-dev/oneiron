@@ -245,13 +245,6 @@ impl EngineNativeExecutor<'_> {
                 script_output_path(completed_steps),
                 &script,
             )?;
-            // Shadow mode type-checks the program before it runs and acts on
-            // nothing it finds. The report is appended once the step's own
-            // state is durable.
-            let mut shadow = self
-                .code_check
-                .map(|shadow| ShadowStep::check(shadow, config.run_id, completed_steps, &script));
-
             let bridge_start = record.bridge_calls.len();
             // ONE-1314: the DURABLE history is the load-bearing half of the
             // lineage seam. An outbound effect parks its step, so a run that
@@ -278,7 +271,25 @@ impl EngineNativeExecutor<'_> {
                 boundary,
                 determinism: config.determinism,
             };
-            let step_outcome = match self.runtime.run_step_cancellable(step, &mut host, cancel) {
+            // Shadow mode type-checks the program on its own thread while the
+            // program runs, and acts on nothing it finds: the program never
+            // waits on a check (FIX 8561). A check thread that cannot start
+            // or panics leaves the step unchecked. The report is appended
+            // once the step's own state is durable.
+            let (mut shadow, step_outcome) = std::thread::scope(|scope| {
+                let checking = self.code_check.and_then(|shadow| {
+                    let (run_id, program) = (config.run_id, script.as_str());
+                    std::thread::Builder::new()
+                        .spawn_scoped(scope, move || {
+                            ShadowStep::check(shadow, run_id, completed_steps, program)
+                        })
+                        .ok()
+                });
+                let step_outcome = self.runtime.run_step_cancellable(step, &mut host, cancel);
+                let shadow = checking.and_then(|checking| checking.join().ok());
+                (shadow, step_outcome)
+            });
+            let step_outcome = match step_outcome {
                 Ok(outcome) => outcome,
                 Err(err) => {
                     // A cancelled root fails the step: the bridge rows it
