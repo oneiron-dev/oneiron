@@ -21500,6 +21500,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/call_labels.rs",
+     "purpose": "Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/confession.rs",
      "purpose": "The confession ask and its parse (OF-544, ARCH-0079): after a DONE line, one fenced block naming each…",
      "surface": {
@@ -21567,13 +21577,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch, and the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 9
      }
     },
     {
@@ -21581,9 +21591,29 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction/cited.rs",
-     "purpose": "The extraction step's citation check (FIX 7274): a TURN byte range that verification would refuse the whole…",
+     "purpose": "The extraction step's citation check (FIX 7274): a citation that verification would refuse the whole…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/extraction/quote_binding.rs",
+     "purpose": "Exact-quote evidence (FIX 7506, ARCH-0026 row 1)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/extraction/wire.rs",
+     "purpose": "The extraction reply's wire (FIX 7506, ARCH-0026 row 1): its contract's shape, and how a reply's call-local…",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -21613,7 +21643,17 @@
      "path": "src/dreamer_consolidation/extracted_people.rs",
      "purpose": "Explicit PERSON outputs from the production extraction response",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/extracted_people/bindings.rs",
+     "purpose": "The engine's person mint (FIX 7506, ARCH-0026 row 1): a reply declares a person it names as `new:P<n>`…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -21690,7 +21730,17 @@
      "path": "src/dreamer_consolidation/neighbourhood.rs",
      "purpose": "The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/neighbourhood/render.rs",
+     "purpose": "The listing as a call shows it (FIX 7506): each entity and claim by its call-local label, never its id",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -21737,6 +21787,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/note_review/candidates.rs",
+     "purpose": "One NOTE review reply's candidates (OF-073), read through the review call's own labels (FIX 7506): a subject…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/note_text.rs",
      "purpose": "The text of one NOTE as the Dreamer may read it (ARCH-0032 stage 2), in the caller's transaction: one…",
      "surface": {
@@ -21764,7 +21824,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/parallel.rs",
@@ -21935,7 +21995,7 @@
      "path": "src/dreamer_consolidation/resources/pins.rs",
      "purpose": "What reading an extraction candidate needs from its branch: the pinned sources, the prior heads and the…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -68858,7 +68918,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 87,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69901,9 +69961,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 183,
+   "over_bar": 182,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4431,
+   "source_files": 4437,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73845,7 +73905,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 54,
+      "const": 55,
       "crate-vis": 1
      }
     },
