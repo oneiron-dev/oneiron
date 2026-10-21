@@ -237,6 +237,8 @@ pub(crate) use super::hook_regen_doors::*;
 pub(crate) use super::host_trigger_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
 pub(crate) use super::merge_queue_doors::*;
+// The owner's merge queue checker doors (FIX 6868), likewise.
+pub(crate) use super::merge_queue_checker_doors::*;
 // The owner's root-request cancel door (FIX 5586), likewise.
 pub(crate) use super::root_request_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
@@ -1781,6 +1783,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.merge_queue.land_reviewed"
         | "vault.code.merge_queue.settle_slow"
         | "vault.code.merge_queue.recover"
+        | "vault.code.merge_queue.init"
+        | "vault.code.merge_queue.check"
+        | "vault.code.merge_queue.diagnose"
+        | "vault.code.merge_queue.check_status"
         | "vault.trusted_contacts.name"
         | "vault.trusted_contacts.dial.set"
         | "vault.trusted_contacts.tier.set"

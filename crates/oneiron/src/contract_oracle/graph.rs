@@ -48,6 +48,18 @@ struct ResolveNode {
 }
 
 impl WorkspaceGraph {
+    /// A graph with no affected-target hint (FIX 6868): a checked queue runs
+    /// its plan's whole declared phase lists whatever a batch touches, for a
+    /// repository in any language. It never means "no commands".
+    #[must_use]
+    pub fn unfiltered() -> Self {
+        Self {
+            roots: BTreeMap::new(),
+            downstream: BTreeMap::new(),
+            targets: BTreeMap::new(),
+        }
+    }
+
     /// The caller supplies resolved metadata from the exact candidate workspace.
     /// `--no-deps` metadata without a resolve graph is refused, not approximated.
     pub fn from_cargo_metadata(json: &[u8]) -> Result<Self> {

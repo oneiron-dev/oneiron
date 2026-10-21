@@ -9918,6 +9918,62 @@
       "host_door_lists": true
     },
     {
+      "name": "vault.code.merge_queue.init",
+      "description": "Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueInitializeRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueCheckWorkView",
+      "call": "memory.merge_queue_init_as(&memory.embedded_owner(\"vault.code.merge_queue.init\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.check",
+      "description": "Queue one fast or slow check on exact pinned inputs. Owner only. Excess checks wait; no pass, argv or output is accepted from the caller.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueCheckRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueCheckWorkView",
+      "call": "memory.merge_queue_check_as(&memory.embedded_owner(\"vault.code.merge_queue.check\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.diagnose",
+      "description": "Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueDiagnoseRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueCheckWorkView",
+      "call": "memory.merge_queue_diagnose_as(&memory.embedded_owner(\"vault.code.merge_queue.diagnose\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.check_status",
+      "description": "Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueCheckStatusRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueCheckWorkView",
+      "call": "memory.merge_queue_check_status_as(&memory.embedded_owner(\"vault.code.merge_queue.check_status\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
       "name": "vault.artifacts.export",
       "description": "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it.",
       "input": "crate::blob_artifact::ArtifactExportRequest",

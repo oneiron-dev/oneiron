@@ -16,7 +16,11 @@
 //! the T2a centroid rung over the entities its positive examples retrieved,
 //! and asks its model only on a miss (FIX 2078). A `session` detector reads
 //! the conversation's own words as the owner reads them off this device
-//! (FIX 2079). A state goes whole: its size is measured, never cut.
+//! (FIX 2079). A configured `t3` reads what its window's runs recorded,
+//! whole: each run's trace and stages, the bodies its results, candidates
+//! and queries name, its conversations and their message graph, with what
+//! was not recorded marked; a run with no trace is judged on its facts as
+//! before (OF-418 L2). A state goes whole: its size is measured, never cut.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,7 +35,7 @@ use oneiron::self_heal::distillation::{MintedExample, MintedT2};
 use oneiron::self_heal::tiered::{
     DETECTOR_DIAL, DetectorDecisions, DetectorPolicy, ProposedDiagnostic, WindowGrade,
 };
-use oneiron::self_heal::{CentroidCorpus, SessionText};
+use oneiron::self_heal::{CentroidCorpus, HealContextSeed, HealEvidenceContext, SessionText};
 use oneiron::store::RetrievalRunRecord;
 
 use crate::config::{DetectorTier, SelfHealConfig};
@@ -307,10 +311,11 @@ fn registered<'a>(vault: &oneiron::Vault, seed: &'a Detector, now: u64) -> Optio
 /// Grades one whole window. A T2 with a reviewed corpus tries T2a over every
 /// run first, and a match is its proposal; otherwise the detector asks its
 /// model question part by part, each part of at most [`WINDOW_RUNS`] runs
-/// over the state its runs make, with the reviewed examples and the
-/// session's text whole beside them, and the window has one verdict once
-/// every part is asked (OF-418 L6). Each question starts at the host's first
-/// staffed rung, up to the detector's ceiling and in its band (OF-418 L9).
+/// over the state its runs make, with the reviewed examples, the session's
+/// text and a configured `t3`'s recorded trace context of the whole window
+/// beside them (OF-418 L2), and the window has one verdict once every part
+/// is asked (OF-418 L6). Each question starts at the host's first staffed
+/// rung, up to the detector's ceiling and in its band (OF-418 L9).
 fn judge(
     vault: &oneiron::Vault,
     host: &DecisionHost,
@@ -330,6 +335,13 @@ fn judge(
         DetectorTier::Session => Some(vault.session_judge_context(principal, window)?),
         DetectorTier::T2 | DetectorTier::T3 => None,
     };
+    // OF-418 L2: a configured `t3` reads what the whole window recorded.
+    let trace = match detector {
+        Graded::Configured { seed, .. } if seed.tier == DetectorTier::T3 => {
+            Some(vault.heal_evidence_context(principal, HealContextSeed::RetrievalWindow(window)))
+        }
+        Graded::Configured { .. } | Graded::Minted { .. } => None,
+    };
     let examples = reviewed.map(|reviewed| &reviewed.examples);
     let dial = DecisionDial {
         first: host.dial(DETECTOR_DIAL.ceiling).first,
@@ -337,7 +349,7 @@ fn judge(
     };
     let mut grade = open_grade(vault, detector, window)?;
     for part in window.chunks(WINDOW_RUNS) {
-        let state = state_of(vault, part, examples, session.as_ref())?;
+        let state = state_of(vault, part, examples, session.as_ref(), trace.as_ref())?;
         let decisions = DetectorDecisions {
             ladder: host.ladder().ladder(),
             principal,
@@ -412,16 +424,19 @@ fn windows<'a>(
 }
 
 /// The whole state a window's providers read: the facts of every run, a
-/// minted T2's reviewed examples, and a session's readable text. Of runs,
-/// counts, signals and grades only, no query or result text; of a session,
-/// its own words as its reader may read them off this device. Nothing is
-/// cut: past `limits.maintenance_text_bytes` or `limits.maintenance_row_items`
-/// the pass asks and reads on.
+/// minted T2's reviewed examples, a session's readable text, and a `t3`'s
+/// recorded trace context. Of runs, counts, signals and grades only; of a
+/// session, its own words as its reader may read them off this device; of a
+/// trace context, the whole window's records and the text they name, as
+/// untrusted data (OF-418 L2). Nothing is cut: past
+/// `limits.maintenance_text_bytes` or `limits.maintenance_row_items` the pass
+/// asks and reads on.
 fn state_of(
     vault: &oneiron::Vault,
     runs: &[RetrievalRunRecord],
     examples: Option<&serde_json::Value>,
     session: Option<&SessionText>,
+    trace: Option<&HealEvidenceContext>,
 ) -> oneiron::Result<serde_json::Value> {
     let facts = run_facts(runs);
     let mut items = facts.len();
@@ -434,6 +449,9 @@ fn state_of(
         items += session.lines.len();
         state["session"] = serde_json::to_value(session)
             .map_err(|_| oneiron::Error::InvariantViolation("session text encode"))?;
+    }
+    if let Some(trace) = trace {
+        state["untrusted_trace_context"] = trace.value();
     }
     let bytes = serde_json::to_vec(&state).map_or(0, |bytes| bytes.len());
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
