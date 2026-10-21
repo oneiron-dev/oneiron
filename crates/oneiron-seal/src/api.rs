@@ -502,9 +502,14 @@ pub mod config {
         pub content_type: Option<String>,
     }
 
+    /// A fetched response. Its body is admitted memory (FIX 7655): its bytes
+    /// were reserved before they were allocated, and every owner shares them
+    /// and their reservation, so a clone copies no bytes. A custom fetcher
+    /// builds it with `AdmittedBytes::copy_from` (or `AdmittedBytes::empty`)
+    /// over the engine's `SealResourceLimits::memory`.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct FetchResponse {
-        pub body: Vec<u8>,
+        pub body: crate::memory::SharedBytes,
         pub content_type: Option<String>,
     }
 
@@ -520,8 +525,10 @@ pub mod config {
         ResponseTooLarge,
         #[error("fetch response was invalid")]
         InvalidResponse,
-        /// The memory the response's bytes needed was not reserved
-        /// (FIX 7654).
+        /// The memory the response's bytes needed was not reserved: the
+        /// machine's floor, the deadline, a cancelled call or the memory
+        /// service itself (FIX 7654, FIX 7655). The seal's own resource
+        /// error: the profile never fails over or degrades on it.
         #[error("fetch response memory: {0}")]
         Memory(crate::memory::SealMemoryRefusal),
     }

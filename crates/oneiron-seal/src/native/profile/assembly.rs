@@ -5,7 +5,7 @@ use std::sync::Arc;
 use rsa::rand_core::RngCore;
 
 use crate::api::{
-    Counter, FetchMethod, FetchPurpose, FetchRequest, PadesProfile, PreparedRevision,
+    Counter, FetchError, FetchMethod, FetchPurpose, FetchRequest, PadesProfile, PreparedRevision,
     ProfileDegradeReason, SealBackend, SealConfig, SealFetcher, SealResourceLimits, SealWarning,
     Sha256Digest, SignRevisionRequest, SignatureAlgorithm, SigningIdentity,
 };
@@ -147,7 +147,8 @@ async fn request_signature(
 }
 
 /// Ordered TSA failover (§5 rule 8, §7.4 step 3). Returns the first token
-/// that passes every §7.4-step-5 check.
+/// that passes every §7.4-step-5 check. A response memory refused is the
+/// seal's own resource error, never a reason to try the next authority.
 async fn fetch_timestamp_token(
     ctx: &SealContext<'_>,
     imprint: &Sha256Digest,
@@ -167,7 +168,14 @@ async fn fetch_timestamp_token(
                 content_type: Some("application/timestamp-query".to_string()),
             })
             .await;
-        let Ok(resp) = response else { continue };
+        let resp = match response {
+            Ok(resp) => resp,
+            Err(FetchError::Memory(refusal)) => {
+                return Err(refusal.seal_error(SealStage::Timestamp));
+            }
+            // Denied, unreachable, timed out or invalid: the next authority.
+            Err(_) => continue,
+        };
         let validated = tsp::validate_response(
             &resp.body,
             imprint,
@@ -420,7 +428,7 @@ pub(crate) async fn assemble(
     }
     let mut bytes = draft.bytes;
     if target >= PadesProfile::BaselineLt && achieved == PadesProfile::BaselineT {
-        match gather_validation_material(ctx, &identity, token.as_ref()).await {
+        match gather_validation_material(ctx, &identity, token.as_ref()).await? {
             Some(material) => {
                 bytes = append_dss(&bytes, ctx, &material)?;
                 achieved = PadesProfile::BaselineLt;

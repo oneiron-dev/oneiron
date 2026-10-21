@@ -79,8 +79,11 @@ impl NativeSealEngine {
     }
 
     /// Engine whose fetcher is the SSRF-guarded HTTP client built from
-    /// `config.fetch_policy` — the wired policy path (§5). A config whose
-    /// `resource_limits.memory` names no service is refused first.
+    /// `config.fetch_policy` — the wired policy path (§5). The fetcher
+    /// reserves its bodies and cache entries from
+    /// `config.resource_limits.memory`, the service the decodes reserve
+    /// from (FIX 7655). A config whose `resource_limits.memory` names no
+    /// service is refused first.
     #[cfg(feature = "network-fetch")]
     pub fn with_guarded_fetcher(
         config: SealConfig,
@@ -91,7 +94,8 @@ impl NativeSealEngine {
         Self::validate_anchors(&config)?;
         let fetcher: Arc<dyn SealFetcher> = Arc::new(super::fetch::SsrfGuardedHttpFetcher::new(
             config.fetch_policy.clone(),
-        ));
+            config.resource_limits.memory.clone(),
+        )?);
         Ok(Self {
             config,
             backend,

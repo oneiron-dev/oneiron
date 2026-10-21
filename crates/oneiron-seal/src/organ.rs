@@ -61,7 +61,7 @@ use crate::api::{
     SignatureAlgorithm, SigningIdentity, TsaEndpoint,
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
-use crate::memory::{SealMemory, SealMemoryProvider, SealMemoryRefusal};
+use crate::memory::{AdmittedBytes, SealMemory, SealMemoryProvider, SealMemoryRefusal};
 use crate::native::NativeSealEngine;
 
 mod report;
@@ -354,11 +354,10 @@ fn engine(
     let mut config = seal_config(config)?;
     let observed = config.resource_limits.observed.clone();
     let asks = Arc::new(CallAsks { asker });
-    let memory = Arc::new(AskedMemory {
+    let memory = SealMemoryProvider::new(Arc::new(AskedMemory {
         asks: Arc::clone(&asks),
-    });
-    let service: Arc<dyn SealMemory> = memory.clone();
-    config.resource_limits.memory = SealMemoryProvider::new(service);
+    }));
+    config.resource_limits.memory = memory.clone();
     let engine = NativeSealEngine::new(
         config,
         Arc::new(AskedBackend {
@@ -562,10 +561,12 @@ impl SealBackend for AskedBackend {
 /// Every fetch, as an ask: the engine's guarded fetch, inside the grant's
 /// allowlist. The seal fetches only timestamps and CRLs. A body comes back
 /// whole: the engine measures its size against its `[limits]` rows, and the
-/// seal's own copy of it is reserved before it is made.
+/// seal's own copy of it is reserved before it is made (`memory.grow`), as
+/// admitted bytes.
 struct AskedFetcher {
     asks: Arc<CallAsks>,
-    memory: Arc<AskedMemory>,
+    /// The call's memory, the provider the engine's decodes reserve from.
+    memory: SealMemoryProvider,
 }
 
 #[async_trait]
@@ -607,14 +608,12 @@ impl SealFetcher for AskedFetcher {
         }
         let body = match reply.data {
             Some(data) => {
-                let len = u64::try_from(data.len()).unwrap_or(u64::MAX);
-                self.memory.grow(len).map_err(FetchError::Memory)?;
-                data.to_vec()
+                AdmittedBytes::copy_from(&self.memory, &data).map_err(FetchError::Memory)?
             }
-            None => Vec::new(),
+            None => AdmittedBytes::empty(),
         };
         Ok(FetchResponse {
-            body,
+            body: Arc::new(body),
             content_type: answer.content_type,
         })
     }

@@ -1,6 +1,7 @@
 //! DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append.
 
 use crate::error::{InputInvalidCode, SealError};
+use crate::memory::SharedBytes;
 
 use super::super::pdf;
 use super::assembly::SealContext;
@@ -10,7 +11,9 @@ use super::assembly::SealContext;
 pub(crate) struct DssMaterial {
     pub certs_der: Vec<Vec<u8>>,
     pub ocsps_der: Vec<Vec<u8>>,
-    pub crls_der: Vec<Vec<u8>>,
+    /// Each CRL is its fetch's own admitted bytes, held with their
+    /// reservation until the DSS is written, and read in place (FIX 7655).
+    pub crls_der: Vec<SharedBytes>,
 }
 
 /// Serialized DSS objects plus the DSS dictionary's own object number.
