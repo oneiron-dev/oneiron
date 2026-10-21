@@ -65,7 +65,8 @@ const NONCE_BYTES: usize = 12;
 pub(crate) enum StoredValue {
     /// `nonce | ciphertext`, sealed at `generation`; empty for no value.
     Sealed { generation: u32, bytes: Vec<u8> },
-    /// The value in the clear: a row a checkpoint image carried.
+    /// The value in the clear: a row a checkpoint image carried that its
+    /// restore has not sealed again yet, pending (`reseal`).
     Carrier(Zeroizing<Vec<u8>>),
 }
 
@@ -211,9 +212,11 @@ pub(super) fn sealed_body_in_txn(
     }
     let sealed = store
         .credential_value_leaf_in_txn(wtxn, id, rec.rotation_generation)
-        .and_then(|leaf| seal_value(&leaf, id, rec.rotation_generation, &rec.value_bytes))
-        .map_err(|error| custody_unavailable(store, wtxn, id, &rec.name, &error))?;
-    encode_custody_map(rec, BodyValue::Sealed(sealed))
+        .and_then(|leaf| seal_value(&leaf, id, rec.rotation_generation, &rec.value_bytes));
+    match sealed {
+        Ok(sealed) => encode_custody_map(rec, BodyValue::Sealed(sealed)),
+        Err(error) => Err(custody_unavailable(store, wtxn, id, &rec.name, &error)),
+    }
 }
 
 /// What a write does when custody cannot take a value's key (CALLS `KS-6
@@ -263,9 +266,9 @@ fn custody_unavailable(
 
 /// Opens `stored`'s value for record `id` into its record. The caller holds
 /// a writer, or took the custody read guard before its snapshot. A row a
-/// restore could not seal again ([`reseal::CUSTODY_RESEAL_PENDING`]) opens only once
-/// this vault's custody takes its key: never from its carrier on a custody
-/// fault.
+/// restore could not seal again ([`reseal::CUSTODY_RESEAL_PENDING`])
+/// opens only once this vault's custody takes its key: never from its
+/// carrier on a custody fault.
 fn open_stored(store: &Store, id: &EntityId, stored: StoredCustody) -> Result<SecretCustodyRecord> {
     let StoredCustody { mut record, value } = stored;
     record.value_bytes = match value {
