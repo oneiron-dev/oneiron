@@ -31021,14 +31021,19 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HumanTaskFollowupDriver"
+      "HumanTaskFollowupDriver",
+      "OpenHumanAsk",
+      "OpenHumanAskKind",
+      "OpenHumanAsks"
      ],
      "path": "src/human_task/followup.rs",
      "purpose": "Native-human routing, follow-up cursor lifecycle and the wake driver",
      "surface": {
+      "const": 1,
       "crate-vis": 5,
-      "fn": 6,
-      "struct": 1
+      "enum": 1,
+      "fn": 8,
+      "struct": 3
      }
     },
     {
@@ -31527,7 +31532,7 @@
       "const": 4,
       "crate-vis": 8,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -89549,6 +89554,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/vm_host/network.rs",
+     "purpose": "The host's half of a vault VM's guest network (FIX 6808, [`oneiron_vault_contract::vm::VmTapAttachment`])…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/vm_host/provision.rs",
      "purpose": "The host's half of a vault VM's provision connection (FIX 6308): on a cold boot, before the credential…",
      "surface": {
@@ -89608,6 +89623,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/vm_init/config_drive.rs",
+     "purpose": "The vault VM's config drive as the root bootstrap reads it: only the typed files the contract names below…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/vm_init/fscrypt.rs",
      "purpose": "The fscrypt v2 ioctls a vault VM's root bootstrap needs (`linux/fscrypt.h`): add the vault's key to its…",
      "surface": {
@@ -89622,6 +89647,26 @@
      "purpose": "The vault VM's disk layout, provision record, UID table and socket directories, as the root bootstrap sets…",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init/network.rs",
+     "purpose": "The bootstrap's half of a vault VM's guest network (FIX 6808…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init/network/netlink.rs",
+     "purpose": "Route netlink as the guest's network setup speaks it: one dump of the links, and the three changes it makes…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -93115,7 +93160,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 70,
+     "files": 74,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -93271,7 +93316,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 993,
+   "source_files": 997,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -98122,9 +98167,24 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 18,
+      "const": 21,
       "enum": 2,
-      "fn": 4
+      "fn": 4,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VmGuestNetworkConfig",
+      "VmTapAttachment"
+     ],
+     "path": "src/lib/vm/network.rs",
+     "purpose": "A vault VM's guest network (FIX 6808): the one NIC a supervisor may attach to a vault VM for its outbound…",
+     "surface": {
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -98244,7 +98304,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 47,
+     "files": 48,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -98253,7 +98313,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 46,
+   "source_files": 47,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
