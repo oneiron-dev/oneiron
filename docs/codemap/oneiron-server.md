@@ -41,6 +41,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/dreamer/run_log.rs` | src | s | 1 crate-vis | — | The outcome line of an attempt the server's Dreamer executor ended without completing it (FIX 7271): who it… |
 | `src/ai_host/eval_authoring.rs` | src | s | 1 crate-vis | — | The Coach's eval authoring (ARCH-0053 "Eval authoring", OF-578): each night it keeps each seat's test set… |
 | `src/ai_host/failure_signals.rs` | src | s | 3 crate-vis | — | The host's failure-signal sender (OF-380) |
+| `src/ai_host/feedback_report_delivery.rs` | src | s | 3 crate-vis | — | The Coach's publisher delivery on the host (OF-420, FIX 739; ARCH-0056 §9: "reports are background") |
 | `src/ai_host/feedback_triage.rs` | src | s | 2 crate-vis | — | The Coach's feedback triage on the host (OF-420 T1; ARCH-0056: "GitHub issues still work |
 | `src/ai_host/feedback_triage/github.rs` | src | m | 4 crate-vis | — | The feedback sweep's GitHub issue sources (OF-420 T1; ARCH-0056: "GitHub issues still work |
 | `src/ai_host/harness.rs` | src | s | 1 crate-vis | — | The Dreamer's tuning config, recorded as a versioned vault artifact so the nightly harness self-audit… |
@@ -215,7 +216,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/authority_history_doors.rs` | src | s | 2 crate-vis | — | Owner-authenticated signed authority history transfer |
 | `src/api/facade/board_stream_doors.rs` | src | s | 4 crate-vis | — | Public run-bound board STREAM doors: `self.focus.refresh`, `self.focus.subscribe`, `self.focus.unsubscribe`… |
 | `src/api/facade/booking_doors.rs` | src | s | 6 crate-vis | — | Typed booking-page discovery, published lifecycle and constraint front |
-| `src/api/facade/browser_doors.rs` | src | m | 21 crate-vis | — | Typed browser calls on the caller's own attached run and existing guest door |
+| `src/api/facade/browser_doors.rs` | src | m | 22 crate-vis | — | Typed browser calls on the caller's own attached run and existing guest door |
 | `src/api/facade/budget_doors.rs` | src | s | 13 crate-vis | — | Credential-backed budget controls, beside the owner's held-run routes |
 | `src/api/facade/calendar_doors.rs` | src | m | 16 crate-vis | — | Owner-authorized calendar file imports through the credential's own handle |
 | `src/api/facade/call_context.rs` | src | m | 27 crate-vis | — | One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is… |
@@ -776,7 +777,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/tests/turns.rs` | test | m | — | — | Turns are the embedding unit (ARCH-0004): a witnessed conversation is found by what it meant, through the… |
 | `src/error/mod.rs` | src | m | 4 struct · 2 enum · 27 fn · 1 const · 1 re-export · 3 crate-vis | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
 | `src/error/schema.rs` | src | s | 4 fn | — | JSON Schema generation for the API error catalog |
-| `src/feedback_delivery.rs` | src | s | 3 struct · 3 enum · 5 fn | FeedbackDeliveryConfig, FeedbackDeliveryError, FeedbackDestination, FeedbackHost, HttpFeedbackTransport, SendFeedbackError | Deployment-selected feedback transport |
+| `src/feedback_delivery.rs` | src | m | 3 struct · 3 enum · 5 fn | FeedbackDeliveryConfig, FeedbackDeliveryError, FeedbackDestination, FeedbackHost, HttpFeedbackTransport, SendFeedbackError | Deployment-selected feedback transport |
 | `src/feedback_delivery/tests.rs` | test | s | — | — | — |
 | `src/feedback_redaction.rs` | src | s | 7 crate-vis | — | The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every… |
 | `src/handler/app_tier.rs` | src | m | 6 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
