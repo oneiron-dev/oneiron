@@ -68,7 +68,7 @@ mod invariant_canonical;
 pub mod scheduled;
 pub mod served_signals;
 mod session_text;
-pub use session_text::{SessionLine, SessionText};
+pub use session_text::{SessionLine, SessionResult, SessionText};
 mod sweep;
 pub use sweep::{TIER1_SWEEP_SCOPE, Tier1Sweep};
 pub(crate) mod tier1_source;
