@@ -198,6 +198,8 @@ impl AgentDispatcher<'_> {
             recorded_at,
             landed: None,
             declined: None,
+            // FIX 7443: the first call's receipt; a retry answers above.
+            direct_spawn: spawn.direct_spawn.clone(),
         };
         // The whole record as the wall stores it, before its proposal's id.
         WIDEN.admit(self.vault, wtxn, &key_hash, &mut record)?;
@@ -272,7 +274,7 @@ impl AgentDispatcher<'_> {
         if record.landed.is_some() || record.declined.is_some() {
             return self.widen_outcome(&wtxn, &record);
         }
-        let (input, spawn) = record.request.intent.dispatch(&proposal.proposal_id, now)?;
+        let (input, spawn) = record.dispatch(&proposal.proposal_id, now)?;
         self.child_depth_remaining(record.request.intent.parent)?;
         self.require_sibling_result_lineage(
             input.parent_attempt,

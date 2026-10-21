@@ -59,6 +59,9 @@ const OP_RETIRE_RECIPIENT: u8 = 3;
 /// A change of the publication policy heads are sealed under (KS-5, FIX
 /// 7191): content-free, an op of its own.
 const OP_PUBLICATION_POLICY: u8 = 4;
+/// History rows a writer is about to commit (FIX 6229): ids only, an op of
+/// its own.
+const OP_BODY_HISTORY: u8 = 5;
 
 pub(super) fn log_corrupt() -> Error {
     Error::CorruptedIndex("key custody log")
@@ -184,11 +187,16 @@ impl Control {
         self.base_seq
     }
 
+    /// The tip of the position the local log starts after.
+    pub(super) fn base_tip(&self) -> [u8; 32] {
+        self.base_tip
+    }
+
     fn derive(&self, context: &str) -> Zeroizing<[u8; 32]> {
         crate::world_keys::derive_guarded(context, &[&self.secret[..]])
     }
 
-    fn log_kek(&self) -> Kek {
+    pub(super) fn log_kek(&self) -> Kek {
         Kek::from_zeroizing(self.derive(LOG_KEY_CONTEXT))
     }
 
@@ -243,6 +251,10 @@ pub(crate) enum LogEntry {
     /// (KS-5, FIX 7191). It names no key and retires none; it moves the log
     /// on, so every member's head is sealed and acknowledged again.
     PublicationPolicy([u8; 32]),
+    /// The body history rows one writer is about to commit (FIX 6229): its
+    /// obligations' ids, never a key. It moves the log on, so every
+    /// member's head is sealed and acknowledged again.
+    BodyHistory(Vec<(Vec<u8>, Vec<u8>)>),
 }
 
 impl LogEntry {
@@ -256,6 +268,14 @@ impl LogEntry {
             Self::PublicationPolicy(digest) => {
                 let mut out = vec![OP_PUBLICATION_POLICY];
                 out.extend_from_slice(digest);
+                return out;
+            }
+            Self::BodyHistory(rows) => {
+                let mut out = vec![OP_BODY_HISTORY];
+                out.extend_from_slice(&super::body_history::encode_rows(
+                    rows.iter()
+                        .map(|(key, value)| (key.as_slice(), value.as_slice())),
+                ));
                 return out;
             }
             Self::Mint(id) => (OP_MINT, id.subject(), id.generation(), None),
@@ -289,6 +309,11 @@ impl LogEntry {
             return <[u8; 32]>::try_from(digest)
                 .map(Self::PublicationPolicy)
                 .map_err(|_| log_corrupt());
+        }
+        if let Some((&OP_BODY_HISTORY, rows)) = bytes.split_first() {
+            return super::body_history::decode_rows(rows)
+                .map(Self::BodyHistory)
+                .ok_or_else(log_corrupt);
         }
         let decoded = (|| {
             let (&op, rest) = bytes.split_first()?;
@@ -453,7 +478,42 @@ pub(super) fn open_sym(
     Envelope::parse(envelope)
         .map_err(|_| log_corrupt())?
         .open(OpenKey::SymmetricKek(kek), &policy)
-        .map_err(|_| crate::world_keys::refused("key custody does not open with this key"))
+        .map_err(|error| open_refused(&error))
+}
+
+/// Why a custody envelope did not open, by the crypto error's kind (FIX
+/// 6780): only a failed authentication is the wrong key; every other cause
+/// names itself. A fixed reason, never the error's values, a key's bytes or
+/// the envelope's.
+fn open_refused(error: &oneiron_crypto::Error) -> Error {
+    use oneiron_crypto::Error as Crypto;
+    crate::world_keys::refused(match error {
+        Crypto::OpenFailed => "key custody does not open with this key",
+        Crypto::FieldLength { .. }
+        | Crypto::Truncated { .. }
+        | Crypto::TrailingBytes { .. }
+        | Crypto::NonCanonical => "opening key custody failed: a field is out of range",
+        Crypto::PurposeMismatch { .. }
+        | Crypto::VaultMismatch
+        | Crypto::RecipientMismatch
+        | Crypto::KeyIdMismatch => {
+            "opening key custody failed: the envelope is bound to another place"
+        }
+        Crypto::UnknownSuite(_)
+        | Crypto::ForbiddenSuite(_)
+        | Crypto::ReservedSuite(_)
+        | Crypto::WrongSuiteKind { .. }
+        | Crypto::SuiteNotAccepted(_)
+        | Crypto::EpochBelowSuiteMinimum { .. }
+        | Crypto::EpochBelowPolicyMinimum { .. } => {
+            "opening key custody failed: the suite or epoch was refused"
+        }
+        Crypto::WrongKeyForWrap { .. } | Crypto::WrapNotAccepted(_) => {
+            "opening key custody failed: the wrap type was refused"
+        }
+        Crypto::Primitive(_) => "opening key custody failed: a crypto primitive failed",
+        _ => "opening key custody failed",
+    })
 }
 
 /// A frame's envelope recipient: a 32-byte commitment to its whole clear
@@ -530,6 +590,11 @@ impl Journal {
     /// The journal's directory in its compartment.
     pub(super) fn dir(&self) -> &std::path::Path {
         &self.dir
+    }
+
+    /// The vault the journal's lineage is of.
+    pub(super) fn vault(&self) -> CustodyVaultId {
+        self.vault
     }
 
     /// The journal `batch` was sealed from.
