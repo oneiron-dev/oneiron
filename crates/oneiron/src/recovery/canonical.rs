@@ -332,12 +332,15 @@ pub struct CanonicalPinCarrier {
     pub row: Vec<u8>,
 }
 
-/// One owner-signed custody transition a base window carries (OF-422): opaque
-/// signed and sealed bytes, kept as the window holds them.
+/// One owner-signed custody transition piece a base window carries
+/// (OF-422): opaque signed and sealed bytes, kept as the window holds them,
+/// with its place among its transition's pieces (Phase2 A).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanonicalCustodyTransition {
     pub id: [u8; 16],
+    #[serde(default)]
+    pub piece: u32,
     pub carrier: Vec<u8>,
 }
 
@@ -688,10 +691,13 @@ pub(crate) fn capture_canonical_window_within(
         if key.starts_with("input:") {
             continue;
         }
+        let (id, piece) = crate::secret_custody::parse_custody_row_key(&key)
+            .ok_or_else(|| invalid("noncanonical custody row key"))?;
         snapshot
             .custody_transitions
             .push(CanonicalCustodyTransition {
-                id: parse_id(&key)?,
+                id: *id.as_bytes(),
+                piece,
                 carrier,
             });
     }
@@ -1037,7 +1043,8 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
         insert(&doc, "edges", &edge.key()?, &edge.value)?;
     }
     for row in &snapshot.custody_transitions {
-        insert(&doc, "custody", &id(row.id)?.to_hex(), &row.carrier)?;
+        let key = crate::secret_custody::custody_row_key(id(row.id)?, row.piece);
+        insert(&doc, "custody", &key, &row.carrier)?;
     }
     for row in &snapshot.room_turns {
         insert(&doc, "room_turns", &id(row.id)?.to_hex(), &row.row)?;

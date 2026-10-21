@@ -33,6 +33,7 @@
 pub use crate::gate::manifest_authenticity::ManifestContribution;
 
 mod act_standing;
+mod admission;
 mod adopted_build;
 mod adopted_evidence;
 mod adopted_fold;
@@ -157,7 +158,7 @@ pub use oneiron_authority::authority::{
     FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
     FederationPactState, FederationPactStatus, FoldedDevice, GENESIS_FRAGILE_FLAG,
     GenesisRecoveryStep, GrantTravelSet, MACHINE_ENCRYPTION_KEY_LEN,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MACHINE_SEEN_WORLD_EDITS_MAX, MAX_PACT_SCOPE_BYTES,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MAX_PACT_SCOPE_BYTES,
     MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
     ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
     OwnerRootRecord, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
@@ -166,7 +167,7 @@ pub use oneiron_authority::authority::{
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, RootChange, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
     SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, WORLD_MODEL_ROUTE_MAX_BYTES,
-    WORLD_MODEL_ROUTES_MAX, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
+    WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
     authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
     authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
     encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
@@ -196,6 +197,11 @@ pub use federation_activation::federation_grant_activation;
 // hand-maintained name list to drift out of date. The globs are also the
 // module's internal wiring — sibling files and `tests` share one scope through
 // `use super::*`, so the file boundaries below do not change name resolution.
+pub(crate) use admission::{AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT, measure_authority_work};
+pub use admission::{
+    AUTHORITY_WORK_MEASURE_ONLY, AUTHORITY_WORK_WAIT_MS, AuthorityWorkPolicy,
+    AuthorityWorkWaitExpired, authority_work_policy, set_authority_work_policy,
+};
 pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::{
     AUTHORITY_CHECKPOINT_MAX_AGE_SECS, AUTHORITY_CHECKPOINT_NEW_BYTES,

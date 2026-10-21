@@ -31,8 +31,6 @@ const MACHINE_PROFILE_PROOF_DOMAIN: &[u8] = b"oneiron/machine-profile/v1\0";
 pub const MACHINE_ENCRYPTION_SUITE_HYBRID_V1: u16 = 0x0101;
 /// `ek_mlkem1024 || x25519_public`.
 pub const MACHINE_ENCRYPTION_KEY_LEN: usize = 1568 + 32;
-/// At most this many world edits one profile revision lists as seen.
-pub const MACHINE_SEEN_WORLD_EDITS_MAX: usize = 4096;
 const SEEN_WORLD_EDITS_KEY: &str = "seen_world_edits";
 /// The key an owner answer names its carrier under (C1). The `machine` key
 /// keeps meaning the target.
@@ -219,8 +217,10 @@ pub struct MachineProfile {
 }
 
 impl MachineProfile {
+    /// A revision lists every act it saw, never refused for how many (Phase2
+    /// A, FIX 7911): its writer measures them.
     pub fn validate(&self) -> Result<()> {
-        if self.revision == 0 || self.seen_world_edits.len() > MACHINE_SEEN_WORLD_EDITS_MAX {
+        if self.revision == 0 {
             return Err(invalid_authority());
         }
         VerifyingKey::from_bytes(&self.machine_key).map_err(|_| invalid_authority())?;

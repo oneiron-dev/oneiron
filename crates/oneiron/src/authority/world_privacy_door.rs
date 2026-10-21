@@ -125,6 +125,10 @@ impl Vault {
         seen: Option<PolicyRevision>,
     ) -> Result<WorldPrivacyChange> {
         settings.validate()?;
+        // Every route is kept, however many (FIX 7912): measured, never refused.
+        if let ModelOrder::Ordered(routes) = &settings.models {
+            super::measure_authority_work(&self.store.limit_watch, routes.len());
+        }
         // Integrity: the settings belong to a stored, live WORLD row other
         // than base reality. Its metadata is enough; no plaintext, key or
         // holding of the world is needed to decide its settings.

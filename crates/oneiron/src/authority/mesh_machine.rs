@@ -33,7 +33,6 @@ const BIND_DOMAIN: &[u8] = b"oneiron/mesh-machine-binding/v1\0";
 /// MACHINE rows a lookup any endpoint key can make reads before it refuses:
 /// a stranger's work stays bounded until an endpoint index serves it.
 const MAX_LOOKUP_MACHINES: usize = 1024;
-const MAX_ALPNS: usize = 32;
 
 /// Address hints. This structure has no authority by itself.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -103,11 +102,14 @@ fn mesh_verb(alpn: &[u8]) -> String {
             .collect::<String>()
     )
 }
+/// The address a MACHINE body carries, every direct address in it: a
+/// binding is never refused or read as absent for how many it names (Phase2
+/// A, FIX 7922). Its key, relay and envelope checks stay; a stranger's lookup
+/// stays bounded by its row count ([`MAX_LOOKUP_MACHINES`]).
 fn parse_address(body: &[u8]) -> Option<MeshMachineAddress> {
     let envelope = rmp_serde::from_slice::<MeshMachineAddressEnvelope>(body).ok()?;
     if envelope.domain != DOMAIN
         || envelope.version != 1
-        || envelope.address.direct_addrs.len() > 32
         || super::strong_ed25519_key(&envelope.address.endpoint_key).is_err()
         || envelope
             .address
@@ -195,10 +197,11 @@ impl Vault {
         else {
             return Ok(None);
         };
+        // Every ALPN grant the host signed is read, however many (FIX 7921);
+        // each must still be a valid ALPN.
         let claims = signed.claims;
         if claims.version != 1
             || claims.machine != machine
-            || claims.alpns.len() > MAX_ALPNS
             || claims.alpns.keys().any(|alpn| !valid_alpn(alpn))
         {
             return Err(invalid_authority());

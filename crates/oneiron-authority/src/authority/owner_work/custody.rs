@@ -32,9 +32,10 @@ const CUSTODY_WORK_KEYS: [&str; 7] = [
 ];
 const PERMIT_KEYS: [&str; 3] = ["machine", "profile", "encryption_key"];
 
-/// The most recipients one active custody change permits, as one custody
-/// transition seals its value to at most this many machines.
-pub const CUSTODY_RECIPIENTS_MAX: usize = 64;
+/// The domain of a custody change's complete-set commitment
+/// ([`custody_recipient_set`]): every piece of the transition that enacts it
+/// signs it (CALLS `Phase2 custody pieces request bound`).
+pub const CUSTODY_RECIPIENT_SET_DOMAIN: &str = "oneiron/custody-recipient-set/v1";
 
 /// The context a custody request's `seen` is hashed under: the live custody
 /// request heads of its secret ([`act_revision`]).
@@ -139,10 +140,28 @@ pub struct CustodyRecipientPermit {
     pub encryption_key: [u8; 32],
 }
 
+/// The commitment to a custody change's complete permitted set, in its
+/// order: BLAKE3 under [`CUSTODY_RECIPIENT_SET_DOMAIN`] over the count and
+/// each permit's machine, profile entry and key digest. A transition that
+/// carries the set in pieces signs it in every piece, so no piece stands for
+/// a partial set.
+#[must_use]
+pub fn custody_recipient_set(recipients: &[CustodyRecipientPermit]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(CUSTODY_RECIPIENT_SET_DOMAIN);
+    hasher.update(&(recipients.len() as u64).to_be_bytes());
+    for permit in recipients {
+        hasher.update(permit.machine.as_bytes());
+        hasher.update(&permit.profile);
+        hasher.update(&permit.encryption_key);
+    }
+    *hasher.finalize().as_bytes()
+}
+
 /// A custody request's shape. A register or rotate states its input and its
 /// holder, a rewrap its holder and an input only for a bind, each permitting
-/// 1 to [`CUSTODY_RECIPIENTS_MAX`] recipients, ascending by machine, one
-/// each, and the holder executes it. A revoke states none of them, and its
+/// one or more recipients, ascending by machine, one each, never refused for
+/// how many (Phase2 A, FIX 7906): its writer measures them, and its
+/// transition carries them in pieces. The holder executes it. A revoke states none of them, and its
 /// carrier executes it: a revoke needs no byte. No digest is zero.
 pub(super) fn validate_custody(
     request: &OwnerWorkRequest,
@@ -152,7 +171,7 @@ pub(super) fn validate_custody(
     recipients: &[CustodyRecipientPermit],
     authority: CustodyRequestAuthority,
 ) -> Result<()> {
-    let permitted = (1..=CUSTODY_RECIPIENTS_MAX).contains(&recipients.len())
+    let permitted = !recipients.is_empty()
         && recipients
             .windows(2)
             .all(|pair| pair[0].machine < pair[1].machine);
@@ -239,8 +258,8 @@ fn permit_value(permit: &CustodyRecipientPermit) -> Value {
     ])
 }
 
-/// Strict keys; the recipient list is bounded before one permit is decoded.
-/// The shape is the request's ([`validate_custody`]).
+/// Strict keys; every permitted recipient is decoded, however many. The
+/// shape is the request's ([`validate_custody`]).
 pub(super) fn decode_custody_work(work: &[(Value, Value)]) -> Result<OwnerWorkBody> {
     validate_keys(work, &CUSTODY_WORK_KEYS)?;
     let recipients = match CUSTODY_SHARED_BODY {
@@ -248,9 +267,6 @@ pub(super) fn decode_custody_work(work: &[(Value, Value)]) -> Result<OwnerWorkBo
             let Value::Array(permits) = required(work, "recipients")? else {
                 return Err(invalid_authority());
             };
-            if permits.len() > CUSTODY_RECIPIENTS_MAX {
-                return Err(invalid_authority());
-            }
             permits
                 .iter()
                 .map(decode_permit)

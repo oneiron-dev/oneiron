@@ -114,6 +114,13 @@ impl Vault {
             ActAuthority::Owner(owner, surface) => (owner, *surface),
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
         };
+        // Every root the owner names is kept (FIX 7909): the count is
+        // measured, and paced only before the writer opens.
+        let _turn = self.admit_authority_work(
+            choice.as_ref().map_or(0, |choice| choice.roots.len()),
+            None,
+            || owner.actor_for_read(self),
+        )?;
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;

@@ -10,6 +10,8 @@
 //! rows, handoffs and ancestor pairs each raise one typed headroom check at
 //! their policy rows. The slip issuer's slip ops count toward no check:
 //! every sign-in mints one, so a busy owner's log gains thousands a year.
+//! Nor does the owner's will this install carries under its own install key
+//! (FIX 7930): known by key possession, never by a local or replicated flag.
 //! Any other key stores up to the `authority_log_signer_bound` policy row;
 //! past it, its rows wait, never refused, a typed check asks the owner, and
 //! raising the row lands them on the next drain. An owner anchor this
@@ -517,6 +519,7 @@ pub(crate) fn authority_door(
     }
     if signed_by(entry, issuers)
         || view.rows.get(signer).copied().unwrap_or_default() < signer_bound(store, txn)?
+        || carries_own_will(store, txn, entry)?
     {
         return Ok(AuthorityDoor::Lands);
     }
@@ -531,6 +534,47 @@ pub(crate) fn authority_door(
         }
     }
     Ok(AuthorityDoor::AtBound)
+}
+
+/// Whether `entry` is the owner's will this install carries (FIX 7930): signed
+/// by this install's own machine key, which only its own doors hold and sign
+/// with after they revalidate the owner or an agent's Grant, and carrying
+/// that will (an owner or delegated act, or owner work's request, result or
+/// cancel). Such a row leaves the lifetime signer bound, which still raises
+/// its typed check; strangers, other installs' rows and a replica's retries
+/// keep their treatment. No local or replicated flag is read. An install
+/// whose key is not known yet keeps today's path
+/// ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
+fn carries_own_will(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entry: &AuthorityLogEntry,
+) -> crate::error::Result<bool> {
+    let own = match crate::identity::read_machine_verifying_key_in_store_txn(store, txn) {
+        Ok(own) => own,
+        Err(_) if AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT => None,
+        Err(error) => return Err(error),
+    };
+    let Some(own) = own else {
+        return Ok(false);
+    };
+    if *entry.signer_key() != AuthorityKey::Ed25519(own) {
+        return Ok(false);
+    }
+    Ok(match &entry.op {
+        AuthorityOp::WorldPrivacy(_)
+        | AuthorityOp::GrantTravelSet(_)
+        | AuthorityOp::OwnerWorkRequest(_)
+        | AuthorityOp::OwnerWorkResult(_)
+        | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::CheckpointPolicySet(_)
+        | AuthorityOp::HomeNodePick(_)
+        | AuthorityOp::ConversationTrainingSet(_)
+        | AuthorityOp::ConversationTrainingVaultSet(_)
+        | AuthorityOp::AgentGrantAct(_) => true,
+        AuthorityOp::MachineProfile(profile) => profile.act.is_some(),
+        _ => false,
+    })
 }
 
 /// A typed OF-520 question about the authority log's bounds, read from the

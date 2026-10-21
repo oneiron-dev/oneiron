@@ -286,8 +286,17 @@ pub(crate) fn read_machine_verifying_key_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<[u8; 32]>> {
+    read_machine_verifying_key_in_store_txn(&vault.store, txn)
+}
+
+/// [`read_machine_verifying_key_in_txn`] on the store alone, for a store
+/// door that has no vault handle: the same public row, never the keystore.
+pub(crate) fn read_machine_verifying_key_in_store_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<[u8; 32]>> {
     MACHINE_PK
-        .get(&vault.store, txn, &())?
+        .get(store, txn, &())?
         .map(|raw| {
             <[u8; 32]>::try_from(raw.as_slice())
                 .map_err(|_| Error::CorruptedIndex("machine public key row"))

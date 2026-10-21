@@ -48,7 +48,9 @@ impl IrohTransport {
         address: &crate::MeshMachineAddress,
         alpn: &[u8],
     ) -> Result<MeshPathReceipt, MeshError> {
-        if address.direct_addrs.len() > 32 || alpn.is_empty() || alpn.len() > 255 {
+        // Every direct address the owner names is dialed (Phase2 A, FIX 7922);
+        // the ALPN's own 1..255-byte bound stays.
+        if alpn.is_empty() || alpn.len() > 255 {
             return Err(MeshError::InvalidRoster);
         }
         let key =

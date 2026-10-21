@@ -9,6 +9,13 @@
 //! generation, status and request, and the recipient's machine, profile
 //! entry and encryption key digest, so an envelope sealed for one request,
 //! status or key never opens as another's.
+//!
+//! A carrier is one piece of its transition (CALLS `Phase2 custody pieces
+//! request bound`): it signs the commitment to the request's complete
+//! permitted set, its own place in the pieces and the first permit it
+//! carries, under the frame floors kept here (the `u16` count, the 4 MiB
+//! decode bound on the content a carrier held before pieces, the piece
+//! fields beside it). No total recipient count is refused.
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use getrandom::SysRng;
@@ -25,19 +32,27 @@ use crate::authority::{AuthorityEntryHash, CustodyRecipientPermit, WrapRecipient
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-const MAGIC: &[u8; 4] = b"OCT1";
-const SIGNATURE_DOMAIN: &[u8] = b"oneiron/custody-transition/v2";
+const MAGIC: &[u8; 4] = b"OCT2";
+const SIGNATURE_DOMAIN: &[u8] = b"oneiron/custody-transition/v3";
 const VALUE_LABEL: &[u8] = b"oneiron/custody-value/v1";
 const KEY_ID_LABEL: &[u8] = b"custody/v2";
 const VALUE_BINDING_DOMAIN: &[u8] = b"oneiron/custody-value-binding/v2";
-const DIGEST_DOMAIN: &[u8] = b"oneiron/custody-transition-digest/v2";
+const DIGEST_DOMAIN: &[u8] = b"oneiron/custody-transition-digest/v3";
 const VALUE_EPOCH: u64 = 1;
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
-/// The largest transition a door writes or a receiver decodes.
-pub(crate) const MAX_TRANSITION_BYTES: usize = 4 << 20;
-/// The most machines one transition seals the value to.
-pub(super) const MAX_RECIPIENTS: usize = 64;
+/// The codec's frame floor on a carrier's content as it was before pieces,
+/// never a recipient cap: what a single sealed value may fill.
+const MAX_TRANSITION_BYTES: usize = 4 << 20;
+/// What a carrier's place among its transition's pieces adds: the set
+/// commitment, its piece, the piece count and its first permit. They ride
+/// outside [`MAX_TRANSITION_BYTES`], so no sealed value has less room than
+/// before pieces.
+const PIECE_FIELD_BYTES: usize = 32 + 4 + 4 + 4;
+/// The largest carrier (one piece) a door writes or a receiver decodes.
+pub(super) const MAX_CARRIER_BYTES: usize = MAX_TRANSITION_BYTES + PIECE_FIELD_BYTES;
+/// The most sealed values one piece carries: its count is two bytes.
+pub(super) const MAX_PIECE_VALUES: usize = u16::MAX as usize;
 
 impl CustodyTransition {
     /// What the signature covers: the vault and every field but the
@@ -58,7 +73,12 @@ impl CustodyTransition {
         out.extend_from_slice(&self.signed_at.to_be_bytes());
         out.extend_from_slice(&self.request);
         out.extend_from_slice(&self.input.unwrap_or([0; 32]));
+        out.extend_from_slice(&self.set);
+        out.extend_from_slice(&self.piece.to_be_bytes());
+        out.extend_from_slice(&self.pieces.to_be_bytes());
+        out.extend_from_slice(&self.first.to_be_bytes());
         put_bytes(out, &self.body);
+        // Pieces are packed to at most `MAX_PIECE_VALUES` values.
         out.extend_from_slice(&(self.sealed.len() as u16).to_be_bytes());
         for (permit, envelope) in &self.sealed {
             out.extend_from_slice(permit.machine.as_bytes());
@@ -93,7 +113,7 @@ impl CustodyTransition {
     /// Decodes carrier bytes strictly: every length exact, nothing after the
     /// signature. Decoding proves nothing; [`Self::verify`] does.
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() > MAX_TRANSITION_BYTES {
+        if bytes.len() > MAX_CARRIER_BYTES {
             return Err(malformed());
         }
         let mut read = Reader(bytes);
@@ -106,12 +126,14 @@ impl CustodyTransition {
         let signed_at = u64::from_be_bytes(read.array()?);
         let request = read.array()?;
         let input = Some(read.array::<32>()?).filter(|input| *input != [0; 32]);
+        let set = read.array()?;
+        let piece = u32::from_be_bytes(read.array()?);
+        let pieces = u32::from_be_bytes(read.array()?);
+        let first = u32::from_be_bytes(read.array()?);
         let body = read.bytes()?.to_vec();
         let count = usize::from(u16::from_be_bytes(read.array()?));
-        if count > MAX_RECIPIENTS {
-            return Err(malformed());
-        }
-        let mut sealed = Vec::with_capacity(count);
+        // Grown as values decode: a count is not taken on trust.
+        let mut sealed = Vec::new();
         for _ in 0..count {
             let permit = CustodyRecipientPermit {
                 machine: EntityId::from_bytes(read.array::<16>()?)?,
@@ -132,6 +154,10 @@ impl CustodyTransition {
             signed_at,
             request,
             input,
+            set,
+            piece,
+            pieces,
+            first,
             body,
             sealed,
             signer,
@@ -162,7 +188,7 @@ impl CustodyTransition {
             return Err(malformed());
         }
         let revoked = self.status == SecretCustodyStatus::Revoked;
-        if revoked != self.sealed.is_empty() {
+        if revoked != self.sealed.is_empty() || !self.place_whole() {
             return Err(malformed());
         }
         let ascending = self

@@ -589,12 +589,11 @@ pub(super) fn main_log_heads(
 /// machine answers `machine` carried, and the owner work requests it carried
 /// that await a result (a root request the owner cancelled or a newer one
 /// superseded awaits none, FIX 5583): what a new profile revision lists as
-/// seen, capped at the codec's limit (an unlisted act only counts stricter
-/// once a removal races it; an unlisted request stops counting then).
-pub(super) fn live_edits_by(
-    fold: &AuthorityFold,
-    machine: EntityId,
-) -> BTreeSet<AuthorityEntryHash> {
+/// seen, every one of them (FIX 7911: an observed act is never left out, so
+/// a removal never retires it; only an act a removal raced counts stricter),
+/// in the order the codec's old clip took them, for the revision that still
+/// needs it ([`super::act_standing::acknowledged_by_in_txn`]).
+pub(super) fn live_edits_by(fold: &AuthorityFold, machine: EntityId) -> Vec<AuthorityEntryHash> {
     fold.worlds
         .values()
         .flat_map(|world| world.live.iter())
@@ -613,7 +612,6 @@ pub(super) fn live_edits_by(
         .chain(fold.conversation_training_vault.live_choices_by(machine))
         .chain(super::machine_profile::live_answers_by(fold, machine))
         .chain(super::owner_work::pending_carried_by(fold, machine))
-        .take(MACHINE_SEEN_WORLD_EDITS_MAX)
         .collect()
 }
 

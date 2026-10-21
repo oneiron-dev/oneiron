@@ -61,8 +61,8 @@ pub(crate) use self::revoked::{
 };
 use super::codec::{encode_bind_input, encode_register_input};
 use crate::authority::{
-    ActSurface, AuthorityEntryHash, AuthorityFold, CUSTODY_RECIPIENTS_MAX, CustodyChange,
-    CustodyRecipientPermit, CustodyRequestAuthority, OwnerWorkBody, OwnerWorkOutcome,
+    ActSurface, AuthorityEntryHash, AuthorityFold, CustodyChange, CustodyRecipientPermit,
+    CustodyRequestAuthority, OwnerWorkBody, OwnerWorkOutcome,
     OwnerWorkRefusal, OwnerWorkRequest, invalid_authority,
 };
 use crate::error::{Error, Result, SecretError};
@@ -428,6 +428,9 @@ impl Vault {
             ));
         };
         let permits = change_permits(&fold, &change, holder)?;
+        // Every permitted install is kept, however many (FIX 7906): measured,
+        // never refused; its transition carries them in pieces.
+        crate::authority::measure_authority_work(&self.store.limit_watch, permits.len());
         let seen = fold.custody_work_revision(change.id);
         if change.seen.is_some_and(|stated| stated != seen) {
             return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
@@ -632,9 +635,9 @@ fn change_permits(
     let ascending = permits
         .windows(2)
         .all(|pair| pair[0].machine < pair[1].machine);
-    if permits.is_empty() || permits.len() > CUSTODY_RECIPIENTS_MAX || !ascending {
+    if permits.is_empty() || !ascending {
         return Err(refused(
-            "a custody change permits 1 to 64 installs, ascending by machine, one each",
+            "a custody change permits one or more installs, ascending by machine, one each",
         ));
     }
     Ok(permits)
