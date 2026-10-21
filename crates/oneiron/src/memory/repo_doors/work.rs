@@ -78,7 +78,7 @@ pub(super) fn repo_ref_pin(vault: &Vault, repo_ref: &RepoRef, git_ref: &str) -> 
 
 /// The proven object store of a local folder pointer; `None` for a remote
 /// pointer or a folder that does not prove.
-fn open_local_repo(vault: &Vault, repo_ref: &RepoRef) -> Option<GitWireRepo> {
+pub(super) fn open_local_repo(vault: &Vault, repo_ref: &RepoRef) -> Option<GitWireRepo> {
     let RepoRef::LocalFolder { path, .. } = repo_ref else {
         return None;
     };
@@ -137,8 +137,8 @@ pub(crate) struct RepoOwnWork {
 }
 
 impl Vault {
-    /// The work `work` of the run `binding` binds, admitted in `txn` for a
-    /// read of `paths` at its repo and ref. A work that is no run's, or
+    /// The work `work` of the run `binding` binds, admitted in `txn` for
+    /// `intent` on `paths` at its repo and ref. A work that is no run's, or
     /// another actor's, executor run's or TASK's, is no membership, so no id
     /// is an existence oracle; this run's work bound under another lease of
     /// its try is a stale lease.
@@ -151,6 +151,7 @@ impl Vault {
         binding: &RepoRunBinding,
         work: EntityId,
         paths: impl IntoIterator<Item = S>,
+        intent: RepoAccessIntent,
     ) -> Result<std::result::Result<RepoOwnWork, RepoAccessRefusal>> {
         let Some((receipt, stamp)) = view_receipt_in_txn(self, txn, work)?
             .and_then(|receipt| receipt.run.clone().map(|stamp| (receipt, stamp)))
@@ -165,11 +166,10 @@ impl Vault {
             return Ok(Err(RepoAccessRefusal::NoMembership));
         }
         let target = repo_target(stamp.repo, &stamp.git_ref, paths);
-        let admitted =
-            match self.admit_repo_run_in_txn(txn, binding, &target, RepoAccessIntent::Read)? {
-                Ok(admitted) => admitted,
-                Err(refused) => return Ok(Err(refused)),
-            };
+        let admitted = match self.admit_repo_run_in_txn(txn, binding, &target, intent)? {
+            Ok(admitted) => admitted,
+            Err(refused) => return Ok(Err(refused)),
+        };
         if !admitted.holds(&stamp) {
             return Ok(Err(RepoAccessRefusal::StaleLease));
         }

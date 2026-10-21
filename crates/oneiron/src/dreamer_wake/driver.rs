@@ -12,8 +12,8 @@ use std::task::Poll;
 use crate::Vault;
 use crate::attempt_queue::{AttemptQueue, LandingWarningOutcome, WarnAttemptBudgetPressure};
 use crate::dreamer_runner::{
-    AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt,
-    DreamerAdmissionOutcome, DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
+    AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, DreamerAdmissionOutcome,
+    DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
     DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerMilestoneKind,
     DreamerParkCause, DreamerRunnerStore, ParkDreamerAttempt, SettleDreamerBudget,
 };
@@ -26,6 +26,7 @@ use crate::llm::{
 };
 
 use super::deadline::{DREAMER_WRAP_UP_NOTICE_PERCENT, WakeCancellation, WakePassDeadline};
+use super::settlement::admitted_lease;
 #[cfg(feature = "sync")]
 use super::types::WakeProgressLane;
 use super::types::{
@@ -845,12 +846,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         // admitted attempt (stuck leased) AND its reservation.
                         // What its run line charged stays spent; the rest is
                         // refunded (SCAN C012).
-                        self.settle_charged_or_abort(
-                            &line,
-                            attempt_id,
-                            spend_meter.charged_units(),
-                            input.now,
-                        )?;
+                        self.settle_charged_or_abort(&line, attempt_id, &spend_meter, input.now)?;
                         // The durable reason keeps the whole error
                         // Display; the full error propagates below
                         // untouched.
@@ -874,10 +870,10 @@ impl<'a> DreamerWakeDriver<'a> {
                             }
                         } else {
                             self.park_attempt(
-                                attempt_id,
+                                &admitted,
                                 reason,
                                 DreamerParkCause::ExecutorError,
-                                input.lease_owner.clone(),
+                                &input.lease_owner,
                                 input.now,
                             )?;
                         }
@@ -984,6 +980,7 @@ impl<'a> DreamerWakeDriver<'a> {
                             park_owner: input.lease_owner.clone(),
                             now: input.now,
                         },
+                        admitted_lease(&admitted, &input.lease_owner),
                     )?;
                     self.publish(attempt_id, ProgressKind::Parked, Some(reason), input.now)?;
                     self.write_attempt_milestone(
@@ -998,12 +995,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     // charged stays spent (SCAN C012), the rest of the
                     // reservation is refunded, all of it for an attempt that
                     // never dispatched.
-                    self.settle_charged_or_abort(
-                        &line,
-                        attempt_id,
-                        spend_meter.charged_units(),
-                        input.now,
-                    )?;
+                    self.settle_charged_or_abort(&line, attempt_id, &spend_meter, input.now)?;
                     let hard_cut =
                         reason == DREAMER_HARD_CUT_PARK_REASON || self.deadline.expired();
                     if self.store.parked_attempt(attempt_id)?.is_some() {
@@ -1011,13 +1003,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         // attempt inside its trap wtxn — publish only.
                         self.publish(attempt_id, ProgressKind::Parked, Some(reason), input.now)?;
                     } else {
-                        self.park_attempt(
-                            attempt_id,
-                            reason,
-                            cause,
-                            input.lease_owner.clone(),
-                            input.now,
-                        )?;
+                        self.park_attempt(&admitted, reason, cause, &input.lease_owner, input.now)?;
                     }
                     if hard_cut {
                         // A deadline-cut park leaves a durable resume point.
@@ -1045,39 +1031,6 @@ impl<'a> DreamerWakeDriver<'a> {
         }
 
         Ok(report)
-    }
-
-    /// Settles a failed or plainly parked attempt's reservation on `line`
-    /// with what its run line `charged` (SCAN C012). A settlement the counter
-    /// refuses (more than the reservation and the counter's remaining units)
-    /// falls back to the zero abort this path always made, so the attempt
-    /// still parks or fails exactly as before.
-    fn settle_charged_or_abort(
-        &self,
-        line: &str,
-        attempt_id: crate::attempt_queue::AttemptId,
-        charged: u64,
-        now: u64,
-    ) -> Result<()> {
-        if let Err(error) = self.store.settle_budget(SettleDreamerBudget {
-            budget_id: line.to_owned(),
-            child_attempt: attempt_id,
-            actual_units: charged,
-            now,
-        }) {
-            tracing::warn!(
-                kind = ?error.kind(),
-                attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
-                "the charged settlement was refused; the reservation is aborted at zero"
-            );
-            self.store
-                .abort_budget_reservation(AbortDreamerBudgetReservation {
-                    budget_id: line.to_owned(),
-                    child_attempt: attempt_id,
-                    now,
-                })?;
-        }
-        Ok(())
     }
 
     /// Fires the ONE 80% wrap-up notice: `max(counter_percent,

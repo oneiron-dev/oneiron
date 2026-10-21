@@ -688,6 +688,7 @@ fn start_turn(
         request.text.clone(),
         at,
     );
+    let mut written = None;
     let user = crate::server::blocking(|| {
         let memory = vault.memory(actor, class).with_session(session_key);
         let (memory, hooked) = match invocation {
@@ -700,10 +701,13 @@ fn start_turn(
             &hooked,
             &user_turn,
             witness_session.as_ref(),
+            &mut written,
         )
     })
     .map_err(|error| engine(&error))?
     .map_err(|stop| hook_stopped(&stop))?;
+    // FIX 7004: the MESSAGE row the user's words were witnessed into.
+    sources.add(written.as_deref());
     // The caller's view of the receipt, which a hook may have redacted.
     let user_turn = user
         .get("turn_short_id")
@@ -886,13 +890,15 @@ fn host_args_kept(args: &Value, rewritten: &Value) -> Result<(), String> {
 /// Lands the user's turn through the `vault.witness` row's boundary, so the
 /// row's verb hooks fire on it (ARCH-0080 §3), reading under `hooked`'s key.
 /// A turn that keeps no record runs them on `session` (FIX 5380). The answer
-/// is the caller's view of the row's receipt.
+/// is the caller's view of the row's receipt; `written` takes the MESSAGE
+/// rows from the receipt itself, and stays `None` when no witness ran here.
 fn witness_through_row(
     vault: &Vault,
     memory: &Memory<'_>,
     hooked: &Memory<'_>,
     turn: &WitnessTurn,
     session: Option<&verb_hook_boundary::HookSession>,
+    written: &mut Option<Vec<EntityId>>,
 ) -> Result<Result<Value, VerbHookStop>, MemoryError> {
     let args = serde_json::to_value(turn)
         .map_err(|_| MemoryError::bad_request("witness turn does not encode"))?;
@@ -909,6 +915,7 @@ fn witness_through_row(
             let turn: WitnessTurn = serde_json::from_value(args)
                 .map_err(|_| MemoryError::bad_request("witness turn does not decode"))?;
             let receipt = memory.witness(&turn)?;
+            *written = sources::witnessed(&receipt);
             serde_json::to_value(receipt)
                 .map_err(|_| MemoryError::bad_request("witness receipt does not encode"))
         },

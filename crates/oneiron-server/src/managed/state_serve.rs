@@ -35,6 +35,7 @@ use admission::WriteKind;
 use boot_keys::{escrow_vault_key, managed_page_seal, spool_vault_key_escrow};
 use oneiron_vault_contract::host::{Host, HostLimits};
 use read_only::is_read_only;
+use refusal::writes_frozen_body;
 
 /// The reap freeze's write admission, held until a write's last write.
 mod admission;
@@ -48,6 +49,8 @@ mod idle_backup;
 mod read_only;
 /// The reap freeze and `prepare_reap`'s freeze, drain and export.
 mod reap;
+/// The body a frozen engine's refusal is served with.
+mod refusal;
 /// The relay delete ctl requests (FIX 6826).
 mod relay_delete;
 
@@ -807,23 +810,6 @@ fn writes_frozen_response(error: &ManagedError) -> Response {
         .into_response()
 }
 
-/// [`writes_frozen_response`]'s body.
-fn writes_frozen_body(error: &ManagedError) -> serde_json::Value {
-    let refusal = REAP_PAUSE_REFUSAL;
-    serde_json::json!({
-        "error": refusal.error,
-        "message": error.to_string(),
-        "bound": refusal.bound,
-        "temporary": refusal.temporary,
-        "affected": ["effects", "non_safe_method_requests", "upgrades", "background_passes"],
-        "resumes_on": refusal.resumes_on,
-        "self_hosted": {
-            "supported": refusal.self_hosted_supported,
-            "condition": "no_service_reap_limit",
-        },
-    })
-}
-
 /// Boots the engine as a supervised child process.
 ///
 /// The startup order is the contract, not an implementation detail: the
@@ -1033,6 +1019,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         Arc::new(move || gate.get()?.admit_background(WriteKind::Dreamer))
     });
     let sync_server = Arc::new(sync_server);
+    // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
+    ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
     // serve installs it, before the connector settler starts (DOOR-079 1a).
     crate::code_consent_host::ServerCodeConsentHost::install(&sync_server);
@@ -1040,7 +1028,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     crate::replay_judge::register(&sync_server, config.skills.live_pulls_per_axis);
 
     // Adoption stays here, after the gates: the listener was only resolved
-    // above, and `bind` is what takes the descriptor over.
+    // above, and `bind` is what takes the descriptor over. A vault VM's cold
+    // restore binds its vsock bridges here too, now its vault is kept.
+    host.activate_service_bridges_after_keep()?;
     let http = http.bind().await?;
     let http_owned_path = http.owned_path().map(Path::to_path_buf);
     let ctl = ManagedCtl::bind(&managed.ctl_socket)?;

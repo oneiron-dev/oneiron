@@ -9,6 +9,9 @@
 //! marker; keeping it by its id lands it (FIX 496). Keeping one from
 //! imported words stages it in its import's review instead: the reply names
 //! the staged claim and the review, and the conflict stays open (FIX 5754).
+//! The owner may then approve that staged member and keep it in one answer,
+//! `approve_and_keep`, beside approving it in the review and keeping it
+//! after (FIX 6151).
 
 use std::sync::Arc;
 
@@ -92,9 +95,10 @@ struct AlternativeView {
 struct SettleConflict {
     /// The open marker, as 32 hex.
     marker: String,
-    /// `keep`, `hold_both` or `dismiss`.
+    /// `keep`, `approve_and_keep`, `hold_both` or `dismiss`.
     settlement: String,
-    /// The member `keep` keeps, as 32 hex.
+    /// The member `keep` keeps, or the staged member `approve_and_keep`
+    /// approves and keeps, as 32 hex.
     #[serde(default)]
     keep: Option<String>,
 }
@@ -267,11 +271,16 @@ async fn settle(
         let marker = entity_id("marker", &request.marker)?;
         let settlement = match (request.settlement.as_str(), request.keep.as_deref()) {
             ("keep", Some(keep)) => ConflictSettlement::Keep(entity_id("keep", keep)?),
+            ("approve_and_keep", Some(keep)) => {
+                ConflictSettlement::ApproveAndKeep(entity_id("keep", keep)?)
+            }
             ("hold_both", None) => ConflictSettlement::HoldBoth,
             ("dismiss", None) => ConflictSettlement::Dismiss,
             _ => {
                 return Err(OwnerError::Invalid(
-                    "settlement is keep with the kept member, hold_both or dismiss".to_owned(),
+                    "settlement is keep or approve_and_keep with the kept member, hold_both or \
+                     dismiss"
+                        .to_owned(),
                 ));
             }
         };

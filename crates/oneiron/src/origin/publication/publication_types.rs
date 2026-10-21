@@ -115,16 +115,20 @@ pub enum OriginKeepRefKind {
     Recovery,
     /// A snapshot references the object.
     Snapshot,
+    /// An exact publish request (FIX 6866) holds the commit it will push
+    /// until it settles.
+    PublishRequest,
 }
 
 impl OriginKeepRefKind {
     /// Every kind, in the order the shared-count law walks them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Publication,
         Self::Change,
         Self::Conflict,
         Self::Recovery,
         Self::Snapshot,
+        Self::PublishRequest,
     ];
 
     /// The pinned on-disk spelling.
@@ -136,6 +140,7 @@ impl OriginKeepRefKind {
             Self::Conflict => "conflict",
             Self::Recovery => "recovery",
             Self::Snapshot => "snapshot",
+            Self::PublishRequest => "publish_request",
         }
     }
 

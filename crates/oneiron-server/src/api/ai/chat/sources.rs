@@ -1,12 +1,15 @@
 //! The rows a live chat turn's call is read from (FIX 6935), ids only, for
 //! its run's permits and metered settlement: the answering agent's
 //! definition, each craft note it is shown, its retained log's summaries,
-//! turns and messages, and the context board when the call carries it. The
-//! person's own words are no stored row. A part that names no rows of its
-//! own, as a caller's history line or a log not all pinned, leaves the whole
-//! set unknown, never a partial list. Nothing reads the set to decide.
+//! turns and messages, the context board when the call carries it, and the
+//! MESSAGE row the person's own words are witnessed into before the call
+//! when one is written (FIX 7004); an off-record turn's words are no stored
+//! row. A part that names no rows of its own, as a caller's history line or
+//! a log not all pinned, leaves the whole set unknown, never a partial list.
+//! Nothing reads the set to decide.
 use oneiron::EntityId;
 use oneiron::attempt_queue::ManifestEntry;
+use oneiron::memory::WitnessReceipt;
 use oneiron::skill_optimize::union_source_rows;
 
 /// What a turn's call has been read from so far; `None` once unknown.
@@ -40,4 +43,22 @@ impl TurnSources {
     pub(super) fn rows(self) -> Option<Vec<EntityId>> {
         union_source_rows([self.0])
     }
+}
+
+/// The MESSAGE rows a turn's witness wrote, from its own receipt, never the
+/// caller's view of it a hook may have redacted (FIX 7004). An off-record
+/// witness writes no vault row, so it names none; a written message whose
+/// row id does not read leaves the part unknown.
+pub(super) fn witnessed(receipt: &WitnessReceipt) -> Option<Vec<EntityId>> {
+    if receipt.turn.is_none() && receipt.messages.is_empty() {
+        return Some(Vec::new());
+    }
+    if receipt.messages.len() != receipt.message_short_ids.len() {
+        return None;
+    }
+    receipt
+        .messages
+        .iter()
+        .map(|message| EntityId::from_hex(&message.id).ok())
+        .collect()
 }

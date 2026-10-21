@@ -34,11 +34,8 @@ const MODE_REGULAR: u32 = 0o100_000;
 pub(crate) struct RepoPinnedBase {
     /// The hash of the encoded snapshot.
     pub(crate) fork_hash: RepoForkHash,
-    /// The encoded snapshot, head = the commit.
-    #[allow(
-        dead_code,
-        reason = "G1 PR2b's proposal submit retains it in the snapshot family"
-    )]
+    /// The encoded snapshot, head = the commit, which a run's proposal
+    /// retains in the snapshot family.
     pub(crate) encoded: Vec<u8>,
     /// Every regular file custody keeps, by repo-relative path.
     pub(crate) files: BTreeMap<String, Vec<u8>>,

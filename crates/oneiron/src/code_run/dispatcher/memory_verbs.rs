@@ -13,8 +13,9 @@ use crate::code_run::types::{
 use crate::error::{Error, Result};
 use crate::{ClaimSubject, EdgeActorClass, EdgeKind, EntityId, ScoredEntity, Vault};
 
-use super::HostSelfDispatcher;
 use super::envelope::edge_operation_gate_id;
+use super::read_worlds::{ServedWorlds, served_world_in};
+use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::error::{CodeError, OffRecordError};
 
 /// Maximum results a first-party `vault.search` call can request.
@@ -98,6 +99,11 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::RepoMergeQueueObserve
             | SelfEffect::RepoSnapshotsIngest
             | SelfEffect::RepoWorkOpen
+            | SelfEffect::RepoSymbolsDeclare
+            | SelfEffect::RepoSymbolsRenew
+            | SelfEffect::RepoSymbolsRelease
+            | SelfEffect::RepoProposalSubmit
+            | SelfEffect::RepoMergeQueueEnqueue
             | SelfEffect::TaskDelegate => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),
@@ -151,31 +157,79 @@ impl HostSelfDispatcher<'_> {
     /// the hits its actor reads by its own entry, as a keyed one does
     /// (`own_entry_kept`). In a room the verb hooks bound to it run around
     /// it, keyed or not, and what each did joins its answer as they leave
-    /// (`verb_hooks::session`).
+    /// (`verb_hooks::session`). An executor run's search on the vault notes
+    /// the world of each hit it serves in the run's ledger (FIX 6130).
     pub(super) fn dispatch_memory_search(
         &self,
         call: SelfMemorySearchCall,
         read_as: Option<ScopedReadActorKey>,
+        site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
         let limit = call.limit.min(SELF_MEMORY_SEARCH_MAX_RESULTS);
-        let results = match read_as {
-            Some(reader) => {
-                let claims = match &self.agent_verbs {
-                    Some(door) if !door.keyed_search_surfaceable_only() => {
-                        ClaimReadStatus::Recorded
-                    }
-                    _ => ClaimReadStatus::Surfaceable,
-                };
-                self.storage
-                    .search_text_as(&call.query, limit, reader, claims)?
+        let results = match (&self.storage, site) {
+            (ExecutorStorage::Canonical(vault), Some(site)) => {
+                self.search_noting_worlds(vault, site, &call.query, limit, read_as)?
             }
-            None => self.own_entry_hits(self.storage.search_text(&call.query, limit)?)?,
+            _ => match read_as {
+                Some(reader) => {
+                    let claims = self.keyed_claims();
+                    self.storage
+                        .search_text_as(&call.query, limit, reader, claims)?
+                }
+                None => self.own_entry_hits(self.storage.search_text(&call.query, limit)?)?,
+            },
         };
         Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
             query: call.query,
             results,
             hooks: Vec::new(),
         }))
+    }
+
+    /// The claim statuses a keyed search keeps: every status where the door
+    /// filters by the key's authorization alone (FIX 5976).
+    fn keyed_claims(&self) -> ClaimReadStatus {
+        match &self.agent_verbs {
+            Some(door) if !door.keyed_search_surfaceable_only() => ClaimReadStatus::Recorded,
+            _ => ClaimReadStatus::Surfaceable,
+        }
+    }
+
+    /// [`Self::dispatch_memory_search`]'s read on the vault for the executor
+    /// run at `site`, serving the same hits: each hit's world proved in the
+    /// read that scored it and, for a keyed search, in the read that admitted
+    /// it, then noted in the run's ledger (FIX 6130).
+    fn search_noting_worlds(
+        &self,
+        vault: &Vault,
+        site: ExecutorCallSite<'_>,
+        query: &str,
+        limit: usize,
+        read_as: Option<ScopedReadActorKey>,
+    ) -> Result<Vec<ScoredEntity>> {
+        let mut scored = ServedWorlds::new();
+        let hits = vault.search_text_observed(query, limit, |txn, hits| {
+            scored = hits
+                .iter()
+                .map(|hit| (hit.id, served_world_in(vault, txn, hit.id)))
+                .collect();
+        })?;
+        let (hits, admitted) = match read_as {
+            Some(reader) => {
+                let mut admitted = ServedWorlds::new();
+                let hits = vault
+                    .scoped_read(reader)
+                    .with_claim_status(self.keyed_claims())
+                    .filter_scored_entities_observed(hits, None, |txn, id| {
+                        admitted.insert(id, served_world_in(vault, txn, id));
+                    })?
+                    .value;
+                (hits, Some(admitted))
+            }
+            None => (self.own_entry_hits(hits)?, None),
+        };
+        self.note_search_worlds(site, &hits, &scored, admitted.as_ref());
+        Ok(hits)
     }
 
     /// The no-key search's hits an agent or the system reads by its own

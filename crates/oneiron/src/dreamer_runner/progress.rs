@@ -392,6 +392,33 @@ impl DreamerRunnerStore<'_> {
         ephemeral: &EphemeralStore,
     ) -> Result<DreamerProgressed<DreamerParkedAttemptRecord>> {
         let record = self.park_attempt(input)?;
+        self.publish_parked(record, producer, ephemeral)
+    }
+
+    /// [`Self::park_attempt_with_progress`], fenced on the lease the try ran
+    /// under (FIX 6057): `None`, nothing parked or published, when the try
+    /// was resumed or claimed again since.
+    #[cfg(feature = "sync")]
+    pub(crate) fn park_if_current_lease_with_progress(
+        &self,
+        input: ParkDreamerAttempt,
+        lease: super::DreamerTryLease<'_>,
+        producer: &mut DreamerAttemptProgressProducer,
+        ephemeral: &EphemeralStore,
+    ) -> Result<Option<DreamerProgressed<DreamerParkedAttemptRecord>>> {
+        self.park_if_current_lease(input, lease)?
+            .map(|record| self.publish_parked(record, producer, ephemeral))
+            .transpose()
+    }
+
+    /// The live parked progress row of a park that just landed.
+    #[cfg(feature = "sync")]
+    fn publish_parked(
+        &self,
+        record: DreamerParkedAttemptRecord,
+        producer: &mut DreamerAttemptProgressProducer,
+        ephemeral: &EphemeralStore,
+    ) -> Result<DreamerProgressed<DreamerParkedAttemptRecord>> {
         let frame = self.publish_progress(
             producer,
             ephemeral,
