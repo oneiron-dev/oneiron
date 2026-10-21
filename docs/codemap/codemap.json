@@ -2551,7 +2551,7 @@
      "path": "src/authority/act_standing.rs",
      "purpose": "An owner act signed outside the authority log, judged at its own causal point (FIX 4649, mesh contract §4)…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -3093,6 +3093,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/frontier_join.rs",
+     "purpose": "Joining a wide causal frontier (FIX 7908 and its duplicates, Phase2 B; CALLS \"Phase2 frontier join\")",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -3568,7 +3578,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "re-export": 60
      }
     },
@@ -69700,7 +69710,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 192,
+     "files": 193,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71158,7 +71168,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4532,
+   "source_files": 4533,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71392,6 +71402,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "FrontierJoin"
+     ],
+     "path": "src/authority/frontier_join.rs",
+     "purpose": "A frontier join (FIX 7908, Phase2 B; CALLS \"Phase2 frontier join\"): one signed main-log row whose parents…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "GrantTravelSet"
      ],
      "path": "src/authority/grant_travel.rs",
@@ -71475,7 +71499,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 29
+      "re-export": 30
      }
     },
     {
@@ -71934,7 +71958,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -71964,7 +71988,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 46,
+   "source_files": 47,
    "test_files": 1
   },
   "oneiron-bench": {
