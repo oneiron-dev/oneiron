@@ -13,6 +13,12 @@
 //! credential the gate did not verify keeps that shared label too, and the
 //! server logs a typed warning naming the credential. Nothing here admits or
 //! refuses a request: the gate and the route judge it as before.
+//!
+//! A verified individual's entries are stamped with its entity, as a core
+//! route's caller's are (KS-2B2), so the erase of that person reaches them:
+//! the erase drops each, and the person's replays end with the erase, not at
+//! the TTL (FIX 7357; CALLS "FIX 7357 erase reach", Engine 10-21 18:4x).
+//! Every other entry is stamped as it was.
 
 use axum::http::HeaderMap;
 use axum::http::header::AUTHORIZATION;
@@ -23,6 +29,53 @@ use crate::auth::CoreAuth;
 /// replays under its own principal rather than the shared label (CALLS
 /// "FIX 5404 self-hosted principal").
 const NON_CORE_INDIVIDUAL_PRINCIPAL: bool = true;
+
+/// Whether the erase of a verified individual drops the non-core keyed
+/// entries stamped as theirs, rather than leaving the erased form a core
+/// route's entry keeps and answers "response erased" with (CALLS "FIX 7357
+/// erased replay form").
+const ERASE_DROPS_INDIVIDUAL_REPLAY: bool = true;
+
+/// Who owns a keyed entry's response, as it is written: the caller its
+/// credential names, and whether that caller's erase drops the entry.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct EntryStamp {
+    pub(super) caller: Option<oneiron::EntityId>,
+    pub(super) erase_drops: bool,
+}
+
+impl EntryStamp {
+    /// A core route's caller, or a managed vault's legacy route's, as
+    /// KS-2B2 stamps it: its principal's entity, when its credential names
+    /// one. Its erase leaves the entry's erased form.
+    pub(super) fn core(auth: &CoreAuth) -> Self {
+        Self {
+            caller: auth.principal_entity(),
+            erase_drops: false,
+        }
+    }
+
+    /// A verified individual caller whose entries key under its own
+    /// partition ([`individual_principal`]), stamped as a core route's
+    /// caller is, its erase dropping them (FIX 7357). A credential that names
+    /// no entity, a host-held slip, stamps no one, as on a core route; one
+    /// whose principal ref names no entity stamps no one either, the entry
+    /// kept and replayed as today, and the server logs a typed warning.
+    fn individual(auth: &CoreAuth) -> Self {
+        let caller = auth.principal_entity();
+        if caller.is_none() && auth.principal_ref().is_some() {
+            tracing::warn!(
+                reason = "idempotency_individual_stamp_unnamed",
+                "a verified individual's principal ref names no entity; \
+                 its keyed entry is kept unstamped"
+            );
+        }
+        Self {
+            caller,
+            erase_drops: ERASE_DROPS_INDIVIDUAL_REPLAY && caller.is_some(),
+        }
+    }
+}
 
 /// Framing prefix of a capability slip.
 const SLIP_PREFIX: &str = "v2.slip.";
@@ -92,4 +145,13 @@ pub(super) fn individual_principal(auth: &CoreAuth, headers: &HeaderMap) -> Opti
         );
     }
     None
+}
+
+/// [`individual_principal`], with the stamp the verified individual's entry
+/// is written under (FIX 7357); `None` exactly where it is `None`.
+pub(super) fn individual_partition(
+    auth: &CoreAuth,
+    headers: &HeaderMap,
+) -> Option<(String, EntryStamp)> {
+    individual_principal(auth, headers).map(|principal| (principal, EntryStamp::individual(auth)))
 }

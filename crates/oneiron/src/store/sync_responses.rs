@@ -22,9 +22,11 @@
 //!
 //! The erase of an owner, from the provenance door alone, scrubs every such
 //! row its stamps name in the erase's own writer: an entry and a job keep
-//! their erased forms, a job's clips go. A delete (the cache's expiry, a
-//! job's cancel or removal) is a delete: the next binding pass drops the
-//! binding and keeps every key.
+//! their erased forms, a job's clips go. An entry the host marks
+//! [`IdempotencyEntry::erase_drops`] goes at its stamped caller's erase
+//! instead (FIX 7357). A delete (the cache's expiry, a job's cancel or
+//! removal) is a delete: the next binding pass drops the binding and keeps
+//! every key.
 
 mod media;
 
@@ -97,6 +99,13 @@ pub struct IdempotencyEntry {
     /// answers "response erased" until it expires (KS-2B2).
     #[serde(default)]
     pub erased: bool,
+    /// The erase of its stamped caller drops the entry rather than leaving
+    /// its erased form: a self-hosted non-core keyed route's verified
+    /// individual caller's, as the host marks it (FIX 7357). Any other
+    /// owner's erase leaves the erased form, as for every entry. Kept last
+    /// and written only when set, so every other entry's row is as before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub erase_drops: bool,
 }
 
 impl IdempotencyEntry {
@@ -131,6 +140,13 @@ impl IdempotencyEntry {
         owners.sort_unstable();
         owners.dedup();
         owners
+    }
+
+    /// Whether the erase of `owner` drops this entry rather than leaving
+    /// its erased form: `owner` is the caller it is stamped with, and the
+    /// host marked it [`Self::erase_drops`] (FIX 7357).
+    fn dropped_by(&self, owner: &EntityId) -> bool {
+        self.erase_drops && self.stamps.actor.as_ref() == Some(owner)
     }
 
     /// The entry an erase leaves: its time, so it still expires; its
@@ -205,10 +221,11 @@ fn names(value: &[u8], hex: &[u8]) -> bool {
 
 /// The erase of `owner` takes every host response its stamps name, in the
 /// erase's own writer (KS-2B2): each cache entry keeps its erased form and
-/// answers "response erased"; each media job keeps its erased form, its
-/// request scrubbed and its end terminal, and its clips go. A row that does
-/// not decode names no owner and stays as it is. Images' copies retire
-/// through the rows' obligations.
+/// answers "response erased", save one stamped with `owner` that the host
+/// marked to drop at its caller's erase, which goes (FIX 7357); each media
+/// job keeps its erased form, its request scrubbed and its end terminal, and
+/// its clips go. A row that does not decode names no owner and stays as it
+/// is. Images' copies retire through the rows' obligations.
 ///
 /// # Errors
 ///
@@ -231,9 +248,12 @@ pub(crate) fn erase_sync_response_owner_in_txn(
         if let Ok(entry) = IdempotencyEntry::decode(&value)
             && !entry.erased
             && entry.owners().contains(owner)
-            && let Ok(stub) = entry.erased_form().encode()
         {
-            scrubbed.push((key.into_owned(), stub));
+            if entry.dropped_by(owner) {
+                gone.push(key.into_owned());
+            } else if let Ok(stub) = entry.erased_form().encode() {
+                scrubbed.push((key.into_owned(), stub));
+            }
         }
     }
     let media = prefix_str(side_table::MODEL_MEDIA_JOB.prefix)?;
