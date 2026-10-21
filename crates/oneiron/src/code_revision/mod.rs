@@ -4,6 +4,7 @@ mod promotion;
 pub use promotion::{CodeRevisionFileOps, CodeSessionRun};
 mod codec;
 mod file_frontiers;
+mod forks;
 mod frontier;
 mod graph;
 mod import_anchor;

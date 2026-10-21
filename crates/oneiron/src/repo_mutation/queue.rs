@@ -9,8 +9,8 @@ use crate::git_wire::{GitWire, lock_repository};
 use super::conflict::{record_repo_conflict, resolve_repo_conflict_file, tree_hash_for_ref};
 use super::git::{
     admitted_repo_ref, git_commit_object_available, git_common_dir, require_pinned_head,
-    resolve_mutable_repo_root, validate_base_ref, validate_commit_message, validate_git_ref_label,
-    validate_relative_repo_path, validate_worktree_path,
+    resolve_mutable_repo_root, validate_base_ref, validate_relative_repo_path,
+    validate_worktree_path,
 };
 use super::oplog::{
     OPLOG, REPO_MUTATION_OPLOG_SCHEMA_VERSION, SEQ, SNAPSHOT, StoredPreparedCommit,
@@ -21,7 +21,7 @@ use super::snapshot::{
     SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntryKind, capture_repo_snapshot,
     decode_snapshot, encode_snapshot, restore_repo_snapshot,
 };
-use super::support::{hex_bytes, now_millis, truncate_failure};
+use super::support::{now_millis, truncate_failure};
 use super::trailer::{commit_message_with_provenance_trailer, validate_repo_provenance_request};
 use super::types::{
     RepoForkHash, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome,
@@ -32,6 +32,10 @@ use super::worktree::{
     prune_queue_owned_worktrees, remove_queue_worktree,
 };
 use crate::error::CodeError;
+
+mod operation;
+use operation::{operation_subject, writes_file};
+pub(super) use operation::validate_operation;
 
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -667,46 +671,6 @@ pub(super) fn execute_repo_mutation(
     }
 }
 
-pub(super) fn validate_operation(operation: &RepoMutationOperation) -> Result<()> {
-    match operation {
-        RepoMutationOperation::CommitFile { path, message, .. } => {
-            validate_relative_repo_path(path)?;
-            validate_commit_message(message)
-        }
-        RepoMutationOperation::CreateWorktree {
-            worktree_path,
-            base_ref,
-        } => {
-            validate_worktree_path(worktree_path)?;
-            validate_base_ref(base_ref)
-        }
-        RepoMutationOperation::RecordConflict {
-            branch_name,
-            ours_ref,
-            theirs_ref,
-            ..
-        } => {
-            validate_git_ref_label(branch_name)?;
-            validate_base_ref(ours_ref)?;
-            validate_base_ref(theirs_ref)
-        }
-        RepoMutationOperation::RemoveWorktree { worktree_path } => {
-            validate_worktree_path(worktree_path)
-        }
-        RepoMutationOperation::RecoverSnapshot { .. } => Ok(()),
-        RepoMutationOperation::ResolveConflictFile {
-            branch_name,
-            path,
-            message,
-            ..
-        } => {
-            validate_git_ref_label(branch_name)?;
-            validate_relative_repo_path(path)?;
-            validate_commit_message(message)
-        }
-    }
-}
-
 fn store_snapshot_if_absent(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -733,30 +697,4 @@ fn allocate_next_repo_mutation_seq(
         .ok_or(Error::ArithmeticOverflow("repo_mutation_seq"))?;
     SEQ.put(&vault.store, wtxn, &key, &next)?;
     Ok(next)
-}
-
-fn writes_file(operation: &RepoMutationOperation) -> bool {
-    matches!(
-        operation,
-        RepoMutationOperation::CommitFile { .. }
-            | RepoMutationOperation::ResolveConflictFile { .. }
-    )
-}
-
-fn operation_subject(operation: &RepoMutationOperation) -> String {
-    match operation {
-        RepoMutationOperation::CommitFile { path, .. } => path.clone(),
-        RepoMutationOperation::CreateWorktree { worktree_path, .. }
-        | RepoMutationOperation::RemoveWorktree { worktree_path } => {
-            worktree_path.to_string_lossy().into_owned()
-        }
-        RepoMutationOperation::RecordConflict {
-            branch_name,
-            ours_ref,
-            theirs_ref,
-            ..
-        } => format!("{branch_name}:{ours_ref}..{theirs_ref}"),
-        RepoMutationOperation::RecoverSnapshot { fork_hash } => hex_bytes(fork_hash),
-        RepoMutationOperation::ResolveConflictFile { path, .. } => path.clone(),
-    }
 }

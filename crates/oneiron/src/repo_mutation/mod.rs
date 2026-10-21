@@ -9,6 +9,7 @@ pub mod mount;
 mod oplog;
 pub mod proposal;
 mod queue;
+mod reviewed_file;
 mod reviewed_stack;
 mod snapshot;
 mod support;

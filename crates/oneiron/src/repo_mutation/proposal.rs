@@ -35,6 +35,7 @@ mod guards;
 mod review;
 mod run;
 pub mod settlement;
+mod persist;
 mod submit;
 pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
