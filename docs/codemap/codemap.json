@@ -23565,6 +23565,7 @@
      "kind": "src",
      "notable": [
       "StewardshipDraftOutcome",
+      "StewardshipDraftPage",
       "StewardshipDraftRequest",
       "StewardshipDraftRoute",
       "StewardshipRule",
@@ -23577,7 +23578,7 @@
       "crate-vis": 4,
       "enum": 1,
       "fn": 6,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -63252,7 +63253,7 @@
      "purpose": "Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs",
      "surface": {
       "const": 13,
-      "crate-vis": 17,
+      "crate-vis": 16,
       "enum": 3,
       "fn": 7,
       "struct": 7
@@ -63276,7 +63277,7 @@
      "path": "src/vault_cleanup/mod.rs",
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "mod": 1,
       "re-export": 4
      }
@@ -63373,9 +63374,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/vault_cleanup/scan.rs",
-     "purpose": "Bounded rotating scans",
+     "purpose": "Whole-index scans",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 3
      }
     },
     {
