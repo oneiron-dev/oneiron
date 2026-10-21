@@ -71,35 +71,71 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
     vault.backfill_tasks_by_owner()?;
     let now = crate::unix_seconds_now();
     let txn = vault.store.env.read_txn()?;
-    let policy = read.live_policy_manifest_in(&txn)?;
+    let fold = room_upkeep_fold_in_txn(read, &txn, room, now)?;
+    drop(txn);
+    Ok(fold.finish(vault).0)
+}
+
+/// [`room_upkeep_input`]'s read in the caller's snapshot, for a caller that
+/// already holds one (OF-417: the room host's upkeep voice rechecks the
+/// thread in the write it lands in). The caller persists `read`'s grant
+/// clock and backfills the TASK owner index before taking `txn`, never in
+/// it. Beside the input it keeps each thread's newest turn `read` reads.
+pub(super) struct RoomUpkeepFold {
+    input: RoomUpkeepInput,
+    /// Each thread's newest turn the reader reads, by its root turn.
+    newest: BTreeMap<EntityId, EntityId>,
+    scans: [crate::scan_check::ScanCount; 2],
+}
+
+impl RoomUpkeepFold {
+    /// The fold's input and newest turns, its scans' checks raised.
+    pub(super) fn finish(self, vault: &Vault) -> (RoomUpkeepInput, BTreeMap<EntityId, EntityId>) {
+        let [turn_rows, census] = self.scans;
+        turn_rows.finish(vault);
+        census.finish(vault);
+        (self.input, self.newest)
+    }
+}
+
+/// [`room_upkeep_input`] in `txn` at `now` (Unix seconds); see
+/// [`RoomUpkeepFold`].
+pub(super) fn room_upkeep_fold_in_txn(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    now: u64,
+) -> Result<RoomUpkeepFold> {
+    let vault = read.vault();
+    let policy = read.live_policy_manifest_in(txn)?;
     let readable = |id: &str| -> Result<bool> {
         match EntityId::from_hex(id) {
-            Ok(id) => read.is_ref_readable_with_policy_in(&txn, &policy, &id),
+            Ok(id) => read.is_ref_readable_with_policy_in(txn, &policy, &id),
             Err(_) => Ok(false),
         }
     };
-    if !read.is_ref_readable_with_policy_in(&txn, &policy, &room)? {
+    if !read.is_ref_readable_with_policy_in(txn, &policy, &room)? {
         return Err(Error::EntityNotFound);
     }
-    let members = vault.room_audience_members_in_txn(&txn, room)?;
+    let members = vault.room_audience_members_in_txn(txn, room)?;
     let mut turn_rows = crate::scan_check::ScanCount::start(
         &vault.store,
-        &txn,
+        txn,
         crate::scan_check::EngineScan::RoomHistoryRows,
         room.as_bytes(),
     )?;
     let mut folds = super::thread_reads::RootFolds::new();
     let mut held = |id: &str| -> Result<bool> {
         match EntityId::from_hex(id) {
-            Ok(id) => super::thread_reads::turn_held_back_folded_for_in(read, &txn, id, &mut folds),
+            Ok(id) => super::thread_reads::turn_held_back_folded_for_in(read, txn, id, &mut folds),
             Err(_) => Ok(false),
         }
     };
     let mut reach = super::thread_reads::RoomReach::default();
-    for row in HISTORY.iter_from(&vault.store, &txn, room.as_bytes())? {
+    for row in HISTORY.iter_from(&vault.store, txn, room.as_bytes())? {
         turn_rows.row();
         let (_, turn_id) = row?;
-        let turn = turn_in(vault, &txn, turn_id)?;
+        let turn = turn_in(vault, txn, turn_id)?;
         if !readable(turn.turn_id.as_str())? {
             if held(turn.turn_id.as_str())? {
                 reach.push_held(&turn);
@@ -120,13 +156,13 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
     let bindings = liveness::thread_task_bindings(turns, &roots)?;
     let mut census = crate::scan_check::ScanCount::start(
         &vault.store,
-        &txn,
+        txn,
         crate::scan_check::EngineScan::RoomThreadTasks,
         room.as_bytes(),
     )?;
     let open = crate::task_verb::room_open_thread_tasks_in(
         vault,
-        &txn,
+        txn,
         &roots,
         &bindings,
         &members,
@@ -148,23 +184,28 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
             },
         );
     }
+    let mut newest: BTreeMap<EntityId, (u64, EntityId)> = BTreeMap::new();
     for turn in reach.read() {
         let id = EntityId::from_hex(&turn.turn_id)?;
-        if let Some(root) = roots.get(&id)
-            && let Some(thread) = threads.get_mut(root)
-        {
+        let Some(root) = roots.get(&id) else {
+            continue;
+        };
+        if newest.get(root).is_none_or(|(at, _)| turn.at >= *at) {
+            newest.insert(*root, (turn.at, id));
+        }
+        if let Some(thread) = threads.get_mut(root) {
             thread.last_message_at = thread.last_message_at.max(turn.at);
         }
     }
     for (task, thread, wait) in open {
         if let Some(row) = threads.get_mut(&thread)
-            && vault.thread_project_in_txn(&txn, room, thread)?.is_none()
-            && read.is_ref_readable_with_policy_in(&txn, &policy, &task)?
+            && vault.thread_project_in_txn(txn, room, thread)?.is_none()
+            && read.is_ref_readable_with_policy_in(txn, &policy, &task)?
         {
             row.open_tasks.push(task);
             if let Some(wait) = wait
-                && crate::consent::person_is_live_in_txn(vault, &txn, &wait.who)?
-                && read.is_ref_readable_with_policy_in(&txn, &policy, &wait.who)?
+                && crate::consent::person_is_live_in_txn(vault, txn, &wait.who)?
+                && read.is_ref_readable_with_policy_in(txn, &policy, &wait.who)?
             {
                 row.waits.push(wait);
             }
@@ -175,14 +216,18 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
         .map(|turn| EntityId::from_hex(&turn.turn_id))
         .collect::<Result<Vec<_>>>()?;
     let last_activity = reach.read().map(|turn| turn.at).max();
-    drop(txn);
-    turn_rows.finish(vault);
-    census.finish(vault);
-    Ok(RoomUpkeepInput {
-        room,
-        source_refs,
-        last_activity,
-        threads: threads.into_values().collect(),
+    Ok(RoomUpkeepFold {
+        input: RoomUpkeepInput {
+            room,
+            source_refs,
+            last_activity,
+            threads: threads.into_values().collect(),
+        },
+        newest: newest
+            .into_iter()
+            .map(|(root, (_, turn))| (root, turn))
+            .collect(),
+        scans: [turn_rows, census],
     })
 }
 
@@ -217,8 +262,19 @@ pub(crate) fn room_upkeep_host(
     turn: Option<EntityId>,
 ) -> Result<Option<EntityId>> {
     let txn = vault.store.env.read_txn()?;
+    room_upkeep_host_in_txn(vault, &txn, room, turn)
+}
+
+/// [`room_upkeep_host`] in the caller's snapshot. Presence is the process's
+/// live list, read under its lock; only the pin and standing are `txn`'s.
+pub(super) fn room_upkeep_host_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    turn: Option<EntityId>,
+) -> Result<Option<EntityId>> {
     let session = match turn {
-        Some(turn) => crate::compaction::turn_session_membership_in_txn(&vault.store, &txn, &turn)?,
+        Some(turn) => crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &turn)?,
         None => None,
     };
     let present = match session {
@@ -231,5 +287,5 @@ pub(crate) fn room_upkeep_host(
             .unwrap_or_default(),
         None => Vec::new(),
     };
-    Ok(room_host_in(vault, &txn, room, &present)?.host)
+    Ok(room_host_in(vault, txn, room, &present)?.host)
 }
