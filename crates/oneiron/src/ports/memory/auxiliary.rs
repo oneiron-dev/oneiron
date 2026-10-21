@@ -425,6 +425,7 @@ impl JobQueue for Memory {
             executor_model: None,
             executor_seat: None,
             executor_role: None,
+            read_set: None,
             cancel_state: Default::default(),
             result_ref: None,
             signals: Vec::new(),
