@@ -3968,22 +3968,23 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/control/permits.rs` | src | s | 6 crate-vis | — | Who may hold an active custody change's bytes (WILL L04 row 04): the recipients the owner permits, each… |
 | `src/secret_custody/control/revoked.rs` | src | s | 7 crate-vis | — | The owner's revoke on a custody request (WILL L04 row 04): its carrier records it with no byte, and every… |
 | `src/secret_custody/control/roster.rs` | src | s | 1 crate-vis | — | The holder's own rewrap when the roster gains one of the owner's machines (WILL L04 row 04, CALLS… |
-| `src/secret_custody/doors.rs` | src | m | 4 fn · 18 crate-vis | — | Name index, borrowing admission projection, sealed put, and Vault doors |
+| `src/secret_custody/doors.rs` | src | m | 4 fn · 20 crate-vis | — | Name index, borrowing admission projection, sealed put, and Vault doors |
 | `src/secret_custody/floor.rs` | src | m | 2 fn · 8 crate-vis | — | Vault floor resolution plus the shared strict POLICY_MANIFEST walk |
 | `src/secret_custody/found_keys.rs` | src | m | 3 struct · 1 enum · 2 fn · 1 const · 1 re-export · 11 crate-vis | FoundKeyAction, FoundKeyCard, FoundKeyNotice, FoundKeySettled | The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record… |
 | `src/secret_custody/found_keys/actions.rs` | src | m | 3 fn · 1 const · 3 crate-vis | — | The owner's four answers to a found key: rotate (the rotate door settles it), delete, grant and not a secret |
 | `src/secret_custody/known_values.rs` | src | m | 1 const · 17 crate-vis | — | The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later… |
 | `src/secret_custody/known_values/forms.rs` | src | s | 7 crate-vis | — | A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not… |
 | `src/secret_custody/masked_files.rs` | src | m | 1 enum · 3 fn · 18 crate-vis | SecretSight | Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2) |
-| `src/secret_custody/mod.rs` | src | s | 10 re-export · 23 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
+| `src/secret_custody/mod.rs` | src | s | 11 re-export · 23 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
 | `src/secret_custody/owner_door.rs` | src | m | 4 struct · 2 fn · 1 crate-vis | ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered | The owner registers a secret (ARCH-0069 S1–S3): the production door that puts a value into custody |
 | `src/secret_custody/owner_door/tests.rs` | test | L | — | — | ARCH-0069 S2 at register time: a name the repo manifest declares carries the manifest's entry on its custody… |
-| `src/secret_custody/reveal.rs` | src | L | 6 struct · 5 enum · 3 fn · 7 const · 1 re-export · 19 crate-vis | HandleReveal, OwnerSecretReveal, RevealTarget, SecretHandleCard, SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk +3 | A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection) |
+| `src/secret_custody/reveal.rs` | src | L | 6 struct · 5 enum · 3 fn · 7 const · 1 re-export · 20 crate-vis | HandleReveal, OwnerSecretReveal, RevealTarget, SecretHandleCard, SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk +3 | A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection) |
 | `src/secret_custody/reveal/actor_erase.rs` | src | s | 1 enum · 1 const · 2 crate-vis | RevealAskErase | An erased actor out of the reveal rows (FIX 3520) |
 | `src/secret_custody/reveal/agent.rs` | src | m | 5 crate-vis | — | The agent's doors: `reveal`, `wait` and `describe` on a handle |
 | `src/secret_custody/reveal/file.rs` | src | m | 3 crate-vis | — | An agent's sight of a file stored with keys in it (OF-560; owner ruling G04 binary = C2): "Agent with a… |
 | `src/secret_custody/reveal/owner.rs` | src | m | 3 fn | — | The owner's doors: the asks and receipts, the answer to one ask, and the owner's own read of a value |
 | `src/secret_custody/reveal/person.rs` | src | s | 5 crate-vis | — | PERSON handles use the reveal consent machine, not custody or a T1 lease |
+| `src/secret_custody/run_bound.rs` | src | m | 1 struct · 1 enum · 3 fn · 1 const · 2 crate-vis | RunSecretHolder, RunSecretSeat | Run-bound custody (FIX 8028, OF-560; ARCH-0069 secret custody): a secret a run's browser or desktop finds… |
 | `src/secret_custody/sighted_file.rs` | src | s | 2 crate-vis | — | An ASSET body kept in its file, read as a serving door's reader reads it (FIX 5507) |
 | `src/secret_custody/storage_seal.rs` | src | m | 14 crate-vis | — | A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 2 (CALLS `KS-6 credential… |
 | `src/secret_custody/storage_seal/reseal.rs` | src | s | 6 crate-vis | — | A restored credential row sealed again (KS-6 part 1, CALLS `KS-6 reseal fault keeps image carrier`, Engine… |
