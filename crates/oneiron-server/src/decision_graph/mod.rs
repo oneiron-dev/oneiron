@@ -36,6 +36,9 @@ use crate::decision_artifact::HostUnitDecider;
 use crate::decision_verdict::vision_rung;
 use crate::server::SyncServer;
 
+mod call;
+pub(crate) use call::{LadderCall, ladder_decide, ladder_located};
+
 /// The longest the pump sleeps. An arrival on a unit that is not a claim
 /// queues its question without a change signal, so the pump re-reads its
 /// due work at least this often.
@@ -314,106 +317,6 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
         )?;
         Ok(Some(GraphDecision::Decision(Box::new(decision))))
     }
-}
-
-/// One call on the host's ladder, for a graph or an artifact unit.
-pub(crate) struct LadderCall<'a> {
-    pub(crate) principal: EntityId,
-    pub(crate) class: EdgeActorClass,
-    pub(crate) question: &'a DecisionQuestion,
-    pub(crate) evidence: &'a [EntityId],
-    pub(crate) images: &'a [DecisionImage],
-    pub(crate) state: &'a serde_json::Value,
-    pub(crate) dial: DecisionDial,
-    pub(crate) policy: &'a DecisionBandPolicy,
-    pub(crate) reversibility: Reversibility,
-    pub(crate) deadline: &'a RetrievalDeadline,
-    /// The run label a vision seat's read is recorded under.
-    pub(crate) label: &'a str,
-    /// Where a person ask goes; none is the vault's owners.
-    pub(crate) ask_to: Option<&'a AskTo>,
-    /// The question's posture where it is stricter than the vault's
-    /// ([`question_posture`]).
-    pub(crate) posture: Option<HostingPrivacyPosture>,
-}
-
-/// The call through the host's ladder. A call with images starts at the
-/// Local-vision rung, seated on a run of the asker's own, when the dial
-/// spans it; a rung above it that reads no image is skipped. Without that
-/// rung the call reads its state alone.
-pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result<TypedDecision> {
-    let host = server.decision_host();
-    let mut dial = call.dial;
-    let sees = !call.images.is_empty()
-        && LocalVisionModel::bound(&server.ai)
-        && dial.first <= DecisionRung::Local
-        && DecisionRung::Local <= dial.ceiling;
-    let local = if sees {
-        dial.first = DecisionRung::Local;
-        Some(
-            vision_rung(server, call.principal, call.class, call.images, call.label)
-                .map_err(|error| Error::InvalidConfig(error.to_string()))?,
-        )
-    } else {
-        None
-    };
-    let images = if sees { call.images } else { &[] };
-    let mut ladder = host.ladder().ladder();
-    if let Some(rung) = &local {
-        ladder.local = Some(rung as &dyn DecisionProvider);
-    }
-    ladder.ask_to = call.ask_to;
-    let ladder = under_question_posture(server, ladder, call.posture, &mut dial);
-    ladder.run_images(
-        call.question,
-        call.principal,
-        call.evidence,
-        images,
-        call.state,
-        dial,
-        call.policy,
-        call.reversibility,
-        call.deadline,
-    )
-}
-
-/// A Box or Point call through the host's ladder, seated as [`ladder_decide`]
-/// seats it: the host's presence question first, then the coordinates
-/// ([`oneiron::llm::decision::DecisionLadder::run_located`]).
-pub(crate) fn ladder_located(server: &SyncServer, call: LadderCall<'_>) -> Result<LocatedDecision> {
-    let host = server.decision_host();
-    let mut dial = call.dial;
-    let sees = !call.images.is_empty()
-        && LocalVisionModel::bound(&server.ai)
-        && dial.first <= DecisionRung::Local
-        && DecisionRung::Local <= dial.ceiling;
-    let local = if sees {
-        dial.first = DecisionRung::Local;
-        Some(
-            vision_rung(server, call.principal, call.class, call.images, call.label)
-                .map_err(|error| Error::InvalidConfig(error.to_string()))?,
-        )
-    } else {
-        None
-    };
-    let images = if sees { call.images } else { &[] };
-    let mut ladder = host.ladder().ladder();
-    if let Some(rung) = &local {
-        ladder.local = Some(rung as &dyn DecisionProvider);
-    }
-    ladder.ask_to = call.ask_to;
-    let ladder = under_question_posture(server, ladder, call.posture, &mut dial);
-    ladder.run_located(
-        call.question,
-        call.principal,
-        call.evidence,
-        images,
-        call.state,
-        dial,
-        call.policy,
-        call.reversibility,
-        call.deadline,
-    )
 }
 
 /// Starts the standing pump. It sleeps until the next standing question

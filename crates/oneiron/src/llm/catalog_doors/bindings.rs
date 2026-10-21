@@ -1,3 +1,7 @@
+//! Owner model-binding doors.
+//! Entry: Vault::propose_model_binding_as_owner.
+//! Vault is crate::Vault; binding records are owned by llm::manifest.
+
 use super::trials::owned_trial;
 use super::*;
 use crate::claim::CallerLocality;

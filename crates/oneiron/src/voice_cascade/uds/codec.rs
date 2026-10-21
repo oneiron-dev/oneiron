@@ -1,3 +1,7 @@
+//! Voice UDS frame codec.
+//! Entry: read_frame.
+//! Request and Response are owned here; RetrievalContext by voice_cascade.
+
 use std::io::{self, BufRead, Write};
 use std::time::{Duration, Instant};
 

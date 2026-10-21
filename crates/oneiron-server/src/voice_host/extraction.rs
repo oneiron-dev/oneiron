@@ -1,3 +1,7 @@
+//! Voice partial-enrichment extraction.
+//! Entry: TinyExtractor.
+//! Extractor definitions are owned here; model-call vocabulary is oneiron::llm.
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;

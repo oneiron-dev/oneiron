@@ -1,3 +1,7 @@
+//! Voice UDS socket lifecycle.
+//! Entry: SocketGuard::bind.
+//! SocketGuard is owned here; Connection and Shutdown by connection.
+
 use std::ffi::{CString, OsStr, OsString};
 use std::fs::{self, File, Permissions};
 use std::io;
