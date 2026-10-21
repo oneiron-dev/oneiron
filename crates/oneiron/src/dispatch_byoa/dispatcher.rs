@@ -388,12 +388,12 @@ where
     /// seat is back; NextSeat hands it to the next seat this runtime may
     /// run, as a child of the spent attempt, from the durable row alone: a
     /// bound work of any connector shape ([`super::RunnerWorkBinding`]), or
-    /// a CLI runner's task. It parks when no seat is left, or when the work
-    /// has nothing to hand on (an unbound endpoint or MCP seat's), so its
-    /// capture still stands. A seat a hosted-only bound keeps off this
-    /// runtime is passed over and named in the receipt's `skipped_seats`; a
-    /// seat whose adapter names an official stamp is judged, and
-    /// dispatched, on that stamp (FIX 5104). InternalModels hands the work
+    /// a CLI runner's task. It parks, its capture standing, when no seat is
+    /// left or the work has nothing to hand on (an unbound endpoint or MCP
+    /// seat's). A spent seat, a CLI seat with no readable task and a seat a
+    /// hosted-only bound keeps off this runtime are passed over and named in
+    /// `skipped_seats`; a stamped seat is judged, and dispatched, on its
+    /// stamp (FIX 5104). InternalModels hands the work
     /// back to the Dreamer's own model roles. A bound work's record notes
     /// each hop. A replay finds the same capture and the same child.
     ///

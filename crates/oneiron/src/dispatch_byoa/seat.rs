@@ -207,19 +207,49 @@ pub fn hosted_seat_bound(
         .map(|row| row.bound)
 }
 
-/// A fallback seat a route passed over because a hosted-only bound keeps
-/// its login off this runtime.
+/// Why a route passed over a seat in the owner's order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SeatPassedOver {
+    /// A hosted-only bound keeps the seat's login off this runtime.
+    Hosted(HostedSeatBound),
+    /// The seat's quota view ([`super::runner_seat_quotas`]) shows it spent
+    /// and not back yet (FIX 7453): back at `back_at`, or `None` while it
+    /// waits for the owner.
+    Spent { back_at: Option<u64> },
+    /// A CLI seat, and the work's original request record is erased or
+    /// unreadable, or none was kept (FIX 7449): the seat has no task to run.
+    TaskUnreadable,
+}
+
+impl std::fmt::Display for SeatPassedOver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hosted(bound) => write!(f, "{bound}"),
+            Self::Spent { back_at: Some(at) } => write!(f, "its quota is spent until {at}"),
+            Self::Spent { back_at: None } => {
+                f.write_str("its quota is spent and waits for the owner")
+            }
+            Self::TaskUnreadable => f.write_str(
+                "the work's task record is erased or unreadable, so this CLI seat has no task",
+            ),
+        }
+    }
+}
+
+/// A fallback seat a route passed over, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkippedRunnerSeat {
     /// The seat's index in the owner's order.
     pub seat: usize,
     /// The runner the seat names.
     pub runner: String,
-    pub bound: HostedSeatBound,
+    /// Why the route passed it over.
+    pub reason: SeatPassedOver,
 }
 
 /// The passed-over seats in words, for a park reason: empty when none was,
-/// else each seat with its runner and its bound, in the owner's order.
+/// else each seat with its runner and why, in the owner's order.
 #[must_use]
 pub fn skipped_seats_note(skipped: &[SkippedRunnerSeat]) -> String {
     skipped
@@ -227,7 +257,7 @@ pub fn skipped_seats_note(skipped: &[SkippedRunnerSeat]) -> String {
         .map(|skip| {
             format!(
                 "; seat {} ({}) skipped: {}",
-                skip.seat, skip.runner, skip.bound
+                skip.seat, skip.runner, skip.reason
             )
         })
         .collect()
