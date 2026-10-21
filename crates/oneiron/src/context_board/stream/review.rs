@@ -3,8 +3,9 @@
 //!
 //! A pending review already waits as a row of its agent's INBOX, and an
 //! engine-native resident is dispatched for it. A foreign harness hears of it
-//! here. After each commit the host reads every pending review again with
-//! [`PendingDiaryReview::read_all`], outside any lock, and hands the set to
+//! here. After each commit, and when a connection attaches, the host reads
+//! every pending review again with [`PendingDiaryReview::read_all`], outside
+//! any lock, and hands the set to
 //! [`BoardStreamRegistry::publish_diary_reviews`]. That queues one WAKE per
 //! review on each connection of the reviewed agent (the review row's
 //! `(agent, request)` key, never the reader) that has not had it yet.
@@ -75,6 +76,17 @@ impl PendingDiaryReview {
 #[derive(Debug, Default)]
 pub(super) struct PublishedReviews {
     offered: BTreeMap<String, BTreeSet<StreamConnectionId>>,
+}
+
+impl PublishedReviews {
+    /// Forgets what was queued for `connection` once its queue is gone, so
+    /// a connection attached again under the same id hears each review anew.
+    pub(super) fn forget(&mut self, connection: &StreamConnectionId) {
+        self.offered.retain(|_, offered| {
+            offered.remove(connection);
+            !offered.is_empty()
+        });
+    }
 }
 
 impl BoardStreamRegistry {

@@ -10,10 +10,11 @@
 //! registry for a host-side adapter. The reads run on a blocking thread,
 //! outside the registry lock.
 //!
-//! Beside it, every commit starts a pass over the pending diary-read reviews
-//! (`oneiron::context_board::PendingDiaryReview`, FIX 2879): each review
-//! wakes its reviewed agent's own connections, naming the review and nothing
-//! of it. That loop runs alongside the TASK loop and never inside it.
+//! Beside it, every commit and every attached connection starts a pass over
+//! the pending diary-read reviews (`oneiron::context_board::PendingDiaryReview`,
+//! FIX 2879, FIX 6957): each review wakes its reviewed agent's own
+//! connections, naming the review and nothing of it. That loop runs
+//! alongside the TASK loop and never inside it.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -56,7 +57,8 @@ impl SyncServer {
 
     /// Starts the publisher. It subscribes before it returns, so no TASK
     /// committed after this call is missed, and a review opened after it is
-    /// read at the latest by the pass its commit starts.
+    /// read at the latest by the pass its commit starts. A connection that
+    /// attaches is read for by the pass its attach starts.
     pub(crate) fn spawn_board_publisher(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let updates = self.vault().subscribe_task_updates();
         let commits = AttemptQueue::new(self.vault()).subscribe();
@@ -70,19 +72,28 @@ impl SyncServer {
     }
 
     /// One pass over the pending reviews first, then one per commit
-    /// announcement. Announcements queued meanwhile, or lost to lag, fold
-    /// into the next pass, which reads the whole pending set fresh. A failed
-    /// pass is logged and retried at the next commit; it never reaches the
-    /// write that opened the review.
+    /// announcement or connection attach. Signals queued meanwhile, or lost
+    /// to lag, fold into the next pass, which reads the whole pending set
+    /// fresh. A failed pass is logged and retried at the next commit or
+    /// attach; it never reaches the write that opened the review.
     async fn publish_reviews_forever(
         self: Arc<Self>,
         mut commits: tokio::sync::broadcast::Receiver<()>,
     ) {
+        let attached = self
+            .mcp_registry
+            .lock()
+            .await
+            .streams_mut()
+            .attach_notifier();
         loop {
             self.publish_pending_reviews().await;
-            match commits.recv().await {
-                Ok(()) | Err(RecvError::Lagged(_)) => {}
-                Err(RecvError::Closed) => return,
+            tokio::select! {
+                commit = commits.recv() => match commit {
+                    Ok(()) | Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => return,
+                },
+                () = attached.notified() => {}
             }
             while matches!(commits.try_recv(), Ok(()) | Err(TryRecvError::Lagged(_))) {}
         }
@@ -101,7 +112,7 @@ impl SyncServer {
                     .publish_diary_reviews(pending);
             }
             Ok(Err(error)) => {
-                tracing::warn!(kind = ?error.kind(), "board publisher could not read pending diary reviews; it reads them again at the next commit");
+                tracing::warn!(kind = ?error.kind(), "board publisher could not read pending diary reviews; it reads them again at the next commit or attach");
             }
             Err(error) => {
                 tracing::warn!(
