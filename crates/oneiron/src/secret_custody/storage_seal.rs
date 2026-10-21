@@ -17,10 +17,8 @@
 //! * plaintext DTO: the body codec with `value_bytes`, stamped
 //!   [`SECRET_CUSTODY_SCHEMA_VERSION`] as on main, the owner archive's and a
 //!   protected input's and a transition's body (CALLS `KS-6 archive form`),
-//!   and the form a checkpoint image carries a row in until part 2 strips it
-//!   ([`image_credential_carrier`]), which a restored row keeps only until
-//!   the restore seals it again (a row it could not seal stays pending, never
-//!   opened from it, [`reseal::CUSTODY_RESEAL_PENDING`]).
+//!   never a row at rest: a checkpoint image carries each row as it rests,
+//!   sealed (KS-6 part 2, [`image`], CALLS `KS-6 image value form`).
 //!
 //! A record read from storage comes back stamped as its DTO is, so every
 //! carrier built from it is byte for byte main's.
@@ -46,7 +44,12 @@ use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::store::{CredentialLeaf, CustodyKind, Store};
 use crate::vault::Vault;
 
-mod reseal;
+mod image;
+
+pub(crate) use self::image::{
+    CredentialDisposition, CredentialRoute, PlannedCredentials, image_credential_ref,
+    plan_archived_credentials, withhold_plain_image_credential,
+};
 
 use super::codec::{BodyValue, decode_custody_map, encode_custody_map};
 use super::types::{
@@ -60,23 +63,18 @@ const VALUE_AAD_DOMAIN: &[u8] = b"oneiron/credential-value/v2\0";
 const ROLE_VALUE: u8 = 0;
 const NONCE_BYTES: usize = 12;
 
-/// A stored value: sealed under its custody key, or a checkpoint image's
-/// carrier, in the clear.
+/// A stored value: sealed under its custody key, the only form a value
+/// rests in (KS-6 part 2: the restored carrier form is gone, FIX 7456).
 pub(crate) enum StoredValue {
     /// `nonce | ciphertext`, sealed at `generation`; empty for no value.
     Sealed { generation: u32, bytes: Vec<u8> },
-    /// The value in the clear: a row a checkpoint image carried that its
-    /// restore has not sealed again yet, pending (`reseal`).
-    Carrier(Zeroizing<Vec<u8>>),
 }
 
 impl StoredValue {
     /// Whether a value is held at all: a revoked record's is not.
     pub(crate) fn holds_value(&self) -> bool {
-        match self {
-            Self::Sealed { bytes, .. } => !bytes.is_empty(),
-            Self::Carrier(value) => !value.is_empty(),
-        }
+        let Self::Sealed { bytes, .. } = self;
+        !bytes.is_empty()
     }
 }
 
@@ -149,9 +147,10 @@ fn open_value(
         .map_err(|_| sealed_corrupt())
 }
 
-/// Decodes a stored body: its fields and its value as stored. A sealed
-/// value goes only with the stored stamp and a carrier only with the DTO's;
-/// the record comes back stamped as its DTO is.
+/// Decodes a stored body: its fields and its value as stored. A value
+/// rests sealed, with the stored stamp, or not at all: a body holding its
+/// value in the clear is no stored body (KS-6 part 2, no old-format
+/// reader). The record comes back stamped as its DTO is.
 pub(crate) fn decode_stored_custody_body(body: &[u8]) -> Result<StoredCustody> {
     let (mut record, value) = decode_custody_map(body)?;
     let value = match (record.schema_version, value) {
@@ -159,9 +158,6 @@ pub(crate) fn decode_stored_custody_body(body: &[u8]) -> Result<StoredCustody> {
             generation: record.rotation_generation,
             bytes,
         },
-        (SECRET_CUSTODY_SCHEMA_VERSION, BodyValue::Plain(value)) => {
-            StoredValue::Carrier(Zeroizing::new(value))
-        }
         _ => {
             return Err(super::codec::invalid_body(
                 "unsupported secret custody schema version",
@@ -175,18 +171,13 @@ pub(crate) fn decode_stored_custody_body(body: &[u8]) -> Result<StoredCustody> {
 /// The stored body of `stored`: its value as stored, never opened. A
 /// sealed value goes only with the generation it was sealed at.
 fn encode_stored_body(stored: &StoredCustody) -> Result<Vec<u8>> {
-    let value = match &stored.value {
-        StoredValue::Sealed { generation, bytes } => {
-            if !bytes.is_empty() && *generation != stored.record.rotation_generation {
-                return Err(super::codec::invalid_body(
-                    "a sealed value goes only with its own generation",
-                ));
-            }
-            BodyValue::Sealed(bytes.clone())
-        }
-        StoredValue::Carrier(value) => BodyValue::Plain(value.to_vec()),
-    };
-    encode_custody_map(&stored.record, value)
+    let StoredValue::Sealed { generation, bytes } = &stored.value;
+    if !bytes.is_empty() && *generation != stored.record.rotation_generation {
+        return Err(super::codec::invalid_body(
+            "a sealed value goes only with its own generation",
+        ));
+    }
+    encode_custody_map(&stored.record, BodyValue::Sealed(bytes.clone()))
 }
 
 /// The stored body `rec` is written as, in `wtxn`: its value sealed under
@@ -232,9 +223,14 @@ enum CustodySealFault {
 
 const CUSTODY_SEAL_FAULT: CustodySealFault = CustodySealFault::TypedRetryNeverClear;
 
-/// The handle a typed custody answer names record `id` by: its short id,
-/// or, for a record that has none yet, its name.
-fn credential_handle(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId, name: &str) -> String {
+/// The handle a typed custody answer, or a restore's note, names record
+/// `id` by: its short id, or, for a record that has none yet, its name.
+pub(crate) fn credential_handle(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    name: &str,
+) -> String {
     crate::ports::ShortIdStoreRead::port_short_id_reference(store, txn, id)
         .ok()
         .flatten()
@@ -265,23 +261,15 @@ fn custody_unavailable(
 }
 
 /// Opens `stored`'s value for record `id` into its record. The caller holds
-/// a writer, or took the custody read guard before its snapshot. A row a
-/// restore could not seal again ([`reseal::CUSTODY_RESEAL_PENDING`])
-/// opens only once this vault's custody takes its key: never from its
-/// carrier on a custody fault.
+/// a writer, or took the custody read guard before its snapshot.
 fn open_stored(store: &Store, id: &EntityId, stored: StoredCustody) -> Result<SecretCustodyRecord> {
     let StoredCustody { mut record, value } = stored;
-    record.value_bytes = match value {
-        StoredValue::Sealed { bytes, .. } if bytes.is_empty() => Vec::new(),
-        StoredValue::Sealed { generation, bytes } => {
-            let leaf = store.read_credential_value_leaf(id, generation)?;
-            open_value(&leaf, id, generation, &bytes)?.to_vec()
-        }
-        StoredValue::Carrier(value) if value.is_empty() => Vec::new(),
-        StoredValue::Carrier(value) => {
-            reseal::retry_pending_key(store, id, record.rotation_generation)?;
-            value.to_vec()
-        }
+    let StoredValue::Sealed { generation, bytes } = value;
+    record.value_bytes = if bytes.is_empty() {
+        Vec::new()
+    } else {
+        let leaf = store.read_credential_value_leaf(id, generation)?;
+        open_value(&leaf, id, generation, &bytes)?.to_vec()
     };
     Ok(record)
 }
@@ -352,8 +340,8 @@ pub(crate) fn read_secret_custody_meta_in_txn(
     Ok(read_stored_custody_in_txn(store, txn, id)?.map(|stored| stored.record))
 }
 
-/// Whether record `id` holds a value at rest, sealed or carried, read
-/// without custody.
+/// Whether record `id` holds a value at rest, sealed, read without
+/// custody.
 pub(crate) fn stored_value_held_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -388,46 +376,6 @@ pub(crate) fn put_stored_custody_in_txn(
         data,
         (at, occurred_at),
     )
-}
-
-/// A checkpoint image's form of entity row `value` under key `key`, when it
-/// is a credential whose value is sealed: the row with its value opened
-/// from current custody into the plaintext DTO, the carrier a restore of
-/// this image lands as on main (KS-6 part 1; part 2 strips it, CALLS `KS-6
-/// image form`). The snapshot holds the custody read guard. `None` keeps
-/// the row as it is: not a credential, no value, or a key that does not
-/// open, warned with no byte.
-pub(crate) fn image_credential_carrier(store: &Store, key: &[u8], value: &[u8]) -> Option<Vec<u8>> {
-    let header = EntityMetadataHeader::parse(value)?;
-    if header.entity_type != ENTITY_TYPE_SECRET_CUSTODY {
-        return None;
-    }
-    let opened = (|| -> Result<Option<Vec<u8>>> {
-        let id = EntityId::from_bytes(<[u8; 16]>::try_from(key).map_err(|_| sealed_corrupt())?)?;
-        let stored = decode_stored_custody_body(&value[ENTITY_METADATA_HEADER_LEN..])?;
-        if !matches!(&stored.value, StoredValue::Sealed { bytes, .. } if !bytes.is_empty()) {
-            return Ok(None);
-        }
-        let record = stored.record.clone();
-        let opened = open_stored(store, &id, stored)?;
-        let stored = StoredCustody {
-            record,
-            value: StoredValue::Carrier(Zeroizing::new(opened.value_bytes)),
-        };
-        let mut row = value[..ENTITY_METADATA_HEADER_LEN].to_vec();
-        row.extend_from_slice(&encode_stored_body(&stored)?);
-        Ok(Some(row))
-    })();
-    match opened {
-        Ok(row) => row,
-        Err(error) => {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "a credential's value did not open for this image; its row rides sealed"
-            );
-            None
-        }
-    }
 }
 
 /// The owner archive's plaintext DTO of stored body `body`, record `id`
@@ -465,29 +413,110 @@ pub(crate) fn archive_custody_body(
     }
 }
 
-/// Plans every credential value this archived store's rows seal, through
-/// its activation's one `plan` (KS-6 part 1), so the fork copies their keys
-/// with the claim keys, bodies, history and pads: a key that is not there
-/// is not copied, warned, and its row keeps its sealed value.
-pub(crate) fn plan_archived_credentials(
-    store: &Store,
-    plan: &mut crate::store::CustodyPlan,
-) -> Result<()> {
-    let txn = store.env.read_txn()?;
-    let mut values = Vec::new();
-    for entry in store.port_entity_ids_by_type(&txn, ENTITY_TYPE_SECRET_CUSTODY, None)? {
-        let id = entry?;
-        if let Some(StoredCustody {
-            value: StoredValue::Sealed { generation, bytes },
-            ..
-        }) = read_stored_custody_in_txn(store, &txn, &id)?
-            && !bytes.is_empty()
-        {
-            values.push((id, generation));
+/// What an owner archive does when it cannot take the custody read guard
+/// (CALLS `KS-6 archive same id`, CUSTODY_ARCHIVE_GUARD_FAULT, Engine 10-21
+/// 22:2x).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CustodyArchiveGuardFault {
+    /// Warned, and the archive goes on unguarded: a value whose key an erase
+    /// destroys mid-read goes as its handle, as before. No export refusal.
+    WarnAndKeepHandleFallback,
+}
+
+const CUSTODY_ARCHIVE_GUARD_FAULT: CustodyArchiveGuardFault =
+    CustodyArchiveGuardFault::WarnAndKeepHandleFallback;
+
+/// The custody read guard an owner archive that opens credential values
+/// takes before its snapshot and holds through its last open, as a
+/// checkpoint's snapshot does, so no key its rows seal under goes between
+/// the row and its open (KS-6). Taken outside any writer and never inside
+/// another guard's pass. `None`, warned, when it does not take.
+pub(crate) fn archive_custody_guard(store: &Store) -> Option<std::sync::RwLockReadGuard<'_, ()>> {
+    match CUSTODY_ARCHIVE_GUARD_FAULT {
+        CustodyArchiveGuardFault::WarnAndKeepHandleFallback => {}
+    }
+    match store.gate_custody_read_guard() {
+        Ok(guard) => Some(guard),
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the owner archive took no custody read guard; a value whose key goes mid-read \
+                 goes as its handle"
+            );
+            None
         }
     }
-    drop(txn);
-    crate::store::plan_credential_values(plan, &values)
+}
+
+/// What an owner archive's import of a record whose id is already here
+/// finds (CALLS `KS-6 archive same id`, CUSTODY_ARCHIVE_SAME_ID, Engine
+/// 10-21 22:2x).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CustodyArchiveSameId {
+    /// The record here, its value opened in the import's writer, is
+    /// compared with the archive's plaintext DTO as one record: the same
+    /// record stays unchanged, a different one is today's collision, and a
+    /// comparison that faults leaves the record here as it is, warned for a
+    /// retry: never overwritten, never a collision it did not find, and no
+    /// plaintext kept.
+    CompareOpenedDtoElsePending,
+}
+
+const CUSTODY_ARCHIVE_SAME_ID: CustodyArchiveSameId =
+    CustodyArchiveSameId::CompareOpenedDtoElsePending;
+
+/// What an owner archive's import finds of a record whose id is already
+/// here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArchiveSameId {
+    /// The same record: unchanged.
+    Same,
+    /// Another record: a collision, refused as before.
+    Different,
+    /// The comparison faulted: the record here stays as it is, pending.
+    Pending,
+}
+
+/// Compares entity row `existing`, record `id`, read in the import's writer
+/// `txn`, with `incoming`, the archive's plaintext DTO of it (CALLS `KS-6
+/// archive same id`): the stored value opened from current custody, never
+/// the sealed bytes, nonce or stamp.
+pub(crate) fn archive_same_custody_in_txn(
+    store: &Store,
+    id: &EntityId,
+    existing: &[u8],
+    incoming: &SecretCustodyRecord,
+) -> ArchiveSameId {
+    match CUSTODY_ARCHIVE_SAME_ID {
+        CustodyArchiveSameId::CompareOpenedDtoElsePending => {}
+    }
+    if !EntityMetadataHeader::parse(existing)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_SECRET_CUSTODY)
+    {
+        return ArchiveSameId::Different;
+    }
+    let opened = decode_stored_custody_body(&existing[ENTITY_METADATA_HEADER_LEN..])
+        .and_then(|stored| open_stored(store, id, stored));
+    match opened {
+        Ok(mut opened) => {
+            let same = opened == *incoming;
+            zeroize::Zeroize::zeroize(&mut opened.value_bytes);
+            if same {
+                ArchiveSameId::Same
+            } else {
+                ArchiveSameId::Different
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                credential = %id.to_hex(),
+                kind = ?error.kind(),
+                "an archive's custody record could not be compared with the one here; the one \
+                 here stays as it is, retry the import"
+            );
+            ArchiveSameId::Pending
+        }
+    }
 }
 
 /// The credentials whose value and carrier keys a custody head may carry
@@ -508,14 +537,20 @@ pub(crate) fn credentials_eligible_for_heads(vault: &Vault) -> Result<BTreeSet<[
     {
         let id = entry?;
         if let Some(record) = read_secret_custody_meta_in_txn(&vault.store, &txn, &id)?
-            && record.class == CustodyClass::CustodyPortable
-            && !record.device_only
-            && record.status == SecretCustodyStatus::Active
+            && head_eligible(&record)
         {
             eligible.insert(*id.as_bytes());
         }
     }
     Ok(eligible)
+}
+
+/// Whether `record`'s keys may ride a custody head (CALLS `KS-6 entry
+/// eligibility`): custody-portable, not "this device only", and active.
+pub(crate) fn head_eligible(record: &SecretCustodyRecord) -> bool {
+    record.class == CustodyClass::CustodyPortable
+        && !record.device_only
+        && record.status == SecretCustodyStatus::Active
 }
 
 /// Which custody entries a head may carry (CALLS `KS-6 entry eligibility`).

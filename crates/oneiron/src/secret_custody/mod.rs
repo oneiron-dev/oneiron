@@ -150,9 +150,11 @@ pub(crate) use self::reveal::{
 };
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
 pub(crate) use self::storage_seal::{
-    StoredValue, archive_custody_body, credentials_eligible_for_heads, image_credential_carrier,
-    plan_archived_credentials, put_stored_custody_in_txn, read_secret_custody_meta_in_txn,
-    read_stored_custody_in_txn, stored_value_held_in_txn,
+    ArchiveSameId, CredentialDisposition, CredentialRoute, PlannedCredentials, StoredValue,
+    archive_custody_body, archive_custody_guard, archive_same_custody_in_txn,
+    credentials_eligible_for_heads, image_credential_ref, plan_archived_credentials,
+    put_stored_custody_in_txn, read_secret_custody_meta_in_txn, read_stored_custody_in_txn,
+    stored_value_held_in_txn, withhold_plain_image_credential,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::moves_custody_floor;
