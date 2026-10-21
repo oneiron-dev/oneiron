@@ -189,6 +189,28 @@ impl FileSpool {
         Ok(())
     }
 
+    /// [`Self::attach_as`] for `bytes` bytes `reader` yields, copied as they
+    /// stream (FIX 5392): bytes whose BLAKE3 and length the caller has
+    /// checked. Only a whole copy is indexed.
+    pub(crate) fn attach_reader_as(
+        &mut self,
+        digest: String,
+        bytes: u64,
+        reader: &mut dyn Read,
+    ) -> Result<()> {
+        if self.index.contains_key(&digest) {
+            return Ok(());
+        }
+        let copied = std::io::copy(reader, &mut self.file)?;
+        let at = self.end;
+        self.end += copied;
+        if copied != bytes {
+            return Err(spool_failed());
+        }
+        self.index.insert(digest, (at, copied));
+        Ok(())
+    }
+
     /// The manifest's file list, in digest order.
     pub(crate) fn manifest(&self) -> Vec<ArchiveFile> {
         self.index

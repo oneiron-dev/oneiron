@@ -16344,6 +16344,21 @@
       "openapi": true
     },
     {
+      "name": "vault.runs.program_hold.release",
+      "description": "The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out.",
+      "input": "crate::dreamer_runner::ReleaseTurnProgramHoldRequest",
+      "output": "crate::dreamer_runner::ProgramHoldReleaseView",
+      "call": "crate::dreamer_runner::release_turn_program_hold_as_owner(memory.vault(), &memory.embedded_owner(\"vault.runs.program_hold.release\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.consolidation.home.get",
       "description": "The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything.",
       "input": "EmptyRequest",

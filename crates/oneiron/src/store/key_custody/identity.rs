@@ -86,10 +86,11 @@ pub(crate) enum CustodyKind {
     /// = the holder's entry slot; secret = the index's 44-byte entry, `len
     /// (u32be) | tag (8) | fingerprint (32)`.
     KnownValueEntry,
-    /// One world key's pad (KS-5, FIX 346): item = the world's id (16 bytes)
-    /// then an instance (16), the key's random mint id, so a world erase
-    /// finds every pad of the world by its directory names; generation 0;
-    /// secret = the pad (32 bytes).
+    /// One world key's pad (KS-5, FIX 346): item = the key's full id (40
+    /// bytes: the world's id (16), the key generation (8, big-endian), the
+    /// key's random mint id (16); CALLS `FIX 5686 pad custody item codec`),
+    /// so a world erase finds every pad of the world by its directory names;
+    /// generation 0; secret = the pad (32 bytes).
     WorldPad,
     /// One owner's compartment of a checkpoint's ordinary payload (KS-7):
     /// item = subtype (1) | canonical owner (32) | incarnation (16), secret
@@ -134,7 +135,7 @@ impl CustodyKind {
             Self::ClaimDecision => 16,
             Self::BodyInstance => 17,
             Self::KnownValueEntry => 16,
-            Self::WorldPad => 32,
+            Self::WorldPad => 40,
             Self::CheckpointPayload => 49,
             Self::KnownValueIndex | Self::TrainingLink => 0,
         }
