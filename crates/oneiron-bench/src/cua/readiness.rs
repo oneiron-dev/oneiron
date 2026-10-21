@@ -416,7 +416,8 @@ pub(super) async fn run(plan_path: &Path, binary: &Path, pins: &Path, out: &Path
         "fresh_admission_replay":passed && cases[5]["status"] == "pass",
         "forward_absent_cells_unavailable":cases[6]["status"] == "pass",
         "passed":passed,"stop_cause":failure,"cleanup":cleanup,"cases":cases,
-        "transport_evidence":out.join("transport.json").exists().then_some("transport.json")});
+        "transport_evidence":out.join("transport.json").exists().then_some("transport.json"),
+        "browser_setup_evidence":out.join("browser-setup.json").exists().then_some("browser-setup.json")});
     write_json(&receipt_path, &receipt)?;
     if passed {
         Ok(())
