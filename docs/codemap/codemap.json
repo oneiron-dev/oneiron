@@ -61633,14 +61633,45 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 15,
-      "fn": 7
+      "crate-vis": 9,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_facade/admission.rs",
+     "purpose": "Ask ceiling, census and minting",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_facade/read.rs",
+     "purpose": "Ask status, waiting and evidence views",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_facade/wait.rs",
+     "purpose": "Durable ask waits and waiter signals",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -61781,6 +61812,16 @@
      "purpose": "Atomic ask cutoffs and the fixed human-word reducers",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_settlement/reducers.rs",
+     "purpose": "Fixed ask evidence reducers and fallback choice",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -62263,7 +62304,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FanoutCheckChoice",
@@ -62272,10 +62313,40 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 14,
       "enum": 1,
-      "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/fanout_launch/checks.rs",
+     "purpose": "Fan-out width checks and held-attempt settlement",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/fanout_launch/hold.rs",
+     "purpose": "Held fan-out ask admission and release records",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/fanout_launch/resume.rs",
+     "purpose": "Fan-out launch reads, rulings and resume",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 5
      }
     },
     {
@@ -62321,13 +62392,43 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/highway_post.rs",
      "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_post/brief.rs",
+     "purpose": "Task brief revision reports and post landing",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_post/parking.rs",
+     "purpose": "Parked posts and agent takes",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_post/settlement.rs",
+     "purpose": "Approved post and brief proposal settlement",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -62341,13 +62442,43 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/highway_report.rs",
      "purpose": "The highway's Report arm (OF-220): progress, blocked, done, failed and release against a fenced handle, the…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_report/done.rs",
+     "purpose": "Done verdicts and report escalation",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_report/receipt.rs",
+     "purpose": "Highway report receipts and fence reads",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_report/work.rs",
+     "purpose": "Work reports and their atomic commits",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -62594,14 +62725,35 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/query_facade.rs",
-     "purpose": "—",
+     "purpose": "Task descriptions, cancellation and proposals",
      "surface": {
-      "crate-vis": 8,
-      "fn": 7
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/query_facade/proposal.rs",
+     "purpose": "Task proposal claim creation and landing",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/query_facade/read.rs",
+     "purpose": "Task descriptions, updates and acknowledgement",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 4
      }
     },
     {
@@ -71807,9 +71959,9 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 129,
+     "files": 144,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
@@ -71982,9 +72134,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 176,
+   "over_bar": 171,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4599,
+   "source_files": 4614,
    "test_files": 902
   },
   "oneiron-android": {
