@@ -1174,7 +1174,7 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Option<SharedVaultDeletion>> {
-        SHARED_VAULT_DELETION.get(&self.store, txn, &())
+        shared_vault_deletion_for_store_in_txn(&self.store, txn)
     }
     /// The executed delete-the-vault act, if any. A host stops serving the
     /// vault once this is present and keeps backups only until its deadline.
@@ -1182,4 +1182,13 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.shared_vault_deletion_in_txn(&txn)
     }
+}
+
+/// [`Vault::shared_vault_deletion_in_txn`] for a reader that holds a `Store`
+/// and no `Vault` (FIX 7461): the same row.
+pub(crate) fn shared_vault_deletion_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<SharedVaultDeletion>> {
+    SHARED_VAULT_DELETION.get(store, txn, &())
 }

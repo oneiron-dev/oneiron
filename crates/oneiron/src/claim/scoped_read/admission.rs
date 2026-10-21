@@ -18,6 +18,7 @@ impl crate::vault::Vault {
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
             room_peer: false,
+            own_owner_authority: false,
         }
     }
 
@@ -57,6 +58,7 @@ impl crate::vault::Vault {
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
             room_peer: false,
+            own_owner_authority: false,
         }
     }
 }

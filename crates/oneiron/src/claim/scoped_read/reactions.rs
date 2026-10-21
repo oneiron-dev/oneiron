@@ -192,6 +192,7 @@ impl<'a> ScopedRead<'a> {
             claim_status: ClaimReadStatus::Recorded,
             recall_authority: Mutex::new(None),
             room_peer: self.room_peer,
+            own_owner_authority: self.own_owner_authority,
         })
     }
 }

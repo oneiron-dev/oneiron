@@ -3,6 +3,7 @@
 
 use super::backfill::{BackfillAtKey, QUESTION_BACKFILL_AT};
 use super::graph_ask::{self, GraphAnswerer, GraphDecision, GraphUnitContext};
+use super::reader_authority::question_lane;
 use super::{arrival, records::*, store::*};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
@@ -253,7 +254,8 @@ fn refresh_with(
         // A graph context's neighbours and every source it showed are read
         // again through the principal's lane in this snapshot.
         let lane = if prepared.iter().any(|p| p.context.is_some()) {
-            Some(vault.scoped_read(graph_ask::asker_reader_in_txn(vault, txn, principal)?))
+            let key = graph_ask::asker_reader_in_txn(vault, txn, principal)?;
+            Some(question_lane(vault, key))
         } else {
             None
         };
@@ -722,7 +724,7 @@ fn graph_proposal(
     kind: u8,
     body: &[u8],
 ) -> Result<Option<Answered>> {
-    let lane = vault.scoped_read(graph_ask::asker_reader(vault, record.principal)?);
+    let lane = question_lane(vault, graph_ask::asker_reader(vault, record.principal)?);
     let Some(context) = graph_ask::unit_context(&lane, unit, kind, body.to_vec())? else {
         return Ok(None);
     };
@@ -985,14 +987,12 @@ fn source(
         source_actor_key(vault, txn, principal, None)?.require_access_grants(Some(principal));
     let actor_key = source_actor_key(vault, txn, actor.entity_ref(), Some(actor.actor_class()))?
         .require_access_grants(Some(principal));
-    let Some(raw) = vault
-        .scoped_read(principal_key)
-        .entity_raw_live_in(txn, &unit)?
-    else {
+    // FIX 7461: each lane also reads under its own reader's live owner
+    // authority once its own admission and Grants refuse.
+    let Some(raw) = question_lane(vault, principal_key).entity_raw_live_in(txn, &unit)? else {
         return Ok(None);
     };
-    if vault
-        .scoped_read(actor_key)
+    if question_lane(vault, actor_key)
         .entity_raw_live_in(txn, &unit)?
         .is_none()
     {

@@ -79,14 +79,20 @@ struct LiveMembers {
 /// plain delete keeps the PERSON shell and its Active lifecycle, so liveness
 /// reads the deletion tombstone too.
 fn personal_owner_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
+    personal_owner_with(&mut |id| crate::consent::person_is_live_in_txn(vault, txn, id))
+}
+
+/// [`personal_owner_in_txn`], each PERSON's liveness read by `person_live`
+/// (through a vault handle or a bare store, FIX 7461).
+fn personal_owner_with(
+    person_live: &mut dyn FnMut(&EntityId) -> Result<bool>,
+) -> Result<Vec<EntityId>> {
     let owner = crate::vault::embedded_owner_actor_id()?;
-    Ok(
-        if crate::consent::person_is_live_in_txn(vault, txn, &owner)? {
-            vec![owner]
-        } else {
-            Vec::new()
-        },
-    )
+    Ok(if person_live(&owner)? {
+        vec![owner]
+    } else {
+        Vec::new()
+    })
 }
 
 /// `None` for a personal vault. A shared vault whose creating owner holds no
@@ -104,24 +110,42 @@ fn shared_members_in_txn(
     txn: &heed::RoTxn<'_>,
     live_persons: bool,
 ) -> Result<Option<LiveMembers>> {
+    shared_members_with(
+        &vault.store,
+        vault.privacy_posture(),
+        txn,
+        live_persons,
+        &mut |id| crate::consent::person_is_live_in_txn(vault, txn, id),
+    )
+}
+
+/// [`shared_members_in_txn`] over `store` and the posture its vault opened
+/// with, each PERSON's liveness read by `person_live` (FIX 7461).
+fn shared_members_with(
+    store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    live_persons: bool,
+    person_live: &mut dyn FnMut(&EntityId) -> Result<bool>,
+) -> Result<Option<LiveMembers>> {
     // Grant expiry is read from the vault clock, not a caller-chosen event time.
-    let now = vault.store.clock.now_recorded_at();
-    let Some(raw) = vault.store.vault_meta.get(txn, SHARED_CREATION_KEY)? else {
+    let now = store.clock.now_recorded_at();
+    let Some(raw) = store.vault_meta.get(txn, SHARED_CREATION_KEY)? else {
         return Ok(None);
     };
     let creation: crate::federation::SharedVaultCreation =
         serde_json::from_slice(&raw).map_err(|_| invalid())?;
-    let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
     let mut grants = Vec::new();
     for entry in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-        &vault.store,
+        store,
         txn,
         crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
         None,
     )? {
         let id = entry?;
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
-            .ok_or_else(invalid)?;
+        let raw =
+            crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.ok_or_else(invalid)?;
         if EntityMetadataHeader::parse(&raw)
             .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT)
         {
@@ -130,7 +154,7 @@ fn shared_members_in_txn(
         // A deleted grant is no membership: its shell is skipped here, and a
         // stored body counts only while its row is live, checked last.
         if raw.len() == ENTITY_METADATA_HEADER_LEN
-            && !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
+            && !crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live()
         {
             continue;
         }
@@ -140,9 +164,8 @@ fn shared_members_in_txn(
             && fold
                 .pact_for_grant(&id)
                 .is_none_or(|p| p.status == crate::authority::FederationPactStatus::Active)
-            && (!live_persons
-                || crate::consent::person_is_live_in_txn(vault, txn, &grant.member_ref)?)
-            && crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
+            && (!live_persons || person_live(&grant.member_ref)?)
+            && crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live()
         {
             grants.push(grant);
         }
@@ -223,12 +246,49 @@ pub(crate) fn is_live_vault_owner_in_txn(
     Ok(owners_in_txn(vault, txn)?.contains(actor))
 }
 
+/// [`is_live_vault_owner_in_txn`] for a reader that holds a `Store` and the
+/// posture its vault opened with, and no `Vault` (FIX 7461): every live owner
+/// [`owners_for_store_in_txn`] counts, co-owners included.
+pub(crate) fn is_live_vault_owner_for_store_in_txn(
+    store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<bool> {
+    Ok(owners_for_store_in_txn(store, posture, txn)?.contains(actor))
+}
+
 /// The vault's live owners: the embedded owner of a personal vault, or every
 /// live Owner-role member of a shared one. An Admin or Delegate is no owner,
 /// whatever action grants it holds.
 pub(crate) fn owners_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
-    match live_shared_members_in_txn(vault, txn)? {
-        None => personal_owner_in_txn(vault, txn),
+    owners_with(&vault.store, vault.privacy_posture(), txn, &mut |id| {
+        crate::consent::person_is_live_in_txn(vault, txn, id)
+    })
+}
+
+/// [`owners_in_txn`] for a reader that holds a `Store` and the posture its
+/// vault opened with, and no `Vault` (FIX 7461): the same census, each
+/// PERSON's liveness read through the store.
+pub(crate) fn owners_for_store_in_txn(
+    store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<EntityId>> {
+    owners_with(store, posture, txn, &mut |id| {
+        crate::consent::person_is_live_for_store_in_txn(store, txn, id)
+    })
+}
+
+/// The owners census, each PERSON's liveness read by `person_live`.
+fn owners_with(
+    store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    person_live: &mut dyn FnMut(&EntityId) -> Result<bool>,
+) -> Result<Vec<EntityId>> {
+    match shared_members_with(store, posture, txn, true, &mut *person_live)? {
+        None => personal_owner_with(person_live),
         Some(members) => Ok(members.owners.into_iter().collect()),
     }
 }

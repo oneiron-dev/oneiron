@@ -660,7 +660,8 @@ pub(crate) fn trial_unit_context_in_txn(
     locality: crate::claim::CallerLocality,
     answer: &AnswerRecord,
 ) -> Result<GraphUnitContext> {
-    let lane = vault.scoped_read(asker_reader_in_txn(vault, txn, principal)?.at(locality));
+    let key = asker_reader_in_txn(vault, txn, principal)?.at(locality);
+    let lane = super::reader_authority::question_lane(vault, key);
     let mut sources = Vec::new();
     for pin in &answer.decision.receipt.evidence_versions {
         let raw = lane
