@@ -91,6 +91,7 @@ fn continuous(
                     )?;
                 }
             }
+            vault.enqueue_live_health_review_in_txn(txn, &attempt.status.attempt, now)?;
         }
         Ok(())
     })?;

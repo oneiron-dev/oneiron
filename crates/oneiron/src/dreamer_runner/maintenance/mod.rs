@@ -249,7 +249,7 @@ pub(crate) fn execute(
             return contribution::execute(attempt, ctx, contribution_host);
         }
         agent_health::COACH_AGENT_HEALTH_FACET => {
-            agent_health::run(ctx.vault, ctx.now_ms / 1000)?;
+            agent_health::review(ctx.vault, &attempt.status.payload.input, ctx.now_ms / 1000)?;
         }
         calibration_asks::COACH_CALIBRATION_ASKS_FACET => {
             calibration_asks::run(ctx.vault)?;

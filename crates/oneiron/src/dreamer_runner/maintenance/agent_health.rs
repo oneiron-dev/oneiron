@@ -1,9 +1,11 @@
 //! The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1
-//! recipe on the gated maintenance lane, run on the Coach's timer wake. It
-//! reads call receipts, attempt rows, run coordination and sealed attempt
-//! receipts. Each finding is one `agent_health` DIAGNOSTIC, merged into one
-//! card per actor, signal and task. Every dial resolves for the project and
-//! task type of the attempt it judges (`learning_setting` scoped rows).
+//! recipe on the gated maintenance lane, run on the Coach's timer wake, and
+//! over one agent attempt at its terminal receipt and at each Dreamer wake
+//! while it runs (`targeted`). It reads call receipts, attempt rows, run
+//! coordination and sealed attempt receipts. Each finding is one
+//! `agent_health` DIAGNOSTIC, merged into one card per actor, signal and
+//! task. Every dial resolves for the project and task type of the attempt it
+//! judges (`learning_setting` scoped rows).
 //!
 //! It never stops an agent and never narrows a grant or scope: its output is
 //! cards and proposed moves, and an agent-health event never feeds the auto
@@ -55,6 +57,7 @@ mod check_repeat;
 mod duplicate;
 mod loaded;
 mod run_loop;
+mod targeted;
 pub use apply::{
     AgentHealthApplicationState, AgentHealthCoachApplication, ConcernApplyOutcome,
     ConcernApplyRequest,
@@ -65,6 +68,7 @@ pub use ask::{
     ConcernMove, ConcernMoveOutcome, ConcernMoveRequest,
 };
 pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
+pub(super) use targeted::review;
 
 /// The recipe's facet. It rides the Coach's timer jobs (`MAINTENANCE_FACETS`),
 /// deduped per wake.
@@ -570,6 +574,34 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     }
     // A project or task type whose review is off keeps its findings unsaid.
     findings.retain(|finding| book.for_attempt(&dispatched, finding.attempt).review);
+    land(
+        vault,
+        findings,
+        &digest_pairs,
+        &dispatched,
+        &attempts,
+        &book,
+        now,
+        true,
+    )
+}
+
+/// Lands one review's findings: what each agent said itself, each finding's
+/// DIAGNOSTIC, the digest pairs' labels, then each card. With `escalate`, a
+/// card its leader leaves open past the TTL also goes up to the owner: a
+/// pass over every card, the nightly review's alone. Returns the cards it
+/// touched.
+#[allow(clippy::too_many_arguments)]
+fn land(
+    vault: &Vault,
+    mut findings: Vec<Finding>,
+    digest_pairs: &[duplicate::DigestPair],
+    dispatched: &Dispatches,
+    attempts: &Attempts,
+    book: &DialBook,
+    now: u64,
+    escalate: bool,
+) -> Result<u64> {
     // What each agent said itself, for its card.
     for finding in &mut findings {
         let began = finding
@@ -587,7 +619,7 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     for finding in &findings {
         emitted.push(emit(vault, finding)?);
     }
-    label_digest_pairs(vault, &digest_pairs, &findings, &emitted, &attempts)?;
+    label_digest_pairs(vault, digest_pairs, &findings, &emitted, attempts)?;
 
     // Recipients from live authority: the project's effective leader, the
     // spawner by dispatch lineage, and the vault's live owners.
@@ -596,7 +628,7 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         let owners = crate::policy_model::owners_in_txn(vault, &rtxn)?;
         let mut routes = Vec::with_capacity(findings.len());
         for finding in &findings {
-            routes.push(route(vault, &rtxn, finding, &dispatched, &attempts, &book)?);
+            routes.push(route(vault, &rtxn, finding, dispatched, attempts, book)?);
         }
         (owners, routes)
     };
@@ -604,7 +636,7 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     vault.with_write_txn_grouped(|txn| {
         let mut touched = BTreeSet::new();
         for ((finding, diagnostic), route) in findings.iter().zip(&emitted).zip(&routes) {
-            let floor = book.for_attempt(&dispatched, finding.attempt).card_floor;
+            let floor = book.for_attempt(dispatched, finding.attempt).card_floor;
             if f64::from(AgentHealthTone::of(finding.signal).impact()) < floor {
                 continue;
             }
@@ -618,7 +650,12 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
             touched.insert(key);
         }
         // A card its leader leaves open past the TTL goes up to the owner.
-        for (key, mut card) in CARDS.scan(&vault.store, txn)? {
+        let scan = if escalate {
+            CARDS.scan(&vault.store, txn)?
+        } else {
+            Vec::new()
+        };
+        for (key, mut card) in scan {
             if card.outcome == AgentHealthOutcome::Open
                 && !card.owner_copy
                 && now

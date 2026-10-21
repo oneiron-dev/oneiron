@@ -69,6 +69,7 @@ impl AttemptQueue<'_> {
     ) -> Result<()> {
         if let Some(vault) = self.vault {
             vault.record_job_notification_in_txn(wtxn, record)?;
+            vault.enqueue_health_review_in_txn(wtxn, record)?;
         }
         Ok(())
     }
