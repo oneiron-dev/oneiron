@@ -17410,7 +17410,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 26,
       "struct": 2
      }
@@ -17433,6 +17433,16 @@
      "purpose": "A person's own slip bound to their proof (FIX 4707): the HTTP door of a world's settings holders, who need…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/doors/queue_check.rs",
+     "purpose": "The owner's queued check approval (FIX 6868, L02 authority seam): the durable record that the owner approved…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -17528,7 +17538,7 @@
      "path": "src/consent/mod.rs",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 3,
       "re-export": 14
      }
@@ -19106,7 +19116,7 @@
      "path": "src/contract_oracle/graph.rs",
      "purpose": "Workspace dependency closure from resolved `cargo metadata --format-version 1` JSON",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -37200,10 +37210,40 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/merge_queue_doors/checker.rs",
+     "purpose": "The owner's checker doors (FIX 6868): request checked initialization, a bound fast or slow check and a bound…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MergeQueueCheckRequest",
+      "MergeQueueCheckState",
+      "MergeQueueCheckStatusRequest",
+      "MergeQueueCheckWorkKind",
+      "MergeQueueCheckWorkView",
+      "MergeQueueDiagnoseRequest",
+      "MergeQueueInitializeRequest",
+      "QueueCheckPhase"
+     ],
+     "path": "src/memory/merge_queue_doors/checker_types.rs",
+     "purpose": "The checker doors' wire types (FIX 6868)",
+     "surface": {
+      "enum": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/merge_queue_doors/mod.rs",
      "purpose": "Typed speculative merge queue doors (DOOR-132): enqueue stored repository proposals as one batch, stage it…",
      "surface": {
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -38951,14 +38991,107 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/check_execute.rs",
+     "purpose": "One check execution body for both check paths (FIX 6868): the low-level callback `check` and the bound…",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QueueCheckEnvironment",
+      "QueueCheckExecution",
+      "QueueCheckFile",
+      "QueueCheckHold",
+      "QueueCheckHoldReason",
+      "QueueCheckHost",
+      "QueueCheckInputs",
+      "QueueCheckInvocation",
+      "QueueCheckLimits",
+      "QueueCheckNeed",
+      "QueueCheckReceipt",
+      "QueueCheckRun",
+      "QueueCheckTarget",
+      "QueueCheckTreeSource",
+      "QueueCommandReceipt"
+     ],
+     "path": "src/merge_queue/check_inputs.rs",
+     "purpose": "The exact inputs one queue check runs on, their one digest, the receipt a run leaves and the host seam that…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 9,
+      "struct": 10,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/check_requests.rs",
+     "purpose": "The owner's checker requests and the bound diagnosis (FIX 6868)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QueueCheckConfiguration",
+      "QueueCheckInitStage",
+      "QueueCheckLease",
+      "QueueCheckRequest",
+      "QueueCheckStatus",
+      "QueueCheckWork"
+     ],
+     "path": "src/merge_queue/check_store.rs",
+     "purpose": "The checker's companion rows and their attempt lifecycle (FIX 6868)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 13,
+      "enum": 3,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/check_tree.rs",
+     "purpose": "A pinned Git tree as a queue check's input (FIX 6868): read from the object store through the shipped…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/merge_queue/checks.rs",
      "purpose": "Out-of-order check completion, all-path agreement and red-batch diagnosis",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/initialize.rs",
+     "purpose": "Checked queue initialization on an owner-approved baseline (FIX 6868)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -38992,8 +39125,23 @@
      "purpose": "Durable batched speculation over real detached worktrees",
      "surface": {
       "fn": 1,
-      "re-export": 3,
+      "re-export": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FrozenCheckPlan",
+      "RepoCheckPlan"
+     ],
+     "path": "src/merge_queue/plan.rs",
+     "purpose": "The repository check plan a checked queue freezes from its approved baseline (FIX 6868)",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -39041,7 +39189,7 @@
      "path": "src/merge_queue/storage.rs",
      "purpose": "Repo-scoped queue/batch rows; every transition is under the repo single writer",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 10,
       "fn": 3
      }
     },
@@ -59843,7 +59991,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1142
+      "fn": 1146
      }
     },
     {
@@ -67019,7 +67167,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67516,14 +67664,14 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 234,
+     "files": 236,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 10,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68197,7 +68345,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4294,
+   "source_files": 4304,
    "test_files": 902
   },
   "oneiron-android": {
@@ -78003,7 +78151,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1113
+      "fn": 1117
      }
     },
     {
@@ -79218,7 +79366,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1114
+      "fn": 1118
      }
     },
     {
@@ -83241,7 +83389,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 184
+      "crate-vis": 185
      }
     },
     {
@@ -83358,10 +83506,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/merge_queue_checker_doors.rs",
+     "purpose": "Credential-bound host projections of the owner's merge queue checker doors (FIX 6868)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/merge_queue_doors.rs",
      "purpose": "Credential-bound host projections of the typed speculative merge queue doors (DOOR-132)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -87460,13 +87618,30 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CheckerBackend",
+      "CheckerNetwork",
+      "MergeQueueCheckerConfig"
+     ],
+     "path": "src/config/merge_queue.rs",
+     "purpose": "`[merge_queue]`: the executor the queue checker runs a repository's frozen check plan in (FIX 6868)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
       "crate-vis": 3,
-      "mod": 14,
-      "re-export": 25
+      "mod": 15,
+      "re-export": 26
      }
     },
     {
@@ -92086,6 +92261,36 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/merge_queue_checker.rs",
+     "purpose": "The standalone merge queue checker drain (FIX 6868)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/merge_queue_checker/executor.rs",
+     "purpose": "The queue checker's executors (FIX 6868): the isolated session by default, the host child only on…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/merge_queue_checker/tree.rs",
+     "purpose": "The trusted check helper's framed protocol, and the pinned tree it carries in (FIX 6868)",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/message_stream.rs",
      "purpose": "Host-owned stream timer and local presence relay",
      "surface": {
@@ -93205,7 +93410,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 491,
+     "files": 492,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -93282,7 +93487,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 49,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93583,7 +93788,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 50,
+     "files": 53,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93655,7 +93860,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1002,
+   "source_files": 1007,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95761,7 +95966,14 @@
       "MergeEvidenceView",
       "MergeQueueBatchRequest",
       "MergeQueueBatchView",
+      "MergeQueueCheckRequest",
+      "MergeQueueCheckState",
+      "MergeQueueCheckStatusRequest",
+      "MergeQueueCheckWorkKind",
+      "MergeQueueCheckWorkView",
+      "MergeQueueDiagnoseRequest",
       "MergeQueueEnqueueRequest",
+      "MergeQueueInitializeRequest",
       "MergeQueueObservation",
       "MergeQueueObserveRequest",
       "MergeQueuePathView",
@@ -96423,6 +96635,8 @@
       "QuestionRefreshRequest",
       "QuestionScheduleHead",
       "QuestionScheduleRequest",
+      "QueueCheckHoldReason",
+      "QueueCheckPhase",
       "QueueTaskBrief",
       "QuickFilterAtom",
       "QuoteAnchor",
@@ -97661,8 +97875,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 918,
-      "struct": 2887
+      "enum": 922,
+      "struct": 2892
      }
     },
     {
