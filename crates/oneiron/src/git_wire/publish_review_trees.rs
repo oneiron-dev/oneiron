@@ -17,14 +17,35 @@ const TREE_MODE: u32 = 0o040_000;
 /// The mode bits that name an entry's type.
 const TYPE_BITS: u32 = 0o170_000;
 
+/// How a review walk reads trees (FIX 7608 slice 2b-i).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum GitTreeReadMode {
+    /// One captured `ls-tree` per tree under the process bounds, one call
+    /// frame per level: today's walk.
+    Captured,
+    /// Each tree's listing spooled whole and read record by record, its
+    /// levels on a heap stack: no output, time or depth bound (Rule 5).
+    Retained,
+}
+
+/// One tree level of a retained walk: what is left of the new tree's
+/// entries, and the old tree's entries not yet matched.
+struct TreeFrame {
+    prefix: Vec<u8>,
+    entries: std::vec::IntoIter<GitTreeEntry>,
+    before: BTreeMap<Vec<u8>, GitTreeEntry>,
+}
+
 impl GitWire<'_> {
     /// One commit whose diff alone passed a bound, compared against each
-    /// parent (the empty tree, for a root) one tree level per call.
+    /// parent (the empty tree, for a root) one tree level per call, its
+    /// trees read as `mode` says.
     pub(super) fn review_commit_by_trees(
         &self,
         repo: &GitWireRepo,
         commit: &GitOid,
         parents: &[GitOid],
+        mode: GitTreeReadMode,
         visit: &mut dyn FnMut(GitReviewItem) -> Result<()>,
     ) -> Result<()> {
         visit(GitReviewItem::Commit {
@@ -33,13 +54,28 @@ impl GitWire<'_> {
         })?;
         let tree = self.commit_tree(repo, commit)?;
         if parents.is_empty() {
-            return self.diff_trees(repo, &[], &tree, None, visit);
+            return self.diff_trees_in(repo, &tree, None, mode, visit);
         }
         for parent in parents {
             let old = self.commit_tree(repo, parent)?;
-            self.diff_trees(repo, &[], &tree, Some(&old), visit)?;
+            self.diff_trees_in(repo, &tree, Some(&old), mode, visit)?;
         }
         Ok(())
+    }
+
+    /// [`Self::diff_trees`] from the root, its trees read as `mode` says.
+    pub(super) fn diff_trees_in(
+        &self,
+        repo: &GitWireRepo,
+        new: &GitOid,
+        old: Option<&GitOid>,
+        mode: GitTreeReadMode,
+        visit: &mut dyn FnMut(GitReviewItem) -> Result<()>,
+    ) -> Result<()> {
+        match mode {
+            GitTreeReadMode::Captured => self.diff_trees(repo, &[], new, old, visit),
+            GitTreeReadMode::Retained => self.diff_trees_retained(repo, new, old, visit),
+        }
     }
 
     /// The tree a commit names.
@@ -115,6 +151,98 @@ impl GitWire<'_> {
             visit(deleted(&prior, joined(prefix, &name)))?;
         }
         Ok(())
+    }
+
+    /// [`Self::diff_trees`] from the root with retained tree reads (FIX
+    /// 7608 slice 2b-i): the same paths in the same order, each level a
+    /// heap frame instead of a call, each listing spooled whole, each path
+    /// its stored bytes. No width, depth, output or time bound ends it.
+    pub(super) fn diff_trees_retained(
+        &self,
+        repo: &GitWireRepo,
+        new: &GitOid,
+        old: Option<&GitOid>,
+        visit: &mut dyn FnMut(GitReviewItem) -> Result<()>,
+    ) -> Result<()> {
+        let mut frames = vec![self.tree_frame(repo, Vec::new(), new, old)?];
+        loop {
+            let Some(frame) = frames.last_mut() else {
+                return Ok(());
+            };
+            let Some(entry) = frame.entries.next() else {
+                if let Some(done) = frames.pop() {
+                    for (name, prior) in done.before {
+                        visit(deleted(&prior, joined(&done.prefix, &name)))?;
+                    }
+                }
+                continue;
+            };
+            let prior = frame.before.remove(&entry.name);
+            if prior
+                .as_ref()
+                .is_some_and(|prior| prior.oid == entry.oid && prior.mode == entry.mode)
+            {
+                continue;
+            }
+            let path = joined(&frame.prefix, &entry.name);
+            let prior_tree = prior.as_ref().filter(|prior| prior.mode == TREE_MODE);
+            if entry.mode == TREE_MODE {
+                if let Some(prior) = prior.as_ref().filter(|prior| prior.mode != TREE_MODE) {
+                    visit(deleted(prior, path.clone()))?;
+                }
+                let child =
+                    self.tree_frame(repo, path, &entry.oid, prior_tree.map(|tree| &tree.oid))?;
+                frames.push(child);
+                continue;
+            }
+            if let Some(prior) = prior_tree {
+                visit(deleted(prior, path.clone()))?;
+            }
+            visit(GitReviewItem::Path {
+                status: path_status(prior.as_ref(), &entry),
+                mode: format!("{:06o}", entry.mode),
+                object: Some(entry.oid),
+                path,
+            })?;
+        }
+    }
+
+    /// One level of a retained walk: `new`'s entries in order, `old`'s by
+    /// name.
+    fn tree_frame(
+        &self,
+        repo: &GitWireRepo,
+        prefix: Vec<u8>,
+        new: &GitOid,
+        old: Option<&GitOid>,
+    ) -> Result<TreeFrame> {
+        let mut before = BTreeMap::new();
+        if let Some(old) = old {
+            self.for_each_tree_entry_retained(repo, old, &mut |entry| {
+                before.insert(entry.name.clone(), entry);
+                Ok(())
+            })?;
+        }
+        let mut entries = Vec::new();
+        self.for_each_tree_entry_retained(repo, new, &mut |entry| {
+            entries.push(entry);
+            Ok(())
+        })?;
+        Ok(TreeFrame {
+            prefix,
+            entries: entries.into_iter(),
+            before,
+        })
+    }
+}
+
+/// The status a changed non-tree entry gets against what its path held.
+fn path_status(prior: Option<&GitTreeEntry>, entry: &GitTreeEntry) -> char {
+    match prior {
+        None => 'A',
+        Some(prior) if prior.mode == TREE_MODE => 'A',
+        Some(prior) if (prior.mode ^ entry.mode) & TYPE_BITS != 0 => 'T',
+        Some(_) => 'M',
     }
 }
 

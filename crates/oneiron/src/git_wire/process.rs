@@ -7,6 +7,7 @@ use std::process::{Child, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use super::config::{GIT_WIRE_POLL_INTERVAL, GIT_WIRE_READ_CHUNK_BYTES};
+use super::retained_object::{GitSpool, RetainedGitIo, spawn_spool_reader, spawn_spool_writer};
 use super::{GIT_WIRE_CONFIG_POLICY, GIT_WIRE_FIXED_ENV, GitWireProcessEnv};
 use crate::error::Result;
 
@@ -19,6 +20,9 @@ pub(crate) struct GitWireProcessOutput {
     pub(crate) success: bool,
     pub(crate) timed_out: bool,
     pub(crate) truncated: bool,
+    /// A retained call's whole stdout (FIX 7608 slice 2b-i): `stdout` is
+    /// then empty. `None` for every captured call.
+    pub(crate) spooled: Option<GitSpool>,
 }
 
 /// The single production git subprocess constructor in this crate.
@@ -42,6 +46,7 @@ pub(super) fn spawn_git(
             command.stdin(),
             None,
             command.hold(),
+            command.retained(),
         );
     }
     let profile = super::repository_profile::AdmittedRepoProfile::admit(
@@ -75,6 +80,7 @@ pub(super) fn spawn_git(
         command.stdin(),
         Some(scope.common_dir()),
         command.hold(),
+        command.retained(),
     )?;
     if let Some(target) = command.worktree_target() {
         scope.rebind_created_worktree(target, output.success)?;
@@ -117,13 +123,16 @@ pub(super) fn spawn_git_inner(
         stdin_payload,
         attribute_common_dir,
         None,
+        None,
     )
 }
 
 /// [`spawn_git_inner`] for an effect child. With `hold`, the child inherits
 /// this thread's coordinator descriptor on that common directory, so the
 /// repository stays held while the child lives, past its parent's hold or
-/// death.
+/// death. With `retained` (FIX 7608 slice 2b-i), stdin is fed from its
+/// spool and stdout is spooled whole, and the child runs with no wall-clock
+/// bound (Rule 5); a pump or feed that fails fails the call.
 fn spawn_git_child(
     process_env: &GitWireProcessEnv,
     repo_root: &Path,
@@ -131,7 +140,10 @@ fn spawn_git_child(
     stdin_payload: Option<&[u8]>,
     attribute_common_dir: Option<&Path>,
     hold: Option<&Path>,
+    retained: Option<&RetainedGitIo>,
 ) -> Result<GitWireProcessOutput> {
+    let retained = retained.filter(|io| io.is_retained());
+    let retained_stdin = retained.and_then(RetainedGitIo::stdin).cloned();
     // A removed repository must not fall back to an unrelated ancestor. Git
     // excludes the ceiling itself; the working directory is still inspected.
     let ceiling = std::env::join_paths([repo_root.parent().unwrap_or(repo_root)])
@@ -169,19 +181,34 @@ fn spawn_git_child(
         || process_env.mirror_egress.is_some()
         || process_env.import_profile.is_some();
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    command.stdin(if stdin_payload.is_some() {
+    command.stdin(if stdin_payload.is_some() || retained_stdin.is_some() {
         Stdio::piped()
     } else {
         Stdio::null()
     });
     let mut child = command.spawn()?;
-    let writer = stdin_payload.map(|payload| spawn_stdin_writer(&mut child, payload));
+    let (writer, spool_writer) = match retained_stdin {
+        Some(spool) => (None, Some(spawn_spool_writer(&mut child, spool))),
+        None => (
+            stdin_payload.map(|payload| spawn_stdin_writer(&mut child, payload)),
+            None,
+        ),
+    };
     let cap = process_env.max_output_bytes;
+    let spool_reader = if retained.is_some_and(RetainedGitIo::spools_stdout) {
+        child
+            .stdout
+            .take()
+            .map(|pipe| spawn_spool_reader(pipe, process_env.tmpdir.clone()))
+    } else {
+        None
+    };
     let out_reader = child.stdout.take().map(|pipe| spawn_reader(pipe, cap));
     let err_reader = child.stderr.take().map(|pipe| spawn_reader(pipe, cap));
-    // An import leg's profile lifts the wall-clock bound (Rule 5); every
-    // other child keeps it.
+    // An import leg's profile and a retained call lift the wall-clock
+    // bound (Rule 5); every other child keeps it.
     let timeout = match &process_env.import_profile {
+        _ if retained.is_some() => None,
         Some(profile) if profile.lifts_child_bound() => None,
         _ => Some(process_env.timeout),
     };
@@ -197,10 +224,21 @@ fn spawn_git_child(
     if let Some(writer) = writer {
         let _ = writer.join();
     }
+    let fed = spool_writer.is_none_or(|writer| writer.join().unwrap_or(false));
+    let spooled = spool_reader.map(|reader| reader.join().ok().flatten());
     let (stdout, stdout_over) = join_reader(out_reader);
     let (stderr, stderr_over) = join_reader(err_reader);
     let truncated = stdout_over || stderr_over;
     let status = status?;
+    let spooled = match spooled {
+        Some(Some(spool)) => Some(spool),
+        Some(None) => {
+            return Err(super::failure::invalid(
+                "a retained git output did not spool",
+            ));
+        }
+        None => None,
+    };
     let (exit_code, exited_zero) = match status {
         Some(status) => (status.code(), status.success()),
         None => (None, false),
@@ -209,9 +247,10 @@ fn spawn_git_child(
         stdout,
         stderr,
         exit_code,
-        success: exited_zero && !truncated,
+        success: exited_zero && !truncated && fed,
         timed_out: status.is_none(),
         truncated,
+        spooled,
     })
 }
 

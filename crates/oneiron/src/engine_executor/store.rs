@@ -5,6 +5,7 @@ use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage,
 };
+use crate::code_sandbox::source::PreparedSource;
 use crate::compaction::output::OutputRef;
 use crate::entity_id::EntityId;
 use crate::store::BodySink;
@@ -289,6 +290,30 @@ pub(super) fn record_script_output(
     let mut sink = storage.code_run_script_sink()?;
     sink.write(script.as_bytes())?;
     publish_output(storage, record, path, sink).map(drop)
+}
+
+/// A TypeScript step's preparation beside its program (FIX 8276): the
+/// JavaScript the guest ran, byte for byte and never swept as its program
+/// is, and the typed record of its position map and Oxc pin. The program at
+/// [`script_output_path`] stays the author's original; a JavaScript step
+/// records nothing here.
+pub(super) fn record_prepared_source(
+    storage: &ExecutorStorage<'_>,
+    record: &mut CodeRunReplayRecord,
+    seq: u64,
+    prepared: &PreparedSource<'_>,
+) -> EngineExecutorResult<()> {
+    let Some(transpiled) = prepared.transpiled() else {
+        return Ok(());
+    };
+    record_script_output(
+        storage,
+        record,
+        executed_output_path(seq),
+        transpiled.executed_js(),
+    )?;
+    let map = transpiled.record_json(prepared.original())?;
+    record_output(storage, record, source_map_output_path(seq), &map)
 }
 
 /// Whether the occurrence of `output` that run `owner` holds may enter
@@ -583,6 +608,27 @@ pub(super) fn script_output_path(seq: u64) -> String {
 
 pub(super) fn observation_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.observation.txt")
+}
+
+/// The JavaScript a TypeScript step's program ran as (FIX 8276).
+pub(super) fn executed_output_path(seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.executed.js")
+}
+
+/// A TypeScript step's preparation record: its position map and Oxc pin.
+pub(super) fn source_map_output_path(seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.source-map.json")
+}
+
+/// The JavaScript a turn program's pinned TypeScript call ran as, kept by
+/// its first entry for every later one (FIX 8276).
+pub(super) fn pinned_executed_output_path() -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/pinned.executed.js")
+}
+
+/// The preparation record of a turn program's pinned TypeScript call.
+pub(super) fn pinned_source_map_output_path() -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/pinned.source-map.json")
 }
 
 /// The console lines of a step that finished, kept as evidence beside its
