@@ -34,7 +34,8 @@
 //! Every reap of a VMM reads its exit through the watch first, a dropped
 //! driver's on a thread of its own (FIX 7126, [`reaper`]), and each spawn
 //! first drops what an earlier, reaped generation left queued on the boot
-//! port's and the restore channel's sockets (FIX 7077, [`backlog`]).
+//! port's, the restore channel's and the custody anchor exchange's sockets
+//! (FIX 7077, FIX 7480, [`backlog`]).
 
 mod anchor;
 mod backlog;
