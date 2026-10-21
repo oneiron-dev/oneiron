@@ -25,7 +25,8 @@ const BRANCH_RESOURCES_DOMAIN: &[u8] = b"oneiron:dreamer-branch-resources:v1";
 
 /// A TURN as a branch part holds it: the planner's selection facts, or the
 /// queued id alone.
-pub(crate) trait BranchTurn {
+pub trait BranchTurn {
+    /// The TURN this part entry names.
     fn turn_id(&self) -> EntityId;
 }
 

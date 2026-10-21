@@ -45,6 +45,7 @@ impl PreparedConsolidationAttempt {
     pub(crate) fn branch(&self) -> &super::branch::QueuedBranch {
         &self.branch
     }
+    #[cfg(test)]
     pub(crate) fn turn_ids(&self) -> &[EntityId] {
         &self.turn_ids
     }
