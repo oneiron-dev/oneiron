@@ -88135,7 +88135,7 @@
       "OneironerRuntime"
      ],
      "path": "src/config/oneironer/runtime.rs",
-     "purpose": "The native runtime a local tagger runs on",
+     "purpose": "The runtime setting a local tagger's workers are chosen by (FIX 6755, Engine call 4)",
      "surface": {
       "enum": 1,
       "fn": 1
@@ -91522,13 +91522,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/dispatcher/eligibility.rs",
+     "purpose": "Which worker may run which call (FIX 6755 slice 2b)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/dispatcher/mod.rs",
      "purpose": "The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 18
      }
     },
     {
@@ -91542,13 +91552,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/dispatcher/worker.rs",
      "purpose": "One worker: a model loaded on one engine, or the one opaque endpoint, on its own thread",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 19
      }
     },
     {
@@ -91568,7 +91578,7 @@
      "path": "src/oneironer/engines/calibration.rs",
      "purpose": "The bundle's reference cases, the bar an engine's answers must clear, the measurement of one engine against…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 13
      }
     },
     {
@@ -91582,13 +91592,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/engines/rows.rs",
      "purpose": "This machine's measured engine rows: where they live, how they are read and written, and what keys them",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -91598,7 +91608,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 13
      }
     },
     {
@@ -91625,10 +91635,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/oneironer/local/window.rs",
+     "path": "src/oneironer/local/window/mod.rs",
      "purpose": "One causal window with byte-accurate message coordinates",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/local/window/ner.rs",
+     "purpose": "The full decode of a bundle with a character head (`oneironer-decode-v1`): BIO, the DATE snap, character…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -94085,7 +94105,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 26,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94213,7 +94233,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1016,
+   "source_files": 1018,
    "test_files": 182
   },
   "oneiron-spawn": {
