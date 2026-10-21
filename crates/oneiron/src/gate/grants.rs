@@ -127,13 +127,26 @@ pub(crate) fn scoped_read_record_allowed(
     actor: &ScopedReadActorKey,
     record: &crate::federation::Scope,
 ) -> bool {
+    scoped_read_record_allowed_with_scope(policy, actor, record, actor.authority_scope())
+}
+
+/// What a key holding a proof of `explicit_scope` reads of a record at
+/// `record` under `policy`, as `scoped_read_record_allowed` asks of the proof
+/// a key carries. The key's own proof, if any, is not read, and no proof is
+/// built.
+pub(crate) fn scoped_read_record_allowed_with_scope(
+    policy: &PolicyManifestResolution,
+    actor: &ScopedReadActorKey,
+    record: &crate::federation::Scope,
+    explicit_scope: Option<&crate::federation::Scope>,
+) -> bool {
     if actor.vault_owner_ref().is_some() {
         return true;
     }
     if policy.diagnostics().loaded_manifest_forces_fail_closed() || policy.is_fail_closed() {
         return false;
     }
-    let proof = actor.authority_scope();
+    let proof = explicit_scope;
     if proof.is_some_and(|scope| !scope.admits("read", record, &crate::federation::Scope::top())) {
         return false;
     }

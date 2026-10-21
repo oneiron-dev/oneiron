@@ -1,3 +1,4 @@
+use super::access_gate::HeldAuthority;
 use super::*;
 
 /// The rows a bounded search's plan refused that its key's own ceiling
@@ -299,30 +300,36 @@ impl ScopedRead<'_> {
         // The scoring txn may have completed before a revocation. The final
         // read must satisfy BOTH the plan authority and this fresh snapshot.
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        // One held authority for every hit's checks in this txn (FIX 7462).
+        let held = HeldAuthority::default();
         let mut value = Vec::new();
         let mut suppressed = 0;
         for result in results {
             let admitted = self.admit_in(&txn, &result.id, || {
                 let allowed = self
-                    .is_entity_retrievable_with_policy_in(&txn, policy, filter, &result.id)?
-                    && self.is_entity_retrievable_with_policy_in(
+                    .is_entity_retrievable_held_in(&txn, policy, filter, &result.id, &held)?
+                    && self.is_entity_retrievable_held_in(
                         &txn,
                         &fresh_policy,
                         &fresh_filter,
                         &result.id,
+                        &held,
                     )?
                     && match revisions.get(&result.id) {
                         Some(revision) => {
                             let mode = crate::vault::ReadMode::Pinned(*revision);
-                            self.entity_raw_with_mode_in(&txn, policy, filter, &result.id, mode)?
-                                .is_some()
+                            self.entity_raw_with_mode_held_in(
+                                &txn, policy, filter, &result.id, mode, &held,
+                            )?
+                            .is_some()
                                 && self
-                                    .entity_raw_with_mode_in(
+                                    .entity_raw_with_mode_held_in(
                                         &txn,
                                         &fresh_policy,
                                         &fresh_filter,
                                         &result.id,
                                         mode,
+                                        &held,
                                     )?
                                     .is_some()
                         }
@@ -422,11 +429,12 @@ impl ScopedRead<'_> {
         let before = results.len();
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        let held = HeldAuthority::for_request(requested);
         let mut value = Vec::with_capacity(before);
         let mut suppressed = 0;
         for result in results {
             let admitted = self.admit_in(&txn, &result.id, || {
-                self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &result.id)
+                self.is_entity_retrievable_held_in(&txn, &policy, &filter, &result.id, &held)
                     .map(|visible| visible.then_some(result))
             })?;
             suppressed += admitted.suppression();
