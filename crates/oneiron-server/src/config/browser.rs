@@ -3,6 +3,9 @@
 //! File-only, like `[models]`. Absent means no run has a browser, and every
 //! browser verb answers `browser_unbound`. Each bound below is a manifest
 //! row for one guest; none of them counts or refuses a program's calls.
+//! A section with no `runtime` is configured and unbound (FIX 7670): the
+//! server serves without a guest, as with no section, and its browser
+//! readiness names the image it would run.
 //!
 //! On a managed node the same guest also renders the web fetch's headless
 //! rung, one guest per render (FIX 7122); absent, that node's fetch keeps
@@ -13,11 +16,18 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// The server's one browser readiness, which each guest start moves.
+mod readiness;
+
+pub(crate) use readiness::BrowserReadinessCell;
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserConfig {
-    /// A Docker-compatible container CLI, as an absolute path.
-    pub runtime: PathBuf,
+    /// A Docker-compatible container CLI, as an absolute path: the
+    /// owner's, or the one a managed node's supervisor binds
+    /// (`--browser-runtime`). None is bound: no guest starts.
+    pub runtime: Option<PathBuf>,
     /// The guest image, pinned: `name@sha256:<digest>` or a local
     /// `sha256:<id>`, built from `crates/oneiron-container/guest/browser`.
     pub image: String,
@@ -68,7 +78,11 @@ impl BrowserConfig {
                 "the browser guest never runs on this host; serve from a fleet Linux host"
             );
         }
-        if !self.runtime.is_absolute() {
+        if self
+            .runtime
+            .as_deref()
+            .is_some_and(|runtime| !runtime.is_absolute())
+        {
             anyhow::bail!("browser.runtime must be an absolute path to a container CLI");
         }
         ImageRef::pinned(&self.image).map_err(|_| {
@@ -88,10 +102,11 @@ impl BrowserConfig {
         Ok(())
     }
 
+    /// The guest this section starts, once its runtime is bound.
     #[must_use]
-    pub fn guest(&self) -> BrowserGuest {
-        BrowserGuest {
-            runtime: self.runtime.clone(),
+    pub fn guest(&self) -> Option<BrowserGuest> {
+        Some(BrowserGuest {
+            runtime: self.runtime.clone()?,
             image: self.image.clone(),
             limits: GuestLimits {
                 memory_mib: self.memory_mib,
@@ -105,6 +120,6 @@ impl BrowserConfig {
             policy: oneiron_browser::SendPolicy::default(),
             fixture: None,
             engine: self.engine,
-        }
+        })
     }
 }
