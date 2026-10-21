@@ -31021,14 +31021,19 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HumanTaskFollowupDriver"
+      "HumanTaskFollowupDriver",
+      "OpenHumanAsk",
+      "OpenHumanAskKind",
+      "OpenHumanAsks"
      ],
      "path": "src/human_task/followup.rs",
      "purpose": "Native-human routing, follow-up cursor lifecycle and the wake driver",
      "surface": {
+      "const": 1,
       "crate-vis": 5,
-      "fn": 6,
-      "struct": 1
+      "enum": 1,
+      "fn": 8,
+      "struct": 3
      }
     },
     {
@@ -31527,7 +31532,7 @@
       "const": 4,
       "crate-vis": 8,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 3
      }
     },

@@ -2429,7 +2429,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/housekeeping/sweeps.rs` | src | m | 2 crate-vis | — | Each engine sweep, called through its own door, within its own bound |
 | `src/housekeeping/tests.rs` | test | m | 2 crate-vis | — | Done-means for the pass's schedule: a restart in the middle of a pass resumes the right sweeps, with no… |
 | `src/housekeeping/wake.rs` | src | s | 5 crate-vis | — | Wake deadlines: when a retirement sweep next has work, read without a scan |
-| `src/human_task/followup.rs` | src | m | 1 struct · 6 fn · 5 crate-vis | HumanTaskFollowupDriver | Native-human routing, follow-up cursor lifecycle and the wake driver |
+| `src/human_task/followup.rs` | src | m | 3 struct · 1 enum · 8 fn · 1 const · 5 crate-vis | HumanTaskFollowupDriver, OpenHumanAsk, OpenHumanAskKind, OpenHumanAsks | Native-human routing, follow-up cursor lifecycle and the wake driver |
 | `src/human_task/followup_tests.rs` | test | m | 10 crate-vis | — | cfg(test) fixture and helpers plus native-route and follow-up cursor tests |
 | `src/human_task/mod.rs` | src | s | 1 fn · 3 re-export · 2 crate-vis | — | Human-assigned TASK follow-up and the identity-bound human response signal (ONE-1708) |
 | `src/human_task/model.rs` | src | s | 5 struct · 2 enum · 1 fn · 1 type · 4 const · 8 crate-vis | HumanFollowupDispatch, HumanFollowupStage, HumanResponseSignal, HumanTaskError, HumanTaskFollowupRecord, HumanTaskWaitBinding, NativeHumanRoute | Human TASK follow-up shared types, stage machine and timing bounds |
@@ -2466,7 +2466,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/inbox/list.rs` | src | m | 2 struct · 1 enum · 2 fn · 2 const | NotificationMark, NotificationPage, NotificationRow | OF-221: the actor-bound inbox page over NOTIFICATION records, and the one write door that marks a… |
 | `src/inbox/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue |
 | `src/inbox/model.rs` | src | m | 9 struct · 3 enum · 5 fn · 4 const · 12 crate-vis | InboxAmendedApproval, InboxBulkVerb, InboxBundleResolution, InboxCheckInException, InboxExceptionClass, InboxGroup, InboxGroupMember, InboxGroupReopen +4 | Public inbox DTOs, surfacing-dial/exception-class/bulk-verb enums, and inbox constants |
-| `src/inbox/notification.rs` | src | m | 3 struct · 1 enum · 3 fn · 4 const · 8 crate-vis | NotificationBody, NotificationEvent, NotificationKind, NotificationSource | OF-221: background events as NOTIFICATION records (type 42) |
+| `src/inbox/notification.rs` | src | m | 3 struct · 1 enum · 4 fn · 4 const · 8 crate-vis | NotificationBody, NotificationEvent, NotificationKind, NotificationSource | OF-221: background events as NOTIFICATION records (type 42) |
 | `src/inbox/projection.rs` | src | m | 2 fn · 3 crate-vis | — | Read-side inbox grouping projection, member classification, and dial surfacing |
 | `src/inbox/resolve.rs` | src | m | 10 fn · 2 crate-vis | — | Write-side inbox bulk bundle consent, approve-with-edit, and bundle-reopen doors |
 | `src/inbox/takeover_ask.rs` | src | s | 3 fn | — | CUA-001: a run guest's takeover ask as the owners' inbox Ask ("Needs you") |
