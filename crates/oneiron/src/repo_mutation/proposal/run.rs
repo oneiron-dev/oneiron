@@ -7,9 +7,8 @@
 //! are unchanged.
 
 use super::submit::ProposalBase;
-use super::{RepoProposal, invalid};
+use super::{RepoProposal, RepoProposalReview, invalid};
 use crate::Vault;
-use crate::critic::LensCatalog;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::repo_doors::RepoRunStamp;
@@ -64,48 +63,6 @@ impl Vault {
         super::PROPOSAL.get(&self.store, txn, &id)
     }
 
-    /// The catalog of the newest stored proposal (by id) one of `owners`
-    /// made himself, at his own door, to the local folder `folder`, read in
-    /// `txn` (FIX 6867, the stock review policy): no run stamp, no
-    /// host-stamped class, a live actor among `owners`. A row that does not
-    /// decode is passed over. `None` when there is none.
-    ///
-    /// # Errors
-    /// A store failure.
-    pub(crate) fn owner_review_catalog_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        owners: &[crate::EntityId],
-        folder: &str,
-    ) -> Result<Option<LensCatalog>> {
-        let wanted = std::path::Path::new(folder).canonicalize().ok();
-        for row in super::PROPOSAL.iter_rev_from(&self.store, txn, &[])? {
-            let Ok((_, proposal)) = row else {
-                continue;
-            };
-            if proposal.run.is_some()
-                || proposal.actor_class.is_some()
-                || proposal
-                    .actor
-                    .id()
-                    .is_none_or(|actor| !owners.contains(&actor))
-            {
-                continue;
-            }
-            let Ok(crate::codebase::RepoRef::LocalFolder { path, .. }) =
-                crate::codebase::RepoRef::parse(&proposal.repo)
-            else {
-                continue;
-            };
-            let same = path == folder
-                || wanted.is_some() && std::path::Path::new(&path).canonicalize().ok() == wanted;
-            if same {
-                return Ok(Some(proposal.catalog));
-            }
-        }
-        Ok(None)
-    }
-
     /// A run's proposal: `request` names the host-stamped writer
     /// ([`RepoMutationRequest::with_write_actor`]) and the commit the run's
     /// work is pinned at, `base` is that commit's tree, and `stamp` is the
@@ -118,7 +75,7 @@ impl Vault {
     pub(crate) fn propose_repo_mutation_for_run<R>(
         &self,
         request: RepoMutationRequest,
-        catalog: LensCatalog,
+        review: RepoProposalReview,
         base: RepoPinnedBase,
         stamp: RepoRunStamp,
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
@@ -133,7 +90,7 @@ impl Vault {
         }
         self.propose_repo_mutation_checked(
             request,
-            catalog,
+            review,
             ProposalBase::Pinned(base),
             Some(stamp),
             check,
