@@ -114,9 +114,9 @@ pub(super) fn attach(vault: &Vault, findings: &mut [Finding]) -> Vec<Vec<HealthC
 }
 
 /// Each open card's labels as they stand now: those on every receipt it
-/// already cites, re-read, and its newest exact attempt's, in scope. A card
-/// with none is absent. A read that fails is logged and the pass goes on
-/// without late labels.
+/// already cites, re-read, and those of every exact attempt it witnessed
+/// (FIX 8258), in scope, one copy per source id. A card with none is absent.
+/// A read that fails is logged and the pass goes on without late labels.
 pub(super) fn late(vault: &Vault) -> Late {
     read_late(vault).unwrap_or_else(|error| {
         tracing::warn!(
@@ -266,12 +266,16 @@ fn read_late(vault: &Vault) -> Result<Late> {
             continue;
         }
         let mut sources = held_sources(vault, &rtxn, &card.causes)?;
-        if let Some(attempt) = card
-            .attempt
-            .and_then(|attempt| AttemptId::from_bytes(attempt.as_bytes()).ok())
-        {
-            sources.extend(attempt_sources(vault, &rtxn, &attempt)?);
+        let mut read = BTreeSet::new();
+        for attempt in card.witnessed_attempts.iter().chain(&card.attempt) {
+            if read.insert(*attempt)
+                && let Ok(attempt) = AttemptId::from_bytes(attempt.as_bytes())
+            {
+                sources.extend(attempt_sources(vault, &rtxn, &attempt)?);
+            }
         }
+        let mut seen = BTreeSet::new();
+        sources.retain(|source| seen.insert(source.source));
         if !sources.is_empty() {
             late.insert(key, sources);
         }

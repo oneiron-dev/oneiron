@@ -26,9 +26,6 @@ use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher, SpendScope, SpendState,
     agent_dispatch_actor, decode_agent_dispatch_input,
 };
-use crate::agent_inbox_lens::{
-    AgentInboxConcern, AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
-};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
@@ -57,6 +54,7 @@ mod brief;
 mod call_evidence;
 mod call_loop;
 mod check_repeat;
+mod delivery;
 mod duplicate;
 mod environment;
 mod loaded;
@@ -78,6 +76,7 @@ pub use ask::{
     AgentHealthPadRead, COACH_AGENT_HEALTH_ASK_FACET, CoachHealthBrief, CoachHealthHost,
 };
 pub use brief::{HealthBriefPin, HealthObservedBrief};
+pub(crate) use delivery::agent_health_inbox_items;
 pub use environment::HealthCauseSource;
 pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
 pub use moves::{
@@ -385,6 +384,10 @@ pub struct AgentHealthCard {
     pub task: Option<EntityId>,
     /// The newest attempt the evidence came from.
     pub attempt: Option<EntityId>,
+    /// Every attempt a merged finding named, oldest first: the nightly pass
+    /// reads each one's late labels (FIX 8258). Neither `evidence` nor the
+    /// watermark counts them.
+    pub witnessed_attempts: Vec<EntityId>,
     pub tone: AgentHealthTone,
     /// 1: deterministic counts over receipts.
     pub tier: u8,
@@ -1696,6 +1699,7 @@ fn merge(
         signal: finding.signal,
         task: finding.task,
         attempt: None,
+        witnessed_attempts: Vec::new(),
         tone: AgentHealthTone::of(finding.signal),
         tier: 1,
         confidence: AgentHealthConfidence::High,
@@ -1727,7 +1731,9 @@ fn merge(
     });
     add_ids(&mut card.evidence, &finding.evidence);
     add_ids(&mut card.diagnostics, &[diagnostic]);
-    card.attempt = finding.attempt.and_then(entity).or(card.attempt);
+    let witnessed = finding.attempt.and_then(entity);
+    card.attempt = witnessed.or(card.attempt);
+    add_ids(&mut card.witnessed_attempts, witnessed.as_slice());
     card.window_from = card.window_from.min(finding.window.0);
     card.window_to = card.window_to.max(finding.window.1);
     card.measured = finding.measured;
@@ -1803,48 +1809,6 @@ fn parse_card_ref(card: &str) -> Option<([u8; 16], [u8; 1], [u8; 16])> {
         Some(EntityId::from_hex(task).ok()?)
     };
     Some(card_key(subject, signal, task))
-}
-
-/// The open cards as inbox rows (ARCH-0063 concern cards): kind Concern, under
-/// "Waiting on you", one row per card, each naming the agent it is about so a
-/// renderer groups them per agent. Never folded into a thread.
-pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLensItem>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let mut items = Vec::new();
-    for (key, card) in CARDS.scan(&vault.store, &rtxn)? {
-        if card.outcome != AgentHealthOutcome::Open || card.recipients.is_empty() {
-            continue;
-        }
-        let participants = card
-            .recipients
-            .iter()
-            .map(|recipient| AgentInboxParticipant {
-                identity_ref: *recipient,
-                actor_ref: *recipient,
-            })
-            .collect();
-        let card_ref = card_ref(&key);
-        items.push(AgentInboxLensItem {
-            item_id: format!("concern:{}", &card_ref[CARD_REF_PREFIX.len()..]),
-            kind: AgentInboxItemKind::Concern,
-            thread_ref: None,
-            identity_ref: card.subject,
-            actor_ref: card.subject,
-            facet_ref: None,
-            participants,
-            impact: InboxImpact(card.tone.impact()),
-            occurred_at: card.window_to,
-            receipt_ref: card.diagnostics.last().map(EntityId::to_hex),
-            payload_ref: Some(card_ref),
-            concern: Some(AgentInboxConcern {
-                subject: card.subject,
-                signal: card.signal,
-                tone: card.tone,
-            }),
-            diary_review: None,
-        });
-    }
-    Ok(items)
 }
 
 /// The first time in `[from, to)` that `card` was opened, updated or
@@ -2005,7 +1969,8 @@ pub struct AgentHealthRunTree {
 
 /// Whether `reader` sees and settles `card`: one of its recipients (its
 /// leader, its spawner, an owner with a copy) or a live vault owner. The
-/// agent a card is about never settles it.
+/// agent a card is about never settles it. A recipient keeps reading a card
+/// after its role changes (FIX 8710).
 fn may_read(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -2020,8 +1985,9 @@ fn may_read(
 }
 
 /// Sets a card's outcome. A settled card leaves the inbox until its evidence
-/// grows past the watermark set here. Both doors reach it through
-/// `outcomes::settle_with_review_receipt_in_txn`.
+/// grows past the watermark set here, but an owner copy stays with each live
+/// owner whose own receipt does not cover it (`delivery`, FIX 8709). Both
+/// doors reach it through `outcomes::settle_with_review_receipt_in_txn`.
 fn settle(card: &mut AgentHealthCard, by: EntityId, outcome: AgentHealthOutcome, at: u64) {
     card.outcome = outcome;
     card.outcome_by = Some(by);
@@ -2129,8 +2095,9 @@ impl Vault {
         Ok(cards)
     }
 
-    /// The owner sets a card's outcome: confirmed, dismissed or unresolved.
-    /// A settled card leaves the inbox until its evidence grows. It never
+    /// The owner sets a card's outcome: confirmed, dismissed or unresolved,
+    /// on an open or a settled card. Its receipt covers this owner's notice
+    /// (`delivery`, FIX 8709) until the card's evidence grows. It never
     /// moves the agent's `learning.reliability`: the owner's verdict is an
     /// anchored outcome of the card's evaluator (`outcomes`).
     ///

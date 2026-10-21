@@ -1471,6 +1471,8 @@ pub enum AgentHealthPadRead {
         read: Option<String>,
         #[serde(rename = "pads")]
         pads: u64,
+        #[serde(rename = "pad_ids")]
+        pad_ids: Vec<String>,
     },
     #[serde(rename = "pending_review")]
     PendingReview {
@@ -1816,6 +1818,8 @@ pub struct AgentHealthCard {
     pub task: Option<String>,
     #[serde(rename = "attempt", default, skip_serializing_if = "Option::is_none")]
     pub attempt: Option<String>,
+    #[serde(rename = "witnessed_attempts")]
+    pub witnessed_attempts: Vec<String>,
     #[serde(rename = "tone")]
     pub tone: AgentHealthTone,
     #[serde(rename = "tier")]

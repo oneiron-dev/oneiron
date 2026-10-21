@@ -435,6 +435,7 @@ class AgentHealthPadReadRead(TypedDict):
     state: Literal["read"]
     read: NotRequired[EntityId | None]
     pads: int
+    pad_ids: list[EntityId]
 class AgentHealthPadReadPendingReview(TypedDict):
     state: Literal["pending_review"]
     request: EntityId
@@ -548,6 +549,7 @@ class AgentHealthCard(TypedDict):
     signal: AgentHealthSignal
     task: NotRequired[EntityId | None]
     attempt: NotRequired[EntityId | None]
+    witnessed_attempts: list[EntityId]
     tone: AgentHealthTone
     tier: int
     confidence: AgentHealthConfidence
