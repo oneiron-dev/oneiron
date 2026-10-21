@@ -68,11 +68,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cua/fixture.rs` | src | s | 7 crate-vis | — | PRIVATE S1 lifecycle |
 | `src/cua/measures.rs` | src | s | 4 crate-vis | — | Receipt observations, not replacements for the engine's success ledger |
 | `src/cua/mod.rs` | src | s | 5 crate-vis | — | Synthetic browser bench: engine outcomes are not oracle passes |
-| `src/cua/provider_gate.rs` | src | s | 13 crate-vis | — | Pass-through only: exact wire identities and durable campaign cash reservations |
+| `src/cua/provider_gate.rs` | src | m | 13 crate-vis | — | Pass-through only: exact wire identities and durable campaign cash reservations |
 | `src/cua/report.rs` | src | s | 1 crate-vis | — | Assigned denominators, separate safety axes and descriptive medians only |
 | `src/cua/rows.rs` | src | s | 7 crate-vis | — | Durable terminal rows |
-| `src/cua/run.rs` | src | s | 1 crate-vis | — | One assigned trial, one original deadline and no failure retries |
-| `src/cua/served.rs` | src | s | 10 crate-vis | — | Shipped binary lifecycle and official MCP stdio |
+| `src/cua/run.rs` | src | m | 1 crate-vis | — | One assigned trial, one original deadline and no failure retries |
+| `src/cua/served.rs` | src | m | 10 crate-vis | — | Shipped binary lifecycle and official MCP stdio |
 | `src/cua/taskgen.rs` | src | s | 6 crate-vis | — | Freeze paired seeds, disjoint holdouts and rotated arm assignments |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `src/eval/outcome_ingest.rs` | src | s | 1 crate-vis | — | JSONL terminal retrieval outcome ingest for the explicit eval command |

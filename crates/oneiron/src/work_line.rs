@@ -17,7 +17,7 @@
 //!
 //! When work has to wait and nobody waited before it, the line is crossed:
 //! its [`LineCrossing`] hears it once per crossing (a host's OF-520 "is
-//! everything okay" question).
+//! everything okay" question), and again when the last waiter leaves.
 //!
 //! Task work (`can`, `ask`, `wait`, `tasks.answer`; Rule 5) takes its turn
 //! from one line per vault ([`Vault::admit_task_work`]), whichever door it
@@ -39,6 +39,12 @@ use crate::{EntityId, Vault};
 pub trait LineCrossing: Send + Sync {
     /// `observed` pieces of work hold or wait for the line's `bound` permits.
     fn crossed(&self, bound: u64, observed: u64);
+
+    /// The crossing `epoch` names ([`WorkLine::crossing_epoch`]) is over:
+    /// its last waiter left the line, given its permit, gone or out of time.
+    fn drained(&self, epoch: u64) {
+        let _ = epoch;
+    }
 }
 
 /// Observation of one caller's place in an existing line. It grants no
@@ -87,6 +93,8 @@ struct Queue<K> {
     background: VecDeque<Arc<Waiter>>,
     /// Whether the crossing in progress was said.
     asked: bool,
+    /// Which crossing is the latest: each new one counts the next.
+    epoch: u64,
 }
 
 /// One queued piece of work. A permit is handed over by setting `granted`
@@ -122,6 +130,7 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
                     turns: VecDeque::new(),
                     background: VecDeque::new(),
                     asked: false,
+                    epoch: 0,
                 }),
                 bound: AtomicUsize::new(bound.max(1)),
                 wait: Mutex::new(wait),
@@ -156,9 +165,13 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
             queue.held += 1;
             grant(&waiter);
         }
-        if queue.waiters() == 0 {
-            queue.asked = false;
-        }
+        let drained = if queue.waiters() == 0 {
+            queue.end_crossing()
+        } else {
+            None
+        };
+        drop(queue);
+        self.pool.say_drained(drained);
     }
 
     /// Whether no work holds a permit or waits for one.
@@ -170,6 +183,13 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
     /// How many pieces of work wait for a permit.
     pub fn waiting(&self) -> usize {
         lock(&self.pool.queue).waiters()
+    }
+
+    /// The crossing in progress while work waits in line: its epoch, which
+    /// every later crossing's is greater than. `None` while nobody waits.
+    pub fn crossing_epoch(&self) -> Option<u64> {
+        let queue = lock(&self.pool.queue);
+        queue.asked.then_some(queue.epoch)
     }
 
     /// A permit for `key`'s work, now or at its turn.
@@ -220,12 +240,19 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
     /// [`Self::admit`] on this thread, for work that runs on its own thread
     /// rather than on a runtime.
     pub fn admit_blocking(&self, key: K) -> Result<LinePermit, WaitTimedOut> {
-        self.wait_blocking(Some(key))
+        self.wait_blocking(Some(key), None)
+    }
+
+    /// [`Self::admit_blocking`] whose wait ends at `wait` rather than at the
+    /// line's own: the same line, order and permit, for work that keeps a
+    /// wait of its own (a caller's shorter deadline among them).
+    pub fn admit_blocking_for(&self, key: K, wait: Duration) -> Result<LinePermit, WaitTimedOut> {
+        self.wait_blocking(Some(key), Some(wait))
     }
 
     /// A permit for the host's own work, given only when no caller waits.
     pub fn admit_background_blocking(&self) -> Result<LinePermit, WaitTimedOut> {
-        self.wait_blocking(None)
+        self.wait_blocking(None, None)
     }
 
     /// A free permit for the host's own work, or `None` with nothing put in
@@ -241,12 +268,16 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
         Some(self.permit())
     }
 
-    fn wait_blocking(&self, key: Option<K>) -> Result<LinePermit, WaitTimedOut> {
+    fn wait_blocking(
+        &self,
+        key: Option<K>,
+        wait: Option<Duration>,
+    ) -> Result<LinePermit, WaitTimedOut> {
         let mut place = match self.enter(key) {
             Entry::Admitted(permit) => return Ok(permit),
             Entry::Queued(place) => place,
         };
-        let deadline = Instant::now() + *lock(&self.pool.wait);
+        let deadline = Instant::now() + wait.unwrap_or_else(|| *lock(&self.pool.wait));
         let waiter = Arc::clone(&place.waiter);
         let mut granted = lock(&waiter.granted);
         while !*granted {
@@ -289,6 +320,9 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
         }
         let first = !queue.asked;
         queue.asked = true;
+        if first {
+            queue.epoch += 1;
+        }
         let observed = queue.held + queue.waiters();
         drop(queue);
         if first {
@@ -358,9 +392,13 @@ impl<K: Eq + Hash + Clone + Send + 'static> Place<K> {
                 .background
                 .retain(|queued| !Arc::ptr_eq(queued, waiter)),
         }
-        if queue.waiters() == 0 {
-            queue.asked = false;
-        }
+        let drained = if queue.waiters() == 0 {
+            queue.end_crossing()
+        } else {
+            None
+        };
+        drop(queue);
+        self.pool.say_drained(drained);
         None
     }
 }
@@ -375,6 +413,12 @@ impl<K: Eq + Hash + Clone + Send + 'static> Drop for Place<K> {
 impl<K: Eq + Hash + Clone> Queue<K> {
     fn waiters(&self) -> usize {
         self.waiting.values().map(VecDeque::len).sum::<usize>() + self.background.len()
+    }
+
+    /// Ends the crossing in progress: its epoch, if it was said, for the
+    /// line's crossing to hear once the lock is let go.
+    fn end_crossing(&mut self) -> Option<u64> {
+        std::mem::take(&mut self.asked).then_some(self.epoch)
     }
 
     /// The next waiter whose turn it is: the oldest of the next key in the
@@ -394,6 +438,24 @@ impl<K: Eq + Hash + Clone> Queue<K> {
     }
 }
 
+impl<K> Pool<K> {
+    /// Tells the line's crossing that crossing `epoch` is over, if one
+    /// ended. Called outside the queue's lock.
+    fn say_drained(&self, epoch: Option<u64>) {
+        let Some(epoch) = epoch else {
+            return;
+        };
+        let crossing = self
+            .crossing
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(crossing) = crossing {
+            crossing.drained(epoch);
+        }
+    }
+}
+
 impl<K: Eq + Hash + Clone + Send + 'static> Release for Pool<K> {
     fn release(&self) {
         let mut queue = lock(&self.queue);
@@ -402,20 +464,24 @@ impl<K: Eq + Hash + Clone + Send + 'static> Release for Pool<K> {
             queue.held -= 1;
             return;
         }
-        match queue.next() {
+        let drained = match queue.next() {
             // The permit passes on as it is: `held` does not change. Once
             // nobody waits, the crossing is over; the next wait is a new one.
             Some(waiter) => {
                 grant(&waiter);
                 if queue.waiters() == 0 {
-                    queue.asked = false;
+                    queue.end_crossing()
+                } else {
+                    None
                 }
             }
             None => {
                 queue.held = queue.held.saturating_sub(1);
-                queue.asked = false;
+                queue.end_crossing()
             }
-        }
+        };
+        drop(queue);
+        self.say_drained(drained);
     }
 }
 

@@ -3016,6 +3016,16 @@ export_facade! {
     let output = client.vault_code_export(&input)?;
     crate::codec::lift_record("vault.code.export", &output)
 };
+"vault.code.export.preview" => fn vault_code_export_preview(&self, input: CodeExportPreviewRequest) -> CodeExportPreviewAnswer = |client| {
+    let input: oneiron::memory::origin_doors::CodeExportPreviewRequest = crate::codec::lower_record("vault.code.export.preview", input)?;
+    let output = client.vault_code_export_preview(&input)?;
+    crate::codec::lift_record("vault.code.export.preview", &output)
+};
+"vault.code.export.preview.read" => fn vault_code_export_preview_read(&self, input: CodeExportFileReadRequest) -> CodeExportFileReadAnswer = |client| {
+    let input: oneiron::memory::origin_doors::CodeExportFileReadRequest = crate::codec::lower_record("vault.code.export.preview.read", input)?;
+    let output = client.vault_code_export_preview_read(&input)?;
+    crate::codec::lift_record("vault.code.export.preview.read", &output)
+};
 "vault.code.import" => fn vault_code_import(&self, input: CodeRepoImportRequest) -> CodeRepoImportView = |client| {
     let input: oneiron::memory::origin_doors::CodeRepoImportRequest = crate::codec::lower_record("vault.code.import", input)?;
     let output = client.vault_code_import(&input)?;
