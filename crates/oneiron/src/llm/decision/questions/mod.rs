@@ -21,7 +21,7 @@ pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
 pub use artifact_refresh::{ArtifactAskRecord, ArtifactAskStanding, artifact_ask_records};
 pub use artifact_refresh::{
     ArtifactRefreshBatch, ArtifactRefreshFailure, refresh_artifact_question_now,
-    refresh_due_artifact_questions,
+    refresh_due_artifact_questions, refresh_due_artifact_questions_while,
 };
 pub use backfill::schedule_backfill;
 pub use graph_ask::validate_decision as validate_unit_decision;
@@ -45,8 +45,8 @@ pub(crate) use refresh::answer_records_in_txn;
 pub(crate) use refresh::principal_actor;
 pub use refresh::{
     RefreshBatch, RefreshFailure, answer_records, refresh_due_questions,
-    refresh_due_questions_by_role, refresh_due_questions_with, refresh_question,
-    refresh_question_with, standing_ask_route,
+    refresh_due_questions_by_role, refresh_due_questions_by_role_while, refresh_due_questions_with,
+    refresh_question, refresh_question_with, standing_ask_route,
 };
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
 pub(crate) use store::read_question_in_txn;
