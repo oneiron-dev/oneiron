@@ -835,7 +835,11 @@ fn enter_run(
         .map_err(text)?
         .with_agent_verb_door(Arc::clone(door) as Arc<dyn AgentVerbDoor>)
         .with_reader_spawn(seat.clone())
-        .with_replay_exposures(exposures.to_vec());
+        .with_replay_exposures(exposures.to_vec())
+        // FIX 6867 (closes FIX 7062): the owner's review catalog for the run's repo proposals.
+        .with_repo_review_policy(Arc::new(
+            oneiron::memory::repo_doors::OwnerProposalReviewPolicy::new(Arc::clone(vault)),
+        ));
     let meter = spend
         .map(|scope| ScopeMeter::open(vault, scope))
         .transpose()?;
