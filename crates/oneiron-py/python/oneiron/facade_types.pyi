@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1113 facade rows, 3822 declarations.
+Census: 1113 facade rows, 3823 declarations.
 Inputs: 1048 of 1113 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1000 of 1113 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -3799,10 +3799,28 @@ class WeaveItemViewAgentHealth(TypedDict):
     item: Literal["agent_health"]
     card_ref: str
     card: AgentHealthCard
-WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth
+class WeaveItemViewSieveAudit(TypedDict):
+    item: Literal["sieve_audit"]
+    attempt_ref: str
+    span_ref: str
+    turn_ref: str
+    source_ref: str
+    expected_kind: str
+    actual_kind: str
+    expected_entity_ref: NotRequired[str | None]
+    actual_entity_ref: NotRequired[str | None]
+    novel: bool
+    confidence: int
+    agrees: bool
+    audited_at: int
+WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit
+class WeaveSieveScoreView(TypedDict):
+    sampled: int
+    agreeing: int
 class WeaveSectionView(TypedDict):
     kind: WeaveSectionKind
     items: list[WeaveItemView]
+    sieve_score: NotRequired[WeaveSieveScoreView | None]
 class WeaveReportView(TypedDict):
     sections: list[WeaveSectionView]
     narrowing: ScopedReadReceipt
