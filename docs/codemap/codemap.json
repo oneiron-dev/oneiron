@@ -5965,7 +5965,7 @@
      "path": "src/batch/phonetic_apply.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -7699,7 +7699,7 @@
      "path": "src/bm25/config.rs",
      "purpose": "Rank-profile config: field/channel params, formula, recency, defaults",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1
      }
     },
@@ -12478,7 +12478,7 @@
      "path": "src/claim/scoped_read/retrieval_loop.rs",
      "purpose": "Scoped admission shared by the read-only retrieval loop's verbs",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -39855,6 +39855,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/recall/paid/lineage.rs",
+     "purpose": "The rows each rerank document is read from (FIX 7001), kept beside its text so the host's call is sourced…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/recall/presentation.rs",
      "purpose": "—",
      "surface": {
@@ -44910,14 +44920,31 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "ConnectorElicitationAnswer"
+      "ConnectorElicitationAnswer",
+      "ConnectorElicitationOwnerAsk"
      ],
      "path": "src/outbound_consent/connector_elicitation_asks.rs",
      "purpose": "The owner ask an answer to a connector's question takes (ONE-2510)",
      "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorElicitationReceipt",
+      "ElicitationDisposition",
+      "ElicitationEgress"
+     ],
+     "path": "src/outbound_consent/connector_elicitation_receipt.rs",
+     "purpose": "The receipt of each answer the host sends a connector's questions (ONE-2510, FIX 3840): receipt-only, on the…",
+     "surface": {
+      "enum": 2,
       "fn": 1,
       "struct": 1
      }
@@ -44948,7 +44975,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -46135,7 +46162,7 @@
      "path": "src/pipeline/types.rs",
      "purpose": "—",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 36,
       "enum": 5,
       "fn": 15,
@@ -63252,7 +63279,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1166
+      "fn": 1167
      }
     },
     {
@@ -71106,7 +71133,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 249,
+     "files": 250,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71169,7 +71196,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71787,7 +71814,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4582,
+   "source_files": 4584,
    "test_files": 902
   },
   "oneiron-android": {
@@ -78106,7 +78133,7 @@
      "path": "src/edit/xml.rs",
      "purpose": "Byte-span writing over a parsed part: every edit is a list of splices on the retained bytes, so whatever it…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
      }
     },
     {
@@ -79061,9 +79088,51 @@
      "surface": {
       "const": 2,
       "enum": 5,
-      "fn": 16,
-      "re-export": 2,
+      "fn": 17,
+      "re-export": 4,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/header.rs",
+     "purpose": "Renaming a worksheet table's column through its header cell (FIX 6399)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/insert.rs",
+     "purpose": "What inserted rows and columns take from their neighbours, as Excel's insert gives it by default (FIX 3695)…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/retain.rs",
+     "purpose": "Writing into a stored cell or defined name (FIX 8571, FIX 8572): only what a change names is written, and…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_body/titles.rs",
+     "purpose": "The worksheet titles a sheet layout leaves in the extended properties (`docProps/app.xml`, FIX 3441)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -79077,7 +79146,7 @@
      "path": "src/xlsx_shift.rs",
      "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 8,
       "struct": 1
@@ -79255,10 +79324,10 @@
      "purpose": "Excel's storage qualifiers for post-2007 worksheet functions"
     },
     "xlsx_body": {
-     "files": 1,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "XL",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")"
     },
     "xlsx_shift": {
@@ -79278,7 +79347,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 111,
+   "source_files": 115,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -82210,7 +82279,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1135
+      "fn": 1136
      }
     },
     {
@@ -83471,7 +83540,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1136
+      "fn": 1137
      }
     },
     {
@@ -83939,7 +84008,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 8,
-      "mod": 11,
+      "mod": 12,
       "re-export": 5,
       "struct": 1
      }
@@ -84006,6 +84075,16 @@
       "enum": 3,
       "fn": 11,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/analyzer/vietnamese.rs",
+     "purpose": "Vietnamese analyzer (ARCH-0031 dispatch row \"Vietnamese → Whitespace + NFC + lowercase\", FIX 7780)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -84090,7 +84169,7 @@
    ],
    "modules": {
     "analyzer": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -84120,7 +84199,7 @@
    },
    "over_bar": 0,
    "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
-   "source_files": 18,
+   "source_files": 19,
    "test_files": 5
   },
   "oneiron-sandbox-contract": {
@@ -87311,7 +87390,7 @@
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -92477,7 +92556,7 @@
      "path": "src/connector_call_host/live_exchange.rs",
      "purpose": "The live half of the call host: the worker that owns an exchange once its send returned, and the reply…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -99767,6 +99846,8 @@
       "ConnectRejoined",
       "ConnectRescoped",
       "ConnectWindow",
+      "ConnectorAnswerAction",
+      "ConnectorAnswerRequest",
       "ConnectorCallReply",
       "ConnectorCallRequest",
       "ConnectorCallStatus",
@@ -99796,6 +99877,7 @@
       "ConnectorQualificationKit",
       "ConnectorQualificationReceipt",
       "ConnectorQuestion",
+      "ConnectorQuestionAnswer",
       "ConnectorSchemaReply",
       "ConnectorSchemaRequest",
       "ConnectorSendTaskOutcome",
@@ -102907,8 +102989,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 957,
-      "struct": 2989
+      "enum": 958,
+      "struct": 2991
      }
     },
     {

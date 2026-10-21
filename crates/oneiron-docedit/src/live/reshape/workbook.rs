@@ -27,8 +27,8 @@ use crate::native_patch::{NativeRefusal, chart_data, number};
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
 use crate::xlsx_body::{
-    XlsxArea, XlsxBook, XlsxCell, XlsxChange, XlsxValue, mark_full_calc, project_xlsx,
-    read_xlsx_cells,
+    XlsxArea, XlsxBook, XlsxCell, XlsxChange, XlsxSheet, XlsxValue, header_rename, mark_full_calc,
+    project_xlsx, read_xlsx_cells,
 };
 use range::Line;
 use std::collections::{BTreeMap, BTreeSet};
@@ -315,6 +315,8 @@ struct Sheet<'b> {
     locked: &'b [XlsxArea],
     /// Each table's corners, and whether the chart reads a cell in it.
     tables: Vec<((u32, u32), (u32, u32), bool)>,
+    /// The sheet as read, whose table headers a series name may rename.
+    held: &'b XlsxSheet,
 }
 
 fn inside(first: (u32, u32), last: (u32, u32), (col, row): (u32, u32)) -> bool {
@@ -331,6 +333,8 @@ struct Plan<'b> {
     planned: BTreeMap<Key, Planned>,
     /// The category set each planned category cell holds.
     owners: BTreeMap<Key, usize>,
+    /// The cells a held series' name is planned into.
+    names: BTreeSet<Key>,
 }
 
 impl<'b> Plan<'b> {
@@ -366,6 +370,7 @@ impl<'b> Plan<'b> {
                         .collect(),
                     locked: &sheet.locked,
                     tables,
+                    held: sheet,
                 };
                 (sheet.name.as_str(), view)
             })
@@ -376,6 +381,7 @@ impl<'b> Plan<'b> {
             down: down.unwrap_or(true),
             planned: BTreeMap::new(),
             owners: BTreeMap::new(),
+            names: BTreeSet::new(),
         })
     }
 
@@ -521,6 +527,7 @@ impl<'b> Plan<'b> {
                 false,
                 &name.line,
             )?;
+            self.names.extend(line.keys());
             refs.name = Some(name.to(&line));
         }
         if let Some(values) = &held.values {
@@ -668,7 +675,8 @@ impl<'b> Plan<'b> {
 
     /// The cell writes: each planned cell that does not already read as
     /// planned, in its own format (a new cell in its model's). A formula
-    /// or read-only cell refuses.
+    /// or read-only cell refuses, but for a held series' name in a table's
+    /// header cell, which renames the table's column with it (FIX 6399).
     fn changes(&self) -> Result<Vec<XlsxChange>, RebuildReason> {
         let mut out = Vec::new();
         for (key, planned) in &self.planned {
@@ -684,7 +692,14 @@ impl<'b> Plan<'b> {
                 .get(key.0.as_str())
                 .is_some_and(|view| view.locked.iter().any(|area| area.contains(key.1, key.2)));
             if locked || stored.is_some_and(|cell| cell.locked.is_some()) {
-                return Err(RebuildReason::ReadOnlyCell);
+                let rename = self
+                    .sheets
+                    .get(key.0.as_str())
+                    .filter(|_| self.names.contains(key))
+                    .and_then(|view| {
+                        header_rename(view.held, key.1, key.2, &value(&planned.cell, stored))
+                    });
+                out.push(rename.ok_or(RebuildReason::ReadOnlyCell)?);
             }
             let style = stored
                 .or_else(|| planned.like.as_ref().and_then(|like| self.stored(like)))
