@@ -61,8 +61,9 @@ pub(in crate::skill_optimize::eval_set) struct ReceiptLineage {
     /// nothing.
     pub(in crate::skill_optimize::eval_set) off_record: bool,
     /// The rows the receipt's attempt read, when the receipt keeps a
-    /// complete set of them (FIX 5761). A pack receipt keeps none, so this
-    /// stays `None`, unknown: the links above are inputs, not that set.
+    /// complete set of them (FIX 5761): the set its producers recorded while
+    /// it ran (FIX 6934). `None`, unknown, when they recorded none or any
+    /// unknown set; the links above are inputs, not that set.
     pub(in crate::skill_optimize::eval_set) sources: Option<Vec<EntityId>>,
 }
 
@@ -111,7 +112,10 @@ impl LineageReader {
         vault: &Vault,
         receipt: &ReceiptRecord,
     ) -> Result<ReceiptLineage> {
-        let mut lineage = ReceiptLineage::default();
+        let mut lineage = ReceiptLineage {
+            sources: receipt.pack_source_rows(),
+            ..ReceiptLineage::default()
+        };
         lineage.roots.insert(receipt.receipt_id.clone());
         for link in self
             .amendments

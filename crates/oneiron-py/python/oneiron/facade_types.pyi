@@ -16840,6 +16840,7 @@ class TurnProgramAdmissionView(TypedDict):
     turn_ref: str
     admissions: list[TurnProgramAdmissionItem]
     next_cursor: NotRequired[str | None]
+    undecodable_admission_rows_examined: int
 class ProgramRunRequest(TypedDict):
     root: str
     cursor: NotRequired[str | None]
@@ -16910,6 +16911,7 @@ class ProgramRunView(TypedDict):
     tries: list[ProgramTryView]
     queue: NotRequired[ProgramQueueView | None]
     held: NotRequired[ProgramHeldView | None]
+    held_by_try: list[ProgramHeldView]
     run: NotRequired[ProgramRunStateView | None]
     steps: list[ProgramStepView]
     undecodable_steps: int

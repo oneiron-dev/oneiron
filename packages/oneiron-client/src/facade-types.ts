@@ -6591,7 +6591,7 @@ export type ProgramAdmissionOutcomeView = { kind: "queued"; root: string; code_r
 /** `oneiron::dreamer_runner::program::read::views::TurnProgramAdmissionItem` */
 export type TurnProgramAdmissionItem = { admission: string; registration: EntityId; actor: EntityId; actor_class: string; conversation?: EntityId | null; landed_at?: number | null; revision: string; definition?: ProgramRecipePin | null; sealed_scope?: string | null; gate_receipt: string; outcome: ProgramAdmissionOutcomeView; decided_at: number; withheld: string[] }
 /** `oneiron::dreamer_runner::program::read::views::TurnProgramAdmissionView` */
-export type TurnProgramAdmissionView = { turn_ref: string; admissions: TurnProgramAdmissionItem[]; next_cursor?: string | null }
+export type TurnProgramAdmissionView = { turn_ref: string; admissions: TurnProgramAdmissionItem[]; next_cursor?: string | null; undecodable_admission_rows_examined: number }
 /** `oneiron::dreamer_runner::program::read::views::ProgramRunRequest` */
 export type ProgramRunRequest = { root: string; cursor?: string | null; limit?: number | null }
 /** `oneiron::dreamer_runner::program::read::views::ProgramTryView` */
@@ -6613,7 +6613,7 @@ export type ProgramStepState = "issued" | "settled" | "uncertain"
 /** `oneiron::dreamer_runner::program::read::views::ProgramStepView` */
 export type ProgramStepView = { step_ref: string; attempt: string; issue: ProgramStepIssueView; state: ProgramStepState; result_digest?: string | null; uncertain?: string | null; at: number }
 /** `oneiron::dreamer_runner::program::read::views::ProgramRunView` */
-export type ProgramRunView = { root: string; admission: string; actor: EntityId; actor_class: string; code_run: string; definition?: ProgramRecipePin | null; root_created_at?: number | null; tries: ProgramTryView[]; queue?: ProgramQueueView | null; held?: ProgramHeldView | null; run?: ProgramRunStateView | null; steps: ProgramStepView[]; undecodable_steps: number; next_cursor?: string | null; withheld: string[] }
+export type ProgramRunView = { root: string; admission: string; actor: EntityId; actor_class: string; code_run: string; definition?: ProgramRecipePin | null; root_created_at?: number | null; tries: ProgramTryView[]; queue?: ProgramQueueView | null; held?: ProgramHeldView | null; held_by_try: ProgramHeldView[]; run?: ProgramRunStateView | null; steps: ProgramStepView[]; undecodable_steps: number; next_cursor?: string | null; withheld: string[] }
 /** `oneiron::dreamer_runner::program::read::views::SettledProgramStepRequest` */
 export type SettledProgramStepRequest = { root: string; step_ref: string }
 /** `oneiron::dreamer_runner::program::read::views::ProgramResultAvailability` */

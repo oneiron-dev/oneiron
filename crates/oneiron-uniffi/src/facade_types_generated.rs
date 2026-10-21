@@ -51293,6 +51293,8 @@ pub struct TurnProgramAdmissionView {
         skip_serializing_if = "Option::is_none"
     )]
     pub next_cursor: Option<String>,
+    #[serde(rename = "undecodable_admission_rows_examined")]
+    pub undecodable_admission_rows_examined: u64,
 }
 
 /// `oneiron::dreamer_runner::program::read::views::ProgramRunRequest`.
@@ -51503,6 +51505,8 @@ pub struct ProgramRunView {
     pub queue: Option<ProgramQueueView>,
     #[serde(rename = "held", default, skip_serializing_if = "Option::is_none")]
     pub held: Option<ProgramHeldView>,
+    #[serde(rename = "held_by_try")]
+    pub held_by_try: Vec<ProgramHeldView>,
     #[serde(rename = "run", default, skip_serializing_if = "Option::is_none")]
     pub run: Option<ProgramRunStateView>,
     #[serde(rename = "steps")]

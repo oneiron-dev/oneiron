@@ -397,6 +397,11 @@ pub struct AttemptRecord {
     /// work no role ran.
     #[serde(default)]
     pub executor_role: Option<crate::llm::manifest::ModelRole>,
+    /// FIX 6934: the rows its producers read its inputs from while it ran,
+    /// copied onto its terminal pack receipt. Absent while none recorded a
+    /// set, so a row written before the field reads the same, unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_set: Option<super::AttemptReadSet>,
     /// ONE-1896 two-rung graceful-cancel lifecycle: landing, resume point,
     /// terminal cancellation receipt, cancel pressure, and reserve accounting.
     /// Rows without the key decode as the default, so no migration is needed.
