@@ -173,7 +173,7 @@ fn agent_grant_listing_in_txn(
         if !standing.stands_for(agent, verb, now, &owners) {
             continue;
         }
-        if pact_standing_lapsed_in_txn(vault, txn, &standing) {
+        if standing.pact_standing_lapsed_in_txn(vault, txn) {
             lapsed = true;
             continue;
         }
@@ -184,36 +184,6 @@ fn agent_grant_listing_in_txn(
     } else {
         NoStanding::NotStanding
     }))
-}
-
-/// Whether `standing`'s pact standing has lapsed (FIX 7511, Engine 10-21
-/// 21:2x): on a shared vault, the shipped membership gate for that one Grant
-/// (`Vault::authenticated_grant_membership_in_txn`: vault not deleted, root
-/// not conflicted, the Grant live, unexpired and not inactive under its
-/// pact) no longer admits it, its refusal (`Error::Claim`) among them, as
-/// federation/repo_access.rs reads it. A personal vault has no pact standing
-/// to lapse. A store or decode failure of the check is no lapse
-/// ([`PACT_STANDING_CHECK_ERROR`]).
-fn pact_standing_lapsed_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    standing: &AgentGrantStanding,
-) -> bool {
-    match vault.shared_vault_creation_in_txn(txn) {
-        Ok(Some(_)) => {}
-        Ok(None) => return false,
-        Err(error) => return lapse_on_check_error(standing.id, &error),
-    }
-    match vault.authenticated_grant_membership_in_txn(
-        txn,
-        standing.grant.scope,
-        standing.grant.member_ref,
-        standing.id,
-    ) {
-        Ok(Some(_)) => false,
-        Ok(None) | Err(Error::Claim(_)) => true,
-        Err(error) => lapse_on_check_error(standing.id, &error),
-    }
 }
 
 /// [`PACT_STANDING_CHECK_ERROR`] for a check of `grant` that failed with
@@ -248,7 +218,35 @@ impl AgentGrantStanding {
         now: u64,
         owners: &[EntityId],
     ) -> bool {
-        self.stands_for(agent, verb, now, owners) && !pact_standing_lapsed_in_txn(vault, txn, self)
+        self.stands_for(agent, verb, now, owners) && !self.pact_standing_lapsed_in_txn(vault, txn)
+    }
+
+    /// Whether this Grant's pact standing has lapsed (FIX 7511, Engine 10-21
+    /// 21:2x): on a shared vault, the shipped membership gate for this one
+    /// Grant (`Vault::authenticated_grant_membership_in_txn`: vault not
+    /// deleted, root not conflicted, the Grant live, unexpired and not
+    /// inactive under its pact) no longer admits it, its refusal
+    /// (`Error::Claim`) among them, as federation/repo_access.rs reads it. A
+    /// personal vault has no pact standing to lapse. A store or decode
+    /// failure of the check is no lapse ([`PACT_STANDING_CHECK_ERROR`]). The
+    /// pact half of [`Self::stands_in_txn`], for a reader that picks its
+    /// Grants by its own rule.
+    pub(crate) fn pact_standing_lapsed_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> bool {
+        match vault.shared_vault_creation_in_txn(txn) {
+            Ok(Some(_)) => {}
+            Ok(None) => return false,
+            Err(error) => return lapse_on_check_error(self.id, &error),
+        }
+        match vault.authenticated_grant_membership_in_txn(
+            txn,
+            self.grant.scope,
+            self.grant.member_ref,
+            self.id,
+        ) {
+            Ok(Some(_)) => false,
+            Ok(None) | Err(Error::Claim(_)) => true,
+            Err(error) => lapse_on_check_error(self.id, &error),
+        }
     }
 
     /// Whether this Grant alone stands for `agent`'s work under `verb` at
