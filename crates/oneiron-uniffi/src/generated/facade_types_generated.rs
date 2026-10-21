@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1136 facade rows, 3949 generated types.
+// UniFFI census: 1136 facade rows, 3952 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1088.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -21502,6 +21502,14 @@ pub struct RecordEraseSweep {
         skip_serializing_if = "Option::is_none"
     )]
     pub sweep_complete_at: Option<u64>,
+    #[serde(
+        rename = "erase_complete_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub erase_complete_at: Option<u64>,
+    #[serde(rename = "final_ref", default, skip_serializing_if = "Option::is_none")]
+    pub final_ref: Option<String>,
     #[serde(rename = "custody", default, skip_serializing_if = "Option::is_none")]
     pub custody: Option<RecordEraseCustody>,
 }
@@ -25664,6 +25672,8 @@ pub struct LegalHoldLiftAndEraseRequest {
 pub enum ErasePendingReason {
     #[serde(rename = "historical_sweep")]
     HistoricalSweep,
+    #[serde(rename = "custody_retirement")]
+    CustodyRetirement,
 }
 
 /// `oneiron_contracts::error::legal_hold::LegalHoldBoundKind`.
@@ -46348,14 +46358,16 @@ pub enum ConnectorCallReply {
     AwaitingInput {
         #[serde(rename = "handle")]
         handle: String,
+        #[serde(rename = "call_ref", default, skip_serializing_if = "Option::is_none")]
+        call_ref: Option<String>,
         #[serde(rename = "source")]
         source: String,
         #[serde(rename = "foreign")]
         foreign: bool,
         #[serde(rename = "questions")]
         questions: Vec<ConnectorQuestion>,
-        #[serde(rename = "expires_at_ms")]
-        expires_at_ms: u64,
+        #[serde(rename = "live_until_ms")]
+        live_until_ms: u64,
         #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
         reasons: Option<Vec<String>>,
     },
@@ -48735,6 +48747,23 @@ pub enum ConnectorCallStatus {
         name: String,
         #[serde(rename = "tool")]
         tool: String,
+        #[serde(rename = "reply")]
+        reply: ConnectorCallReply,
+    },
+    #[serde(rename = "awaiting_input")]
+    AwaitingInput {
+        #[serde(rename = "call_ref")]
+        call_ref: String,
+        #[serde(rename = "name")]
+        name: String,
+        #[serde(rename = "tool")]
+        tool: String,
+        #[serde(rename = "generation")]
+        generation: u64,
+        #[serde(rename = "asked")]
+        asked: u64,
+        #[serde(rename = "uncertain", default, skip_serializing_if = "Option::is_none")]
+        uncertain: Option<bool>,
         #[serde(rename = "reply")]
         reply: ConnectorCallReply,
     },
@@ -52125,7 +52154,7 @@ pub struct OfficeBodyImportRequest {
     pub made_by: Option<crate::WireJson>,
 }
 
-/// `oneiron::office_body::OfficeBodyKind`.
+/// `oneiron::office_body::records::OfficeBodyKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum OfficeBodyKind {
     #[serde(rename = "docx")]
@@ -52136,7 +52165,7 @@ pub enum OfficeBodyKind {
     Pptx,
 }
 
-/// `oneiron::office_body::OfficeBodyHead`.
+/// `oneiron::office_body::records::OfficeBodyHead`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeBodyHead {
     #[serde(rename = "artifact")]
@@ -52254,7 +52283,7 @@ pub struct DocxBodyView {
     pub blocks: Vec<DocxBlockView>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxValue`.
+/// `oneiron_docedit::xlsx_body::model::XlsxValue`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum XlsxValue {
     #[serde(rename = "blank")]
@@ -52269,7 +52298,7 @@ pub enum XlsxValue {
     Error(String),
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxLock`.
+/// `oneiron_docedit::xlsx_body::model::XlsxLock`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum XlsxLock {
     #[serde(rename = "shared_formula")]
@@ -52305,7 +52334,7 @@ pub struct BodyCell {
     pub locked: Option<XlsxLock>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxArea`.
+/// `oneiron_docedit::xlsx_body::model::XlsxArea`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxArea {
     #[serde(rename = "first")]
@@ -52316,7 +52345,7 @@ pub struct XlsxArea {
     pub lock: XlsxLock,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxTable`.
+/// `oneiron_docedit::xlsx_body::model::XlsxTable`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxTable {
     #[serde(rename = "name")]
@@ -52341,7 +52370,7 @@ pub struct XlsxTable {
     pub calculated: Option<Vec<Option<String>>>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxSheetVisibility`.
+/// `oneiron_docedit::xlsx_body::model::XlsxSheetVisibility`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum XlsxSheetVisibility {
     #[serde(rename = "visible")]
@@ -52382,7 +52411,7 @@ pub struct BodyName {
     pub locked: Option<XlsxLock>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxStyle`.
+/// `oneiron_docedit::xlsx_body::model::XlsxStyle`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxStyle {
     #[serde(rename = "num_fmt")]
@@ -52705,6 +52734,28 @@ pub enum ChartKind {
     Radar,
 }
 
+/// `oneiron_docedit::live::pptx::chart::categories::ChartCategory`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ChartCategory {
+    #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
+    #[serde(rename = "levels", default, skip_serializing_if = "Option::is_none")]
+    pub levels: Option<Vec<Option<String>>>,
+}
+
+/// `oneiron_docedit::live::pptx::chart::categories::ChartCategories`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ChartCategories {
+    #[serde(
+        rename = "level_count",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub level_count: Option<u32>,
+    #[serde(rename = "points", default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<Vec<ChartCategory>>,
+}
+
 /// `oneiron_docedit::live::pptx::chart::ChartSeries`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ChartSeries {
@@ -52718,6 +52769,12 @@ pub struct ChartSeries {
     pub family: Option<ChartKind>,
     #[serde(rename = "x", default, skip_serializing_if = "Option::is_none")]
     pub x: Option<Vec<Option<f64>>>,
+    #[serde(
+        rename = "categories",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub categories: Option<ChartCategories>,
 }
 
 /// `oneiron_docedit::live::pptx::chart::ChartSource`.
@@ -52881,7 +52938,7 @@ pub enum NodePayload {
         #[serde(rename = "family")]
         family: ChartKind,
         #[serde(rename = "categories")]
-        categories: Vec<String>,
+        categories: ChartCategories,
         #[serde(rename = "series")]
         series: Vec<ChartSeries>,
         #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
@@ -53340,6 +53397,12 @@ pub enum ChartEdit {
         family: Option<ChartKind>,
         #[serde(rename = "x", default, skip_serializing_if = "Option::is_none")]
         x: Option<Vec<Option<f64>>>,
+        #[serde(
+            rename = "categories",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        categories: Option<ChartCategories>,
     },
     #[serde(rename = "delete_series")]
     DeleteSeries {
@@ -53389,7 +53452,59 @@ pub enum ChartEdit {
     #[serde(rename = "set_categories")]
     SetCategories {
         #[serde(rename = "categories")]
-        categories: Vec<String>,
+        categories: ChartCategories,
+    },
+    #[serde(rename = "set_series_categories")]
+    SetSeriesCategories {
+        #[serde(rename = "series")]
+        series: u64,
+        #[serde(
+            rename = "categories",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        categories: Option<ChartCategories>,
+    },
+    #[serde(rename = "insert_category")]
+    InsertCategory {
+        #[serde(rename = "owner", default, skip_serializing_if = "Option::is_none")]
+        owner: Option<u64>,
+        #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+        #[serde(rename = "levels", default, skip_serializing_if = "Option::is_none")]
+        levels: Option<Vec<Option<String>>>,
+    },
+    #[serde(rename = "delete_category")]
+    DeleteCategory {
+        #[serde(rename = "owner", default, skip_serializing_if = "Option::is_none")]
+        owner: Option<u64>,
+        #[serde(rename = "category")]
+        category: u64,
+    },
+    #[serde(rename = "move_category")]
+    MoveCategory {
+        #[serde(rename = "owner", default, skip_serializing_if = "Option::is_none")]
+        owner: Option<u64>,
+        #[serde(rename = "category")]
+        category: u64,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "set_category_levels")]
+    SetCategoryLevels {
+        #[serde(rename = "owner", default, skip_serializing_if = "Option::is_none")]
+        owner: Option<u64>,
+        #[serde(rename = "category")]
+        category: u64,
+        #[serde(rename = "levels")]
+        levels: Vec<Option<String>>,
+    },
+    #[serde(rename = "reserve_categories")]
+    ReserveCategories {
+        #[serde(rename = "ids")]
+        ids: Vec<u64>,
     },
     #[serde(rename = "set_source")]
     SetSource {
@@ -53534,7 +53649,7 @@ pub struct OfficeBodyEditRequest {
     pub made_by: Option<crate::WireJson>,
 }
 
-/// `oneiron::office_body::OfficeBodyEdit`.
+/// `oneiron::office_body::records::OfficeBodyEdit`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeBodyEdit {
     #[serde(rename = "frontier")]
@@ -53567,7 +53682,7 @@ pub struct OfficeBodyForkOpenRequest {
     pub proposal_ref: Option<String>,
 }
 
-/// `oneiron::office_body::ForkState`.
+/// `oneiron::office_body::records::ForkState`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
 pub enum ForkState {
@@ -53591,7 +53706,7 @@ pub enum ForkState {
     },
 }
 
-/// `oneiron::office_body::OfficeBodyFork`.
+/// `oneiron::office_body::records::OfficeBodyFork`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeBodyFork {
     #[serde(rename = "id")]
@@ -53946,7 +54061,7 @@ pub struct OfficeBodyExportVerbRequest {
     pub iana_timezone: Option<String>,
 }
 
-/// `oneiron::office_body::OfficeBodyExportRecord`.
+/// `oneiron::office_body::records::OfficeBodyExportRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeBodyExportRecord {
     #[serde(rename = "artifact")]
@@ -54002,7 +54117,7 @@ pub struct OfficeBodyPreviewRequest {
     pub iana_timezone: Option<String>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxCell`.
+/// `oneiron_docedit::xlsx_body::model::XlsxCell`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxCell {
     #[serde(rename = "col")]
@@ -54019,7 +54134,7 @@ pub struct XlsxCell {
     pub locked: Option<XlsxLock>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxSheet`.
+/// `oneiron_docedit::xlsx_body::model::XlsxSheet`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxSheet {
     #[serde(rename = "name")]
@@ -54034,7 +54149,7 @@ pub struct XlsxSheet {
     pub visibility: XlsxSheetVisibility,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxName`.
+/// `oneiron_docedit::xlsx_body::model::XlsxName`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxName {
     #[serde(rename = "name")]
@@ -54049,7 +54164,7 @@ pub struct XlsxName {
     pub locked: Option<XlsxLock>,
 }
 
-/// `oneiron_docedit::xlsx_body::XlsxBook`.
+/// `oneiron_docedit::xlsx_body::model::XlsxBook`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxBook {
     #[serde(rename = "date1904")]
@@ -54062,7 +54177,7 @@ pub struct XlsxBook {
     pub styles: Vec<XlsxStyle>,
 }
 
-/// `oneiron::office_body::XlsxPreview`.
+/// `oneiron::office_body::records::XlsxPreview`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxPreview {
     #[serde(rename = "frontier")]
@@ -54120,6 +54235,19 @@ pub enum SeriesField {
     Family,
     #[serde(rename = "x")]
     X,
+    #[serde(rename = "categories")]
+    Categories,
+    #[serde(rename = "order")]
+    Order,
+    #[serde(rename = "existence")]
+    Existence,
+}
+
+/// `oneiron_docedit::live::pptx::chart::categories::CategoryField`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CategoryField {
+    #[serde(rename = "levels")]
+    Levels,
     #[serde(rename = "order")]
     Order,
     #[serde(rename = "existence")]
@@ -54178,6 +54306,17 @@ pub enum Conflict {
         series: u64,
         #[serde(rename = "field")]
         field: SeriesField,
+    },
+    #[serde(rename = "category_vs_category")]
+    CategoryVsCategory {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "owner", default, skip_serializing_if = "Option::is_none")]
+        owner: Option<u64>,
+        #[serde(rename = "category")]
+        category: u64,
+        #[serde(rename = "field")]
+        field: CategoryField,
     },
 }
 

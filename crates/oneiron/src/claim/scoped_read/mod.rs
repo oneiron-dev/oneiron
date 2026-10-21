@@ -78,6 +78,7 @@ mod access_gate;
 pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
 mod actor_key;
 mod agent_grants;
+mod guest_bound;
 mod owner_authority;
 mod records_cover;
 pub use actor_key::{CallerLocality, ScopedReadActorKey};
