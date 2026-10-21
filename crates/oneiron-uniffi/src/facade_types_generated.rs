@@ -4587,6 +4587,8 @@ pub enum TaskWorkflowHandoff {
         #[serde(rename = "id")]
         id: String,
     },
+    #[serde(rename = "interrupted")]
+    Interrupted,
 }
 
 /// `oneiron::task_verb::highway_types::TaskWorkflowOutcome`.
@@ -4594,6 +4596,11 @@ pub enum TaskWorkflowHandoff {
 pub enum TaskWorkflowOutcome {
     #[serde(rename = "pending")]
     Pending,
+    #[serde(rename = "started")]
+    Started {
+        #[serde(rename = "at")]
+        at: u64,
+    },
     #[serde(rename = "done")]
     Done {
         #[serde(rename = "receipt_ref")]

@@ -6,6 +6,9 @@
 //! planner with the receipt named before it. The program runs at the run's
 //! first entry alone, and an end it came to is never run again: a later
 //! entry reads that end, so its task says the same thing at every entry.
+//! Its start goes on the pin before it can act (FIX 8104): an entry that
+//! finds a start with no end hands off as interrupted, its effects unknown,
+//! and never runs it again.
 
 use oneiron::agent_dispatch::{AgentDispatcher, agent_dispatch_actor};
 use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptResultRef, SetAttemptResult};
@@ -15,9 +18,9 @@ use oneiron::engine_executor::{EngineExecutorError, entered_run};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::task_verb::{
-    TaskWorkflowAttempt, TaskWorkflowCheck, TaskWorkflowHandoff, TaskWorkflowOutcome,
-    TaskWorkflowReport, record_task_workflow_outcome, runner_done_question,
-    runner_workflow_done_answer, task_workflow_binding,
+    HostBinding, TaskWorkflowAttempt, TaskWorkflowCheck, TaskWorkflowHandoff, TaskWorkflowOutcome,
+    TaskWorkflowReport, mark_task_workflow_started, record_task_workflow_outcome,
+    runner_done_question, runner_workflow_done_answer, task_workflow_binding,
 };
 use oneiron::{DreamerRunnerStore, EntityId, Vault, WriteActor};
 use oneiron_browser::{ExpectInput, ExpectOutput};
@@ -75,13 +78,19 @@ pub(super) fn before_seat(
                 *receipt_ref,
             )));
         }
-        TaskWorkflowOutcome::Pending => {}
+        TaskWorkflowOutcome::Pending | TaskWorkflowOutcome::Started { .. } => {}
     }
     // A run that entered before its end was recorded ran its first entry
     // without the program: running it now would say something new to a run
     // whose task its record holds.
     if !matches!(entered_run(vault, run_id), Ok(None)) {
         return Ok(BeforeSeat::Unbound);
+    }
+    // FIX 8104: a program started at an earlier entry whose end was never
+    // recorded is not run again: the run hands off, its effects unknown.
+    if matches!(pinned.outcome(), TaskWorkflowOutcome::Started { .. }) {
+        let report = TaskWorkflowReport::Interrupted;
+        return Ok(recorded(vault, &binding, &pinned, attempt, report, now));
     }
     let report = match pinned.active() {
         None => TaskWorkflowReport::Unavailable,
@@ -94,6 +103,21 @@ pub(super) fn before_seat(
                     return Ok(BeforeSeat::Unbound);
                 }
             };
+            // FIX 8104: the start is on the pin before the program can act.
+            // A start that does not land runs nothing, as a receipt that does
+            // not land leaves the run unbound.
+            match mark_task_workflow_started(vault, &binding, now) {
+                Ok(None) => {}
+                Ok(Some(TaskWorkflowOutcome::Started { .. })) => {
+                    let report = TaskWorkflowReport::Interrupted;
+                    return Ok(recorded(vault, &binding, &pinned, attempt, report, now));
+                }
+                Ok(Some(outcome)) => return Ok(settled(&pinned, &outcome)),
+                Err(error) => {
+                    tracing::warn!(%error, attempt = ?attempt.id, "a bound try's library program start was not marked; it runs as an unbound try");
+                    return Ok(BeforeSeat::Unbound);
+                }
+            }
             match preflight_task_workflow(door, record, args, &origin, InvocationId::mint())? {
                 WorkflowPreflight::Done(output) => TaskWorkflowReport::Ran {
                     output,
@@ -109,18 +133,38 @@ pub(super) fn before_seat(
             }
         }
     };
-    // A receipt the try cannot record leaves its end unwritten: the run goes
-    // on as an unbound one, and no later entry runs the program again.
-    match record_task_workflow_outcome(vault, &binding, report, now) {
-        Ok(TaskWorkflowOutcome::Done { receipt_ref }) => Ok(BeforeSeat::Done(receipt_ref)),
-        Ok(TaskWorkflowOutcome::Handoff { cause, receipt_ref }) => Ok(BeforeSeat::Handoff(
-            handoff_text(&pinned, &cause, receipt_ref),
-        )),
-        Ok(TaskWorkflowOutcome::Pending) => Ok(BeforeSeat::Unbound),
+    Ok(recorded(vault, &binding, &pinned, attempt, report, now))
+}
+
+/// Records `report` as the try's end and answers what its seat takes. A
+/// receipt the try cannot record leaves its end unwritten: the run goes on
+/// as an unbound one, and no later entry runs the program again.
+fn recorded(
+    vault: &Vault,
+    binding: &HostBinding,
+    pinned: &TaskWorkflowAttempt,
+    attempt: &AttemptRecord,
+    report: TaskWorkflowReport,
+    now: u64,
+) -> BeforeSeat {
+    match record_task_workflow_outcome(vault, binding, report, now) {
+        Ok(outcome) => settled(pinned, &outcome),
         Err(error) => {
             tracing::warn!(%error, attempt = ?attempt.id, "a bound try's library program receipt was not recorded; it runs as an unbound try");
-            Ok(BeforeSeat::Unbound)
+            BeforeSeat::Unbound
         }
+    }
+}
+
+/// What a seat takes for `outcome`, its try's end: unbound while none is
+/// recorded.
+fn settled(pinned: &TaskWorkflowAttempt, outcome: &TaskWorkflowOutcome) -> BeforeSeat {
+    match outcome {
+        TaskWorkflowOutcome::Done { receipt_ref } => BeforeSeat::Done(*receipt_ref),
+        TaskWorkflowOutcome::Handoff { cause, receipt_ref } => {
+            BeforeSeat::Handoff(handoff_text(pinned, cause, *receipt_ref))
+        }
+        TaskWorkflowOutcome::Pending | TaskWorkflowOutcome::Started { .. } => BeforeSeat::Unbound,
     }
 }
 
@@ -211,6 +255,14 @@ fn handoff_text(
     receipt: EntityId,
 ) -> String {
     let typed = serde_json::to_string(cause).unwrap_or_else(|_| cause.code().to_owned());
+    if matches!(cause, TaskWorkflowHandoff::Interrupted) {
+        return format!(
+            "\n\nThis TASK binds library program workflow:{}. It was started strict on this run's browser at an earlier entry and its end was never recorded: {} ({typed}). What it did on the page is unknown. Its receipt is NOTE {}: read it, look at the page as it stands, then finish the TASK from there.",
+            pinned.requested().to_hex(),
+            cause.code(),
+            receipt.to_hex(),
+        );
+    }
     format!(
         "\n\nThis TASK binds library program workflow:{}. It ran strict on this run's browser before you, and handed off: {} ({typed}). Its whole receipt, with the failed step, the checks that did not hold and what the page showed, is NOTE {}: read it, then finish the TASK from the page as it stands.",
         pinned.requested().to_hex(),

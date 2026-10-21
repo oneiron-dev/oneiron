@@ -3,9 +3,10 @@
 //!
 //! A MESSAGE with an entity document is quoted through the document's
 //! citation pin (frontier, stable cursors, retained quote, hash). An atomic
-//! MESSAGE has no document and cannot change in place, so its span is bound
-//! to the BLAKE3 hash of its canonical text instead; nothing is born or
-//! rewritten on the quoted author's row.
+//! MESSAGE's first quote births that document in its author's name, in the
+//! reply's writer (FIX 7743, [`super::quote_birth`]). One whose birth a
+//! precondition stops keeps its span bound to the BLAKE3 hash of its
+//! canonical text, as before; nothing is rewritten on the quoted row.
 
 use super::graph::{self, edge_ids, invalid, require_member, require_type};
 use super::{AppendRecord, QuoteSpan};
@@ -31,8 +32,10 @@ pub enum QuoteAnchor {
         message: EntityId,
         citation: EntityId,
     },
-    /// An atomic MESSAGE: the scalar span is stable only as bound to the
-    /// BLAKE3 hash of the canonical text it was taken from.
+    /// An atomic MESSAGE quoted before its quotes took documents (FIX
+    /// 7743), or one no quote can birth a document for: the scalar span is
+    /// stable only as bound to the BLAKE3 hash of the canonical text it was
+    /// taken from.
     Body {
         message: EntityId,
         #[serde(with = "hex32")]
@@ -175,6 +178,9 @@ pub(super) struct ProvenQuote {
     pub(super) anchor: QuoteAnchor,
     /// The scalar span a document pin turns into cursors.
     span: (usize, usize),
+    /// The author of the atomic MESSAGE whose document the pin births first
+    /// (FIX 7743); `None` when a document stands or the anchor is a body's.
+    birth: Option<WriteActor>,
 }
 
 /// [`prove_quote_in_txn`] for an append: its conversation, parent and writer.
@@ -259,6 +265,7 @@ pub(super) fn prove_quote_in_txn(
             turn,
             anchor: QuoteAnchor::Document { message, citation },
             span,
+            birth: None,
         });
     }
     let text = field(&fields, "content")
@@ -266,6 +273,15 @@ pub(super) fn prove_quote_in_txn(
         .ok_or(Error::CorruptedIndex("message canonical content"))?;
     let quoted = scalar_slice(text, span.0, span.1)
         .ok_or_else(|| invalid("quote span is outside the message text"))?;
+    // FIX 7743: the pin births the document this quote anchors to.
+    if let Some(author) = super::quote_birth::birth_author_in(vault, txn, message, actor)? {
+        return Ok(ProvenQuote {
+            turn,
+            anchor: QuoteAnchor::Document { message, citation },
+            span,
+            birth: Some(author),
+        });
+    }
     Ok(ProvenQuote {
         turn,
         anchor: QuoteAnchor::Body {
@@ -276,11 +292,13 @@ pub(super) fn prove_quote_in_txn(
             quote_hash: *blake3::hash(quoted.as_bytes()).as_bytes(),
         },
         span,
+        birth: None,
     })
 }
 
-/// Writes a document quote's citation pin in the append transaction. A body
-/// anchor needs no row: the reply pointer carries all of it.
+/// Writes a document quote's citation pin in the append transaction, first
+/// birthing an atomic MESSAGE's document its proof found it owes (FIX 7743).
+/// A body anchor needs no row: the reply pointer carries all of it.
 pub(super) fn pin_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -288,6 +306,9 @@ pub(super) fn pin_in_txn(
     actor: WriteActor,
 ) -> Result<()> {
     if let QuoteAnchor::Document { message, citation } = proven.anchor {
+        if let Some(author) = proven.birth {
+            crate::entity_doc::ensure_quote_document_in_txn(vault, txn, &message, author)?;
+        }
         vault.pin_message_quote_in_txn(
             txn,
             &citation,
@@ -614,8 +635,16 @@ fn require_stored_quote_in_txn(
     let Some((target, anchor)) = stored else {
         return Err(changed());
     };
-    if target != proven.turn || anchor != proven.anchor {
+    if target != proven.turn {
         return Err(changed());
+    }
+    if anchor != proven.anchor {
+        // FIX 7743: a body anchor kept before atomic quotes took documents
+        // holds for a retry that quotes the same text again.
+        let message = proven.anchor.message();
+        let kept =
+            super::quote_birth::is_body_anchor_in(vault, txn, &anchor, message, proven.span)?;
+        return if kept { Ok(()) } else { Err(changed()) };
     }
     if let QuoteAnchor::Document { message, citation } = anchor {
         let pin = vault

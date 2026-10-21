@@ -88,6 +88,7 @@ pub(crate) use report_journal::{
 pub mod revoke_lands;
 mod room_thread;
 mod route_receipts;
+pub mod run_cancel;
 pub mod run_control;
 pub mod run_doors;
 mod runner_done;
@@ -174,8 +175,8 @@ pub use brief::{
 pub(crate) use browser_workflow::erase_task_workflows_in_txn;
 pub use browser_workflow::{
     TaskWorkflowAttempt, TaskWorkflowCheck, TaskWorkflowPin, TaskWorkflowReport,
-    TaskWorkflowUnavailable, record_task_workflow_outcome, task_workflow_binding,
-    task_workflow_binding_in_txn,
+    TaskWorkflowUnavailable, mark_task_workflow_started, record_task_workflow_outcome,
+    task_workflow_binding, task_workflow_binding_in_txn,
 };
 pub use decision_port::TaskDecisions;
 pub(crate) use highway_post::settle_task_proposal_in_txn;
