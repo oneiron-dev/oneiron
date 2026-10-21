@@ -107,7 +107,10 @@ impl ModelRole {
     /// falls back to the chat seat.
     #[must_use]
     pub const fn is_optional(self) -> bool {
-        matches!(self, Self::DreamerDistilled | Self::Coach | Self::BrowserPlanner)
+        matches!(
+            self,
+            Self::DreamerDistilled | Self::Coach | Self::BrowserPlanner
+        )
     }
     /// The disposition a row that names none takes: the extraction teacher
     /// is offline, every other role served (ARCH-0036 "one base, two roles").
