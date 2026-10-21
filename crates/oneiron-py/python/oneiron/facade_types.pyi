@@ -4,14 +4,15 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1131 facade rows, 3942 declarations.
-Inputs: 1066 of 1131 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1018 of 1131 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1133 facade rows, 3951 declarations.
+Inputs: 1068 of 1133 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1020 of 1133 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
 
+Q = TypeVar("Q")
 T = TypeVar("T")
 
 CommitmentObligorKind = Literal["owner", "agent", "third_party"]
@@ -1710,7 +1711,11 @@ class TaskWorkflowHandoffUnreadableBody(TypedDict):
     id: EntityId
 class TaskWorkflowHandoffUnreadable(TypedDict):
     unreadable: TaskWorkflowHandoffUnreadableBody
-TaskWorkflowHandoff = Literal["goal_unmet"] | TaskWorkflowHandoffProgram | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+TaskWorkflowHandoff = Literal["goal_unmet", "interrupted"] | TaskWorkflowHandoffProgram | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+class TaskWorkflowOutcomeStartedBody(TypedDict):
+    at: int
+class TaskWorkflowOutcomeStarted(TypedDict):
+    started: TaskWorkflowOutcomeStartedBody
 class TaskWorkflowOutcomeDoneBody(TypedDict):
     receipt_ref: EntityId
 class TaskWorkflowOutcomeDone(TypedDict):
@@ -1720,7 +1725,7 @@ class TaskWorkflowOutcomeHandoffBody(TypedDict):
     receipt_ref: EntityId
 class TaskWorkflowOutcomeHandoff(TypedDict):
     handoff: TaskWorkflowOutcomeHandoffBody
-TaskWorkflowOutcome = Literal["pending"] | TaskWorkflowOutcomeDone | TaskWorkflowOutcomeHandoff
+TaskWorkflowOutcome = Literal["pending"] | TaskWorkflowOutcomeStarted | TaskWorkflowOutcomeDone | TaskWorkflowOutcomeHandoff
 class TaskWorkflowStatus(TypedDict):
     attempt_ref: str
     requested: EntityId
@@ -2306,6 +2311,9 @@ class TaskUpdateReceipt(TypedDict):
     acked: bool
     report: NotRequired[TaskCallReceipt | None]
 class TaskAccept(TypedDict):
+    task_ref: EntityId
+    intent_key: str
+class TaskRedo(TypedDict):
     task_ref: EntityId
     intent_key: str
 WitnessAuthor = Literal["user", "companion", "system"]
@@ -10829,11 +10837,19 @@ class CodeImportAnchor(TypedDict):
     receive_provenance: EntityId
     snapshot: EntityId
     snapshot_fork_hash: str
+RepoFileProjectionKind = Literal["masked", "opaque"]
+class RepoFileProjectionView(TypedDict):
+    kind: RepoFileProjectionKind
+    source_blob: str
+    copy_blake3: str
+    copy_size_bytes: int
+    way_out: str
 class CodeSnapshotFile(TypedDict):
     path: str
     content_hash_blake3: str
     size_bytes: int
     mode: int
+    projection: NotRequired[RepoFileProjectionView | None]
 class CodeImportManifestFile(TypedDict):
     git_oid: str
     file: CodeSnapshotFile
@@ -11334,6 +11350,7 @@ class CodeViewFileBytes(TypedDict):
     path: str
     bytes: list[int]
     sha256: str
+    projection: NotRequired[RepoFileProjectionView | None]
 class CodeSecretTaintRef(TypedDict):
     secret_ref: str
     rotation_generation: int
@@ -15093,6 +15110,7 @@ class VoiceBankPackPutRequest(TypedDict):
 class VoiceBankPackReceipt(TypedDict):
     voice_id: str
     pack_id: str
+VoiceRefSubjectKind = Literal["person", "designed"]
 class VoiceConsentBasisConversationalNoticeBody(TypedDict):
     notice: str
 class VoiceConsentBasisConversationalNotice(TypedDict):
@@ -15115,7 +15133,8 @@ class VoiceRenderConsentRequest(TypedDict):
     event_id: str
     occurred_at: int
     reach: ModelLocality
-    basis: VoiceConsentBasis
+    subject_kind: NotRequired[VoiceRefSubjectKind]
+    basis: NotRequired[VoiceConsentBasis | None]
     state: VoiceConsentState
 VoiceVendorDeleteStatus = Literal["deleted", "no_clone_wire", "delete_failed", "absent"]
 class VoiceVendorEviction(TypedDict):
@@ -15127,6 +15146,9 @@ class VoiceRenderConsentReceipt(TypedDict):
     state: VoiceConsentState
     reach: ModelLocality
     revision: str
+    event_id: str
+    sequence: int
+    replayed: bool
     evicted: list[VoiceVendorEviction]
 class VoiceTargetProvisionRequest(TypedDict):
     voice_id: str
@@ -15155,6 +15177,7 @@ class VoiceIdentityView(TypedDict):
     version: int
     id: str
     owner: str
+    subject_kind: VoiceRefSubjectKind
     pack_ids: list[str]
 class VoiceClipSummary(TypedDict):
     register: str
@@ -15168,12 +15191,14 @@ class VoicePackSummary(TypedDict):
 class VoiceRenderConsentView(TypedDict):
     event_id: str
     subject: str
+    subject_kind: VoiceRefSubjectKind
     recorded_by: str
     occurred_at: int
     reach: ModelLocality
-    basis: VoiceConsentBasis
+    basis: NotRequired[VoiceConsentBasis | None]
     state: VoiceConsentState
     revision: str
+    sequence: int
 class VoiceTargetCloneView(TypedDict):
     vendor_voice_id: str
     source_packs: list[str]
@@ -15191,6 +15216,15 @@ class VoiceBankInspection(TypedDict):
     packs: list[VoicePackSummary]
     render_consent: NotRequired[VoiceRenderConsentView | None]
     target: VoiceTargetInspection
+class VoiceRenderLineageRequest(TypedDict):
+    voice_id: str
+class VoiceDroppedTargetView(TypedDict):
+    target: str
+    held: VoiceTargetCloneView
+class VoiceRenderEventView(TypedDict):
+    voice_id: str
+    decision: VoiceRenderConsentView
+    dropped: list[VoiceDroppedTargetView]
 AiOperation = Literal["text", "image", "video", "speech", "transcribe", "embed"]
 class AiVideoTicket(TypedDict):
     job: str
@@ -15314,8 +15348,8 @@ class QuestionMedia(TypedDict):
 class ArtifactUnits(TypedDict):
     artifact: str
     selection: ArtifactAskUnits
-class QuestionDefinition(TypedDict):
-    question: DecisionQuestion
+class QuestionDefinition(TypedDict, Generic[Q]):
+    question: Q
     adapter: str
     units: list[str]
     recipe: str
@@ -15332,17 +15366,19 @@ class QuestionDefinition(TypedDict):
     media: NotRequired[QuestionMedia]
     deadline_ms: NotRequired[int | None]
     artifacts: NotRequired[list[ArtifactUnits]]
+DecisionQuestionInput = TypedDict("DecisionQuestionInput", {"text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
+QuestionDefinitionInput = QuestionDefinition[DecisionQuestionInput]
 class QuestionCreateRequest(TypedDict):
-    definition: QuestionDefinition
+    definition: QuestionDefinitionInput
 class QuestionRecord(TypedDict):
     schema_version: int
     principal: str
-    definition: QuestionDefinition
+    definition: QuestionDefinition[DecisionQuestion]
     created_at: int
 class QuestionEditRequest(TypedDict):
     id: EntityId
     expected_version: int
-    definition: QuestionDefinition
+    definition: QuestionDefinitionInput
 class QuestionPauseRequest(TypedDict):
     id: EntityId
     paused: bool
@@ -18398,6 +18434,10 @@ class WakeRecipePolicy(TypedDict):
     arc_min_new_statements: int
     arc_child_calls_per_wake: int
     audit_window_instruction: str
+    follower_enabled: bool
+    follower_instruction: str
+    follower_keyframe_instruction: str
+    follower_sizing_bytes_per_token: int
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
 class SieveLeaseRequest(TypedDict):

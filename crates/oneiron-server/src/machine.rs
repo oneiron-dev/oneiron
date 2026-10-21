@@ -250,6 +250,103 @@ impl oneiron::origin::smart_http::SpillFloor for DiskFloor {
     }
 }
 
+/// A foreign guest's proposal spool keeps the reserve uploads keep, on the
+/// same claims (FIX 7650): each append holds its bytes until they are on the
+/// disk, so concurrent runs, uploads and backups count one another's pending
+/// writes, and nothing written is counted twice.
+impl oneiron::code_sandbox::ProposalSpoolFloor for DiskFloor {
+    /// `spool` in the directory this floor measures, made on first use; an
+    /// error making it is the caller's, never a fall back to another disk.
+    fn spool_dir(&self) -> std::io::Result<PathBuf> {
+        let dir = self.dir.join("spool");
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(&dir)?;
+        Ok(dir)
+    }
+
+    fn claim(&self) -> Box<dyn oneiron::code_sandbox::ProposalSpoolClaim> {
+        Box::new(SpoolClaim {
+            floor: self.clone(),
+            claim: DiskFloor::claim(self),
+        })
+    }
+}
+
+/// One proposal spool file's claim on the shared disk floor (FIX 7650).
+struct SpoolClaim {
+    floor: DiskFloor,
+    claim: Arc<DiskClaim>,
+}
+
+impl oneiron::code_sandbox::ProposalSpoolClaim for SpoolClaim {
+    fn admit(&self, bytes: u64) -> Result<(), oneiron::code_sandbox::SpoolFloorRefusal> {
+        self.floor.admit(&self.claim, bytes)
+    }
+
+    fn landed(&self) {
+        self.floor.landed(&self.claim);
+    }
+
+    fn full(&self, bytes: u64) -> oneiron::code_sandbox::SpoolAtFloor {
+        self.floor.at_floor(&self.claim, bytes)
+    }
+}
+
+impl DiskFloor {
+    /// Sets `claim` to `bytes` as [`Self::hold`] does, naming why not
+    /// (FIX 7650): the measured shortfall, or the error that kept the disk
+    /// from being read.
+    fn admit(
+        &self,
+        claim: &DiskClaim,
+        bytes: u64,
+    ) -> Result<(), oneiron::code_sandbox::SpoolFloorRefusal> {
+        debug_assert!(Arc::ptr_eq(&self.claimed, &claim.claimed));
+        let mut claimed = lock(&self.claimed);
+        let others = claimed.saturating_sub(claim.bytes.load(Ordering::Relaxed));
+        let available = self
+            .free()
+            .map_err(oneiron::code_sandbox::SpoolFloorRefusal::Unmeasured)?;
+        let needed = self.reserve.saturating_add(others).saturating_add(bytes);
+        if available < needed {
+            return Err(oneiron::code_sandbox::SpoolFloorRefusal::AtFloor(
+                oneiron::code_sandbox::SpoolAtFloor {
+                    needed,
+                    available,
+                    reserve: self.reserve,
+                },
+            ));
+        }
+        *claimed = others.saturating_add(bytes);
+        claim.bytes.store(bytes, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// The transfer-accounting step (FIX 7650): `claim`'s held bytes are on
+    /// the disk now, where its free space counts them, so the hold ends and
+    /// no write is counted twice.
+    fn landed(&self, claim: &DiskClaim) {
+        debug_assert!(Arc::ptr_eq(&self.claimed, &claim.claimed));
+        let mut claimed = lock(&self.claimed);
+        *claimed = claimed.saturating_sub(claim.bytes.swap(0, Ordering::Relaxed));
+    }
+
+    /// What this floor measures now for `bytes` its disk refused room for
+    /// (FIX 7650). A disk that cannot be read shows no room, as it said.
+    fn at_floor(&self, claim: &DiskClaim, bytes: u64) -> oneiron::code_sandbox::SpoolAtFloor {
+        let claimed = lock(&self.claimed);
+        let others = claimed.saturating_sub(claim.bytes.load(Ordering::Relaxed));
+        oneiron::code_sandbox::SpoolAtFloor {
+            needed: self.reserve.saturating_add(others).saturating_add(bytes),
+            available: self.free().unwrap_or(0),
+            reserve: self.reserve,
+        }
+    }
+}
+
 impl DiskClaim {
     /// The bytes this claim holds now.
     pub(crate) fn bytes(&self) -> u64 {

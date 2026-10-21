@@ -25,7 +25,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/mod.rs` | src | s | 5 re-export | — | — |
 | `src/llm/budget/policy.rs` | src | s | 2 struct · 1 enum · 9 fn · 1 crate-vis | BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable | Resolved manifest policy table for one budget meter |
 | `src/llm/budget/settlement.rs` | src | s | 2 fn · 1 crate-vis | — | — |
-| `src/llm/budget/state.rs` | src | m | 25 crate-vis | — | Budget meter core: reserve planning and admission |
+| `src/llm/budget/state.rs` | src | m | 23 crate-vis | — | Budget meter core: reserve planning and admission |
 | `src/llm/budget/templates.rs` | src | s | 1 struct · 9 const | BudgetPromptTemplate | Budget ladder prompt templates and their registry |
 | `src/llm/budget/tests.rs` | test | s | — | — | — |
 | `src/llm/budget/tests/dispatch.rs` | test | s | — | — | — |
@@ -33,7 +33,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/types.rs` | src | s | 5 struct · 4 enum · 4 fn · 1 const | BudgetAdmission, BudgetExhaustionPolicy, BudgetLadderEvent, BudgetLeaseState, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal +1 | Public budget DTOs and the exhaustion policy |
 | `src/llm/burst_inputs.rs` | src | s | 1 struct · 1 fn | NormalizedBurstInputs | Peer-relative write velocity and structural-failure streaks for automatic verdicts |
 | `src/llm/bus.rs` | src | m | 2 struct · 1 trait · 7 fn | LlmEventBus, StreamSubscription, TerminalSink | Ephemeral one-producer fanout |
-| `src/llm/cache.rs` | src | m | 6 struct · 5 enum · 7 fn · 1 const | CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError, CacheIdentity, CacheOutcome +3 | What a backend reported about its prompt cache on one physical model call (FIX 6567, INF 2 step 1): for each… |
+| `src/llm/cache.rs` | src | m | 6 struct · 5 enum · 7 fn | CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError, CacheIdentity, CacheOutcome +3 | What a backend reported about its prompt cache on one physical model call (FIX 6567, INF 2 step 1): for each… |
 | `src/llm/call.rs` | src | s | 5 struct · 6 enum · 6 fn | CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality, ModelTierRef, PinnedConfigViolation +3 | Per-call description: envelope, pin admission, roles, tier precedence, response format, and locality |
 | `src/llm/catalog.rs` | src | s | 2 struct · 2 enum · 10 fn · 2 const | LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort | Capability catalog: flags, entries with supports/require, costs, and reasoning effort |
 | `src/llm/defaults.rs` | src | s | 5 struct · 3 enum · 1 trait · 15 fn | ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault, SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane +1 | Inference defaults as data: the shipped purpose-default table, its validation and the routing rules it implies |
@@ -41,16 +41,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/failure_policy.rs` | src | s | 2 struct · 3 enum · 9 fn | DreamerFailureClass, DreamerFailureDecision, DreamerFailurePrecedence, DreamerFailureRoute, DreamerFailureRule | Vault-resident Dreamer failure decisions; these restrict downstream use, never grant authority |
 | `src/llm/fallback.rs` | src | s | 1 struct · 1 enum · 1 trait · 4 fn | DeterministicRunner, FallbackError, FallbackRegistry | Named deterministic non-LLM fallback runners |
 | `src/llm/image.rs` | src | s | 5 struct · 1 trait · 2 fn · 1 type | ImageBackend, ImageBytes, ImageCatalog, ImageCatalogRow, ImageIntent, ImageResponse | Provider-neutral image generation and reference-edit intent |
+| `src/llm/inference.rs` | src | m | 4 struct · 6 enum · 6 fn · 1 const | InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence, WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode +2 | What a model worker is and what one physical call to it reported (FIX 8314, INFERENCE R1): the worker's… |
 | `src/llm/label_read.rs` | src | s | 3 struct · 1 enum · 1 trait · 4 fn | LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet | Label-read seam: a host model scores a closed label set instead of generating text |
 | `src/llm/limit.rs` | src | m | 6 fn | — | How an adapter reads a provider's refusal as a spent quota or a rate limit, and the reset the refusal names… |
 | `src/llm/media.rs` | src | m | 6 struct · 6 enum · 2 trait · 25 fn · 1 type · 1 const · 1 mod | AiMediaDoor, AiOperation, ImageMedia, MediaBackend, MediaCaps, MediaJobState, MediaPart, MediaRequest +6 | The `ai.*` call family past text (runtime "The ai.* call family"): image, video, speech, transcription and… |
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
-| `src/llm/mod.rs` | src | s | 4 mod · 24 re-export | — | Engine-facing LLM invocation seam |
+| `src/llm/mod.rs` | src | s | 4 mod · 25 re-export | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
 | `src/llm/protocol.rs` | src | m | 7 struct · 5 enum · 7 fn · 1 const | ContentPart, FinishReason, ImageContent, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest +4 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
 | `src/llm/protocol/tests.rs` | test | s | — | — | — |
 | `src/llm/safeguard.rs` | src | s | 2 enum · 5 fn · 2 const | SafeguardModelBinding, SafeguardModelBindingError | Safeguard-classifier binding selector with parsing, display, serde, and tier/model projections |
-| `src/llm/scope.rs` | src | s | 1 struct · 1 enum · 3 fn | Scope, ScopeResource | Four-axis branch scope and exact readable/writable resource identities |
+| `src/llm/scope.rs` | src | s | 1 struct · 1 enum · 4 fn | Scope, ScopeResource | Four-axis branch scope and exact readable/writable resource identities |
 | `src/llm/streaming_tests.rs` | test | s | — | — | — |
 | `src/llm/subscribers.rs` | src | s | 4 struct · 6 fn | ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker | Pure clock-injected progress and voice stages |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-model` made `pub` so `oneiron` can reach them across the crate split |

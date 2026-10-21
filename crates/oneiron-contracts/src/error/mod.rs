@@ -305,6 +305,9 @@ pub enum ErrorKind {
     KitConfirmationStale,
     MicroVmBackendUnavailable,
     MicroVmBackendError,
+    /// A foreign guest's proposal spool append would cross the host's disk
+    /// floor.
+    SandboxProposalDiskFloor,
     MicroVmOverlayError,
     MicroVmCredentialDestinationDenied,
     /// A code step was cancelled while it ran.

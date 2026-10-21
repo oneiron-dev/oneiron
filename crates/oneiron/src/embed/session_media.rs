@@ -18,6 +18,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::device::media_device_row_key;
 use super::media::{
     MediaEgressGate, MediaEmbedReport, MediaEmbedder, PendingMedia, asset_document_in,
     is_text_document_type, media_egress_for, media_held_in, text_document_of,
@@ -26,7 +27,7 @@ use super::space::{
     EmbeddingSpace, InputKind, embedding_space_in_txn, media_text_hash_of, media_vector_row_key,
 };
 use super::space_move::space_fill_kinds_in_txn;
-use super::{EgressPredicate, TEXT_HASH_LEN};
+use super::{EgressPredicate, EmbeddingProvenance, TEXT_HASH_LEN};
 use crate::Vault;
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
@@ -91,7 +92,8 @@ impl Vault {
     /// when the room holds no record `id` or no TURN `turn`; [`Error::InvalidConfig`] when the
     /// space is undeclared, no slot binds or moves `kind` to it, or a text record holds no text;
     /// [`Error::DimensionMismatch`] for a vector of another width. An anonymous room records
-    /// nothing, so it refuses.
+    /// nothing, so it refuses. A vector a caller supplies names no device, so it keeps no mark
+    /// (FIX 7796).
     pub fn put_session_media_vector(
         &self,
         session: &OffRecordSession<'_>,
@@ -101,16 +103,17 @@ impl Vault {
         kind: InputKind,
         vector: &[f32],
     ) -> Result<()> {
-        self.put_session_media_vector_of(session, turn, space_id, id, kind, vector, None)
+        self.put_session_media_vector_of(session, turn, space_id, id, kind, vector, None, None)
             .map(|_| ())
     }
 
     /// [`Self::put_session_media_vector`]; with the embed pass's `read`, `false`, landing
     /// nothing, once the room is no longer off record or a text record's text has moved from
-    /// the one its vector was embedded from.
+    /// the one its vector was embedded from. The vector's mark, the device and runtime the
+    /// pass's model answered with, lands beside it (FIX 7796).
     #[expect(
         clippy::too_many_arguments,
-        reason = "the session door's arguments, and what the pass read before its model ran"
+        reason = "the session door's arguments, what the pass read before its model ran, and its answer's mark"
     )]
     fn put_session_media_vector_of(
         &self,
@@ -121,6 +124,7 @@ impl Vault {
         kind: InputKind,
         vector: &[f32],
         read: Option<PassRead>,
+        provenance: Option<&EmbeddingProvenance>,
     ) -> Result<bool> {
         if session.vault_id() != self.vault_id() {
             return Err(Error::InvariantViolation(
@@ -135,7 +139,7 @@ impl Vault {
             }
             return session
                 .with_saver_write_txn(session.saver_check_for(&route)?, |wtxn| {
-                    self.put_base_media_vector_in_txn(wtxn, space_id, id, kind, vector)
+                    self.put_base_media_vector_in_txn(wtxn, space_id, id, kind, vector, provenance)
                 })
                 .map(|()| true);
         }
@@ -190,6 +194,10 @@ impl Vault {
                 OverlayKeyspace::VaultMeta,
                 &media_vector_row_key(space_id, id),
             )?;
+            session.overlay().mark_bookkeeping_row(
+                OverlayKeyspace::VaultMeta,
+                &media_device_row_key(space_id, id),
+            )?;
             let at = self.store.clock.now_recorded_at();
             apply(
                 wtxn,
@@ -204,6 +212,7 @@ impl Vault {
                         kind,
                         text_hash,
                         vector: vector.to_vec(),
+                        provenance: provenance.cloned(),
                     },
                 },
             )?;
@@ -329,8 +338,8 @@ impl Vault {
         }
         let outcomes = self.embed_documents(embedder, &documents, Some(session))?;
         for ((document, turn), outcome) in documents.iter().zip(&turns).zip(outcomes) {
-            let vector = match outcome {
-                Ok(vector) => vector,
+            let (vector, provenance) = match outcome {
+                Ok(answer) => answer,
                 Err(_) => {
                     refusals.record(&room, &space.id, document);
                     report.refused += 1;
@@ -347,6 +356,7 @@ impl Vault {
                 Some(PassRead {
                     text_hash: document.text_hash,
                 }),
+                Some(&provenance),
             ) {
                 Ok(true) => {
                     refusals.clear(&room, &space.id, document.id);
