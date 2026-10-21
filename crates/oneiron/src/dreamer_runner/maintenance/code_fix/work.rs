@@ -15,9 +15,11 @@ use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{COACH_HEAL_ATTEMPT_KIND, DreamerAttemptPayload, DreamerRunnerStore};
 use crate::failure_ladder::{BlockedReportRef, HealerCase, healer_case_in_txn};
 use crate::failure_signals::{
-    CodeFixSource, CodeFixVerdict, CodeFixWithheld, Sealing, failed_case_in, queue_sealed_in_txn,
+    CodeFixSource, CodeFixVerdict, CodeFixWithheld, FailureSource, Sealing, failed_case_in,
+    queue_sealed_in_txn,
 };
 use crate::limit_ask::EngineLimit;
+use crate::skill_optimize::union_source_rows;
 use crate::{EntityId, Result, Vault};
 
 /// The work row's key: a case's own key, or one derived from a blocked
@@ -146,11 +148,13 @@ pub(super) fn enqueue_run_in_txn(
 }
 
 /// The candidates of `pinned` that `settled` holds no run of that stands,
-/// each as its id and kind: one it never ran, and an engine pair it kept
-/// not run at another shadow protocol (FIX 1661/2144).
+/// each as its id and kind: one it never ran, an engine pair it kept not
+/// run at another shadow protocol (FIX 1661/2144), and with `read_granted`
+/// one kept for want of the Coach's Grant (FIX 7031).
 pub(super) fn untried(
     settled: &CodeFixSettled,
     pinned: &[PublisherCandidate],
+    read_granted: bool,
 ) -> Vec<(String, PublisherCandidateKind)> {
     pinned
         .iter()
@@ -158,7 +162,7 @@ pub(super) fn untried(
             !settled
                 .candidates
                 .iter()
-                .any(|run| run.candidate_id == candidate.id && run.tried())
+                .any(|run| run.candidate_id == candidate.id && run.tried(read_granted))
         })
         .map(|candidate| (candidate.id.clone(), candidate.kind.clone()))
         .collect()
@@ -217,6 +221,27 @@ pub(super) fn failure_context(
         })
         .collect();
     Ok((evidence, reports))
+}
+
+/// The rows a job's draft is assembled from (FIX 6997): the failure's texts,
+/// each report the questions read (`evidence`, which a case would join), and
+/// the heal its route came from. A failure-ladder case is a row under a
+/// correlation key that names no rows its class came from, so a job with one
+/// is unknown, `None`.
+pub(super) fn draft_rows(
+    case: Option<&HealerCase>,
+    failure: &FailureSource,
+    evidence: &[EntityId],
+    proposal: EntityId,
+) -> Option<Vec<EntityId>> {
+    if case.is_some() {
+        return None;
+    }
+    union_source_rows([
+        failure.source_rows.as_deref(),
+        Some(evidence),
+        Some(std::slice::from_ref(&proposal)),
+    ])
 }
 
 /// Queues the Coach's code-fix run for a blocked report it just filed a heal

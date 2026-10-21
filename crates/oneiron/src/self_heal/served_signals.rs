@@ -3,7 +3,7 @@
 //! pass. Retrieval misses and windowed retrieval regressions read every
 //! stored ARCH-0037 run row; MCP boundary refusals read the lasting call
 //! receipts. Nothing here repairs: the pass emits diagnostics, and
-//! `Vault::propose_tier1_repairs` files the bounded proposed-only repairs.
+//! `Vault::propose_tier1_repairs` files every proposed-only repair.
 
 use super::tripwires::{McpActionRejectedDetector, RetrievalRegressionDetector};
 use super::{DiagnosticObservation, TIER1_SWEEP_SCOPE};

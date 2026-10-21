@@ -620,6 +620,8 @@ class Oneiron:
         @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         @property
+        def repo(self) -> "Oneiron._VaultRepoVerbs": ...
+        @property
         def standing_blocks(self) -> "Oneiron._VaultStandingBlocksVerbs": ...
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs": ...
@@ -2324,15 +2326,15 @@ class Oneiron:
             """Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."""
     class _VaultCodeOriginMirrorVerbs:
         def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorView:
-            """Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."""
+            """Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner."""
         def set(self, spec: Facade.OriginMirrorSetRequest) -> Facade.OriginMirrorTarget:
-            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me unless named; the same URL keeps its own); the token binding is checked in the setup write."""
+            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked."""
         def strategy(self, spec: Facade.OriginMirrorStrategyRequest) -> Facade.OriginMirrorTarget:
-            """Set one served origin mirror's sync strategy: ask_me sends nothing until an exact publish request is approved, schedule pushes every published ref on its cadence; it changes only the strategy and its revision."""
+            """Set one served origin mirror's sync strategy: ask_me sends nothing until an exact request is approved, schedule pushes every published ref on its cadence, full_auto each new green head at once; unsent automatic work pauses."""
         def clear(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorCleared:
             """Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."""
         def push(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorRun:
-            """Push one origin's published Git refs to its schedule mirror now, recording the real outcome (ask_me refuses publish_request_required); refs pushed are not readiness, which names the LFS objects the history needs."""
+            """Push one origin's published refs to its schedule or full_auto mirror now as a reviewed, leased plan (full_auto: green heads only), recording the real outcome; ask_me refuses publish_request_required. Refs are not LFS readiness."""
     class _VaultCodeOriginPublishVerbs:
         def request(self, spec: Facade.OriginPublishRequestInput) -> Facade.OriginPublishRequestView:
             """Ask to publish one exact commit to one branch of a served origin's mirror, once: the request leases the push on the branch tip an authenticated read saw and records a full-ancestry review of what it would expose."""
@@ -2448,6 +2450,67 @@ class Oneiron:
             """The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept."""
         def get(self, spec: Facade.PlannedSpawnRead) -> Facade.PlannedSpawnObservation:
             """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
+    class _VaultRepoVerbs:
+        @property
+        def git_push(self) -> "Oneiron._VaultRepoGitPushVerbs": ...
+        @property
+        def anchor(self) -> "Oneiron._VaultRepoAnchorVerbs": ...
+        @property
+        def snapshots(self) -> "Oneiron._VaultRepoSnapshotsVerbs": ...
+        @property
+        def symbols(self) -> "Oneiron._VaultRepoSymbolsVerbs": ...
+        @property
+        def views(self) -> "Oneiron._VaultRepoViewsVerbs": ...
+        @property
+        def merge_queue(self) -> "Oneiron._VaultRepoMergeQueueVerbs": ...
+        @property
+        def work(self) -> "Oneiron._VaultRepoWorkVerbs": ...
+        def proposal_submit(self, spec: Facade.LiveRunRequest[Facade.RepoProposalSubmitInput]) -> Facade.RepoProposalSubmitOutput:
+            """Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept."""
+        @property
+        def checkout(self) -> "Oneiron._VaultRepoCheckoutVerbs": ...
+        def export(self, spec: Facade.LiveRunRequest[Facade.RepoExportInput]) -> Facade.RepoExportOutput:
+            """Exports one finalized, promoted revision from the attached run's own checkout when one Grant lists publish over the revision's paths; otherwise it holds with a typed code. git_push never implies an export."""
+    class _VaultRepoGitPushVerbs:
+        def mint(self, spec: Facade.GitPushGrantMintInput) -> Facade.GitPushGrantMintOutput:
+            """The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it."""
+        def revoke(self, spec: Facade.GitPushGrantRevokeInput) -> Facade.GitPushGrantRevokeOutput:
+            """The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing."""
+    class _VaultRepoAnchorVerbs:
+        def bind(self, spec: Facade.RepoAnchorBindInput) -> Facade.RepoAnchorBindOutput:
+            """The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."""
+    class _VaultRepoSnapshotsVerbs:
+        def get(self, spec: Facade.LiveRunRequest[Facade.RepoSnapshotsGetInput]) -> Facade.RepoSnapshotsGetOutput:
+            """Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease."""
+        def read(self, spec: Facade.LiveRunRequest[Facade.RepoSnapshotsReadInput]) -> Facade.RepoSnapshotsReadOutput:
+            """Reads one file of such a snapshot on a path the attached run's Grant reads."""
+        def ingest(self, spec: Facade.LiveRunRequest[Facade.RepoSnapshotsIngestInput]) -> Facade.RepoSnapshotsIngestOutput:
+            """Imports the commit an admitted repo's full ref names now, readable paths only, for the attached run."""
+    class _VaultRepoSymbolsVerbs:
+        def definitions(self, spec: Facade.LiveRunRequest[Facade.RepoSymbolsDefinitionsInput]) -> Facade.RepoSymbolsDefinitionsOutput:
+            """Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads."""
+        def declare(self, spec: Facade.LiveRunRequest[Facade.RepoSymbolsDeclareInput]) -> Facade.RepoSymbolsDeclareOutput:
+            """Declares current symbols of the attached run's own work on paths its Grant edits, for its TASK; an overlap waits, never refused."""
+        def renew(self, spec: Facade.LiveRunRequest[Facade.RepoSymbolsRenewInput]) -> Facade.RepoSymbolsRenewOutput:
+            """Extends the attached run's own symbol declaration by its declared lifetime."""
+        def release(self, spec: Facade.LiveRunRequest[Facade.RepoSymbolsReleaseInput]) -> Facade.RepoSymbolsReleaseOutput:
+            """Removes the attached run's own symbol declaration."""
+    class _VaultRepoViewsVerbs:
+        def get(self, spec: Facade.LiveRunRequest[Facade.RepoViewsGetInput]) -> Facade.RepoViewsGetOutput:
+            """Reads the attached run's own work, as it was opened."""
+        def read(self, spec: Facade.LiveRunRequest[Facade.RepoViewsReadInput]) -> Facade.RepoViewsReadOutput:
+            """Reads one file of the attached run's own work."""
+    class _VaultRepoMergeQueueVerbs:
+        def observe(self, spec: Facade.LiveRunRequest[Facade.RepoMergeQueueObserveInput]) -> Facade.RepoMergeQueueObserveOutput:
+            """Reads the merge queue the attached run's own work is pinned under, with its own entries and what each waits behind."""
+        def enqueue(self, spec: Facade.LiveRunRequest[Facade.RepoMergeQueueEnqueueInput]) -> Facade.RepoMergeQueueEnqueueOutput:
+            """Queues the attached run's own stored proposals of one work as one batch, under the declaration they were made under."""
+    class _VaultRepoWorkVerbs:
+        def open(self, spec: Facade.LiveRunRequest[Facade.RepoWorkOpenInput]) -> Facade.RepoWorkOpenOutput:
+            """Opens a fresh private working set of an admitted repo at its queue's green commit for the attached run, readable paths only."""
+    class _VaultRepoCheckoutVerbs:
+        def bind(self, spec: Facade.LiveRunRequest[Facade.RepoCheckoutBindInput]) -> Facade.RepoCheckoutBindOutput:
+            """Materializes the attached run's own live checkout lease of an admitted served repo, for its TASK, with its lease-route remote when a door base is named; no lease is minted and no host path is shown."""
     class _VaultStandingBlocksVerbs:
         def configure(self, spec: Facade.StandingBlockConfigureRequest) -> Facade.StandingBlockView:
             """The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle."""
@@ -2507,6 +2570,8 @@ class Oneiron:
             """Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body."""
         def program_checkpoint(self, spec: Facade.ProgramCheckpointRequest) -> Facade.ProgramCheckpointView | None:
             """Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it."""
+        @property
+        def program_hold(self) -> "Oneiron._VaultRunsProgramHoldVerbs": ...
         def review(self, spec: Facade.RunReviewRequest) -> Facade.RunReview:
             """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
         def settle(self, spec: Facade.RunSettleRequest) -> Facade.RunSettlement:
@@ -2516,6 +2581,9 @@ class Oneiron:
     class _VaultRunsBranchesVerbs:
         def get(self, spec: Facade.RunBranchesRequest) -> Facade.RunBranchesView:
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
+    class _VaultRunsProgramHoldVerbs:
+        def release(self, spec: Facade.ReleaseTurnProgramHoldRequest) -> Facade.ProgramHoldReleaseView:
+            """The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out."""
     class _VaultConsultsVerbs:
         def get(self, spec: Facade.ConsultReadRequest) -> Facade.ConsultInspection:
             """The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies."""

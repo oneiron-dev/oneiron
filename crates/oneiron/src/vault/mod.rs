@@ -191,9 +191,14 @@ pub struct Vault {
     /// ([`Vault::install_code_consent_effect_host`]). In memory only.
     pub(crate) code_consent_host:
         std::sync::OnceLock<std::sync::Arc<dyn crate::code_run::CodeConsentEffectHost>>,
-    /// A host Coach drafts this vault's digest settings steps (FIX 5609;
-    /// [`Vault::register_coach_weave_digest_host`]). In memory only.
+    /// A host Coach serving this vault drafts its digest settings steps (FIX
+    /// 5609, 6165; [`Vault::set_coach_weave_digest_host_ready`]). In memory
+    /// only.
     pub(crate) coach_weave_digest_host: std::sync::atomic::AtomicBool,
+    /// The origin mirror pushes' wake (FIX 6866): a published-ref move or a
+    /// green landing starts a full-auto pass at once. In memory only and
+    /// never shared across vaults; each lifecycle tick repairs a missed one.
+    pub(crate) origin_mirror_wake: crate::origin::OriginMirrorWake,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:

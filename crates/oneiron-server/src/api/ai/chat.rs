@@ -564,8 +564,10 @@ fn start_turn(
     let board_at = messages
         .iter()
         .rposition(|message| message.role == LlmMessageRole::User);
-    let (board, board_rows) = board.map(|board| (board.block, board.rows)).unzip();
-    let (admitted, recalled) = recall::admit(&server.ai, &vault, &seat, messages, board);
+    let (board, board_rows) = board
+        .map(|board| ((board.block, board.context), board.rows))
+        .unzip();
+    let (admitted, recalled, context) = recall::admit(&server.ai, &vault, &seat, messages, board);
     let turn_context = turn_context.or(board_at.filter(|_| recalled));
     // A board the call goes without is no row it read.
     if recalled {
@@ -596,6 +598,10 @@ fn start_turn(
         }
         compaction::mark_prefix(&mut admitted.request);
     }
+    // FIX 6921: what the admitted board showed, frozen against the call it
+    // rides in.
+    let context = context
+        .map(|capture| crate::api::context_board::freeze_chat_context(capture, &admitted.request));
     // `host.turn.generate` (ARCH-0080 §5): its pre chain runs once the turn
     // is admitted, so a refused admission leaves no hook's blocks or notes,
     // and before the user's turn is witnessed, so a skip or an ask ends the
@@ -677,6 +683,8 @@ fn start_turn(
     let signals = sitting::signals_sitting(&vault, &hooked());
     // A turn that keeps no durable record keeps no craft receipt either.
     let craft = craft.filter(|_| !verb_hook_boundary::keeps_no_record(&hooked()));
+    // Nor its context's records (FIX 6921): a session-only turn keeps none.
+    let context = context.filter(|_| generate_session.is_none() && witness_session.is_none());
     if signals {
         server.ai.session_hint(session_key, SessionHint::AppOpen);
     }
@@ -770,6 +778,16 @@ fn start_turn(
         }
     })?;
     let answering = after_turn(hooks_vault, generating, answering);
+    // FIX 6921: the answer's context records, kept once it is handed on.
+    let answering = crate::api::context_board::record_chat_answer(
+        Arc::clone(server),
+        context,
+        turn,
+        agent,
+        WriteActor::new(actor, class),
+        session_key,
+        answering,
+    );
     Ok(Started {
         stream: request.stream,
         conversation_ref: request.conversation_ref,

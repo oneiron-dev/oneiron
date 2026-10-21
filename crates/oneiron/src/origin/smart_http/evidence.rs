@@ -20,6 +20,7 @@ use crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
+use crate::federation::git_push::GitPushStamp;
 use crate::git_wire::{GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire};
 use crate::origin::actor_erase::{
     ClaimRewrite, ORIGIN_ACTOR_ERASE_PROOF, OriginClaimKind, OriginProofErase,
@@ -324,6 +325,11 @@ impl Vault {
                 (
                     "origin_authority",
                     OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref()),
+                ),
+                // What the push decision admitted it under (G1-PUSH).
+                (
+                    "git_push",
+                    GitPushStamp::evidence_value(stamp.push.as_ref()),
                 ),
             ]),
         )?;

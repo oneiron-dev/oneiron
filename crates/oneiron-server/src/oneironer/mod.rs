@@ -5,18 +5,32 @@
 //! ([`oneiron::tagging`]); this slot only holds the tagger the worker calls.
 //! No model name and no label name sits here: identity and labels come from
 //! the `[oneironer]` section and the tagger's own model card.
+//!
+//! Every call goes through the slot's one dispatcher ([`dispatcher`]) to a
+//! ready worker, live calls before bulk ones, and comes back with the facts
+//! of the worker that ran it. Every worker in a slot serves the same
+//! checkpoint, stack, capabilities and decode. The tagging coordinator
+//! reaches the same dispatcher through [`ProviderTagger::claim_room`] and
+//! [`ProviderTagger::submit`] (FIX 6755), so its markers queue beside every
+//! other call.
 
 #[cfg(test)]
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use oneiron::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder};
+use oneiron::memory::extraction::{
+    EncoderAttempt, EncoderInput, ExtractionEncoder, ExtractionWork,
+};
 use oneiron::tagging::{TaggingOutcome, TaggingTrace};
 use oneiron::{ModelId, embed::EmbedderLocality};
 
 use crate::config::{OneironerConfig, OneironerProvider};
+use dispatcher::{Completion, Dispatcher, WorkerSpec};
 
+pub(crate) use dispatcher::DispatchClaim;
+
+mod dispatcher;
 pub(crate) mod endpoint;
 pub(crate) mod engines;
 mod local;
@@ -47,50 +61,102 @@ pub(crate) enum EncoderNotSelected {
     OtherTier { bound: String, tier: String },
 }
 
-/// Native and HTTP providers share the marker, worker and persistence path.
-pub(crate) enum ProviderTagger {
-    Endpoint(endpoint::HttpTagger),
-    Local(Box<local::LocalTagger>),
+/// The slot's one facade: every call goes through its dispatcher to a ready
+/// worker. Native and HTTP providers share the marker, worker and
+/// persistence path.
+pub(crate) struct ProviderTagger {
+    model: ModelId,
+    locality: EmbedderLocality,
+    provider: Provider,
+    dispatcher: Dispatcher,
+}
+
+/// What the slot knows of its provider beside its workers.
+enum Provider {
+    /// The configured endpoint, probed for its card.
+    Endpoint(Arc<endpoint::HttpTagger>),
+    /// A native bundle: its card and decoder, as it loaded.
+    Local {
+        card: endpoint::ModelCard,
+        decode_revision: &'static str,
+    },
 }
 
 impl ProviderTagger {
-    pub(crate) fn probe(&self) -> Result<endpoint::ProbeOutcome, endpoint::ProbeError> {
-        match self {
-            Self::Endpoint(tagger) => tagger.probe(),
-            Self::Local(tagger) => Ok(endpoint::ProbeOutcome::Ready(tagger.card())),
+    /// The facade over `workers`. `pinned` says the slot serves one
+    /// configured worker, a named device or an endpoint.
+    fn new(
+        model: ModelId,
+        locality: EmbedderLocality,
+        provider: Provider,
+        pinned: bool,
+        workers: Vec<WorkerSpec>,
+    ) -> anyhow::Result<Self> {
+        let dispatcher = Dispatcher::new(pinned);
+        for worker in workers {
+            dispatcher.add(worker)?;
         }
+        Ok(Self {
+            model,
+            locality,
+            provider,
+            dispatcher,
+        })
+    }
+
+    pub(crate) fn probe(&self) -> Result<endpoint::ProbeOutcome, endpoint::ProbeError> {
+        match &self.provider {
+            Provider::Endpoint(tagger) => tagger.probe(),
+            Provider::Local { card, .. } => Ok(endpoint::ProbeOutcome::Ready(card.clone())),
+        }
+    }
+
+    /// Room for one call in `work`'s class on the slot's dispatcher, awaited
+    /// with nothing held: the tagging coordinator's claim (FIX 6755). It
+    /// shares the pending caps every other call takes room in, and never
+    /// refuses; dropped unused, the claim gives its room back.
+    pub(crate) fn claim_room(
+        &self,
+        work: ExtractionWork,
+    ) -> impl std::future::Future<Output = DispatchClaim> + Send + 'static {
+        self.dispatcher.claim_async(work)
+    }
+
+    /// Queues `input` under `claim`, never waiting; the answer comes back
+    /// through the returned completion.
+    pub(crate) fn submit(&self, claim: DispatchClaim, input: EncoderInput) -> Completion {
+        claim.submit(input)
+    }
+
+    /// The dispatcher's pending cap of `work`'s class, from its policy: the
+    /// bound the tagging coordinator also keeps its resident markers in.
+    pub(crate) fn pending_cap(&self, work: ExtractionWork) -> usize {
+        dispatcher::pending_cap(work)
     }
 
     /// The decoder revision a native tagger runs; `None` for an endpoint,
     /// whose card names no decoder.
     pub(crate) fn decode_revision(&self) -> Option<&'static str> {
-        match self {
-            Self::Endpoint(_) => None,
-            Self::Local(tagger) => Some(tagger.decode_revision()),
+        match &self.provider {
+            Provider::Endpoint(_) => None,
+            Provider::Local {
+                decode_revision, ..
+            } => Some(*decode_revision),
         }
     }
 }
 
 impl ExtractionEncoder for ProviderTagger {
     fn model_id(&self) -> &ModelId {
-        match self {
-            Self::Endpoint(tagger) => tagger.model_id(),
-            Self::Local(tagger) => tagger.model_id(),
-        }
+        &self.model
     }
 
     fn locality(&self) -> EmbedderLocality {
-        match self {
-            Self::Endpoint(tagger) => tagger.locality(),
-            Self::Local(tagger) => tagger.locality(),
-        }
+        self.locality
     }
 
-    fn infer(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
-        match self {
-            Self::Endpoint(tagger) => tagger.infer(input),
-            Self::Local(tagger) => tagger.infer(input),
-        }
+    fn infer(&self, input: &EncoderInput, work: ExtractionWork) -> EncoderAttempt {
+        self.dispatcher.call(input, work)
     }
 }
 
@@ -159,7 +225,9 @@ impl TaggerSlot {
         Ok(())
     }
 
-    /// The engine a local tagger serves on; `None` for an endpoint.
+    /// The engine a local tagger was loaded on at startup and how it was
+    /// picked; `None` for an endpoint. Not a call's execution: each call's
+    /// receipt names the worker that ran it.
     pub(crate) fn serving(&self) -> Option<engines::Serving> {
         self.serving
     }
@@ -243,10 +311,30 @@ pub(crate) fn build_slot_with_rows(
                 "oneironer engine serving"
             );
             serving = Some(engine);
-            ProviderTagger::Local(Box::new(tagger))
+            let provider = Provider::Local {
+                card: tagger.card(),
+                decode_revision: tagger.decode_revision(),
+            };
+            let model = tagger.model_id().clone();
+            // `auto` keeps every ready eligible worker: here the survey's
+            // default alone, so no second model is loaded beside it. A named
+            // device is the one worker the owner pinned.
+            let pinned = engine.pick == engines::Pick::Named;
+            let worker = WorkerSpec::local(engine.engine, 0, tagger);
+            ProviderTagger::new(
+                model,
+                EmbedderLocality::OnDevice,
+                provider,
+                pinned,
+                vec![worker],
+            )?
         }
         OneironerProvider::Endpoint => {
-            ProviderTagger::Endpoint(endpoint::HttpTagger::from_config(config)?)
+            let tagger = Arc::new(endpoint::HttpTagger::from_config(config)?);
+            let (model, locality) = (tagger.model_id().clone(), tagger.locality());
+            let worker = WorkerSpec::endpoint(Arc::clone(&tagger));
+            let provider = Provider::Endpoint(tagger);
+            ProviderTagger::new(model, locality, provider, true, vec![worker])?
         }
         OneironerProvider::None => return Ok(None),
     };

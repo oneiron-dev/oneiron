@@ -86,11 +86,12 @@ pub(super) fn land_pads(vault: &Vault, window: &WindowKey, pads: &[PadRow]) {
     }
 }
 
-/// Lands one pad row unless this machine holds a row at its id.
+/// Lands one pad row unless this machine holds a row at its id whose pad is
+/// here (KS-5: a reference whose pad custody lacks takes it again).
 fn land_pad(vault: &Vault, pad: &PadRow) -> crate::Result<()> {
     let held = {
         let rtxn = vault.store.env.read_txn()?;
-        crate::ports::EntityStoreRead::port_entity_present(&vault.store, &rtxn, &pad.id)?
+        crate::world_keys::pad_row_held_in_txn(&vault.store, &rtxn, &pad.id)?
     };
     if held {
         return Ok(());

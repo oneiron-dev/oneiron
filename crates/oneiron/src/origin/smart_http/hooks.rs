@@ -42,6 +42,11 @@ use crate::error::Result;
 /// disk above its floor, read once when the hook starts ([`ScanBounds`],
 /// substituted when the hook is written). Past either the push is refused
 /// whole, never scanned in part, with a reason that names the bound's key.
+///
+/// A checkout push (G1-PUSH) also lists, per move, every path the move
+/// changes, deletes and both names of a rename included, into a third
+/// stream the final intent writer judges under the run's Grant; the list is
+/// charged to the same disk budget. Every other push lists none.
 pub(super) const DOOR_PRE_RECEIVE_HOOK: &str = r#"#!/bin/sh
 # Vetted door hook (ONE-1908). Repository-supplied hooks never run: every serve
 # invocation pins core.hooksPath in argv to this door-owned directory.
@@ -85,6 +90,10 @@ typed="$dir/pre-receive.typed"
 listed="$dir/pre-receive.listed"
 seen="$dir/pre-receive.seen"
 verdict="$dir/pre-receive.verdict"
+paths="$dir/pre-receive.paths"
+pathspart="$dir/pre-receive.paths.part"
+names="$dir/pre-receive.names"
+listpaths=@DOOR_LIST_CHANGED_PATHS@
 # The door holds one blob whole while it scans it, so no blob may carry more
 # than this. The streams are written to this directory's disk, which keeps this
 # floor free: its free space is read once, here, and every framed byte, headers
@@ -130,6 +139,7 @@ tab=$(printf '\t')
 : > "$pairs"
 : > "$blobspart"
 : > "$historypart"
+: > "$pathspart"
 : > "$seen"
 printf 'quarantine %s\n' "${GIT_QUARANTINE_PATH-}" >> "$part"
 empty=$(git --no-replace-objects hash-object -t tree /dev/null)
@@ -167,6 +177,17 @@ while read -r old new; do
 	total=$((total + ${#old} + ${#new} + 7))
 	[ "$total" -le "$max" ] || disk_floor
 	printf 'move %s %s\n' "$old" "$new" >> "$blobspart"
+	# A checkout push's changed paths, NUL-terminated after one framed
+	# "move <old> <new> <bytes>" line, every status and both rename names.
+	if [ "$listpaths" = 1 ]; then
+		git --no-replace-objects diff-tree -r -z --name-only --no-renames \
+			--no-commit-id "$base" "$new" > "$names"
+		size=$(($(wc -c < "$names")))
+		total=$((total + size + ${#old} + ${#new} + 32))
+		[ "$total" -le "$max" ] || disk_floor
+		printf 'move %s %s %s\n' "$old" "$new" "$size" >> "$pathspart"
+		cat "$names" >> "$pathspart"
+	fi
 	# ":<srcmode> <dstmode> <srcoid> <dstoid> <status><tab><path>"
 	while IFS= read -r entry; do
 		meta=${entry%%"$tab"*}
@@ -249,7 +270,8 @@ if [ -s "$objects" ]; then
 		< "$listed" > "$historypart"
 fi
 printf 'end\n' >> "$part"
-rm -f "$entries" "$pairs" "$tips" "$objects" "$typed" "$listed" "$seen"
+rm -f "$entries" "$pairs" "$tips" "$objects" "$typed" "$listed" "$seen" "$names"
+mv -f "$pathspart" "$paths"
 mv -f "$historypart" "$history"
 mv -f "$blobspart" "$blobs"
 mv -f "$part" "$req"
@@ -288,6 +310,16 @@ impl DoorHooksDir {
 
     /// Materializes the directory with the hook keeping `scan`'s bounds.
     pub(super) fn materialize_with(root: &Path, scan: ScanBounds) -> Result<Self> {
+        Self::materialize_listing(root, scan, false)
+    }
+
+    /// [`Self::materialize_with`], the hook also listing each move's
+    /// changed paths when `list_paths` (a checkout push, G1-PUSH).
+    pub(super) fn materialize_listing(
+        root: &Path,
+        scan: ScanBounds,
+        list_paths: bool,
+    ) -> Result<Self> {
         let path = root.join(EntityId::now().to_hex());
         fs::create_dir_all(&path)?;
         let hook = path.join(DOOR_PRE_RECEIVE_HOOK_NAME);
@@ -298,7 +330,11 @@ impl DoorHooksDir {
                 &scan.disk_floor_bytes().to_string(),
             )
             .replace("@DOOR_BLOB_TOO_LARGE@", DOOR_BLOB_TOO_LARGE)
-            .replace("@DOOR_DISK_FLOOR@", DOOR_DISK_FLOOR);
+            .replace("@DOOR_DISK_FLOOR@", DOOR_DISK_FLOOR)
+            .replace(
+                "@DOOR_LIST_CHANGED_PATHS@",
+                if list_paths { "1" } else { "0" },
+            );
         fs::write(&hook, script.as_bytes())?;
         set_executable(&hook)?;
         Ok(Self {
@@ -326,6 +362,12 @@ impl DoorHooksDir {
     /// diffs did not frame. Moved into place before the blob stream.
     pub(super) fn history_path(&self) -> PathBuf {
         self.path.join("pre-receive.history")
+    }
+
+    /// The changed-path stream of a checkout push, moved into place before
+    /// the history stream.
+    pub(super) fn paths_path(&self) -> PathBuf {
+        self.path.join("pre-receive.paths")
     }
 
     pub(super) fn verdict_path(&self) -> PathBuf {

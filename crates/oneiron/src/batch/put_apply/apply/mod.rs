@@ -171,6 +171,8 @@ pub(in crate::batch) fn apply_put(
     // STO-03: `Some` only when the incoming TASK body named a derived streak
     // counter, i.e. only on the sync door — the body that gets stored instead.
     let mut task_body_without_streaks = None;
+    // KS-5: the reference a pad row stores once custody took its pad.
+    let mut pad_stored_body = None;
     let mut decoded_claim_body = None;
     let mut authority_entry_hash_pin: Option<crate::authority::AuthorityEntryHash> = None;
     let mut authority_entry_observation = None;
@@ -261,7 +263,7 @@ pub(in crate::batch) fn apply_put(
     } else if entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
         crate::blob_artifact::validate_blob_artifact_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
-        crate::world_keys::validate_pad_put_in_txn(store, wtxn, &id, data)?;
+        pad_stored_body = crate::world_keys::admit_pad_put_in_txn(store, wtxn, &id, data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         if replicated {
             validate_replicated_authority_log_for_local_vault(store, wtxn, &id, data, posture)?;
@@ -448,6 +450,7 @@ pub(in crate::batch) fn apply_put(
     // decides whether the body changed, so nothing downstream ever sees the
     // discarded counters.
     let data = task_body_without_streaks.as_deref().unwrap_or(data);
+    let data = pad_stored_body.as_deref().unwrap_or(data);
     let reconciled_critical_claim_body = if replicated && entity_type == ENTITY_TYPE_CLAIM {
         reconcile_replicated_critical_confirm(store, wtxn, &id, data, &mut decoded_claim_body)?
     } else {

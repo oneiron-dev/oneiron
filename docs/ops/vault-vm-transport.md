@@ -1,11 +1,18 @@
 # Vault VM restore transport
 
 A vault VM (`oneiron-server host vm`) can be cold-restored in its guest, and a
-lost restore result can be settled from its disk (FIX 6584). This page is the
-supervisor's contract: the image floor, the descriptors and who owns them, the
-source drive, and the decision table for a lost result. The wire lives in
-`oneiron_vault_contract::vm_restore`; the native restore it carries is
-`oneiron_vault_contract::restore` and is unchanged.
+lost restore result can be settled from its disk (FIX 6584). Its engine gets the
+custody anchor door's owner credential and reaches the anchor URL through its
+host (FIX 6517). Its guest can have one NIC for outbound IPv4 (FIX 6808), and
+its engine takes the vault's managed profile from the config drive (FIX 6809).
+This page is the supervisor's contract: the image floor, the descriptors and who
+owns them, the source drive, the custody anchor channels, the guest network, the
+managed profile, and the decision table for a lost result. The wire lives in
+`oneiron_vault_contract::vm_restore` and `oneiron_vault_contract::vm_anchor`,
+and the network's two views and the profile's files in
+`oneiron_vault_contract::vm`; the native restore it carries is
+`oneiron_vault_contract::restore` and is unchanged, and so is the native anchor
+credential.
 
 ## Image floor: check it before any secret
 
@@ -20,6 +27,30 @@ source drive, and the decision table for a lost result. The wire lives in
   the merge floor.
 - No older image is booted, and no reader of an image without the field is
   kept. `CONTRACT_VERSION` stays 3, and `Ping` has no field for this.
+- The custody anchor channels (FIX 6517) add two required manifest fields,
+  published together: `anchor_wire_revision: 1` and `anchor_proxy_revision: 1`.
+  Every serving cold boot of an image at or after their floor dials the anchor
+  exchange, vsock port 1031, after its provision connection. The floor is the
+  engine commit that merged FIX 6517's VM half. The supervisor checks both
+  revisions, with the hashes and that floor, before it prepares the VMM or
+  hands over F, C or the anchor credential A.
+- The guest network (FIX 6808) adds a required manifest field,
+  `vm_network_revision: 1`. Its floor is the engine commit that merged FIX
+  6808's engine half. An image before it sets up no NIC. The supervisor checks
+  the revision, with the hashes and that floor, before it prepares a VMM whose
+  profile plans a NIC or hands over F, C or A, and boots no image before the
+  floor with a NIC planned.
+- At that floor the profile's `network` key is required: `null` for a VM with
+  no NIC. A host library before the floor refuses a profile that names
+  `network`, and one at or after it refuses a profile without it, so profiles
+  change with the host library.
+- The managed profile (FIX 6809) adds a required manifest field,
+  `vm_managed_profile_revision: 1`. Its floor is the engine commit that merged
+  FIX 6809. An image before it ignores the profile's files, so its vault would
+  start without its tenancy or its owner's choices. The supervisor checks the
+  revision, with the hashes and that floor, before it stages any of the files,
+  prepares the VMM or hands over F, C or A, and boots no image before the floor
+  for a profile that needs one of them.
 
 ## The channel
 
@@ -54,7 +85,12 @@ before it reads anything.
 |---|---|---|
 | Open (today) | `--listen`, `--credentials-fd C`, `--fscrypt-key-fd F` | Reads C, then F. The VM starts on the first connection or a due wake. |
 | Restore | Open's flags plus `--restore --restore-input-fd R --restore-result-fd W` | See the restore order below. |
-| Inspect | `--config`, `--vault-name`, `--fscrypt-key-fd F`, `--restore-marker-identity-fd Q`, `--restore-marker-result-fd S` (no `--listen`, `--credentials-fd` or `--restore`) | Reads F and Q, boots, writes one observation to S, stops the VM and exits. |
+| Inspect | `--config`, `--vault-name`, `--fscrypt-key-fd F`, `--restore-marker-identity-fd Q`, `--restore-marker-result-fd S` (no `--listen`, `--credentials-fd`, `--restore` or anchor flags) | Reads F and Q, boots, writes one observation to S, stops the VM and exits. |
+| Anchor (with Open or Restore) | `--custody-anchor-url URL`, and optionally `--custody-anchor-credentials-fd A`, which needs the URL | Reads A once, after the first cold boot's C went to the guest. See the custody anchor channels below. |
+
+Open and Restore give the engine the vault's managed profile the same way:
+from the config drive's typed files (see the managed profile below), never from
+a flag, pipe or descriptor of the runner's. An inspection reads none of them.
 
 Restore order:
 
@@ -98,6 +134,55 @@ Loss:
 - A failed restore stops the VM and lets the guest's last result records out
   within the stop's grace.
 
+## Custody anchor channels (FIX 6517)
+
+`--custody-anchor-url` is the anchor URL the vault's effective settings bind,
+the restore plan's `custody` URL included, exactly as they spell it. It is not a
+secret, but it is never logged. A is the read end of a pipe carrying the same
+native credential a node's engine reads on `--custody-anchor-credentials-fd`:
+one JSON object, then EOF. A needs the URL. Pass A only for the exact URL it was
+issued for.
+
+The exchange, vsock port 1031, once per serving cold boot (not an inspection):
+
+1. After provisioning, the host sends the header: `revision`, `vault`,
+   `anchor_url` (`null` when no URL was given) and `has_credentials`. The guest
+   reads it before its engine starts.
+2. After the engine's credential frame C, the host sends the payload: a
+   big-endian u32 length, then exactly A's bytes, or a length of 0 when there
+   is no A, then a half-close.
+3. The guest answers `accepted` (with the URL's digest) or `refused` with a
+   closed code. The host waits for that answer before the ready byte.
+   `accepted` means the bytes crossed. It does not mean the vault is ready or
+   that its anchor answered.
+
+The order is R, then C, then A, as for a native start. The header and its
+answer are at most 64 KiB (`MAX_CTL_LINE`), and so is A in a VM; a node's A has
+no bound. The host reads A once, holds it in memory (wiped when dropped), and
+sends it again after each later cold boot's C. A RAM snapshot holds the guest's
+copy, as it holds the data key; a resume runs no second exchange. A is never
+written to the profile, the boot arguments, a drive, the outbox or a log.
+
+The proxy, vsock port 1033: the guest bootstrap serves
+`/run/oneiron/custody-anchor.sock` (the vault UID's, mode 0600) when a URL was
+given. Each stream on it says a hello naming the URL by its BLAKE3 digest. The
+host checks the hello against the boot, dials the URL's host and port (its only
+destination, which may be the host's own 127.0.0.1 relay) and carries bytes
+both ways. It adds no credential and reads nothing. The engine's anchor client
+takes this socket only when its configured base URL is byte for byte the bound
+URL; the URL, its TLS and its host checks are unchanged. The proxy runs with
+each VMM generation and ends with its exit, a stop or a kill, along with every
+stream it carries. A RAM resume starts it again for the same URL.
+
+| Case | Outcome |
+|---|---|
+| No URL and no A | As before: the anchor is unset, or pending when the settings name a URL. |
+| URL, no A | The anchor stays `custody_anchor_pending`. |
+| URL and A, and the vault's effective URL is the same string | The engine reads A with the native reader and calls the door through the proxy. |
+| A, and the vault's effective URL differs | The start is refused (`custody anchor credentials fd rejected`), as for a malformed native A. No byte of A is read. |
+| A malformed header, a short payload, bytes after it, or a wrong vault | The boot is refused. If A was announced, the guest ends its engine before the engine can read an EOF. |
+| The proxy cannot reach the URL's host and port | The call fails as unreachable, and the anchor stays pending. The vault still starts. |
+
 ## Source drive (`restore_source_disk`)
 
 - `restore_source_disk` is an optional key in the VM profile. It names a clean,
@@ -105,7 +190,9 @@ Loss:
 - The image holds only the sealed artifact and its keyless custody head. It
   never holds a secret, an unsealed backup or a credential.
 - The host attaches it only on a restore's boot, after the root, vault and
-  config drives: `/dev/vdc` without a config drive, `/dev/vdd` with one.
+  config drives: `/dev/vdc` without a config drive, `/dev/vdd` with one. A
+  profile with a `network` always has a config drive, so its source drive is
+  `/dev/vdd`.
 - The guest mounts it at `/restore` with `ro,nosuid,nodev,noexec`, and unmounts
   it when the engine ends.
 - Make its files readable by the vault's guest UID, and author the plan's
@@ -122,6 +209,133 @@ Snapshots:
   is a generation whose boot attached the source drive: a sleep stops it
   instead. Firecracker reloads drives from their host paths when it loads a
   snapshot, and the staged source may be gone by then.
+- A generation with a NIC sleeps and snapshots as usual. Loading the snapshot
+  opens the same TAP by its name again, and a resume runs no second network
+  setup in the guest. So keep the TAP, its MAC, its rules and the config drive
+  as they are while a snapshot is published. A changed network plan needs a
+  cold boot: drop the published snapshot first.
+
+## Guest network (FIX 6808)
+
+A vault VM can have one NIC, for the guest's outbound IPv4: mesh relays and
+peers, model endpoints, connector endpoints. It adds no public ingress, port
+forward, bridge or listener. Every host surface (HTTP, ctl, the ledger,
+artifacts, voice, the outbox, restore and the anchor channels) stays on vsock.
+
+The supervisor owns the host side, and the engine owns none of it:
+
+- One TAP per vault, made, up and given its gateway address before the VMM
+  starts, and openable by the VMM's identity.
+- IPv4 forwarding from that TAP only out of the operator's egress interface,
+  masquerade there, and only established or related traffic back. Drop new,
+  invalid and other inbound forwarding to the TAP, the host's own new
+  connections to the guest, traffic between TAPs, and all IPv6 on the TAP.
+- Every name and address: the TAP's name, the MAC, the guest's address and
+  prefix, the gateway and the nameservers. The engine has no default for any
+  of them, and it never runs `ip` or `nft` or changes a host sysctl.
+
+The supervisor writes one plan as two views, under the lock it builds the
+config drive with. The MAC is the same string in both.
+
+- The VM profile's `network` (`vm::VmTapAttachment`), or `null`:
+
+  ```json
+  {"tap_name": "ovm61000", "guest_mac": "02:00:00:00:ee:48"}
+  ```
+
+- The config drive's `network.json`, the guest's `/config/network.json`
+  (`vm::VM_GUEST_NETWORK_FILE`, `vm::VmGuestNetworkConfig`), one JSON object of
+  exactly these keys:
+
+  ```json
+  {"guest_mac":"02:00:00:00:00:01","guest_ipv4":"10.247.0.2","prefix_len":30,"gateway":"10.247.0.1","dns_servers":[]}
+  ```
+
+  The values are examples. An empty `dns_servers` gives the guest no resolver,
+  so plan DNS before anything the vault reaches by name. Ordinary JSON
+  whitespace is fine; an unknown, repeated or missing key, a wrong type or
+  bytes after the object refuse the boot. The file is at most 16384 bytes
+  (`vm::MAX_VM_CONFIG_FILE_BYTES`).
+
+Both views are checked by the contract's `validate`:
+
+- The MAC is six two-digit hex octets in either case, joined by `:`, unicast
+  and not all zero.
+- The TAP name is 1 to 15 bytes of printable ASCII, with no `/` or `:`, and
+  neither `.` nor `..`.
+- The prefix length is 1 to 31. The guest address and the gateway are unicast
+  (not `0.0.0.0`, broadcast, multicast or loopback), differ, share the prefix,
+  and below a /31 are neither its network nor its broadcast address.
+- Each nameserver is unicast and not loopback: the guest's loopback has no
+  resolver.
+
+On the host, `VaultVm::prepare` refuses a `network` not in its form, or one
+without a `config_disk`, before anything is made. Every boot (an open, a
+restore and an inspection) then sends `PUT /network-interfaces/vault-egress`
+with `{"iface_id": "vault-egress", "host_dev_name": <tap_name>, "guest_mac":
+<guest_mac>}` after the vsock device and before `InstanceStart`.
+
+In the guest, the image's init passes `oneiron-vm-init --guest-config-dir
+/config` once the config drive is mounted. On a boot that serves, not an
+inspection, the bootstrap reads `network.json` whole, then, still root and
+before the vault's key goes in or any engine or companion starts:
+
+1. It finds the one link whose MAC is the plan's. None, or more than one,
+   refuses the boot.
+2. It turns IPv6 off on that link, then brings loopback and the link up.
+3. It gives the link the plan's address and prefix, and adds the default route
+   through the gateway. The kernel's answer to each step is checked.
+4. With nameservers, it writes them to `/run/oneiron-net/resolv.conf` and
+   bind-mounts that over the image's empty `/etc/resolv.conf`.
+
+A `network.json` that is not there means no NIC setup: an attached NIC stays
+down. One that cannot be read, is not a regular file, is over its bound or is
+malformed, or a step that fails, refuses the provisioning as `provision_failed`
+with the step named (link, address, route or DNS). Readiness means the guest
+set up what it was told. It does not prove that the operator's egress, DNS,
+relays or providers answer.
+
+A NIC does not replace the custody anchor proxy. The host's loopback is not the
+guest's, so an anchor URL on the host's `127.0.0.1` relay still goes through
+1033.
+
+## Managed profile (FIX 6809)
+
+A vault VM's engine takes the same managed-profile flags a supervisor passes a
+node's child. In a VM they come from five typed files on the config drive,
+which the guest's bootstrap reads itself. There is no generic argument file and
+no shell parser.
+
+| File (`vm::` constant) | Body | The engine gets |
+|---|---|---|
+| `/config/organization-owner` (`VM_GUEST_ORGANIZATION_OWNER_FILE`) | Exactly 64 hex digits, in either case | `--organization-owner <id>`, as written |
+| `/config/member-vault` (`VM_GUEST_MEMBER_VAULT_FILE`) | `true` or `false` | `true`: a bare `--member-vault`. `false`: no flag, the engine's own false |
+| `/config/failure-signal-export` (`VM_GUEST_FAILURE_SIGNAL_EXPORT_FILE`) | `true` or `false` | `--failure-signal-export true` or `--failure-signal-export false` |
+| `/config/failure-signal-training` (`VM_GUEST_FAILURE_SIGNAL_TRAINING_FILE`) | `true` or `false`, apart from the export file | `--failure-signal-training true` or `--failure-signal-training false` |
+| `/config/fast-dims` (`VM_GUEST_FAST_DIMS_FILE`) | Decimal digits: a nonzero width a u16 holds | `--fast-dims <width>` |
+
+- Each body is the whole value, with at most one final LF: no space, CR, sign,
+  prefix, comment or second line. Write the hex in lowercase and end each file
+  with one LF.
+- A file that is not there gives no flag, so the engine's own default stands.
+  It is never read as `false`. Write both failure-signal files from the owner's
+  explicit choices, `false` included.
+- A file that is there but empty, unreadable, not a regular file, over 16384
+  bytes or not in its form refuses the provisioning as `provision_failed`. The
+  refusal names the file, never its bytes.
+- On each boot that serves (an open or a restore, not an inspection) the
+  bootstrap reads all five with `network.json`, before the vault's key goes in.
+  An open's engine and a restore's engine get the same flags.
+- The engine checks the values as it does on a node: `--member-vault` needs
+  `--organization-owner`, a shared vault's organization is its derivation
+  owner, and the width is below the vault's effective dimensions.
+- The image's init passes none of these flags itself.
+
+The supervisor publishes the profile as one set. Under the lock it builds the
+config drive with, it writes the files for the profile it publishes, removes
+the ones whose values became absent, and builds the one drive that an open and
+a restore both boot with. A RAM resume reads no file again, so a changed
+profile takes effect at the next cold boot: drop a published snapshot first.
 
 ## Lost result: decision table
 
@@ -151,9 +365,14 @@ overwrite.
 
 ## Not here yet
 
-- **Custody anchor credentials.** A VM restore whose plan names an HTTP custody
-  anchor gets no anchor credential until the anchor channel lands. It has the
-  same outcome as a native start without one.
+- **Owner anchor credentials.** Which URLs get A, and the owner's own anchor
+  credentials (FIX 6707), stay the supervisor's choice.
 - **Supervisor-side work.** The VM launcher and its lifecycle adapter, source
   image staging and erase inventory, and each generation's ownership, kill and
   reconcile are the supervisor's.
+- **Host network.** The TAP, its rules, DNS sourcing, operator relays and the
+  network's activation are the supervisor's (FIX 6808's host half).
+- **Profile publication.** Writing and removing the five profile files under
+  the config drive's lock, building the drive an open and a restore share, and
+  holding back a profile until the image's revision and floor check out are the
+  supervisor's (FIX 6809's LC half, FIX 7081).

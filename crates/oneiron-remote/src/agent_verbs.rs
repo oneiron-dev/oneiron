@@ -2040,6 +2040,60 @@ impl OneironClient {
                 "vault.agents.grants.revoke" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AgentGrantRevoked,
                 >(client, verb, &input),
+                "vault.repo.git_push.mint" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::GitPushGrantMintOutput,
+                >(client, verb, &input),
+                "vault.repo.git_push.revoke" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::GitPushGrantRevokeOutput,
+                >(client, verb, &input),
+                "vault.repo.anchor.bind" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RepoAnchorBindOutput,
+                >(client, verb, &input),
+                "vault.repo.snapshots.get" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoSnapshotsGetOutput,
+                >(client, verb, &input),
+                "vault.repo.snapshots.read" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoSnapshotsReadOutput,
+                >(client, verb, &input),
+                "vault.repo.symbols.definitions" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoSymbolsDefinitionsOutput,
+                >(client, verb, &input),
+                "vault.repo.views.get" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoViewsGetOutput,
+                >(client, verb, &input),
+                "vault.repo.views.read" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoViewsReadOutput,
+                >(client, verb, &input),
+                "vault.repo.merge_queue.observe" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoMergeQueueObserveOutput,
+                >(client, verb, &input),
+                "vault.repo.snapshots.ingest" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoSnapshotsIngestOutput,
+                >(client, verb, &input),
+                "vault.repo.work.open" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoWorkOpenOutput,
+                >(client, verb, &input),
+                "vault.repo.symbols.declare" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoSymbolsDeclareOutput,
+                >(client, verb, &input),
+                "vault.repo.symbols.renew" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoSymbolsRenewOutput,
+                >(client, verb, &input),
+                "vault.repo.symbols.release" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoSymbolsReleaseOutput,
+                >(client, verb, &input),
+                "vault.repo.proposal_submit" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoProposalSubmitOutput,
+                >(client, verb, &input),
+                "vault.repo.merge_queue.enqueue" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoMergeQueueEnqueueOutput,
+                >(client, verb, &input),
+                "vault.repo.checkout.bind" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoCheckoutBindOutput,
+                >(client, verb, &input),
+                "vault.repo.export" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoExportOutput,
+                >(client, verb, &input),
                 "vault.agents.base" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BaseAgentList,
                 >(client, verb, &input),
@@ -2969,6 +3023,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.runs.program_checkpoint" => remote_agent_verb_output::<
                     Option<oneiron::dreamer_runner::ProgramCheckpointView>,
+                >(client, verb, &input),
+                "vault.runs.program_hold.release" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::ProgramHoldReleaseView,
                 >(client, verb, &input),
                 "vault.consolidation.home.get" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::ConsolidationHomeView,
@@ -11424,6 +11481,252 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.agents.grants.revoke", value)
     }
+    pub fn vault_repo_git_push_mint(
+        &self,
+        input: &oneiron::task_verb::sdk::GitPushGrantMintInput,
+    ) -> Result<oneiron::task_verb::sdk::GitPushGrantMintOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.git_push.mint", value)
+    }
+    pub fn vault_repo_git_push_revoke(
+        &self,
+        input: &oneiron::task_verb::sdk::GitPushGrantRevokeInput,
+    ) -> Result<oneiron::task_verb::sdk::GitPushGrantRevokeOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.git_push.revoke", value)
+    }
+    pub fn vault_repo_anchor_bind(
+        &self,
+        input: &oneiron::task_verb::sdk::RepoAnchorBindInput,
+    ) -> Result<oneiron::task_verb::sdk::RepoAnchorBindOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.anchor.bind", value)
+    }
+    pub fn vault_repo_snapshots_get(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoSnapshotsGetInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoSnapshotsGetOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.snapshots.get", value)
+    }
+    pub fn vault_repo_snapshots_read(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoSnapshotsReadInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoSnapshotsReadOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.snapshots.read", value)
+    }
+    pub fn vault_repo_symbols_definitions(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoSymbolsDefinitionsInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoSymbolsDefinitionsOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.symbols.definitions", value)
+    }
+    pub fn vault_repo_views_get(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoViewsGetInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoViewsGetOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.views.get", value)
+    }
+    pub fn vault_repo_views_read(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoViewsReadInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoViewsReadOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.views.read", value)
+    }
+    pub fn vault_repo_merge_queue_observe(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoMergeQueueObserveInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoMergeQueueObserveOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.merge_queue.observe", value)
+    }
+    pub fn vault_repo_snapshots_ingest(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoSnapshotsIngestInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoSnapshotsIngestOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.snapshots.ingest", value)
+    }
+    pub fn vault_repo_work_open(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoWorkOpenInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoWorkOpenOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.work.open", value)
+    }
+    pub fn vault_repo_symbols_declare(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoSymbolsDeclareInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoSymbolsDeclareOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.symbols.declare", value)
+    }
+    pub fn vault_repo_symbols_renew(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoSymbolsRenewInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoSymbolsRenewOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.symbols.renew", value)
+    }
+    pub fn vault_repo_symbols_release(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoSymbolsReleaseInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoSymbolsReleaseOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.symbols.release", value)
+    }
+    pub fn vault_repo_proposal_submit(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoProposalSubmitInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoProposalSubmitOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.proposal_submit", value)
+    }
+    pub fn vault_repo_merge_queue_enqueue(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoMergeQueueEnqueueInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoMergeQueueEnqueueOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.merge_queue.enqueue", value)
+    }
+    pub fn vault_repo_checkout_bind(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoCheckoutBindInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoCheckoutBindOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.checkout.bind", value)
+    }
+    pub fn vault_repo_export(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoExportInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoExportOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.export", value)
+    }
     pub fn vault_agents_base(
         &self,
         input: &oneiron::task_verb::sdk::EmptyRequest,
@@ -15165,6 +15468,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.runs.program_checkpoint", value)
+    }
+    pub fn vault_runs_program_hold_release(
+        &self,
+        input: &oneiron::dreamer_runner::ReleaseTurnProgramHoldRequest,
+    ) -> Result<oneiron::dreamer_runner::ProgramHoldReleaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.program_hold.release", value)
     }
     pub fn vault_consolidation_home_get(
         &self,

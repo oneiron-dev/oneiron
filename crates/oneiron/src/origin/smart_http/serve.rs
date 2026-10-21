@@ -3,7 +3,6 @@
 
 use std::fs;
 use std::io::{self, Read, Write};
-use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStderr, ChildStdin};
 use std::sync::Arc;
@@ -13,7 +12,7 @@ use std::time::{Duration, Instant};
 use super::advertise::AdvertisedRefGate;
 use super::bounds::{ExchangeBounds, ScanBounds};
 use super::cgi_finish::{finish_serve, stream_response};
-use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam, NoopDoorHook};
+use super::door::{DoorAdmissionStamp, DoorSeam};
 use super::door_window::{DoorWindowContext, DoorWindowReport, serve_door_window};
 use super::evidence::{ReceivePackOutcome, receive_pack_provenance_refused};
 use super::exchange_idle::{Progress, ProgressRead, ProgressSink, Watched, stall_as_idle, watch};
@@ -26,12 +25,14 @@ use super::paths::{
     SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root, origin_repo_dir,
     origin_serving_root, push_refused, repository_busy, serve_failed, serve_idle,
 };
+use super::push_admission::{ServeCaller, admit_push, stamp_admission};
 use super::serve_cmd::{IncomingQuarantines, ServeChild, ServeCommand, ServeRequest};
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::federation::git_push::GitPushStamp;
 use crate::git_wire::{lock_repository, lock_repository_within, try_lock_repository};
 use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
 
@@ -172,6 +173,7 @@ pub fn serve_bounded_with_authority(
         spill_floor: bounds.spill_floor,
         wait_for_repository: false,
         push_wait: Some(bounds.repository_wait),
+        caller: ServeCaller::InProcess,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -208,6 +210,7 @@ pub fn serve_with_provenance(
         spill_floor: None,
         wait_for_repository: true,
         push_wait: None,
+        caller: ServeCaller::InProcess,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -232,6 +235,7 @@ pub fn serve_with_authority(
         spill_floor: None,
         wait_for_repository: true,
         push_wait: None,
+        caller: ServeCaller::InProcess,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -239,18 +243,20 @@ pub fn serve_with_authority(
 /// What one invocation runs under besides its request: the door seam, a lease
 /// from trusted host configuration, the exchange's idle limit, scan floors
 /// and spill floor, whether a read may wait for a repository a writer holds,
-/// and how long a push waits for it (`None`: until it is free).
-struct ServeTerms<'a> {
-    seam: DoorSeam,
-    authority: Option<&'a OriginAuthorityLease>,
-    idle: Duration,
-    scan: ScanBounds,
-    spill_floor: Option<Arc<dyn SpillFloor>>,
-    wait_for_repository: bool,
-    push_wait: Option<Duration>,
+/// and how long a push waits for it (`None`: until it is free), and who it
+/// pushes as (G1-PUSH).
+pub(super) struct ServeTerms<'a> {
+    pub(super) seam: DoorSeam,
+    pub(super) authority: Option<&'a OriginAuthorityLease>,
+    pub(super) idle: Duration,
+    pub(super) scan: ScanBounds,
+    pub(super) spill_floor: Option<Arc<dyn SpillFloor>>,
+    pub(super) wait_for_repository: bool,
+    pub(super) push_wait: Option<Duration>,
+    pub(super) caller: ServeCaller<'a>,
 }
 
-fn serve_request(
+pub(super) fn serve_request(
     vault: &Arc<Vault>,
     repo_name: &str,
     request: &ServeRequest,
@@ -266,6 +272,7 @@ fn serve_request(
         spill_floor,
         wait_for_repository,
         push_wait,
+        caller,
     } = terms;
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
@@ -285,8 +292,12 @@ fn serve_request(
             .checkout_credential(ticket, principal, &unpinned_repo_ref(&repo_dir))
             .map_err(|error| super::paths::door_refused(&error))?;
     }
+    // Every receive-pack advertisement and RPC meets the push decision
+    // before a hook, a child or a body byte exists (G1-PUSH).
+    let push = admit_push(vault, request, repo_name, &repo_dir, caller)?;
     let door_root = origin_door_root(vault)?;
-    let hooks = DoorHooksDir::materialize_with(&door_root, scan)?;
+    let list_paths = push.as_ref().is_some_and(GitPushStamp::is_checkout);
+    let hooks = DoorHooksDir::materialize_listing(&door_root, scan, list_paths)?;
     let command = ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?;
     let coordinator = if request.is_receive_pack() {
         let common_dir = repo_common_dir(&repo_dir)?;
@@ -303,7 +314,7 @@ fn serve_request(
     };
     // The same coordinator guards epoch cutover. Stamp and persist only after
     // acquiring it, so an old accepted request cannot cross an epoch change.
-    let mut admission = stamp_admission(vault, request, &repo_dir, seam)?;
+    let mut admission = stamp_admission(vault, request, &repo_dir, seam, push)?;
     if let Some(stamp) = admission.as_mut() {
         stamp.origin_authority = authority.map(OriginAuthorityStamp::from_lease);
         vault.record_receive_pack_admission(&repo_dir, stamp, seam)?;
@@ -440,81 +451,6 @@ pub(super) fn repo_common_dir(repo_dir: &Path) -> Result<PathBuf> {
         Err(error) => return Err(Error::Io(error)),
     };
     Ok(common.canonicalize()?)
-}
-
-/// Stamps the admission before any subprocess exists.
-///
-/// The transport has already proved a registered principal and a write scope by
-/// the time this runs; the door derives its record from that (and from a
-/// presented slip, when Phase B starts presenting one). `peer_addr` is passed
-/// through unread on purpose — the door's own contract is that "localhost"
-/// describes a route and never a principal.
-///
-/// This is also where the landed door's catastrophe dial reaches the push: the
-/// `Landed` seam admits the `door:receive-pack` effector here, with no slip
-/// required, so an operator-narrowed effector set closes the push path BEFORE
-/// the backend is spawned and before a single pushed byte is read. The `Noop`
-/// seam refuses nothing, which is its whole contract.
-pub(super) fn stamp_admission(
-    vault: &Arc<Vault>,
-    request: &ServeRequest,
-    repo_dir: &Path,
-    seam: DoorSeam,
-) -> Result<Option<DoorAdmissionStamp>> {
-    if !request.is_receive_pack() {
-        return Ok(None);
-    }
-    let principal_ref = request
-        .remote_user
-        .as_deref()
-        .ok_or_else(|| serve_failed("receive-pack requires a registered principal"))?;
-    let repo = unpinned_repo_ref(repo_dir);
-    let peer_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    let now = vault.now_recorded_at();
-    let operation_id = vault.new_entity_id()?;
-    let stamp = match seam {
-        DoorSeam::Noop => {
-            if request
-                .query_string
-                .split('&')
-                .any(|part| part.starts_with("checkout-lease="))
-            {
-                return Err(serve_failed("checkout lease requires the credential door"));
-            }
-            NoopDoorHook.admit_receive_pack(
-                operation_id,
-                None,
-                principal_ref,
-                &repo,
-                peer_addr,
-                now,
-            )?
-        }
-        DoorSeam::Landed => {
-            let door = CredentialDoorService::new(Arc::clone(vault));
-            let mut tickets = request
-                .query_string
-                .split('&')
-                .filter_map(|part| part.strip_prefix("checkout-lease="));
-            let ticket = tickets.next();
-            if tickets.next().is_some() {
-                return Err(serve_failed("ambiguous checkout lease"));
-            }
-            let credential = ticket
-                .map(|ticket| door.checkout_credential(ticket, principal_ref, &repo))
-                .transpose()
-                .map_err(|error| super::paths::door_refused(&error))?;
-            door.admit_receive_pack(
-                operation_id,
-                credential.as_ref(),
-                principal_ref,
-                &repo,
-                peer_addr,
-                now,
-            )?
-        }
-    };
-    Ok(Some(stamp))
 }
 
 /// A repo_ref that names the repository before any commit is pinned to it.

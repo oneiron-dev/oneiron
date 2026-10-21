@@ -21,13 +21,25 @@
 //! sides speak one JSON line per frame. A snapshot restore resets vsock, so
 //! the guest joins again after each one; it runs no second provision. The
 //! guest's outbox companion dials [`VM_OUTBOX_PORT`] on its own
-//! ([`crate::vm_outbox`]) and dials again after a reset.
+//! ([`crate::vm_outbox`]) and dials again after a reset. Between the
+//! provision connection and the engine, a serving boot's bootstrap dials the
+//! custody anchor exchange ([`VM_ANCHOR_PORT`], [`crate::vm_anchor`]), and
+//! each stream to the vault's custody anchor door leaves through
+//! [`VM_ANCHOR_PROXY_PORT`]. A supervisor may also attach one NIC for the
+//! guest's outbound IPv4 (FIX 6808, [`VmTapAttachment`] and
+//! [`VmGuestNetworkConfig`]); every host surface stays on vsock. Its config
+//! drive may carry the vault's managed profile too, as five typed files
+//! (FIX 6809, [`VM_MANAGED_PROFILE_REVISION`]).
 //!
 //! The provision connection rides contract version 3 with a build floor, the
 //! first engine revision that ships `oneiron-vm-init`: a host speaks it only
 //! to an image built at or after that floor, which the image manifest pins.
 //! An older image's engine would read the provision frame as its credential
 //! frame and refuse it, so it never starts.
+
+mod network;
+
+pub use self::network::{VmGuestNetworkConfig, VmTapAttachment, parse_vm_guest_mac};
 
 use crate::UnixTs;
 use serde::{Deserialize, Serialize};
@@ -55,9 +67,16 @@ pub const VM_VOICE_PORT: u32 = 1029;
 /// Guest to host: the outbox carrier, one persistent duplex stream that
 /// carries every outbox kind both ways (FIX 5235, `crate::vm_outbox`).
 pub const VM_OUTBOX_PORT: u32 = 1030;
+/// Guest to host: the custody anchor exchange (FIX 6517,
+/// [`crate::vm_anchor`]), dialled once on every cold boot that serves, after
+/// the provision connection and before the engine starts.
+pub const VM_ANCHOR_PORT: u32 = 1031;
 /// Guest to host: the restore channel (FIX 6584, [`crate::vm_restore`]),
 /// dialled once on every cold boot before the provision connection.
 pub const VM_RESTORE_PORT: u32 = 1032;
+/// Guest to host: the custody anchor proxy (FIX 6517, [`crate::vm_anchor`]),
+/// one stream per connection to the anchor URL the host bound the boot to.
+pub const VM_ANCHOR_PROXY_PORT: u32 = 1033;
 /// The owner-only directory a vault VM's `[models.voice]` socket lies in.
 pub const VM_VOICE_DIR: &str = "/run/oneiron/voice";
 /// Where the guest mounts the vault's read-only config drive: its settings
@@ -65,6 +84,47 @@ pub const VM_VOICE_DIR: &str = "/run/oneiron/voice";
 /// supervisor maps a guest owner path below it onto the vault's own config
 /// directory (`crate::settings_paths`).
 pub const VM_GUEST_CONFIG_DIR: &str = "/config";
+/// The guest's view of its network plan on the config drive (FIX 6808,
+/// [`VmGuestNetworkConfig`]): one JSON object, read whole by the root
+/// bootstrap before the vault's key goes in. Without it the guest sets up no
+/// NIC.
+pub const VM_GUEST_NETWORK_FILE: &str = "/config/network.json";
+/// The guest network's revision (FIX 6808): an image that sets up the NIC a
+/// host attaches names it as its manifest's `vm_network_revision`. Revision 1
+/// is IPv4 only.
+pub const VM_NETWORK_REVISION: u32 = 1;
+/// The longest typed file the root bootstrap reads whole from the config
+/// drive: a bound on one file's codec, not on what it configures.
+pub const MAX_VM_CONFIG_FILE_BYTES: usize = 16384;
+/// The managed profile's organization hosting id on the config drive
+/// (FIX 6809): exactly 64 hex digits, either case. The root bootstrap passes
+/// it to the engine as `--organization-owner`.
+///
+/// Each of the managed profile's five files holds its one value with at most
+/// one final LF and nothing else, and is read before the vault's key goes in
+/// on a boot that serves. One that is not there gives the engine no flag,
+/// never a `false`; one that is there but not in its form refuses the boot.
+pub const VM_GUEST_ORGANIZATION_OWNER_FILE: &str = "/config/organization-owner";
+/// The managed profile's member-vault choice (FIX 6809): `true` or `false`.
+/// `true` gives the engine a bare `--member-vault`, and `false` no flag, the
+/// engine's own false.
+pub const VM_GUEST_MEMBER_VAULT_FILE: &str = "/config/member-vault";
+/// The managed profile's "Help improve Oneiron" choice (FIX 6809): `true` or
+/// `false`, passed as `--failure-signal-export` with its value, `false`
+/// included.
+pub const VM_GUEST_FAILURE_SIGNAL_EXPORT_FILE: &str = "/config/failure-signal-export";
+/// The managed profile's training choice (FIX 6809), apart from the export
+/// one: `true` or `false`, passed as `--failure-signal-training` with its
+/// value, `false` included.
+pub const VM_GUEST_FAILURE_SIGNAL_TRAINING_FILE: &str = "/config/failure-signal-training";
+/// The managed profile's MRL prefix width (FIX 6809): decimal digits, a
+/// nonzero width a u16 holds, passed as `--fast-dims`. The engine checks it
+/// against the vault's dimensions, as on a node.
+pub const VM_GUEST_FAST_DIMS_FILE: &str = "/config/fast-dims";
+/// The managed profile files' revision (FIX 6809): an image whose root
+/// bootstrap reads the five files and passes the engine their flags names it
+/// as its manifest's `vm_managed_profile_revision`.
+pub const VM_MANAGED_PROFILE_REVISION: u32 = 1;
 /// The vault's fscrypt v2 storage on its own disk: owned by the vault's UID,
 /// mode 0700, encrypted under the provisioned key. It holds the data
 /// directory and the engine's siblings of it (backups, rehearsals).

@@ -126,6 +126,88 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// `identity` and `observation`, with its `state` and its `data_present` or
 /// `reason`. No reader of a record without them is kept. Supervisor and vault
 /// move to v3 together; no v2 reader is kept.
+///
+/// VM backup-label registration (FIX 7046): a vault VM's outbox companion
+/// names its engine's registered backup label on the carrier
+/// ([`VmOutboxFrame::BackupRegistered`](crate::vm_outbox::VmOutboxFrame::BackupRegistered)),
+/// and the host keeps the last one it was told for the vault its attachment
+/// is bound to, which the host library's `read_vm_backup_label` reads. It
+/// carries a build floor, at the engine revision it merged in: carrier
+/// revision 2 ([`VM_OUTBOX_WIRE_REVISION`](crate::vm_outbox::VM_OUTBOX_WIRE_REVISION))
+/// makes the frame's `label` required, and each end refuses the other's
+/// revision 1 at the hello, with no reader of it kept. So the host library and
+/// the installed guest image and its companion are all at or after the
+/// floor, and a supervisor that accepts an image by its outbox revision (LC's
+/// image acceptance, revision 1 today) moves to 2 at the floor in its
+/// consuming change. An image before the floor, or one whose engine registered
+/// no backup plan, gives no binding, and none is guessed from a backup's file
+/// name. No `Ping` field is added and this version stays 3.
+///
+/// VM custody anchor channels (FIX 6517): a vault VM's custody anchor
+/// exchange and proxy ([`vm_anchor`](crate::vm_anchor): vsock ports 1031 and
+/// 1033, their records and the credential payload, `serve`'s
+/// `--vm-anchor-revision`, `--vm-anchor-url` and `--vm-anchor-socket` with a
+/// vault VM engine's `--custody-anchor-credentials-fd`, and `host vm`'s
+/// `--custody-anchor-credentials-fd` and `--custody-anchor-url`) carry a
+/// build floor, at the engine revision they merged in, proven by the image
+/// manifest's required `anchor_wire_revision` 1 and `anchor_proxy_revision`
+/// 1, published together, with no `Ping` field. Every serving cold boot of an
+/// image at or after the floor dials the exchange after its provision
+/// connection, so a host and its image come from the same build: a
+/// supervisor checks both revisions, the manifest's hashes and the merge
+/// floor before it prepares the VMM or hands over the fscrypt key, the
+/// credential frame or the anchor credential, and boots no image before the
+/// floor. The records' fields are all required, their two nullable keys (the
+/// header's `anchor_url` and an accepted reply's `anchor_identity_digest`)
+/// present as `null`: the header's `revision`, `vault`, `anchor_url` and
+/// `has_credentials`; the reply's `state` with its `revision`, `vault` and
+/// `anchor_identity_digest`, or its `code`; the proxy hello's `revision`,
+/// `vault` and `anchor_identity_digest`; and the proxy reply's `state` with
+/// its `revision` or its `code`. No reader of a record without them is kept.
+/// A node's credential, its pipe and its reader are unchanged, and a vault VM
+/// handed no credential keeps its anchor pending, as a node's child does. No
+/// `Ping` field is added and this version stays 3.
+///
+/// VM guest network (FIX 6808): a vault VM's one NIC, the VM profile's
+/// `network` ([`VmTapAttachment`](crate::vm::VmTapAttachment): `tap_name` and
+/// `guest_mac`) and the config drive's `/config/network.json`
+/// ([`VmGuestNetworkConfig`](crate::vm::VmGuestNetworkConfig): `guest_mac`,
+/// `guest_ipv4`, `prefix_len`, `gateway` and `dns_servers`), with
+/// `oneiron-vm-init`'s `--guest-config-dir`, carries a build floor, at the
+/// engine revision it merged in, proven by the image manifest's required
+/// `vm_network_revision` 1, with no `Ping` field. Every key is required: the
+/// profile's `network` is present as `null` for a VM with no NIC, and both
+/// objects refuse a missing or an unknown key, with no reader of a profile or
+/// a file without them kept. A host library before the floor refuses a
+/// profile that names `network` and one at or after it refuses a profile
+/// that does not, so profiles move with the host library, and an image
+/// before the floor sets up no NIC: a supervisor checks the manifest's
+/// revision, its hashes and the merge floor before it prepares the VMM or
+/// hands over the fscrypt key or any credential, and boots no image before
+/// the floor with a NIC planned. The TAP, its rules and every name and
+/// address are the supervisor's; the engine defaults none. No `Ping` field is
+/// added and this version stays 3.
+///
+/// VM managed profile (FIX 6809): the config drive's five typed files,
+/// `/config/organization-owner`, `/config/member-vault`,
+/// `/config/failure-signal-export`, `/config/failure-signal-training` and
+/// `/config/fast-dims`
+/// ([`VM_GUEST_ORGANIZATION_OWNER_FILE`](crate::vm::VM_GUEST_ORGANIZATION_OWNER_FILE)
+/// and its four siblings), which `oneiron-vm-init` reads before the vault's
+/// key goes in and passes to an open's or a cold restore's engine as its
+/// managed-profile flags, carry a build floor, at the engine revision they
+/// merged in, proven by the image manifest's required
+/// `vm_managed_profile_revision` 1
+/// ([`VM_MANAGED_PROFILE_REVISION`](crate::vm::VM_MANAGED_PROFILE_REVISION)).
+/// An image before the floor ignores the files, so its vault would start
+/// without its tenancy or its owner's choices: a supervisor checks the
+/// revision, the manifest's hashes and the merge floor before it stages any
+/// of the files, prepares the VMM or hands over the fscrypt key or any
+/// credential, and boots no image before the floor for a profile that needs
+/// one of them. Each file is optional, and one that is not there gives the
+/// engine no flag, never a `false`; one that is there holds its one value and
+/// at most one final LF, or the boot is refused, with no reader of another
+/// form kept. No `Ping` field is added and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

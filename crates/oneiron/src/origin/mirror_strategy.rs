@@ -6,7 +6,11 @@
 //!   (`origin::publish`). The scheduler never pushes such a mirror, and a
 //!   push-now refuses with [`PublishRequestRequired`].
 //! - [`OriginMirrorSyncStrategy::Schedule`]: the scheduled push of every
-//!   published ref at the mirror's cadence, and push-now, exactly as before.
+//!   published ref at the mirror's cadence, and push-now: the same refs,
+//!   forced, with deletions, in the same batches (FIX 6866 part 2 adds the
+//!   frozen review, the leases and the reconcile before any resend).
+//! - [`OriginMirrorSyncStrategy::FullAuto`]: each new green head goes out
+//!   as soon as the published refs move (`mirror_auto`), with no waiting.
 //!
 //! A mirror with no strategy set is [`ORIGIN_MIRROR_DEFAULT_SYNC_STRATEGY`]:
 //! a row stored without one decodes as it. Exact publish requests do not
@@ -17,7 +21,10 @@
 //! [`Vault::set_served_origin_mirror_strategy_in_txn`], which changes the
 //! strategy and its revision and nothing else. A change of the mirror's URL,
 //! user, custody record or served name moves its target generation instead,
-//! which every exact request is bound to.
+//! which every exact request is bound to. Either change pauses the mirror's
+//! unsent automatic work in the same transaction (a switch to `ask_me`
+//! sends nothing more whole; a running push settles first), and every
+//! automatic batch's claim fences the strategy, revision and generation.
 
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +43,9 @@ pub enum OriginMirrorSyncStrategy {
     /// Every published ref (imported refs aside) is pushed at the mirror's
     /// cadence, forced, with deletions, as the scheduled mirror always did.
     Schedule,
+    /// Each published ref is pushed as soon as it moves, at its newest head
+    /// the merge queue proved green; other heads wait for checks.
+    FullAuto,
 }
 
 /// The strategy of a mirror that names none (CALLS "FIX 6866 sync
@@ -56,10 +66,12 @@ impl OriginMirrorSyncStrategy {
         matches!(self, Self::Schedule)
     }
 
-    /// Whether a push-now sends the whole published set.
+    /// Whether the mirror is pushed whole, by its own standing authority:
+    /// on its cadence or its events, and by a push-now (a full-auto
+    /// push-now still sends green heads only).
     #[must_use]
     pub const fn pushes_whole_refs(self) -> bool {
-        matches!(self, Self::Schedule)
+        matches!(self, Self::Schedule | Self::FullAuto)
     }
 
     /// The wire spelling.
@@ -68,6 +80,7 @@ impl OriginMirrorSyncStrategy {
         match self {
             Self::AskMe => "ask_me",
             Self::Schedule => "schedule",
+            Self::FullAuto => "full_auto",
         }
     }
 }
@@ -90,7 +103,7 @@ impl From<PublishRequestRequired> for Error {
         Error::Refused(format!(
             "{ORIGIN_MIRROR_PUBLISH_REQUEST_REQUIRED}: the mirror of {} is {}, so nothing goes \
              out whole; ask for an exact ref and commit with vault.code.origin.publish.request, \
-             or have the owner set its strategy to schedule",
+             or have the owner set its strategy to schedule or full_auto",
             refusal.repo,
             refusal.strategy.as_str()
         ))
@@ -163,6 +176,7 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let row = self.set_served_origin_mirror_strategy_in_txn(&mut txn, repo_name, strategy)?;
         txn.commit()?;
+        self.wake_origin_mirrors();
         Ok(row)
     }
 
@@ -182,6 +196,7 @@ impl Vault {
             row.sync_strategy = strategy;
             row.strategy_revision = row.strategy_revision.saturating_add(1);
             TARGETS.put(&self.store, txn, &repo_id, &row)?;
+            self.pause_mirror_work_on_change_in_txn(txn, repo_id, false);
         }
         Ok(row)
     }

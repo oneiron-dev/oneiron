@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1094 facade rows, 3767 declarations.
-Inputs: 1029 of 1094 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 981 of 1094 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1113 facade rows, 3823 declarations.
+Inputs: 1048 of 1113 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1000 of 1113 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -2523,6 +2523,16 @@ class TaggingMarkerView(TypedDict):
     created_at: int
     updated_at: int
 TaggingFailureView = TypedDict("TaggingFailureView", {"class": str, "code": NotRequired[str | None], "refusal": NotRequired[str | None]})
+ExecutionRuntime = Literal["candle", "endpoint"]
+ExecutionCompute = Literal["cpu", "metal", "cuda", "opaque"]
+ExecutionPick = Literal["calibrated", "free", "shorter_queue", "fallback", "pinned"]
+class EncoderExecution(TypedDict):
+    runtime: ExecutionRuntime
+    compute: ExecutionCompute
+    engine: str
+    pick: ExecutionPick
+    queue_ms: int
+    infer_ms: int
 class TaggingOutcomeViewSaved(TypedDict):
     outcome: Literal["saved"]
     spans: int
@@ -2580,6 +2590,7 @@ class TaggingTraceView(TypedDict):
     input_hash: NotRequired[str | None]
     try_number: int
     call_micros: NotRequired[int | None]
+    execution: NotRequired[EncoderExecution | None]
     outcome: TaggingOutcomeView
 class TaggingStatusView(TypedDict):
     turn_ref: str
@@ -3788,10 +3799,28 @@ class WeaveItemViewAgentHealth(TypedDict):
     item: Literal["agent_health"]
     card_ref: str
     card: AgentHealthCard
-WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth
+class WeaveItemViewSieveAudit(TypedDict):
+    item: Literal["sieve_audit"]
+    attempt_ref: str
+    span_ref: str
+    turn_ref: str
+    source_ref: str
+    expected_kind: str
+    actual_kind: str
+    expected_entity_ref: NotRequired[str | None]
+    actual_entity_ref: NotRequired[str | None]
+    novel: bool
+    confidence: int
+    agrees: bool
+    audited_at: int
+WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit
+class WeaveSieveScoreView(TypedDict):
+    sampled: int
+    agreeing: int
 class WeaveSectionView(TypedDict):
     kind: WeaveSectionKind
     items: list[WeaveItemView]
+    sieve_score: NotRequired[WeaveSieveScoreView | None]
 class WeaveReportView(TypedDict):
     sections: list[WeaveSectionView]
     narrowing: ScopedReadReceipt
@@ -10448,7 +10477,26 @@ class OriginMirrorRun(TypedDict):
     deleted: int
     failure: NotRequired[str | None]
     readiness: NotRequired[OriginMirrorReadiness | None]
-OriginMirrorSyncStrategy = Literal["ask_me", "schedule"]
+OriginMirrorSyncStrategy = Literal["ask_me", "schedule", "full_auto"]
+OriginMirrorHoldCause = Literal["storage", "decode", "review", "remote_read"]
+class OriginMirrorHold(TypedDict):
+    cause: OriginMirrorHoldCause
+    error_kind: str
+    last_seen: int
+    times: int
+class OriginMirrorPendingCheck(TypedDict):
+    ref_name: str
+    head: str
+    sent: NotRequired[str | None]
+class OriginMirrorAutomation(TypedDict):
+    plan_id: NotRequired[EntityId | None]
+    plan_digest: NotRequired[str | None]
+    plan_settled: bool
+    review_unavailable: NotRequired[OriginMirrorHold | None]
+    reconcile_unavailable: NotRequired[OriginMirrorHold | None]
+    pending_checks: list[OriginMirrorPendingCheck]
+    remote_moved: list[str]
+    refused: list[str]
 class OriginMirrorTarget(TypedDict):
     repo: str
     url: str
@@ -10460,6 +10508,7 @@ class OriginMirrorTarget(TypedDict):
     sync_strategy: NotRequired[OriginMirrorSyncStrategy]
     strategy_revision: NotRequired[int]
     target_generation: NotRequired[EntityId | None]
+    automation: NotRequired[OriginMirrorAutomation | None]
 class OriginMirrorView(TypedDict):
     repo: str
     mirror: NotRequired[OriginMirrorTarget | None]
@@ -10555,7 +10604,14 @@ class OriginPublishReviewItemPath(TypedDict):
     mode: str
     object: NotRequired[str | None]
     path: str
-OriginPublishReviewItem = OriginPublishReviewItemCommit | OriginPublishReviewItemPath
+class OriginPublishReviewItemObject(TypedDict):
+    kind: Literal["object"]
+    object_type: str
+    object: str
+    target: NotRequired[str | None]
+    name: NotRequired[str | None]
+    size: NotRequired[int | None]
+OriginPublishReviewItem = OriginPublishReviewItemCommit | OriginPublishReviewItemPath | OriginPublishReviewItemObject
 class OriginPublishReviewView(TypedDict):
     request_id: EntityId
     digest: str
@@ -11006,6 +11062,199 @@ class AgentGrantRevoked(TypedDict):
     changed: bool
     agent: NotRequired[EntityId | None]
     act_ref: NotRequired[str | None]
+class GitPushRepo(TypedDict):
+    repo: EntityId
+    project: EntityId
+class GitPushGrantMintInput(TypedDict):
+    member: EntityId
+    repos: list[GitPushRepo]
+    expires_at: NotRequired[int | None]
+class GitPushGrantView(TypedDict):
+    grant_ref: EntityId
+    member: EntityId
+    repos: list[GitPushRepo]
+    delegated_by: EntityId
+    expires_at: NotRequired[int | None]
+    stands: bool
+    revoke_command: str
+class GitPushGrantMintOutput(TypedDict):
+    grant: GitPushGrantView
+    act_ref: str
+class GitPushGrantRevokeInput(TypedDict):
+    grant_ref: EntityId
+    seen: NotRequired[str | None]
+class GitPushGrantRevokeOutput(TypedDict):
+    grant_ref: EntityId
+    changed: bool
+    member: NotRequired[EntityId | None]
+    act_ref: NotRequired[str | None]
+class RepoAnchorBindInput(TypedDict):
+    repo: str
+    project: EntityId
+class RepoAnchorBindOutput(TypedDict):
+    repo: str
+    anchor: GitPushRepo
+    changed: bool
+class RepoSnapshotsGetInput(TypedDict):
+    repo: EntityId
+    ref: str
+    snapshot: str
+class RepoSnapshotView(TypedDict):
+    repo: EntityId
+    ref: str
+    commit: str
+    snapshot: str
+    artifact: EntityId
+    files: list[CodeSnapshotFile]
+RepoSnapshotsGetOutput = RepoSnapshotView
+class RepoSnapshotsReadInput(TypedDict):
+    repo: EntityId
+    ref: str
+    snapshot: str
+    path: str
+class RepoSnapshotsReadOutput(TypedDict):
+    repo: EntityId
+    ref: str
+    snapshot: str
+    file: CodeSnapshotFile
+    content: str
+    text_sha256: str
+class RepoSymbolsDefinitionsInput(TypedDict):
+    repo: EntityId
+    ref: str
+    snapshot: str
+    name: str
+class RepoSymbolsDefinitionsOutput(TypedDict):
+    repo: EntityId
+    ref: str
+    snapshot: str
+    definitions: list[CodeSnapshotDefinition]
+class RepoViewsGetInput(TypedDict):
+    work: EntityId
+class RepoWorkFile(TypedDict):
+    path: str
+    content_hash_blake3: str
+class RepoWorkView(TypedDict):
+    work: EntityId
+    repo: EntityId
+    ref: str
+    base_green: str
+    base_snapshot: str
+    fork_hash: str
+    files: list[RepoWorkFile]
+RepoViewsGetOutput = RepoWorkView
+class RepoViewsReadInput(TypedDict):
+    work: EntityId
+    path: str
+class RepoViewsReadOutput(TypedDict):
+    work: EntityId
+    path: str
+    bytes: list[int]
+    sha256: str
+class RepoMergeQueueObserveInput(TypedDict):
+    work: EntityId
+class RepoQueueEntryView(TypedDict):
+    batch: str
+    work: EntityId
+    proposals: list[EntityId]
+    declaration: NotRequired[EntityId | None]
+    state: BatchState
+    base_green: str
+    expected_head: str
+    landed_head: NotRequired[str | None]
+    blockers: list[EntityId]
+class RepoMergeQueueObserveOutput(TypedDict):
+    work: EntityId
+    repo: EntityId
+    ref: str
+    base_green: str
+    head_commit: str
+    green_commit: str
+    green_moved: bool
+    entries: list[RepoQueueEntryView]
+class RepoSnapshotsIngestInput(TypedDict):
+    repo: EntityId
+    ref: str
+RepoSnapshotsIngestOutput = RepoSnapshotView
+class RepoWorkOpenInput(TypedDict):
+    repo: EntityId
+    ref: str
+RepoWorkOpenOutput = RepoWorkView
+class RepoSymbolsDeclareInput(TypedDict):
+    work: EntityId
+    symbols: list[EntityId]
+    ttl_seconds: int
+class RepoSymbolDeclarationView(TypedDict):
+    work: EntityId
+    declaration: EntityId
+    task: EntityId
+    symbols: list[EntityId]
+    expires_at: int
+    held: bool
+    blockers: list[EntityId]
+RepoSymbolsDeclareOutput = RepoSymbolDeclarationView
+class RepoSymbolsRenewInput(TypedDict):
+    work: EntityId
+    declaration: EntityId
+RepoSymbolsRenewOutput = RepoSymbolDeclarationView
+class RepoSymbolsReleaseInput(TypedDict):
+    work: EntityId
+    declaration: EntityId
+class RepoSymbolsReleaseOutput(TypedDict):
+    work: EntityId
+    declaration: EntityId
+    task: EntityId
+class RepoProposalSubmitInput(TypedDict):
+    work: EntityId
+    path: str
+    content: list[int]
+    message: str
+    declaration: NotRequired[EntityId | None]
+class RepoProposalSubmitOutput(TypedDict):
+    proposal: EntityId
+    work: EntityId
+    path: str
+    base_green: str
+    base_snapshot: str
+    session: EntityId
+    provenance_claim: EntityId
+    declaration: NotRequired[EntityId | None]
+    status: RepoProposalStatus
+class RepoMergeQueueEnqueueInput(TypedDict):
+    work: EntityId
+    proposals: list[EntityId]
+    declaration: NotRequired[EntityId | None]
+RepoMergeQueueEnqueueOutput = RepoQueueEntryView
+class RepoCheckoutBindInput(TypedDict):
+    repo: EntityId
+    ref: str
+    checkout: str
+    epoch: int
+    endpoint: NotRequired[str | None]
+class RepoCheckoutBindOutput(TypedDict):
+    repo: EntityId
+    ref: str
+    checkout: str
+    epoch: int
+    remote_url: NotRequired[str | None]
+class RepoExportInput(TypedDict):
+    repo: EntityId
+    ref: str
+    checkout: str
+    epoch: int
+    revision: EntityId
+    expected_old_oid: NotRequired[str | None]
+class RepoExportOutput(TypedDict):
+    repo: EntityId
+    ref: str
+    revision: EntityId
+    git_commit: str
+    receipt: EntityId
+    status: OriginPublicationState
+    grant: EntityId
+    ref_was_already_applied: bool
+    wire_replayed: bool
+    wire_rejected: bool
 class BaseAgentPrincipal(TypedDict):
     name: str
     id: EntityId
@@ -12420,7 +12669,7 @@ class TaskAskReceipt(TypedDict):
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "ConsultResult", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "WorldPrivacySet", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team", "WorkflowDispatch", "RepoSnapshotsGet", "RepoSnapshotsRead", "RepoSymbolsDefinitions", "RepoViewsGet", "RepoViewsRead", "RepoMergeQueueObserve", "RepoSnapshotsIngest", "RepoWorkOpen", "RepoSymbolsDeclare", "RepoSymbolsRenew", "RepoSymbolsRelease", "RepoProposalSubmit", "RepoMergeQueueEnqueue"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "ConsultResult", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "WorldPrivacySet", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team", "WorkflowDispatch", "RepoSnapshotsGet", "RepoSnapshotsRead", "RepoSymbolsDefinitions", "RepoViewsGet", "RepoViewsRead", "RepoMergeQueueObserve", "RepoSnapshotsIngest", "RepoWorkOpen", "RepoSymbolsDeclare", "RepoSymbolsRenew", "RepoSymbolsRelease", "RepoProposalSubmit", "RepoMergeQueueEnqueue", "RepoCheckoutBind", "RepoExport"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId
@@ -13269,6 +13518,7 @@ class ModelRoleOutputEmbedded(TypedDict):
 class ModelRoleOutputTagged(TypedDict):
     kind: Literal["tagged"]
     output: EncoderOutput
+    execution: NotRequired[EncoderExecution | None]
 ModelRoleOutput = ModelRoleOutputGenerated | ModelRoleOutputEmbedded | ModelRoleOutputTagged
 class ModelRoleInvocation(TypedDict):
     receipt: ModelRoleReceipt
@@ -17041,11 +17291,25 @@ class ProgramCheckpointRequest(TypedDict):
     root: str
     cursor: NotRequired[str | None]
     limit: NotRequired[int | None]
+class ProgramCheckpointConsentView(TypedDict):
+    binding_digest: str
+    effect_digest: str
+    state: str
+    ask: NotRequired[str | None]
+    choice: NotRequired[str | None]
+    word: NotRequired[str | None]
+    answer_receipt: NotRequired[str | None]
+    outcome: NotRequired[str | None]
+    settlement_receipt: NotRequired[str | None]
+    consumption_receipt: NotRequired[str | None]
+    settlement_facts_digest: NotRequired[str | None]
+    consumption_facts_digest: NotRequired[str | None]
 class ProgramCheckpointWaitView(TypedDict):
     row: int
     wait_id: str
     generation: int
     delivered: bool
+    consent: NotRequired[ProgramCheckpointConsentView | None]
 class ProgramCheckpointHeadView(TypedDict):
     committed_by: str
     content_hash: str
@@ -17075,6 +17339,19 @@ class ProgramCheckpointView(TypedDict):
     calls: list[ProgramCheckpointCallView]
     next_cursor: NotRequired[str | None]
     withheld: list[str]
+ProgramHoldReleaseAction = Literal["stop", "resume_validated"]
+class ReleaseTurnProgramHoldRequest(TypedDict):
+    attempt: str
+    reason: str
+    parked_at: int
+    action: ProgramHoldReleaseAction
+    note: NotRequired[str | None]
+class ProgramHoldReleaseView(TypedDict):
+    attempt: str
+    action: ProgramHoldReleaseAction
+    released: str
+    state: str
+    effected: bool
 ConsolidationHomeNode = TypedDict("ConsolidationHomeNode", {"node_id": str, "class": str, "elected_at": int})
 ConsolidationHomeCandidate = TypedDict("ConsolidationHomeCandidate", {"node_id": str, "class": NotRequired[str | None], "cloud": bool, "attached": bool, "always_on_local": bool, "primary_device": bool})
 class ConsolidationHomePickHead(TypedDict):
@@ -17533,6 +17810,7 @@ class FreeTimeItemReceiptView(TypedDict):
     policy_revision: int
     attempt: NotRequired[str | None]
     proposal: NotRequired[str | None]
+    context_unread: NotRequired[str | None]
     at: int
 class FreeTimeItemView(TypedDict):
     item: str

@@ -685,6 +685,9 @@ class Oneiron:
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
         @property
+        def repo(self) -> "Oneiron._VaultRepoVerbs":
+            return Oneiron._VaultRepoVerbs(self._client)
+        @property
         def standing_blocks(self) -> "Oneiron._VaultStandingBlocksVerbs":
             return Oneiron._VaultStandingBlocksVerbs(self._client)
         @property
@@ -3592,19 +3595,19 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def get(self, spec):
-            """Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."""
+            """Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_get(json.dumps(spec))))
         def set(self, spec):
-            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me unless named; the same URL keeps its own); the token binding is checked in the setup write."""
+            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_set(json.dumps(spec))))
         def strategy(self, spec):
-            """Set one served origin mirror's sync strategy: ask_me sends nothing until an exact publish request is approved, schedule pushes every published ref on its cadence; it changes only the strategy and its revision."""
+            """Set one served origin mirror's sync strategy: ask_me sends nothing until an exact request is approved, schedule pushes every published ref on its cadence, full_auto each new green head at once; unsent automatic work pauses."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_strategy(json.dumps(spec))))
         def clear(self, spec):
             """Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_clear(json.dumps(spec))))
         def push(self, spec):
-            """Push one origin's published Git refs to its schedule mirror now, recording the real outcome (ask_me refuses publish_request_required); refs pushed are not readiness, which names the LFS objects the history needs."""
+            """Push one origin's published refs to its schedule or full_auto mirror now as a reviewed, leased plan (full_auto: green heads only), recording the real outcome; ask_me refuses publish_request_required. Refs are not LFS readiness."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_push(json.dumps(spec))))
     class _VaultCodeOriginPublishVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -3798,6 +3801,111 @@ class Oneiron:
         def get(self, spec):
             """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
             return json.loads(_translate(lambda: self._client.vault_agents_spawn_get(json.dumps(spec))))
+    class _VaultRepoVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def git_push(self) -> "Oneiron._VaultRepoGitPushVerbs":
+            return Oneiron._VaultRepoGitPushVerbs(self._client)
+        @property
+        def anchor(self) -> "Oneiron._VaultRepoAnchorVerbs":
+            return Oneiron._VaultRepoAnchorVerbs(self._client)
+        @property
+        def snapshots(self) -> "Oneiron._VaultRepoSnapshotsVerbs":
+            return Oneiron._VaultRepoSnapshotsVerbs(self._client)
+        @property
+        def symbols(self) -> "Oneiron._VaultRepoSymbolsVerbs":
+            return Oneiron._VaultRepoSymbolsVerbs(self._client)
+        @property
+        def views(self) -> "Oneiron._VaultRepoViewsVerbs":
+            return Oneiron._VaultRepoViewsVerbs(self._client)
+        @property
+        def merge_queue(self) -> "Oneiron._VaultRepoMergeQueueVerbs":
+            return Oneiron._VaultRepoMergeQueueVerbs(self._client)
+        @property
+        def work(self) -> "Oneiron._VaultRepoWorkVerbs":
+            return Oneiron._VaultRepoWorkVerbs(self._client)
+        def proposal_submit(self, spec):
+            """Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept."""
+            return json.loads(_translate(lambda: self._client.vault_repo_proposal_submit(json.dumps(spec))))
+        @property
+        def checkout(self) -> "Oneiron._VaultRepoCheckoutVerbs":
+            return Oneiron._VaultRepoCheckoutVerbs(self._client)
+        def export(self, spec):
+            """Exports one finalized, promoted revision from the attached run's own checkout when one Grant lists publish over the revision's paths; otherwise it holds with a typed code. git_push never implies an export."""
+            return json.loads(_translate(lambda: self._client.vault_repo_export(json.dumps(spec))))
+    class _VaultRepoGitPushVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mint(self, spec):
+            """The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it."""
+            return json.loads(_translate(lambda: self._client.vault_repo_git_push_mint(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_repo_git_push_revoke(json.dumps(spec))))
+    class _VaultRepoAnchorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bind(self, spec):
+            """The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_repo_anchor_bind(json.dumps(spec))))
+    class _VaultRepoSnapshotsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease."""
+            return json.loads(_translate(lambda: self._client.vault_repo_snapshots_get(json.dumps(spec))))
+        def read(self, spec):
+            """Reads one file of such a snapshot on a path the attached run's Grant reads."""
+            return json.loads(_translate(lambda: self._client.vault_repo_snapshots_read(json.dumps(spec))))
+        def ingest(self, spec):
+            """Imports the commit an admitted repo's full ref names now, readable paths only, for the attached run."""
+            return json.loads(_translate(lambda: self._client.vault_repo_snapshots_ingest(json.dumps(spec))))
+    class _VaultRepoSymbolsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def definitions(self, spec):
+            """Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads."""
+            return json.loads(_translate(lambda: self._client.vault_repo_symbols_definitions(json.dumps(spec))))
+        def declare(self, spec):
+            """Declares current symbols of the attached run's own work on paths its Grant edits, for its TASK; an overlap waits, never refused."""
+            return json.loads(_translate(lambda: self._client.vault_repo_symbols_declare(json.dumps(spec))))
+        def renew(self, spec):
+            """Extends the attached run's own symbol declaration by its declared lifetime."""
+            return json.loads(_translate(lambda: self._client.vault_repo_symbols_renew(json.dumps(spec))))
+        def release(self, spec):
+            """Removes the attached run's own symbol declaration."""
+            return json.loads(_translate(lambda: self._client.vault_repo_symbols_release(json.dumps(spec))))
+    class _VaultRepoViewsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Reads the attached run's own work, as it was opened."""
+            return json.loads(_translate(lambda: self._client.vault_repo_views_get(json.dumps(spec))))
+        def read(self, spec):
+            """Reads one file of the attached run's own work."""
+            return json.loads(_translate(lambda: self._client.vault_repo_views_read(json.dumps(spec))))
+    class _VaultRepoMergeQueueVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def observe(self, spec):
+            """Reads the merge queue the attached run's own work is pinned under, with its own entries and what each waits behind."""
+            return json.loads(_translate(lambda: self._client.vault_repo_merge_queue_observe(json.dumps(spec))))
+        def enqueue(self, spec):
+            """Queues the attached run's own stored proposals of one work as one batch, under the declaration they were made under."""
+            return json.loads(_translate(lambda: self._client.vault_repo_merge_queue_enqueue(json.dumps(spec))))
+    class _VaultRepoWorkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, spec):
+            """Opens a fresh private working set of an admitted repo at its queue's green commit for the attached run, readable paths only."""
+            return json.loads(_translate(lambda: self._client.vault_repo_work_open(json.dumps(spec))))
+    class _VaultRepoCheckoutVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bind(self, spec):
+            """Materializes the attached run's own live checkout lease of an admitted served repo, for its TASK, with its lease-route remote when a door base is named; no lease is minted and no host path is shown."""
+            return json.loads(_translate(lambda: self._client.vault_repo_checkout_bind(json.dumps(spec))))
     class _VaultStandingBlocksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3897,6 +4005,9 @@ class Oneiron:
         def program_checkpoint(self, spec):
             """Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it."""
             return json.loads(_translate(lambda: self._client.vault_runs_program_checkpoint(json.dumps(spec))))
+        @property
+        def program_hold(self) -> "Oneiron._VaultRunsProgramHoldVerbs":
+            return Oneiron._VaultRunsProgramHoldVerbs(self._client)
         def review(self, spec):
             """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
             return json.loads(_translate(lambda: self._client.vault_runs_review(json.dumps(spec))))
@@ -3912,6 +4023,12 @@ class Oneiron:
         def get(self, spec):
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
             return json.loads(_translate(lambda: self._client.vault_runs_branches_get(json.dumps(spec))))
+    class _VaultRunsProgramHoldVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def release(self, spec):
+            """The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out."""
+            return json.loads(_translate(lambda: self._client.vault_runs_program_hold_release(json.dumps(spec))))
     class _VaultConsultsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -23,6 +23,22 @@
 //! channel. An inspection installs the key, reads the commit marker and
 //! answers, and starts nothing.
 //!
+//! A boot that serves then reads the host's custody anchor header before
+//! the engine starts, and carries the anchor's credential into the engine
+//! after the engine's credential frame, on a pipe of the engine's own, and
+//! its streams to the anchor URL the host bound, through a socket of the
+//! engine's own (FIX 6517, [`anchor`]).
+//!
+//! A boot that serves reads its config drive's typed files once, before the
+//! key goes in ([`config_drive`]), when the image's init mounted the drive
+//! and said so (`--guest-config-dir`, never passed on to the engine). When
+//! they plan a network, the bootstrap sets up the NIC the host attached
+//! while it is still root, before the key and before any engine or companion
+//! (FIX 6808, [`network`]); a setup that fails refuses the provisioning.
+//! The managed profile's five files on the drive ([`profile`], FIX 6809)
+//! become the engine's own managed-profile flags, the same for an open and a
+//! cold restore.
+//!
 //! It stays root only to supervise, and to run the outbox companion
 //! `oneiron-vm-outbox` beside the engine ([`outbox`], FIX 5235): started
 //! before the engine, it lays out the outbox and carries it to the host, and
@@ -33,17 +49,23 @@
 //! and exits with the engine's status; the image's init then powers the VM
 //! off.
 
+mod anchor;
+mod config_drive;
 mod fscrypt;
 mod layout;
+mod network;
 mod outbox;
+mod profile;
 mod restore;
 
+use self::config_drive::VmGuestConfig;
 use self::fscrypt::{KeyIdentifier, Removal};
+use self::profile::VmManagedProfile;
 use anyhow::Context as _;
 use oneiron_vault_contract::host_adapters::connect_blocking;
 use oneiron_vault_contract::vm::{
-    MAX_VM_FRAME, VM_BOOT_PORT, VM_GUEST_DATA_DIR, VM_GUEST_KEYS_DIR, VM_HOST_CID, decode_vm_frame,
-    encode_vm_frame,
+    MAX_VM_FRAME, VM_BOOT_PORT, VM_GUEST_CONFIG_DIR, VM_GUEST_DATA_DIR, VM_GUEST_KEYS_DIR,
+    VM_HOST_CID, decode_vm_frame, encode_vm_frame,
 };
 use oneiron_vault_contract::vm_provision::{
     VmFscryptKey, VmProvision, VmProvisionFailure, VmProvisionReply,
@@ -55,7 +77,9 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::RawFd;
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::{ExitCode, ExitStatus, Stdio};
+use std::sync::mpsc;
 
 /// The engine the bootstrap starts, beside it in the image.
 const ENGINE: &str = "/usr/bin/oneiron-server";
@@ -63,10 +87,12 @@ const ENGINE: &str = "/usr/bin/oneiron-server";
 /// gives it too.
 const ENGINE_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 
-/// Why provisioning was refused, as the host is told it.
+/// Why provisioning was refused, as the host is told it, and the typed
+/// error behind it when there is one, which the bootstrap's own report keeps.
 struct Refusal {
     code: VmProvisionFailure,
     detail: String,
+    source: Option<anyhow::Error>,
 }
 
 impl Refusal {
@@ -74,22 +100,38 @@ impl Refusal {
         Self {
             code,
             detail: detail.into(),
+            source: None,
+        }
+    }
+
+    /// A refusal for `error`: the host is told what it and its causes say,
+    /// and the error itself is kept.
+    fn caused(code: VmProvisionFailure, error: impl Into<anyhow::Error>) -> Self {
+        let source = error.into();
+        Self {
+            code,
+            detail: format!("{source:#}"),
+            source: Some(source),
         }
     }
 }
 
 /// What the image's init passes: the vault and the derivation owner its boot
-/// arguments name, then `--` and the engine flags the bootstrap does not own
-/// (its sockets, its settings and its supervisor's bindings).
+/// arguments name, the config drive's mountpoint when it mounted the drive,
+/// then `--` and the engine flags the bootstrap does not own (its sockets,
+/// its settings and its supervisor's bindings).
 struct InitArgs {
     vault: String,
     owner: String,
+    /// [`VM_GUEST_CONFIG_DIR`], the only one taken, whose typed files the
+    /// bootstrap reads itself; the engine is never passed it.
+    guest_config_dir: Option<PathBuf>,
     engine_flags: Vec<OsString>,
 }
 
 impl InitArgs {
     fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Self, &'static str> {
-        let (mut vault, mut owner) = (None, None);
+        let (mut vault, mut owner, mut guest_config_dir) = (None, None, None);
         loop {
             let Some(flag) = args.next() else {
                 return Err("no -- before the engine's flags");
@@ -98,6 +140,13 @@ impl InitArgs {
                 Some("--") => break,
                 Some("--vault-name") => &mut vault,
                 Some("--derivation-owner") => &mut owner,
+                Some("--guest-config-dir") => {
+                    if args.next().is_none_or(|dir| dir != VM_GUEST_CONFIG_DIR) {
+                        return Err("a --guest-config-dir that is not /config");
+                    }
+                    guest_config_dir = Some(PathBuf::from(VM_GUEST_CONFIG_DIR));
+                    continue;
+                }
                 _ => return Err("an argument oneiron-vm-init does not take"),
             };
             *slot = args.next().and_then(|value| value.into_string().ok());
@@ -106,6 +155,7 @@ impl InitArgs {
             (Some(vault), Some(owner)) => Ok(Self {
                 vault,
                 owner,
+                guest_config_dir,
                 engine_flags: args.collect(),
             }),
             _ => Err("no --vault-name or no --derivation-owner"),
@@ -114,11 +164,14 @@ impl InitArgs {
 }
 
 /// A provisioned guest: the held vault root, the installed key's identifier,
-/// the UID the engine runs as, and a cold restore's mounted source drive.
+/// the UID the engine runs as, the config drive's typed files as a serving
+/// boot read them (none for an inspection), and a cold restore's mounted
+/// source drive.
 struct Provisioned {
     root: File,
     identifier: KeyIdentifier,
     uid: u32,
+    guest: VmGuestConfig,
     source: Option<restore::SourceMount>,
 }
 
@@ -155,11 +208,12 @@ fn run() -> anyhow::Result<ExitCode> {
         .context("answering the host's provision connection");
     drop(channel);
     let (frame, mut provisioned) = provisioned.map_err(|refusal| {
-        anyhow::anyhow!(
-            "provisioning refused ({}): {}",
-            refusal.code,
-            refusal.detail
-        )
+        let refused = format!("provisioning refused ({})", refusal.code);
+        match refusal.source {
+            // The typed error says the detail itself, with its causes.
+            Some(source) => source.context(refused),
+            None => anyhow::anyhow!("{refused}: {}", refusal.detail),
+        }
     })?;
     if let Err(error) = answered {
         remove_key(&provisioned);
@@ -169,9 +223,14 @@ fn run() -> anyhow::Result<ExitCode> {
     let status = match boot {
         VmRestoreBoot::Open => {
             drop(restore_channel);
-            run_engine(&args, provisioned.uid, None)
+            run_engine(&args, provisioned.uid, &provisioned.guest.profile, None)
         }
-        VmRestoreBoot::Restore { .. } => run_engine(&args, provisioned.uid, Some(restore_channel)),
+        VmRestoreBoot::Restore { .. } => run_engine(
+            &args,
+            provisioned.uid,
+            &provisioned.guest.profile,
+            Some(restore_channel),
+        ),
         VmRestoreBoot::InspectMarker { identity } => {
             let observation =
                 restore::observe(&provisioned.root, &provisioned.identifier, provisioned.uid);
@@ -208,9 +267,10 @@ fn read_line(channel: &mut File) -> anyhow::Result<String> {
 }
 
 /// The provision connection's guest side, up to its answer: the frame and
-/// the key, the binding's checks, the key's installation and the layout
-/// `boot` takes, a cold restore's source drive mounted last. A refusal after
-/// the key went in removes it again.
+/// the key, the binding's checks, a serving boot's config drive and network,
+/// the key's installation and the layout `boot` takes, a cold restore's
+/// source drive mounted last. A refusal after the key went in removes it
+/// again.
 fn provision(
     channel: &mut File,
     args: Result<&InitArgs, &'static str>,
@@ -247,6 +307,21 @@ fn provision(
     // An inspection makes nothing on the disk: it reads what is there.
     let inspecting = matches!(boot, VmRestoreBoot::InspectMarker { .. });
     let restoring = matches!(boot, VmRestoreBoot::Restore { .. });
+    // A boot that serves reads its config drive's typed files once, keeping
+    // the managed profile for the engine, and sets up the network they plan
+    // while root, before the key goes in and before anything is made on the
+    // disk. An inspection does neither.
+    let guest = if inspecting {
+        VmGuestConfig::default()
+    } else {
+        let failed = VmProvisionFailure::ProvisionFailed;
+        let guest = VmGuestConfig::load(args.guest_config_dir.is_some())
+            .map_err(|error| Refusal::caused(failed, error))?;
+        if let Some(plan) = &guest.network {
+            network::configure(plan).map_err(|error| Refusal::caused(failed, error))?;
+        }
+        guest
+    };
     let control = if inspecting {
         layout::existing_control(&root)?
     } else {
@@ -262,6 +337,7 @@ fn provision(
         root,
         identifier,
         uid: frame.binding.guest_uid,
+        guest,
         source: None,
     };
     let uid = provisioned.uid;
@@ -329,33 +405,53 @@ fn remove_key(provisioned: &Provisioned) {
 }
 
 /// Starts the outbox companion, then the engine as `uid`, and waits for the
-/// engine; then stops the companion, and ends and reaps what is left. A cold
-/// restore's engine (`restore_channel`) gets its two restore pipes, and the
-/// restore's last result record goes out before this returns.
+/// engine; then stops the companion, and ends and reaps what is left. The
+/// host's custody anchor header is read before either, and the anchor's
+/// credential taken beside the engine. The engine gets the managed
+/// `profile`'s flags, an open's and a cold restore's alike. A cold restore's
+/// engine (`restore_channel`) gets its two restore pipes, and the restore's
+/// last result record goes out before this returns.
 fn run_engine(
     args: &InitArgs,
     uid: u32,
+    profile: &VmManagedProfile,
     restore_channel: Option<File>,
 ) -> anyhow::Result<ExitStatus> {
     // Whatever the engine leaves behind is reparented here, not to PID 1, so
     // it is reaped before the key goes. Any nonzero argument sets it.
     rustix::process::set_child_subreaper(Some(rustix::process::getpid()))
         .context("becoming the engine's subreaper")?;
+    let anchor = anchor::exchange(&args.vault, uid)?;
     let companion = outbox::start(&args.vault, uid, ENGINE_PATH);
-    let outbox_flags = if companion.is_some() {
+    let mut flags = if companion.is_some() {
         outbox::engine_flags()
     } else {
         Vec::new()
     };
+    flags.extend(anchor.flags());
+    flags.extend(profile.engine_flags());
+    let anchor_fds = anchor.fds();
+    // A pipe the engine reads that broke before its end comes back here.
+    let (lost_sender, lost) = mpsc::channel();
     let mut restoring = None;
+    let mut anchored = None;
     let status = match restore_channel {
-        None => start_engine(args, uid, &outbox_flags, &[])
-            .and_then(|mut engine| engine.wait().context("waiting for the engine")),
-        Some(channel) => restore::start(channel, |fds, flags| {
-            start_engine(args, uid, &[&outbox_flags[..], flags].concat(), fds)
+        None => start_engine(args, uid, &flags, &anchor_fds).and_then(|mut engine| {
+            anchored = Some(anchor.start(lost_sender)?);
+            restore::supervise(&mut engine, &lost)
+        }),
+        Some(channel) => restore::start(channel, lost_sender.clone(), |fds, restore_flags| {
+            let fds = [fds, &anchor_fds[..]].concat();
+            start_engine(args, uid, &[&flags[..], restore_flags].concat(), &fds)
         })
-        .and_then(|started| restoring.insert(started).wait()),
+        .and_then(|started| {
+            let restoring = restoring.insert(started);
+            anchored = Some(anchor.start(lost_sender)?);
+            restoring.wait(&lost)
+        }),
     };
+    // The anchor's socket goes with the engine.
+    drop(anchored);
     // The companion goes first, while the key is in: it may be writing into
     // the encrypted storage. Then everything else, the broker among it.
     if let Some(companion) = companion {

@@ -43,7 +43,7 @@ use crate::{EntityId, Result, Vault};
 mod exact;
 mod queue;
 mod subject;
-pub(crate) use self::exact::exact_replay_request;
+pub(crate) use self::exact::{ExactReplay, exact_replay};
 pub use self::exact::{ExactReplayRequest, ReplayFidelity};
 pub(super) use self::queue::{
     CodeFixShare, ack_code_fix_records_in_txn, code_fix_still_eligible_in,
@@ -52,9 +52,6 @@ pub(crate) use self::subject::dispatch_worlds_in;
 use self::subject::{SubjectFailure, blocked_source_failure_in};
 
 pub const CODE_FIX_RECORD_VERSION: u16 = 1;
-pub const CODE_FIX_MAX_NOTE_BYTES: usize = 1024;
-pub const CODE_FIX_MAX_MESSAGES: usize = 32;
-pub const CODE_FIX_MAX_MESSAGE_BYTES: usize = 4096;
 
 /// Sealed records waiting for the host to deliver them, with the worlds each
 /// failure touched (local only). A record stays until the host acks its
@@ -108,6 +105,10 @@ pub struct FailureSource {
     pub instructions: String,
     pub briefing: Option<String>,
     pub task: Option<String>,
+    /// The rows these texts were read from (FIX 6997): the failing attempt's
+    /// recorded input set with its TASK row. `None`, unknown, for a kept
+    /// request, or an attempt whose producers recorded no complete set.
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 /// What a code fix is for (OF-380): a failure-ladder case, or a blocked
@@ -365,6 +366,21 @@ impl Vault {
         if !draft_in_shape(&draft) {
             return withheld(W::Malformed);
         }
+        // Rule 5 (OF-380 L2): the draft goes whole at any length, measured,
+        // never refused or cut for its size.
+        let longest = draft
+            .conversation
+            .iter()
+            .map(|m| m.text.len())
+            .fold(draft.note.len(), usize::max);
+        let _ = self.measure_limit(
+            crate::limit_ask::EngineLimit::MaintenanceTextBytes,
+            longest as u64,
+        );
+        let _ = self.measure_limit(
+            crate::limit_ask::EngineLimit::MaintenanceRowItems,
+            draft.conversation.len() as u64,
+        );
         self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
         let Some(subject) = code_fix_subject_in(self, &txn, source)? else {
@@ -617,6 +633,7 @@ fn failure_source_in(
     };
     let mut worlds = vec![input.scope.and_then(|scope| scope.world).unwrap_or(base)];
     let mut task = None;
+    let mut task_rows = Vec::new();
     if let Some(raw) = task_ref {
         let Ok(task_ref) = EntityId::from_hex(raw) else {
             return Ok(None);
@@ -633,7 +650,12 @@ fn failure_source_in(
                 return Ok(None);
             };
             worlds.push(world.unwrap_or(base));
-            task = crate::task_verb::task_text_in(vault, txn, task_ref)?;
+            if let Some((text, row)) =
+                crate::task_verb::task_text_with_source_in(vault, txn, task_ref)?
+            {
+                task = Some(text);
+                task_rows.push(row);
+            }
         }
     }
     worlds.sort_unstable();
@@ -642,6 +664,12 @@ fn failure_source_in(
         instructions: input.definition.instructions.unwrap_or_default(),
         briefing: input.context_spec.and_then(|spec| spec.briefing),
         task,
+        // The dispatch's texts are its attempt's inputs: known only where the
+        // attempt's producers recorded the rows they read them from.
+        source_rows: crate::skill_optimize::union_source_rows([
+            attempt.source_rows(),
+            Some(task_rows.as_slice()),
+        ]),
     };
     Ok(Some((source, worlds)))
 }
@@ -664,15 +692,13 @@ fn all_public(fold: &AuthorityFold, worlds: &[EntityId]) -> bool {
         .all(|world| fold.world_privacy(*world).read == EffectiveRead::Everywhere)
 }
 
+/// A note and a conversation, each message with words in it. Its size is no
+/// part of its shape (Rule 5): a long draft is measured, not refused.
 fn draft_in_shape(draft: &InventedExampleDraft) -> bool {
-    let text_ok = |text: &str, max: usize| !text.trim().is_empty() && text.len() <= max;
-    text_ok(&draft.note, CODE_FIX_MAX_NOTE_BYTES)
+    let text_ok = |text: &str| !text.trim().is_empty();
+    text_ok(&draft.note)
         && !draft.conversation.is_empty()
-        && draft.conversation.len() <= CODE_FIX_MAX_MESSAGES
-        && draft
-            .conversation
-            .iter()
-            .all(|m| text_ok(&m.text, CODE_FIX_MAX_MESSAGE_BYTES))
+        && draft.conversation.iter().all(|m| text_ok(&m.text))
 }
 
 /// A candidate id is a host token, never prose: printable ASCII with no

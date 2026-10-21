@@ -2,12 +2,15 @@
 //! reconciler.
 //!
 //! The engine commits the markers with the writes, leases them and settles
-//! them; it never starts a thread. This loop is the host half, shaped like the
-//! embedding worker: make sure the tagger is the configured one before every
-//! pass, drain what is ready, then wait. Pickup is level-triggered: every pass
-//! reads the markers that are ready now, and a commit to the job tables only
-//! wakes the loop early. Everything the reconciler does is sync, so every pass
-//! runs on a blocking thread.
+//! them; it never starts a thread. This loop is the host half: make sure the
+//! tagger is the configured one, release what a stopped worker left leased,
+//! then hand the vault to its one [`coordinator`] (FIX 6755), which keeps live
+//! and bulk markers in flight through the slot's dispatcher, live first.
+//! Pickup is level-triggered: every claim reads the markers that are ready
+//! now, and a commit to the job tables only wakes the loop early. Everything
+//! the reconciler does is sync, so each of its units runs on a blocking
+//! thread; only the wait for dispatcher room and for a call's answer is
+//! async, and neither holds a transaction or an admission it has not claimed.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,6 +21,9 @@ use oneiron::tagging::{TaggingBackoff, TaggingReconciler};
 use super::core::SyncServer;
 use super::housekeeping::{PassControl, admit_every_pass};
 use crate::oneironer::endpoint::ProbeOutcome;
+use coordinator::Coordinator;
+
+mod coordinator;
 
 /// Ceiling on the worker's own backoff while the tagger is down.
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
@@ -47,11 +53,11 @@ impl SyncServer {
     }
 
     /// Starts the worker on a host with a write freeze: the start that
-    /// releases stale leases and each drain pass are admitted through
-    /// `pass`'s admission, and hold it on their blocking thread through
-    /// every marker they settle. A refused pass tags nothing and waits.
-    /// While `pass` is paused (FIX 6902), a running pass claims no next
-    /// marker and ends as a pass with nothing more ready does.
+    /// releases stale leases, each round's upkeep and each marker's claim
+    /// are admitted through `pass`'s admission, and a claimed marker holds
+    /// its admission through its call to the end of its settlement's write.
+    /// A refused claim tags nothing and waits. While `pass` is paused (FIX
+    /// 6902), no next marker is claimed; one already claimed settles.
     pub(crate) fn spawn_tagging_worker_admitted(
         self: &Arc<Self>,
         pass: PassControl,
@@ -62,103 +68,22 @@ impl SyncServer {
     }
 
     async fn tag_forever(self: Arc<Self>, control: PassControl) {
-        // Subscribed before the first pass, so a commit between that pass and
-        // the first wait still wakes the loop.
-        let mut wake = oneiron::attempt_queue::AttemptQueue::new(self.vault()).subscribe();
+        // Subscribed before the first read, so a commit between it and the
+        // first wait still wakes the loop.
+        let wake = oneiron::attempt_queue::AttemptQueue::new(self.vault()).subscribe();
         let Some(reconciler) = self.prepare_tagging(&control).await else {
             return;
         };
-        let admit = control.admission();
-        let idle = self.tagger.as_ref().map_or(MIN_IDLE, |slot| {
-            Duration::from_millis(slot.config().idle_interval_ms).max(MIN_IDLE)
-        });
-        // The reconciler claims at least one marker a pass.
-        let batch = self
-            .tagger
-            .as_ref()
-            .map_or(1, |slot| slot.config().batch_size.max(1));
-        let mut backoff = FIRST_BACKOFF;
-        // The earliest retry a pass of this worker scheduled that no later
-        // pass has reached: the next wake when no commit comes first.
-        let mut next_retry: Option<u64> = None;
-        loop {
-            // Level-triggered: the pass reads what is ready, so every wake
-            // queued before it is already answered by it.
-            while wake.try_recv().is_ok() {}
-            let Some(admission) = admit() else {
-                tokio::time::sleep(idle).await;
-                continue;
-            };
-            let started = reconciler.now();
-            let pass = Arc::clone(&reconciler);
-            let server = Arc::clone(&self);
-            let pause = control.clone();
-            let outcome = tokio::task::spawn_blocking(move || {
-                let _admission = admission;
-                pass.drain_until_paused(&|| pause.paused(), |trace| {
-                    if let Some(slot) = server.tagger.as_ref() {
-                        slot.log(trace);
-                    }
-                })
-            })
-            .await;
-            match outcome {
-                Ok(Ok(pass)) => {
-                    if pass.paused {
-                        tracing::debug!(
-                            settled = pass.traces.len(),
-                            batch_left = batch.saturating_sub(pass.traces.len()),
-                            "tagging pass paused by the reap freeze; unclaimed markers stay ready"
-                        );
-                    }
-                    // A retry due when this pass began was claimable by it.
-                    next_retry = next_retry
-                        .filter(|at| *at > started)
-                        .into_iter()
-                        .chain(pass.earliest_retry_at())
-                        .min();
-                    if pass.failed_calls > 0 {
-                        tracing::warn!("tagger call failed; backing off");
-                        tokio::time::sleep(backoff).await;
-                        backoff = (backoff * 2).min(MAX_BACKOFF);
-                    } else {
-                        backoff = FIRST_BACKOFF;
-                        if pass.traces.is_empty() {
-                            let wait = until_ready(reconciler.now(), next_retry, idle);
-                            tokio::select! {
-                                _ = wake.recv() => {}
-                                () = tokio::time::sleep(wait) => {}
-                            }
-                        }
-                    }
-                }
-                Ok(Err(error)) => {
-                    tracing::warn!(kind = ?error.kind(), "tagging pass failed; backing off");
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
-                }
-                Err(error) => {
-                    tracing::error!(
-                        panicked = error.is_panic(),
-                        "tagging pass task ended; worker stopping"
-                    );
-                    return;
-                }
-            }
-            // Every pass settles its answers under the configured checkpoint,
-            // so every pass follows a probe: the tagger may have been swapped
-            // while the loop waited, backed off, or drained the last batch.
-            if !self.tagger_still_configured().await {
-                return;
-            }
+        if let Some(coordinator) = Coordinator::new(self, reconciler, control, wake) {
+            coordinator.run().await;
         }
     }
 
     /// Waits until the tagger answers as the configured one and `control`
     /// admits the start, then builds the reconciler and returns this
     /// worker's stale leases from a previous process to the queue, until
-    /// `control` pauses; the first pass releases what is left. `None` when
-    /// the tagger is refused.
+    /// `control` pauses; the first round's upkeep releases what is left.
+    /// `None` when the tagger is refused.
     async fn prepare_tagging(
         self: &Arc<Self>,
         control: &PassControl,
@@ -232,8 +157,9 @@ impl SyncServer {
 
     /// Probes the tagger. `false` when it answers as another model, or when
     /// the vault's manifest binds another extraction encoder, which stops
-    /// the worker: the markers wait for a tagger that is the configured and
-    /// bound one. An unreachable tagger is still configured.
+    /// the worker once what it owns has settled: the markers wait for a
+    /// tagger that is the configured and bound one. An unreachable tagger is
+    /// still configured.
     async fn tagger_still_configured(self: &Arc<Self>) -> bool {
         let server = Arc::clone(self);
         let selected = tokio::task::spawn_blocking(move || {
