@@ -190,7 +190,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/observe.rs` | src | s | 1 fn · 2 crate-vis | — | Post-commit invalidations for local run-tree observers |
 | `src/attempt_queue/payload_erase.rs` | src | m | 3 crate-vis | — | An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076) |
 | `src/attempt_queue/ports.rs` | src | s | — | — | JobQueue adapter over the existing lease state machine |
-| `src/attempt_queue/read_set.rs` | src | s | 2 struct · 4 fn · 1 const · 1 crate-vis | AttemptReadSet, ReadSetProducer | FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the… |
+| `src/attempt_queue/read_set.rs` | src | s | 2 struct · 4 fn · 4 const · 1 crate-vis | AttemptReadSet, ReadSetProducer | FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the… |
 | `src/attempt_queue/result.rs` | src | s | 2 fn · 3 crate-vis | — | Transaction-composable result attachment and abandonment |
 | `src/attempt_queue/settlement.rs` | src | s | 2 fn · 2 crate-vis | — | Transaction-composable completion and failure with terminal pack receipts |
 | `src/attempt_queue/telemetry.rs` | src | s | 1 struct · 5 crate-vis | AttemptQueueCleanupMetricsSnapshot | Per-vault cleanup counters, cleanup span emission, and the shared invalid-transition error constructor |
@@ -1617,7 +1617,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/critic/review.rs` | src | s | 4 struct · 1 enum · 1 fn · 4 re-export · 2 crate-vis | CriticReviewInput, ReviewArtifactKind, ReviewCritic, ReviewRequest, ReviewResult | Artifact-independent review fan-out and the persisted calibration feedback loop |
 | `src/critic/review/dissent.rs` | src | s | 2 struct · 3 fn · 1 crate-vis | CriticPrediction, ReviewDissent | Testable overruled predictions: attributed opinions and bound standing questions, never critique claims |
 | `src/critic/review/outcomes.rs` | src | s | 2 fn · 1 crate-vis | — | Anchored review outcomes feed the shared measured-state projector |
-| `src/critic/review/persistence.rs` | src | m | 14 crate-vis | — | Transactional review bundles |
+| `src/critic/review/persistence.rs` | src | m | 15 crate-vis | — | Transactional review bundles |
 | `src/critic/review/questions.rs` | src | m | 4 struct · 1 trait · 1 const · 2 crate-vis | ReviewDecisions, ReviewFinding, ReviewNote, ReviewNotes, ReviewWording | A review's typed questions: each lens asks its verdict, severity, scope and (when the lens has one) hard… |
 | `src/critic/review/submit.rs` | src | s | 3 struct · 1 fn | CriticBinding, CriticReviewOutcome, CriticReviewSubmit | One critic review through a host's door (`vault.critic.review`): what the caller binds and what the review… |
 | `src/critic/review/tests.rs` | test | s | 5 crate-vis | — | — |
@@ -2701,8 +2701,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/learning/project.rs` | src | m | 1 struct · 1 fn · 11 crate-vis | SettingFit | The one projector: anchored evidence, a prior and a window in, one superseding `learning.*` head per cell out |
 | `src/learning/read.rs` | src | s | 1 struct · 3 fn · 3 crate-vis | LearningRead | Reading measured state back, with the fixed backoff order (ARCH-0003 #learning-qualifiers) |
 | `src/learning/retest.rs` | src | s | 1 struct · 1 enum · 1 fn | Retest, RetestScore | `learning.retest_noise`: how often a judge or scorer disagrees with itself when it scores the same case twice |
-| `src/learning_setting.rs` | src | L | 3 struct · 2 enum · 11 fn · 16 const · 13 crate-vis | SettingCheck, SettingMode, SettingRow, SettingScope, SettingSpec | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… |
+| `src/learning_setting.rs` | src | L | 3 struct · 2 enum · 11 fn · 16 const · 15 crate-vis | SettingCheck, SettingMode, SettingRow, SettingScope, SettingSpec | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… |
 | `src/learning_setting/actor_erase.rs` | src | s | 2 crate-vis | — | An erased owner out of the seed and pin rows that name it (FIX 3520) |
+| `src/learning_setting/sourced.rs` | src | s | 1 crate-vis | — | A vault-wide setting's value beside the rows it stands on (FIX 7101): what a producer that cites its inputs… |
+| `src/learning_setting/subject.rs` | src | s | 2 crate-vis | — | The entity a vault-wide knob's fit is learned on (FIX 8079): an engine-owned ASSET at the knob's… |
 | `src/learning_setting_choice.rs` | src | m | 1 struct · 2 enum · 6 fn · 1 const · 3 crate-vis | ChoiceRow, ChoiceValue, SpawnChoice | The owner's spawn choices (ARCH-0003 #learning-settings, ARCH-0079 #seed-pin): a seed or pin over a spawn's… |
 | `src/learning_setting_doors.rs` | src | m | 6 struct · 3 enum · 3 fn | LearningChoiceValue, LearningSettingClear, LearningSettingMode, LearningSettingPut, LearningSettingRowView, LearningSettingScope, LearningSettingSpecView, LearningSettingsRequest +1 | The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a… |
 | `src/lens/activation.rs` | src | s | 2 struct · 5 fn | LensActivateRequest, LensDeactivateRequest | The owner's selection of a proposed pack lens for its slot, and its clearing (OF-250) |
@@ -4249,7 +4251,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_attribution/projector.rs` | src | m | 6 fn · 5 crate-vis | — | Evidence door and ordered idempotent projection from evidence to judgments and edit proposals |
 | `src/skill_attribution/run_writes.rs` | src | s | 5 crate-vis | — | OF-540/OF-397: the write envelope of a leased agent run |
 | `src/skill_attribution/skill_erase.rs` | src | s | 2 crate-vis | — | A skill's erase in the attribution ledgers (FIX 8265, OF-568 L10): the evidence rows and routed judgments… |
-| `src/skill_attribution/split.rs` | src | s | 6 crate-vis | — | The one split path both lanes judge through (ARCH-0056 §5): per-hunk answers in, a label + share vector out… |
+| `src/skill_attribution/split.rs` | src | s | 7 crate-vis | — | The one split path both lanes judge through (ARCH-0056 §5): per-hunk answers in, a label + share vector out… |
 | `src/skill_attribution/sweep.rs` | src | s | 2 struct · 1 trait · 2 fn | AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource | TASK-lane receipt pump: capture once, route, then resume both idempotent projections |
 | `src/skill_attribution/tests.rs` | test | s | — | — | — |
 | `src/skill_attribution/tests/resident.rs` | test | m | — | — | — |
@@ -4327,7 +4329,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/pack_catalog/tool_schema.rs` | src | m | 6 crate-vis | — | Closed Draft 2020-12 tool-schema profile: resource-aware nodes, not a JSON rewrite |
 | `src/skill_hub/pack_catalog/transport.rs` | src | s | 1 trait · 2 fn · 3 crate-vis | PackSourceAdapter | Generic Git/HTTP source fetch composes with the post-fit pack install door |
 | `src/skill_hub/package.rs` | src | s | 4 struct · 1 enum · 8 fn · 6 crate-vis | HubFile, HubIndexEntry, HubPackage, SkillCapabilitySurface, SkillPackageFormat | — |
-| `src/skill_hub/package_codec.rs` | src | m | 2 fn · 13 crate-vis | — | Bounded, typed package persistence |
+| `src/skill_hub/package_codec.rs` | src | m | 2 fn · 14 crate-vis | — | Bounded, typed package persistence |
 | `src/skill_hub/publisher.rs` | src | s | 1 struct · 5 fn · 3 crate-vis | ForeignSkillPublisher | A publisher is a foreign actor with an owner-minted, revocable offer-only grant |
 | `src/skill_hub/record.rs` | src | m | 3 struct · 4 enum · 14 fn · 3 const · 2 crate-vis | HubPin, HubRef, HubSyncPolicy, SkillHubKind, SkillHubRecord, SkillHubTrustTier, TrackedHubRef | — |
 | `src/skill_hub/ref_sync.rs` | src | s | 2 fn · 6 crate-vis | — | Per-ref sync policy (ARCH-0053 §7: sync_policy per ref, not per hub) |
@@ -4398,14 +4400,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_reliability/archive.rs` | src | s | 3 crate-vis | — | Imported reliability history is inert data, not a local posterior or synced base |
 | `src/skill_reliability/callable.rs` | src | s | 3 crate-vis | — | Callable invocation witnesses |
 | `src/skill_reliability/codec.rs` | src | s | 10 crate-vis | — | The msgpack map accessors and value encode/decode this module’s rows are read through |
+| `src/skill_reliability/equivalent.rs` | src | s | 1 crate-vis | — | The stored subjects one derived read folds together (FIX 7815): an entity and every shell merged into it… |
 | `src/skill_reliability/floor.rs` | src | s | 4 fn · 4 const · 1 crate-vis | — | The reliability floor dial and the quarantine proposal a floor crossing mints |
-| `src/skill_reliability/ledger.rs` | src | L | 3 fn · 1 const · 26 crate-vis | — | The durable per-(skill, receipt) outcome ledger: the contributing-win door and the tallies read off it |
-| `src/skill_reliability/mod.rs` | src | s | 7 re-export · 6 crate-vis | — | Bayesian skill retrieval over the shared learning.reliability projection |
+| `src/skill_reliability/ledger.rs` | src | m | 3 fn · 26 crate-vis | — | The durable per-(skill, receipt) outcome ledger: the contributing-win door and the tallies read off it |
+| `src/skill_reliability/mod.rs` | src | s | 7 re-export · 7 crate-vis | — | Bayesian skill retrieval over the shared learning.reliability projection |
 | `src/skill_reliability/posterior.rs` | src | s | 1 struct · 1 enum · 6 fn · 1 const · 6 crate-vis | ProvenanceTrustClass, SkillReliabilityPosterior | The Beta(α, β) posterior over a skill’s success rate and the provenance classes its prior is keyed by |
 | `src/skill_reliability/priors.rs` | src | s | 3 crate-vis | — | Weighted starting points for skill cells |
 | `src/skill_reliability/projector.rs` | src | m | 3 fn · 5 const · 3 crate-vis | — | Project attributed skill outcomes into the shared learning.reliability cells |
 | `src/skill_reliability/provenance.rs` | src | s | 2 fn · 2 crate-vis | — | Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the… |
-| `src/skill_reliability/read.rs` | src | m | 2 struct · 9 fn · 11 crate-vis | ExecutorReliability, SkillReliabilityQuery | Skill reliability reads use learning cells, never SkillRecord confidence |
+| `src/skill_reliability/read.rs` | src | m | 2 struct · 9 fn · 12 crate-vis | ExecutorReliability, SkillReliabilityQuery | Skill reliability reads use learning cells, never SkillRecord confidence |
 | `src/skill_reliability/resident.rs` | src | s | 1 fn | — | Per-resident version bandit over independently attributed fork receipts |
 | `src/skill_reliability/tests.rs` | test | L | — | — | — |
 | `src/skill_reliability/tests/resident.rs` | test | s | — | — | — |

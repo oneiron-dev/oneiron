@@ -2319,7 +2319,7 @@
      "path": "src/attempt_queue/read_set.rs",
      "purpose": "FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the…",
      "surface": {
-      "const": 1,
+      "const": 4,
       "crate-vis": 1,
       "fn": 4,
       "struct": 2
@@ -20710,7 +20710,7 @@
      "path": "src/critic/review/persistence.rs",
      "purpose": "Transactional review bundles",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -34563,7 +34563,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
       "const": 16,
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 2,
       "fn": 11,
       "struct": 3
@@ -34575,6 +34575,26 @@
      "notable": [],
      "path": "src/learning_setting/actor_erase.rs",
      "purpose": "An erased owner out of the seed and pin rows that name it (FIX 3520)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/learning_setting/sourced.rs",
+     "purpose": "A vault-wide setting's value beside the rows it stands on (FIX 7101): what a producer that cites its inputs…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/learning_setting/subject.rs",
+     "purpose": "The entity a vault-wide knob's fit is learned on (FIX 8079): an engine-owned ASSET at the knob's…",
      "surface": {
       "crate-vis": 2
      }
@@ -54493,7 +54513,7 @@
      "path": "src/skill_attribution/split.rs",
      "purpose": "The one split path both lanes judge through (ARCH-0056 §5): per-hunk answers in, a label + share vector out…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -55512,7 +55532,7 @@
      "path": "src/skill_hub/package_codec.rs",
      "purpose": "Bounded, typed package persistence",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 2
      }
     },
@@ -56547,6 +56567,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/skill_reliability/equivalent.rs",
+     "purpose": "The stored subjects one derived read folds together (FIX 7815): an entity and every shell merged into it…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/skill_reliability/floor.rs",
      "purpose": "The reliability floor dial and the quarantine proposal a floor crossing mints",
      "surface": {
@@ -56556,13 +56586,12 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_reliability/ledger.rs",
      "purpose": "The durable per-(skill, receipt) outcome ledger: the contributing-win door and the tallies read off it",
      "surface": {
-      "const": 1,
       "crate-vis": 26,
       "fn": 3
      }
@@ -56574,7 +56603,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 7
      }
     },
@@ -56638,7 +56667,7 @@
      "path": "src/skill_reliability/read.rs",
      "purpose": "Skill reliability reads use learning cells, never SkillRecord confidence",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 9,
       "struct": 2
      }
@@ -71175,7 +71204,7 @@
      "purpose": "The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault…"
     },
     "learning_setting": {
-     "files": 2,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -71693,9 +71722,9 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection"
     },
@@ -71945,9 +71974,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 177,
+   "over_bar": 176,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4596,
+   "source_files": 4599,
    "test_files": 902
   },
   "oneiron-android": {
