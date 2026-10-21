@@ -17,8 +17,9 @@
 //!
 //! `fetch` places a shipped release from the catalogue
 //! ([`crate::oneironer::release`]) under a models root: resumable, verified
-//! file by file, committed whole. It opens no vault; a managed engine never
-//! runs it, its supervisor does, into the node's shared model root.
+//! file by file, its selected platform archives extracted, committed whole.
+//! It opens no vault; a managed engine never runs it, its supervisor does,
+//! into the node's shared model root.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -35,7 +36,7 @@ use crate::config::{
     EmbedderDevice, OneironerConfig, OneironerProvider, ServeArgs, ServeConfig,
     resolve_serve_config,
 };
-use crate::oneironer::release::{self, ReleaseSource};
+use crate::oneironer::release::{self, Platforms, ReleaseSource};
 
 #[derive(Subcommand)]
 pub enum OneironerCommand {
@@ -167,6 +168,24 @@ pub struct FetchArgs {
     /// without one the fetch is anonymous.
     #[arg(long)]
     pub token_file: Option<PathBuf>,
+    /// The platform archives placed beside the common files: `host` (the
+    /// rows this build's OS and architecture run), `all` (every row, for a
+    /// root other machines read) or `none`. It never changes the manifest
+    /// or the stack. A placed bundle is never added to: place more
+    /// platforms under a fresh --into root.
+    #[arg(long, value_enum, default_value_t = FetchPlatforms::Host)]
+    pub platforms: FetchPlatforms,
+}
+
+/// The platform archives a fetch places.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum FetchPlatforms {
+    /// The rows whose OS and architecture this build targets.
+    Host,
+    /// Every row.
+    All,
+    /// No row: the common files alone.
+    None,
 }
 
 /// The engine device a qualification runs on.
@@ -267,15 +286,10 @@ fn publish(args: PublishArgs) -> anyhow::Result<()> {
 /// order, flushing each line as it lands. The answers carry offsets and
 /// labels, never text; stdout carries counts.
 fn qualify(args: QualifyArgs) -> anyhow::Result<()> {
-    // The section names what the bundle declares; the tagger checks both
-    // against the bundle again as it loads.
-    let bytes = std::fs::read(args.model_dir.join("oneironer.json"))?;
-    let manifest: serde_json::Value = serde_json::from_slice(&bytes)?;
-    let checkpoint = manifest["trunk"]["sha256"]
-        .as_str()
-        .and_then(|sha| sha.get(..16))
-        .unwrap_or_default();
-    let labels = manifest["ner_labels"].as_array().map_or(0, Vec::len);
+    // The section names what the bundle declares, read by the strict reader
+    // every runtime loads by; the tagger checks both against the bundle
+    // again as it loads.
+    let identity = crate::oneironer::engines::bundle_identity(&args.model_dir)?;
     let device = match args.device {
         QualifyDevice::Cpu => EmbedderDevice::Cpu,
         QualifyDevice::Cuda => EmbedderDevice::Cuda,
@@ -294,8 +308,8 @@ fn qualify(args: QualifyArgs) -> anyhow::Result<()> {
         provider: OneironerProvider::Local,
         model_dir: Some(args.model_dir),
         device,
-        checkpoint_sha16: Some(checkpoint.to_owned()),
-        label_count: Some(u32::try_from(labels)?),
+        checkpoint_sha16: Some(identity.checkpoint_sha16),
+        label_count: Some(identity.label_count),
         max_input_tokens: args.max_input_tokens.unwrap_or(defaults.max_input_tokens),
         live_window_tokens: args
             .live_window_tokens
@@ -350,8 +364,9 @@ fn qualify(args: QualifyArgs) -> anyhow::Result<()> {
 
 /// Places a shipped release under a models root and prints one JSON object:
 /// the outcome, the bundle's directory and, once the bundle is there, the
-/// `[oneironer]` section that serves it. A release not published, or private
-/// to this fetch, prints its outcome and then fails.
+/// platform rows it holds and those it does not, and the `[oneironer]`
+/// section that serves it. A release not published, or private to this
+/// fetch, prints its outcome and then fails.
 fn fetch(args: FetchArgs) -> anyhow::Result<()> {
     let Some(entry) = release::find(args.stack.as_deref()) else {
         let named = args.stack.unwrap_or_default();
@@ -359,6 +374,11 @@ fn fetch(args: FetchArgs) -> anyhow::Result<()> {
         anyhow::bail!("no oneironer release has stack {named}; known: {known}");
     };
     let source = ReleaseSource::new(args.repo, args.token_file.as_deref())?;
+    let selected = match args.platforms {
+        FetchPlatforms::Host => Platforms::Host,
+        FetchPlatforms::All => Platforms::All,
+        FetchPlatforms::None => Platforms::None,
+    };
     // A named root reads no environment.
     let root = match args.into {
         Some(root) => root,
@@ -373,7 +393,7 @@ fn fetch(args: FetchArgs) -> anyhow::Result<()> {
     // fetch gets a thread of its own.
     let fetched = std::thread::scope(|scope| {
         scope
-            .spawn(|| release::fetch_release(entry, &source, &root))
+            .spawn(|| release::fetch_release(entry, &source, &root, selected))
             .join()
     });
     let outcome = fetched.map_err(|_| anyhow::anyhow!("the oneironer fetch panicked"))??;
@@ -384,6 +404,7 @@ fn fetch(args: FetchArgs) -> anyhow::Result<()> {
     let block = outcome
         .placed()
         .map(|placed| release::oneironer_block(entry, placed));
+    let platforms = outcome.platforms();
     print(serde_json::json!({
         "outcome": outcome.as_str(),
         "stack_sha16": stack,
@@ -392,6 +413,8 @@ fn fetch(args: FetchArgs) -> anyhow::Result<()> {
         "model_dir": model_dir,
         "bytes": bytes,
         "resumed_bytes": resumed_bytes,
+        "platforms_installed": platforms.map(|placed| &placed.installed),
+        "platforms_skipped": platforms.map(|placed| &placed.skipped),
         "file": outcome.refused_file(),
         "message": refusal.as_deref(),
         "oneironer_block": block,

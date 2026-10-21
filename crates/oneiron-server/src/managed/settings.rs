@@ -385,8 +385,7 @@ fn admit_owner_path(
     let admitted = check_owner_path(field, path, stack, roots)
         .map_err(|reason| refused(field, SettingsRefusal::OutsideVault, Some(reason.as_str())))?;
     if admitted.origin == OwnerPathOrigin::SharedModel {
-        let manifest = crate::oneironer::engines::bundle_identity(&admitted.path)
-            .map(|identity| identity.stack_sha16);
+        let manifest = crate::oneironer::bundle::manifest_stack(&admitted.path);
         if manifest.ok().as_deref() != stack {
             return Err(refused(
                 field,

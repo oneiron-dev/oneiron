@@ -1,13 +1,12 @@
 //! Native extraction on candle, with no HTTP server or second runtime.
 //!
-//! A model directory contains `oneironer.json`: format_version 1, hashed
-//! `trunk`, `config` and `tokenizer` artifacts, `ner_labels` in classifier
-//! order, and optional `mentions`, `coref`, `vad` and `characters` heads.
-//! Artifact rows have `file` and full `sha256` fields. Head rows name their
-//! `trunk_sha16`. The SHA-256 prefix of this manifest is the served stack
-//! identity, binding the tokenizer, backbone config, all weights, label
-//! tables and decode knobs. Weights retain the model repository's state-dict
-//! names in safetensors.
+//! A model directory is a format-2 bundle ([`super::bundle`]): its
+//! `oneironer.json` names the hashed trunk, config and tokenizer, the label
+//! table in classifier order and the optional heads, each head naming its
+//! `trunk_sha16`, and its SHA-256 prefix is the served stack, binding every
+//! file, table and decode knob. Candle reads the common rows only; the
+//! platform rows are other runtimes'. Weights retain the model repository's
+//! state-dict names in safetensors.
 //!
 //! `characters` names the checkpoint's own training config, which holds the
 //! character vocabulary and width, and the decode revision; the head's
@@ -19,17 +18,15 @@ mod heads;
 mod window;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Component, Path};
 use std::sync::Mutex;
 
-use candle_core::{DType, Device, Module};
-use candle_nn::{Linear, VarBuilder, linear};
+use candle_core::{Device, Module};
+use candle_nn::{Linear, linear};
 use oneiron::ModelId;
 use oneiron::memory::extraction::{EncoderInput, EncoderOutput, NerSpan};
-use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use tokenizers::Tokenizer;
 
+use super::bundle::{CharacterConfig, Manifest, ReadManifest, character_vocab, read_manifest};
 use super::endpoint::{CONTRACT_VERSION, ModelCard, Returns};
 use crate::config::{EmbedderDevice, OneironerConfig};
 use backbone::{Backbone, Config};
@@ -38,100 +35,6 @@ use window::{
     CharacterFeatures, Characters, DecodeLayers, Named, ONEIRONER_DECODE_REVISION, Window,
     conversation_tokenizer, decode, decode_ner,
 };
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Artifact {
-    file: String,
-    sha256: String,
-}
-
-impl Artifact {
-    fn read(&self, dir: &Path) -> anyhow::Result<Vec<u8>> {
-        anyhow::ensure!(
-            !self.file.is_empty()
-                && Path::new(&self.file)
-                    .components()
-                    .all(|component| matches!(component, Component::Normal(_))),
-            "oneironer artifact file must be relative to its model directory"
-        );
-        let bytes = std::fs::read(dir.join(&self.file))?;
-        anyhow::ensure!(
-            format!("{:x}", Sha256::digest(&bytes)) == self.sha256,
-            "oneironer artifact SHA-256 mismatch"
-        );
-        Ok(bytes)
-    }
-
-    fn weights(&self, dir: &Path, device: &Device) -> anyhow::Result<VarBuilder<'static>> {
-        Ok(VarBuilder::from_buffered_safetensors(
-            self.read(dir)?,
-            DType::F32,
-            device,
-        )?)
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MentionHead {
-    weights: Artifact,
-    trunk_sha16: String,
-    labels: Vec<String>,
-    o_bias: f32,
-    /// Labels that are not overt mentions (for example predicate anchors).
-    ignored_labels: BTreeSet<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CorefHead {
-    weights: Artifact,
-    trunk_sha16: String,
-    repr_dim: usize,
-    tau: f32,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct VadHead {
-    weights: Artifact,
-    trunk_sha16: String,
-    hidden_size: usize,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CharacterHead {
-    /// The checkpoint's own training config.json, copied verbatim.
-    config: Artifact,
-    /// Must be this build's `ONEIRONER_DECODE_REVISION`, so a bundle never
-    /// runs a decode other than the one it names.
-    decode_revision: String,
-}
-
-/// The keys a checkpoint's training config holds for its character head.
-/// The file's other keys are training settings and go unread.
-#[derive(Deserialize)]
-struct CharacterConfig {
-    char_head: bool,
-    char_dim: u32,
-    char_vocab: BTreeMap<String, u32>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Manifest {
-    format_version: u32,
-    trunk: Artifact,
-    config: Artifact,
-    tokenizer: Artifact,
-    ner_labels: Vec<String>,
-    mentions: Option<MentionHead>,
-    coref: Option<CorefHead>,
-    vad: Option<VadHead>,
-    characters: Option<CharacterHead>,
-}
 
 struct Network {
     backbone: Backbone,
@@ -181,19 +84,16 @@ impl LocalTagger {
             .model_dir
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("oneironer.model_dir is required"))?;
-        let manifest_bytes = std::fs::read(dir.join("oneironer.json"))?;
-        let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
-        anyhow::ensure!(
-            manifest.format_version == 1,
-            "unsupported local oneironer manifest version"
-        );
-        validate_labels(&manifest.ner_labels)?;
+        // The format, every closed row and every check no setting decides.
+        let ReadManifest {
+            manifest,
+            stack_sha16: stack,
+        } = read_manifest(dir)?;
         let checkpoint = config.checkpoint_sha16.as_deref().unwrap_or_default();
         anyhow::ensure!(
-            manifest.trunk.sha256.len() == 64 && manifest.trunk.sha256.starts_with(checkpoint),
+            manifest.trunk.sha256.starts_with(checkpoint),
             "local oneironer checkpoint does not match checkpoint_sha16"
         );
-        let stack = format!("{:x}", Sha256::digest(&manifest_bytes))[..16].to_owned();
         anyhow::ensure!(
             config
                 .stack_sha16
@@ -258,12 +158,6 @@ impl LocalTagger {
             .mentions
             .as_ref()
             .map(|head| -> anyhow::Result<Linear> {
-                anyhow::ensure!(
-                    head.trunk_sha16 == checkpoint,
-                    "mention head belongs to another trunk"
-                );
-                anyhow::ensure!(head.o_bias.is_finite(), "invalid mention O bias");
-                validate_labels(&head.labels)?;
                 Ok(linear(
                     body.hidden_size,
                     head.labels.len(),
@@ -275,14 +169,6 @@ impl LocalTagger {
             .coref
             .as_ref()
             .map(|head| -> anyhow::Result<Coreference> {
-                anyhow::ensure!(
-                    head.trunk_sha16 == checkpoint && head.repr_dim > 0 && head.tau.is_finite(),
-                    "invalid coreference head or trunk binding"
-                );
-                anyhow::ensure!(
-                    mentions.is_some(),
-                    "coreference requires a mention proposer"
-                );
                 Ok(Coreference::load(
                     head.weights.weights(dir, &device)?,
                     body.hidden_size,
@@ -295,10 +181,6 @@ impl LocalTagger {
             .vad
             .as_ref()
             .map(|head| -> anyhow::Result<Affect> {
-                anyhow::ensure!(
-                    head.trunk_sha16 == checkpoint && head.hidden_size > 0,
-                    "invalid affect head or trunk binding"
-                );
                 Ok(Affect::load(
                     head.weights.weights(dir, &device)?,
                     body.hidden_size,
@@ -370,6 +252,15 @@ impl LocalTagger {
                 tool: "oneironer-local",
                 code: "native extraction failed".to_owned(),
             })
+    }
+
+    /// The tokens of `input`'s live window, special tokens included: the
+    /// window [`Self::infer`] tags it in (`Window::new`), its context joined
+    /// and cut to the live budget, whichever window this tagger tags in.
+    /// Calibration holds a reference case to a row's max window by it.
+    pub(crate) fn window_tokens(&self, input: &EncoderInput) -> anyhow::Result<usize> {
+        let window = Window::new(input, &self.tokenizer, self.cap, self.live)?;
+        Ok(window.encoding.len())
     }
 
     /// The revision of this build's decoder: what a bundle's character head
@@ -506,50 +397,4 @@ impl LocalTagger {
         }
         Ok(output)
     }
-}
-
-/// The character vocabulary as the head reads it, and the embedding rows it
-/// fills: ids run from 2 with no gap, 0 being padding and 1 an unknown
-/// character, as the model project's loader requires.
-fn character_vocab(vocab: BTreeMap<String, u32>) -> anyhow::Result<(HashMap<char, u32>, usize)> {
-    let mut ids = BTreeSet::new();
-    let mut table = HashMap::with_capacity(vocab.len());
-    for (key, id) in vocab {
-        let mut scalars = key.chars();
-        let (Some(character), None) = (scalars.next(), scalars.next()) else {
-            anyhow::bail!("oneironer character vocabulary keys must be single characters");
-        };
-        ids.insert(id);
-        table.insert(character, id);
-    }
-    let rows = table.len() + 2;
-    anyhow::ensure!(
-        ids.len() == table.len()
-            && ids.first() == Some(&2)
-            && ids.last().map(|&last| last as usize + 1) == Some(rows),
-        "oneironer character vocabulary ids must run from 2 with no gap"
-    );
-    Ok((table, rows))
-}
-
-fn validate_labels(labels: &[String]) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        labels.first().map(String::as_str) == Some("O"),
-        "local extraction BIO table must start with O"
-    );
-    let mut seen = BTreeSet::new();
-    for label in labels {
-        anyhow::ensure!(seen.insert(label), "duplicate extraction BIO label");
-        if label == "O" {
-            continue;
-        }
-        let Some((prefix, kind)) = label.split_once('-') else {
-            anyhow::bail!("invalid extraction BIO label");
-        };
-        anyhow::ensure!(
-            matches!(prefix, "B" | "I") && !kind.is_empty() && kind.len() <= 64,
-            "invalid extraction BIO label"
-        );
-    }
-    Ok(())
 }

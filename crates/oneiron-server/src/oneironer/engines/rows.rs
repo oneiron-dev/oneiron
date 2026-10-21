@@ -38,7 +38,13 @@ pub(crate) struct Row {
     pub(crate) os_build: String,
     /// Idle milliseconds before each timed case.
     pub(crate) idle_ms: u64,
-    /// Whether every reference answer cleared the bar.
+    /// The longest live window, in tokens with specials, a reference case
+    /// may need to be held; candle's is its `max_input_tokens`.
+    pub(crate) max_window_tokens: usize,
+    /// The `live_window_tokens` each case's window was cut to.
+    pub(crate) live_window_tokens: u32,
+    /// Whether every held reference answer cleared the bar; a row holding
+    /// none clears nothing.
     pub(crate) clears: bool,
     /// Mean wall-clock milliseconds per reference case, each timed after the
     /// idle, after one warm-up call; `None` when the engine could not load
@@ -48,7 +54,11 @@ pub(crate) struct Row {
     pub(crate) p50_ms: Option<f64>,
     /// The cases' 95th percentile milliseconds, as `mean_ms` is timed.
     pub(crate) p95_ms: Option<f64>,
+    /// The reference cases held and timed.
     pub(crate) cases: usize,
+    /// The reference cases whose window is longer than `max_window_tokens`:
+    /// left out, never failed.
+    pub(crate) skipped: usize,
     /// Unix seconds.
     pub(crate) measured_at: u64,
 }
@@ -65,17 +75,29 @@ pub(super) struct RowKey {
     build: String,
     os_build: String,
     idle_ms: u64,
+    window: WindowRules,
+}
+
+/// The window rules a row is measured under: which reference cases it
+/// holds, and how each case's window is cut.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct WindowRules {
+    /// The longest window a held case may need, tokens with specials.
+    pub(super) max_window_tokens: usize,
+    /// The earlier text a live window keeps.
+    pub(super) live_window_tokens: u32,
 }
 
 impl RowKey {
     /// `engine`'s key for the bundle `stack` and its reference, under this
-    /// server build and OS build.
+    /// server build and OS build and these window rules.
     pub(super) fn new(
         stack: &str,
         reference: &str,
         engine: Engine,
         build: &str,
         os_build: &str,
+        window: WindowRules,
     ) -> Self {
         let artifact = match engine.runtime {
             // A candle engine loads the bundle the stack names.
@@ -90,13 +112,20 @@ impl RowKey {
             build: build.to_owned(),
             os_build: os_build.to_owned(),
             idle_ms: u64::try_from(CALIBRATION_IDLE.as_millis()).unwrap_or(u64::MAX),
+            window,
         }
+    }
+
+    /// The longest window a case the row holds may need.
+    pub(super) fn max_window_tokens(&self) -> usize {
+        self.window.max_window_tokens
     }
 }
 
 impl Row {
-    /// A row for `key` with nothing timed and nothing cleared yet.
-    pub(super) fn unmeasured(key: &RowKey, cases: usize) -> Self {
+    /// A row for `key` holding `cases` and skipping `skipped`, with nothing
+    /// timed and nothing cleared yet.
+    pub(super) fn unmeasured(key: &RowKey, cases: usize, skipped: usize) -> Self {
         let key = key.clone();
         Self {
             stack_sha16: key.stack_sha16,
@@ -107,11 +136,14 @@ impl Row {
             build: key.build,
             os_build: key.os_build,
             idle_ms: key.idle_ms,
+            max_window_tokens: key.window.max_window_tokens,
+            live_window_tokens: key.window.live_window_tokens,
             clears: false,
             mean_ms: None,
             p50_ms: None,
             p95_ms: None,
             cases,
+            skipped,
             measured_at: unix_now(),
         }
     }
@@ -125,6 +157,8 @@ impl Row {
             && self.build == key.build
             && self.os_build == key.os_build
             && self.idle_ms == key.idle_ms
+            && self.max_window_tokens == key.window.max_window_tokens
+            && self.live_window_tokens == key.window.live_window_tokens
     }
 
     /// Its timing, when it clears the bar and was timed.

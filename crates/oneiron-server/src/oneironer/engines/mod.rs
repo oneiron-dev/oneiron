@@ -14,14 +14,15 @@
 //! No bar and no speed sits in this file. The bar and the reference cases
 //! ship in the bundle's `parity.json`; the measured speeds are rows in this
 //! machine's engine file, and a row is measured again when the stack, the
-//! reference, the runtime, its artifact, the server build, the OS build or
-//! the calibration idle moves. A bundle with no reference holds no engine to
-//! a bar, so the built-in one serves.
+//! reference, the runtime, its artifact, the server build, the OS build, the
+//! calibration idle or the window rules move. A row holds an engine to the
+//! reference cases whose live window fits its max window; a longer case is
+//! skipped, the only skip. A bundle with no reference holds no engine to a
+//! bar, so the built-in one serves.
 
 use std::path::Path;
 
-use serde::Deserialize;
-
+use super::bundle::read_manifest;
 use super::local::LocalTagger;
 use crate::config::oneironer::OneironerRuntime;
 use crate::config::{EmbedderDevice, OneironerConfig};
@@ -30,12 +31,9 @@ mod calibration;
 mod rows;
 
 use calibration::{Reference, Timing, measure, prefers};
-use rows::{RowKey, build_id, os_build, read_rows, rows_path, sha16, write_rows};
+use rows::{RowKey, WindowRules, build_id, os_build, read_rows, rows_path, write_rows};
 
 pub(crate) use rows::Row;
-
-/// The bundle file the local tagger loads; its SHA-256 prefix is the stack.
-const MANIFEST_FILE: &str = "oneironer.json";
 
 /// One runtime on one device.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -111,40 +109,16 @@ pub(crate) struct BundleIdentity {
     pub(crate) label_count: u32,
 }
 
-/// The two manifest fields the identity needs. The local tagger reads the
-/// manifest whole, strictly, when it loads.
-#[derive(Deserialize)]
-struct ManifestIdentity {
-    trunk: TrunkIdentity,
-    ner_labels: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct TrunkIdentity {
-    sha256: String,
-}
-
+/// Reads the identity through the strict reader every runtime loads by, so
+/// a bundle of another format is the same typed refusal here
+/// ([`super::bundle::BundleFormat`]).
 pub(crate) fn bundle_identity(dir: &Path) -> anyhow::Result<BundleIdentity> {
-    let bytes = std::fs::read(dir.join(MANIFEST_FILE)).map_err(|error| {
-        anyhow::anyhow!(
-            "oneironer model_dir {} holds no readable {MANIFEST_FILE}: {error}",
-            dir.display()
-        )
-    })?;
-    let manifest: ManifestIdentity = serde_json::from_slice(&bytes)
-        .map_err(|_| anyhow::anyhow!("oneironer {MANIFEST_FILE} is not a bundle manifest"))?;
-    let trunk = manifest.trunk.sha256;
-    anyhow::ensure!(
-        trunk.len() == 64
-            && trunk
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-        "oneironer {MANIFEST_FILE} trunk sha256 is not 64 lowercase hex digits"
-    );
+    let read = read_manifest(dir)?;
     Ok(BundleIdentity {
-        checkpoint_sha16: trunk[..16].to_owned(),
-        stack_sha16: sha16(&bytes),
-        label_count: u32::try_from(manifest.ner_labels.len())?,
+        // 64 lowercase hex digits: the parse checked them.
+        checkpoint_sha16: read.manifest.trunk.sha256[..16].to_owned(),
+        stack_sha16: read.stack_sha16,
+        label_count: u32::try_from(read.manifest.ner_labels.len())?,
     })
 }
 
@@ -230,12 +204,17 @@ pub(crate) fn survey(
     let path = rows_path(rows_location);
     let mut rows = path.as_deref().map(read_rows).unwrap_or_default();
     let (build, os_build) = (build_id(), os_build());
+    // Candle holds a case to the window it is configured to build.
+    let window = WindowRules {
+        max_window_tokens: config.max_input_tokens,
+        live_window_tokens: config.live_window_tokens,
+    };
     let mut engines = Vec::with_capacity(here.len());
     let mut preferred: Option<(Engine, Timing)> = None;
     let mut loaded: Option<LocalTagger> = None;
     let mut measured = false;
     for engine in here {
-        let key = RowKey::new(stack, &reference.sha16, engine, &build, &os_build);
+        let key = RowKey::new(stack, &reference.sha16, engine, &build, &os_build, window);
         let kept = rows.iter().find(|row| row.is_for(&key)).cloned();
         let (row, tagger) = match kept {
             Some(row) => (row, None),
