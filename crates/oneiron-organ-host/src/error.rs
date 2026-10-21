@@ -1,5 +1,6 @@
 //! What can go wrong on the engine side of an organ call.
 
+use std::fmt;
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -23,12 +24,30 @@ pub enum Unavailable {
     ThirdPartyUnconfined,
 }
 
+impl fmt::Display for Unavailable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Revoked => f.write_str("its install grant was withdrawn"),
+            Self::Reinstalled => {
+                f.write_str("a reinstall replaced it while the call was starting; retry")
+            }
+            Self::Quarantined => {
+                f.write_str("it crashed five times in ten minutes; reinstall to clear")
+            }
+            Self::Incompatible(reason) => write!(f, "its binary failed the handshake: {reason}"),
+            Self::ThirdPartyUnconfined => f.write_str(
+                "third-party organ: this platform has no filesystem confinement for organs yet",
+            ),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum HostError {
     #[error("organ {0} is not installed")]
     NotInstalled(String),
-    #[error("organ {organ} is unavailable: {reason:?}")]
+    #[error("organ {organ} is unavailable: {reason}")]
     Unavailable { organ: String, reason: Unavailable },
     #[error("organ {organ} is backing off after a crash; retry in {retry_after:?}")]
     Backoff {

@@ -51,10 +51,11 @@ pub use desktop::{AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, 
 pub use engine::BrowserEngine;
 pub use fact::{ActionFact, ActionTarget, NoEffectReason, ViewportPoint};
 pub use library::{
-    LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
-    LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, ProposeInput,
-    ProposeOutput, RetiredCard, WORKFLOW_MAX_CHECKS, WORKFLOW_MAX_PARAMS, WORKFLOW_SUBGOAL_BYTES,
-    WorkflowCheck, WorkflowLibrary, WorkflowProgram, WorkflowProof, site_of,
+    AdmissionRefusal, Admitted, LibraryCard, LibraryFindInput, LibraryFindOutput,
+    LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput,
+    LibraryRunInput, LibraryRunOutput, ProposeInput, ProposeOutput, RecentCounts, ReplayGuest,
+    RetiredCard, SupersedeOutcome, SupersedeRefusal, WorkflowCheck, WorkflowLibrary,
+    WorkflowProgram, WorkflowProof, WorkflowSeed, site_of, validate_replay_args,
 };
 pub use observation::{
     HandleInfo, ObservationBase, Rebound, RowSplice, StepRebound, is_live_handle,
@@ -68,7 +69,7 @@ pub use request::{BrowserRequestHandler, RenderedDocument};
 pub use retention::HandleRetention;
 pub use row::{Row, RowFieldGap, RowGapField, RowGapReason};
 #[cfg(feature = "driver")]
-pub use session::{BrowserGuest, BrowserGuestStarter, BrowserSession, StartedGuest};
+pub use session::{BrowserGuest, BrowserGuestStarter, BrowserSession, FreshGuest, StartedGuest};
 pub use switch::{
     EngineSwitchRecord, StoragePhase, SwitchCarried, SwitchComponent, SwitchEngineInput,
     SwitchEngineOutput, SwitchLoss, SwitchNotCarried, SwitchOutcome, SwitchStage,

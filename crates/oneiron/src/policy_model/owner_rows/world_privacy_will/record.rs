@@ -96,6 +96,11 @@ pub struct WorldPrivacyRequest {
     pub ask: Option<u64>,
     pub status: WorldPrivacyRequestStatus,
     pub at: u64,
+    /// For an agent's request, why a Grant that named it was passed over:
+    /// `pact_standing_lapsed` when, on a shared vault, its pact membership
+    /// alone had lapsed (FIX 7548). Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_omitted: Option<String>,
 }
 
 impl WorldPrivacyRequest {
@@ -156,6 +161,7 @@ pub(super) struct NewRequest {
     pub(super) holders: Vec<EntityId>,
     pub(super) needs: Vec<EntityId>,
     pub(super) yes: Vec<EntityId>,
+    pub(super) grant_omitted: Option<&'static str>,
 }
 
 impl Vault {
@@ -187,6 +193,7 @@ impl Vault {
             ask: None,
             status: WorldPrivacyRequestStatus::Pending,
             at,
+            grant_omitted: new.grant_omitted.map(str::to_owned),
         };
         REQUESTS.put(&self.store, txn, &id, &request)?;
         let (kind, detail) = match new.kind {

@@ -1190,7 +1190,13 @@ impl EngineNativeExecutor<'_> {
             model: config.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
-                scope: crate::llm::Scope::default(),
+                // A scoped child's calls carry the resource scope its loan
+                // lent it (FIX 7507); every other run's keep the default.
+                scope: self
+                    .gated_write
+                    .scoped_child_scope()
+                    .cloned()
+                    .unwrap_or_default(),
                 purpose: CallPurpose::Other {
                     name: ENGINE_EXECUTOR_PURPOSE_NAME.to_owned(),
                 },

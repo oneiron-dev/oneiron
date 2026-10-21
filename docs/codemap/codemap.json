@@ -3538,7 +3538,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "re-export": 59
      }
     },
@@ -3578,7 +3578,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -3724,7 +3724,7 @@
      "path": "src/authority/principal_standing.rs",
      "purpose": "FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -8834,19 +8834,23 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "Filing",
       "LibraryActor",
+      "RecentOutcome",
+      "RecentRun",
       "Retired",
       "RetiredWorkflow",
-      "WorkflowRecord"
+      "WorkflowRecord",
+      "WorkflowResolution"
      ],
      "path": "src/browser_library.rs",
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
-      "const": 1,
+      "const": 3,
       "crate-vis": 2,
-      "enum": 2,
-      "fn": 10,
-      "struct": 2
+      "enum": 5,
+      "fn": 12,
+      "struct": 3
      }
     },
     {
@@ -13703,6 +13707,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/dispatcher/agent_verb/scoped_port.rs",
+     "purpose": "A scoped child's port calls (FIX 7507 PR2): the verbs its parent lent it, each run by the adapter its host…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/dispatcher/agent_verb/session_write.rs",
      "purpose": "The two writes a run bound to an off-record session stages in its room (DOOR-127; WILL L11-01, S01-2a)…",
      "surface": {
@@ -13850,8 +13864,8 @@
      "path": "src/code_run/dispatcher/reader_spawn.rs",
      "purpose": "Reader forks at the dispatcher (ARCH-0079 #reader-forks): the seat a host lends a run that may spawn…",
      "surface": {
-      "crate-vis": 10,
-      "fn": 2
+      "crate-vis": 14,
+      "fn": 3
      }
     },
     {
@@ -14058,7 +14072,7 @@
      "surface": {
       "crate-vis": 23,
       "mod": 7,
-      "re-export": 21
+      "re-export": 23
      }
     },
     {
@@ -14125,6 +14139,16 @@
       "fn": 19,
       "struct": 21,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/reader_brief.rs",
+     "purpose": "The task text a reader child's run is given: a read child's names its one source; a scoped child's (FIX…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -14369,6 +14393,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ScopedChildCallContext",
+      "ScopedChildLoan",
+      "ScopedChildPorts",
+      "ScopedChildSpec",
+      "ScopedInputRead"
+     ],
+     "path": "src/code_run/scoped_child.rs",
+     "purpose": "Scoped children (FIX 7507 PR2): a separate code-mode agent a host queues on the reader-job machinery…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 6,
+      "fn": 8,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -14607,6 +14651,16 @@
       "enum": 1,
       "fn": 11,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/reader_jobs/scoped.rs",
+     "purpose": "A host's scoped child (FIX 7507 PR2), queued on its parent's reader rows as every child of the parent is…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -21537,13 +21591,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/call_labels.rs",
      "purpose": "Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/call_labels/decision_rungs.rs",
+     "purpose": "The host ladder's model rungs through one call's labels (FIX 7506 P2)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -21611,7 +21675,7 @@
      "path": "src/dreamer_consolidation/executor/decisions.rs",
      "purpose": "The consolidation's typed questions through the host's ladder: how a conflict set resolves and which…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 1
      }
@@ -21621,9 +21685,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction.rs",
-     "purpose": "Extraction request/response projection for one admitted branch, and the typed pack that decides which listed…",
+     "purpose": "Extraction request/response projection for one admitted branch; the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 7
      }
     },
     {
@@ -21632,6 +21696,16 @@
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction/cited.rs",
      "purpose": "The extraction step's citation check (FIX 7274): a citation that verification would refuse the whole…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/extraction/corrections.rs",
+     "purpose": "The typed pack that decides which listed claim each extracted candidate corrects: one question per candidate…",
      "surface": {
       "crate-vis": 3
      }
@@ -22259,6 +22333,16 @@
       "enum": 2,
       "fn": 4,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/settle/decision_projection.rs",
+     "purpose": "A parked conflict's settlement ask as the ladder reads it (FIX 7506 P2): each stored member and retained…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -23201,7 +23285,7 @@
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
       "const": 15,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 6,
       "fn": 12,
       "re-export": 3,
@@ -23292,6 +23376,16 @@
      "purpose": "`loop` over an agent run's own calls",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/targeted.rs",
+     "purpose": "The agent-health review over one agent attempt (OF-568 L1, L2): on its terminal receipt, and at each Dreamer…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -35008,7 +35102,21 @@
      "surface": {
       "enum": 3,
       "fn": 2,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DecisionWireLabels"
+     ],
+     "path": "src/llm/decision/generated/wire.rs",
+     "purpose": "A generated read's wire names (FIX 7506): what the request shows in place of each question's id and each…",
+     "surface": {
+      "crate-vis": 3,
+      "trait": 1
      }
     },
     {
@@ -40001,7 +40109,7 @@
      "path": "src/merge_queue/candidate_intake.rs",
      "purpose": "The queue's accepted-push candidate intake (FIX 6869, G4 PR2): the one server port the checker's drain calls…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -40072,7 +40180,7 @@
      "purpose": "The checker's companion rows and their attempt lifecycle (FIX 6868)",
      "surface": {
       "const": 2,
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 3,
       "fn": 4,
       "struct": 3
@@ -40208,7 +40316,7 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 1
      }
     },
@@ -40258,6 +40366,39 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/merge_queue/source.rs",
+     "purpose": "The served queue source's one resolver (FIX 6869): which root a queue opens at the owner's doors, the driver…",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/source_materialize.rs",
+     "purpose": "The served queue source's materialization (FIX 6869): the one place its engine-owned detached worktree is…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ServedQueueSource"
+     ],
+     "path": "src/merge_queue/source_types.rs",
+     "purpose": "The served queue source's names (FIX 6869): which authenticated import a served repository's checked queue…",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/merge_queue/staging.rs",
      "purpose": "Bounded speculation, materialization and cleanup through the shared repo writer",
      "surface": {
@@ -40272,7 +40413,7 @@
      "path": "src/merge_queue/storage.rs",
      "purpose": "Repo-scoped queue/batch rows; every transition is under the repo single writer",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 3
      }
     },
@@ -68752,7 +68893,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 130,
+     "files": 134,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68990,7 +69131,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 93,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69018,7 +69159,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 115,
+     "files": 116,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69333,7 +69474,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 117,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69361,7 +69502,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 28,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -70035,7 +70176,7 @@
    },
    "over_bar": 182,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4443,
+   "source_files": 4455,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72884,7 +73025,7 @@
      "path": "src/driver/storage.rs",
      "purpose": "The driver's reads of a page's storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on both…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -73007,12 +73148,32 @@
      "path": "src/library.rs",
      "purpose": "The replay library (OF-598; EIRI-ARCH-0002 \"The replay library\"): a solved browser run, kept as a…",
      "surface": {
-      "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 3,
+      "re-export": 1,
       "struct": 14,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AdmissionRefusal",
+      "Admitted",
+      "RecentCounts",
+      "ReplayGuest",
+      "SupersedeOutcome",
+      "SupersedeRefusal",
+      "WorkflowSeed"
+     ],
+     "path": "src/library/admission.rs",
+     "purpose": "What an admission checks past the two pages, and what the library keeps of it (CUA E1): the held-out values…",
+     "surface": {
+      "enum": 4,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -73123,8 +73284,22 @@
      "surface": {
       "crate-vis": 5,
       "fn": 23,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FreshGuest"
+     ],
+     "path": "src/session/fresh.rs",
+     "purpose": "The fresh guest a proposal's replay runs on (CUA E1): admission's second check runs on a browser of its own…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "trait": 1
      }
     },
     {
@@ -73170,7 +73345,7 @@
      "path": "src/session/switch.rs",
      "purpose": "The engine switch's transaction (FIX 6680, BROWSER-SPLIT PR3, PR3b), under the seat lock the call already…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 7
      }
     },
     {
@@ -73247,10 +73422,10 @@
      "purpose": "What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page…"
     },
     "library": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The replay library (OF-598; EIRI-ARCH-0002 \"The replay library\"): a solved browser run, kept as a…"
     },
     "mcp": {
@@ -73303,7 +73478,7 @@
      "purpose": "A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX…"
     },
     "session": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -73319,7 +73494,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 36,
+   "source_files": 38,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -80820,7 +80995,7 @@
      "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…",
      "surface": {
       "enum": 1,
-      "fn": 9
+      "fn": 10
      }
     },
     {
@@ -80953,7 +81128,7 @@
      "path": "src/wire.rs",
      "purpose": "The protocol's messages",
      "surface": {
-      "const": 7,
+      "const": 8,
       "enum": 10,
       "fn": 7,
       "struct": 22
@@ -82967,7 +83142,7 @@
      "surface": {
       "crate-vis": 36,
       "fn": 22,
-      "mod": 1,
+      "mod": 2,
       "re-export": 1,
       "struct": 2
      }
@@ -83010,6 +83185,17 @@
      "purpose": "A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/scoped_child.rs",
+     "purpose": "Scoped children at the host (FIX 7507 PR2): the door a scoped child runs behind, the binding of its lent…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -94481,7 +94667,7 @@
      "path": "src/server/organs.rs",
      "purpose": "The organs on the server's one host ([`SyncServer::organs`]): every organ an Active pack carries a build of…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -95579,7 +95765,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 70,
+     "files": 71,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96036,7 +96222,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1048,
+   "source_files": 1049,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -96258,6 +96444,7 @@
       "AdmissionConsent",
       "AdmissionReceipt",
       "AdmissionReceiptsRequest",
+      "AdmissionRefusal",
       "AdmissionStatus",
       "AdmissionStatusRequest",
       "AffectAnnotationPut",
@@ -98878,6 +99065,7 @@
       "ReceiptRecord",
       "ReceiptView",
       "ReceivedFileOperation",
+      "RecentCounts",
       "RecipientRole",
       "RecipientState",
       "RecordEraseConfirmRequest",
@@ -98911,6 +99099,7 @@
       "RenderPair",
       "RenderSide",
       "RendererKind",
+      "ReplayGuest",
       "ReplyCode",
       "ReplyDisposition",
       "ReplyRouteRule",
@@ -99700,6 +99889,8 @@
       "SummarySourceVersion",
       "SummarySpan",
       "SummaryStatusRequest",
+      "SupersedeOutcome",
+      "SupersedeRefusal",
       "SupportGrantList",
       "SupportGrantListRequest",
       "SupportGrantMintAnswer",
@@ -100060,6 +100251,7 @@
       "WorkflowRunRequest",
       "WorkflowRunView",
       "WorkflowSaveRequest",
+      "WorkflowSeed",
       "WorkflowStepCapture",
       "WorkflowStepRun",
       "WorkflowUpdateRequest",
@@ -100104,8 +100296,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 930,
-      "struct": 2937
+      "enum": 933,
+      "struct": 2940
      }
     },
     {

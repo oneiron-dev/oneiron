@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3940 declarations.
+// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3946 declarations.
 // Replies: 1057 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -868,7 +868,7 @@ declare namespace Sdk {
   type WeaveScheduleCleared = { cleared: boolean };
   type WeaveDigestSettingChangeStatus = "pending" | "applied" | "accepted" | "declined" | "superseded" | "undone";
   type WeaveDigestSettings = { cadence: WeaveDigestCadence; sections: WeaveSectionKind[] };
-  type WeaveDigestSettingChange = { change_ref: string; status: WeaveDigestSettingChangeStatus; before: WeaveDigestSettings; after: WeaveDigestSettings; reason: string; coach_ref: string; grant_ref?: string | null; base_generation: number; after_generation?: number | null; undone_generation?: number | null; created_at: number; settled_at?: number | null };
+  type WeaveDigestSettingChange = { change_ref: string; status: WeaveDigestSettingChangeStatus; before: WeaveDigestSettings; after: WeaveDigestSettings; reason: string; coach_ref: string; grant_ref?: string | null; base_generation: number; after_generation?: number | null; undone_generation?: number | null; created_at: number; settled_at?: number | null; grant_omitted?: string | null };
   type WeaveDigestSettingAnswer = { change_ref: string; accept: boolean };
   type WeaveDigestSettingUndo = { change_ref: string };
   type WeaveDigestFeedback = { preferred_cadence?: WeaveDigestCadence | null; lead_section?: WeaveSectionKind | null; keep_current?: boolean };
@@ -3080,7 +3080,9 @@ declare namespace Sdk {
   type SwitchOutcome = { state: "switched" } | { state: "unchanged" } | { state: "failed"; stage: SwitchStage; code: string; detail: string };
   type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reason: string; url: string; carried?: SwitchCarried[]; not_carried?: SwitchNotCarried[]; outcome: SwitchOutcome };
   type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null };
-  type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number };
+  type RecentCounts = { pass: number; miss: number; repair: number; of: number };
+  type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
+  type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
   type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null };
   type ObservationPage = Observation2 & { next?: string | null };
@@ -3855,9 +3857,13 @@ declare namespace Sdk {
   type LibraryFindInput = { site?: string | null; subgoal?: string | null };
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type BrowserLibraryFindOutput = BrowserAnswer<LibraryFindOutput>;
-  type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string> };
-  type WorkflowCheck = "solved" | "replay";
-  type ProposeOutput = { admitted: boolean; workflow?: string | null; refused_by?: WorkflowCheck | null; unmet?: number[]; replay?: BatchOutput | null };
+  type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null };
+  type WorkflowCheck = "solved" | "replay" | "held_out" | "fresh_guest" | "supersedes";
+  type SupersedeRefusal = "malformed" | "not_on_site" | "same_record" | "not_filer";
+  type AdmissionRefusal = { cause: "held_out"; used: string[]; missing: string[]; unknown: string[]; same: string[] } | { cause: "fresh_guest"; stage: SwitchStage; code: string; detail: string } | { cause: "supersedes"; workflow: string; why: SupersedeRefusal };
+  type ReplayGuest = { engine: BrowserEngine; carried: SwitchCarried[]; not_carried: SwitchNotCarried[] };
+  type SupersedeOutcome = "retired" | "linked" | "dropped";
+  type ProposeOutput = { admitted: boolean; workflow?: string | null; refused_by?: WorkflowCheck | null; refusal?: AdmissionRefusal | null; unmet?: number[]; replay?: BatchOutput | null; replay_guest?: ReplayGuest | null; superseded?: SupersedeOutcome | null };
   type BrowserLibraryProposeOutput = BrowserAnswer<ProposeOutput>;
   type LibraryRetireInput = { workflow: string; reason?: string | null };
   type LibraryRetireOutput = { retired: LibraryCard };
@@ -3883,7 +3889,7 @@ declare namespace Sdk {
   type WorldReadInput = { kind: "one_machine"; machine: string } | { kind: "my_machines" } | { kind: "everywhere" };
   type WorldSealedInput = "off" | "my_machines" | "cloud_and_my_machines";
   type WorldPrivacySetInput = { world: string; read: WorldReadInput; sealed: WorldSealedInput; models?: string[] | null; seen?: string | null };
-  type WorldPrivacySetOutput = { kind: "applied"; receipt: string } | { kind: "proposed"; proposal: string; wait: TaskAskHandle } | { kind: "asked"; ask: string; ask_seq?: number | null; wait: TaskAskHandle };
+  type WorldPrivacySetOutput = { kind: "applied"; receipt: string } | { kind: "proposed"; proposal: string; wait: TaskAskHandle; grant_omitted?: string | null } | { kind: "asked"; ask: string; ask_seq?: number | null; wait: TaskAskHandle; grant_omitted?: string | null };
   type MemorySearchInput = { query: string; limit?: number | null };
   type MemorySearchHit = { id: EntityId; score: number };
   type SessionHookPhase = "pre" | "post";
@@ -4172,9 +4178,9 @@ declare namespace self {
     /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.BrowserHandoverOutput | StoredResult>;
     library: {
-      /** The replay library's programs for a site, or for the open page's site. */
+      /** The replay library's programs for a site, or for the open page's site, each card with its lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of` outcomes), held_out, supersedes and seed. */
       find(input: Sdk.LibraryFindInput): Promise<Sdk.BrowserLibraryFindOutput | StoredResult>;
-      /** Offers a solved run's program to the replay library, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition. */
+      /** Offers a solved run's program to the replay library, refs as locators; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance. */
       propose(input: Sdk.ProposeInput): Promise<Sdk.BrowserLibraryProposeOutput | StoredResult>;
       /** Takes a program out of the replay library for every later run, and returns the card it had. */
       retire(input: Sdk.LibraryRetireInput): Promise<Sdk.BrowserLibraryRetireOutput | StoredResult>;
