@@ -6,6 +6,9 @@ mod codec;
 mod file_frontiers;
 mod frontier;
 mod graph;
+mod import_anchor;
+mod import_promotion;
+mod import_types;
 mod integrity;
 mod keys;
 mod proposals;
@@ -33,8 +36,14 @@ pub use self::types::{CodeRevision, CodeRevisionFork, CodeRevisionKind};
 // The tested queue revision (FIX 6868, G2 PR3).
 pub(crate) use self::queue::{queue_aggregation_session, queue_provenance_id, queue_revision_id};
 pub(crate) use self::queue_promotion::QueuePromotionGap;
-pub use self::tree_inventory::CodeTreeBlob;
-pub(crate) use self::tree_inventory::{CodeTreeInventory, MODE_GITLINK};
+pub(crate) use self::tree_inventory::MODE_GITLINK;
+pub use self::tree_inventory::{CodeTreeBlob, CodeTreeInventory};
+// The reviewed import and its untouched-byte promotion (FIX 6869, G4 PR1).
+pub(crate) use self::import_anchor::import_snapshot_custody_in_txn;
+pub use self::import_anchor::materialize_code_revision_tree;
+pub(crate) use self::import_promotion::CodeImportHold;
+pub use self::import_types::{CodeImportAcceptance, CodeImportAnchor, CodePathRetirement};
+pub(crate) use self::import_types::{CodeImportManifest, manifest_digest, manifest_id};
 
 #[cfg(test)]
 mod tests;

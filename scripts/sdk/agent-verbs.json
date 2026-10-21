@@ -9295,6 +9295,21 @@
       "openapi": true
     },
     {
+      "name": "vault.code.import",
+      "description": "Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only.",
+      "input": "crate::memory::origin_doors::CodeRepoImportRequest",
+      "output": "crate::memory::origin_doors::CodeRepoImportView",
+      "call": "memory.code_repo_import_as(&memory.embedded_owner(\"vault.code.import\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.origin.register",
       "description": "Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused.",
       "input": "crate::memory::origin_doors::OriginRegisterRequest",

@@ -67,6 +67,9 @@ pub struct CodeSnapshotFile {
     /// The BLAKE3 hash of the stored bytes, 64 lower-hex characters.
     pub content_hash_blake3: String,
     pub size_bytes: u64,
+    /// The file's exact Git mode: 33188 (100644), 33261 (100755) or 40960
+    /// (120000, a link whose bytes are its target).
+    pub mode: u32,
 }
 
 /// One imported snapshot manifest. `repo` is the artifact of this one

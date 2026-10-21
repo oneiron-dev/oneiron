@@ -53,6 +53,14 @@ pub struct CodeRevision {
     /// The queue record a tested queue revision was sealed from; `None` on
     /// every ordinary revision.
     pub tested_queue: Option<crate::merge_queue::QueueTestedRevision>,
+    /// The reviewed import manifest a tested queue revision's untouched
+    /// bytes descend from, when its seal knew it (G4 PR1); `None` on every
+    /// ordinary revision and on an unbound seal.
+    pub snapshot_anchor: Option<EntityId>,
+    /// Each path a tested queue revision removed, by its old path, with
+    /// the exact predecessor and the reviewed operation that retired it;
+    /// empty on every ordinary revision.
+    pub retired_paths: BTreeMap<String, super::CodePathRetirement>,
 }
 
 impl CodeRevision {
@@ -70,6 +78,8 @@ impl CodeRevision {
             commit_metadata: None,
             blob_frontiers: BTreeMap::new(),
             tested_queue: None,
+            snapshot_anchor: None,
+            retired_paths: BTreeMap::new(),
         }
     }
 
@@ -105,6 +115,8 @@ impl CodeRevision {
             commit_metadata: None,
             blob_frontiers: BTreeMap::new(),
             tested_queue: None,
+            snapshot_anchor: None,
+            retired_paths: BTreeMap::new(),
         }
     }
 
@@ -125,6 +137,16 @@ impl CodeRevision {
     pub fn with_provenance_claim_id(mut self, provenance_claim_id: EntityId) -> Self {
         self.provenance_claim_id = Some(provenance_claim_id);
         self
+    }
+
+    /// The whole-tree hash of a tested queue revision: its queue record's
+    /// complete inventory digest, beside the record's Git root tree. No
+    /// second hash is kept; `None` on an ordinary revision.
+    #[must_use]
+    pub fn whole_tree_hash(&self) -> Option<[u8; 32]> {
+        self.tested_queue
+            .as_ref()
+            .map(|tested| tested.inventory_digest)
     }
 }
 

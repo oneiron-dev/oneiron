@@ -11,11 +11,14 @@
 //! served repository, through the same gate every lease-route git request
 //! redeems (`credential_door::require_checkout_lease`).
 
+mod import;
+mod import_types;
 mod operations;
 mod publish;
 mod setup;
 mod types;
 
+pub use import_types::*;
 pub use publish::OriginPublishProof;
 pub use types::*;
 

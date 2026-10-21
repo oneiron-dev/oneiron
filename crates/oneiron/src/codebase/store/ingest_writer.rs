@@ -83,6 +83,31 @@ impl Vault {
         )
     }
 
+    /// The owner's import of one exact commit of a served repository (FIX
+    /// 6869, G4 PR1): every path, through the same checked writer, with no
+    /// editable policy. `admit` judges the owner, the anchor and the admitted
+    /// source again in the final writer; a refusal there writes nothing.
+    pub(crate) fn ingest_served_repo_as_owner<R>(
+        &self,
+        project_id: String,
+        repo_path: &Path,
+        commit: &str,
+        timing: (TimeRange, u64),
+        admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<RepoIngestResult, R>> {
+        let config = RepoIngestConfig::new(repo_path, NO_EDITABLE_WHITELIST)?;
+        self.ingest_local_repo_checked(
+            project_id,
+            &config,
+            commit,
+            timing,
+            &NoopHostedMediaHashMatchProvider,
+            || Ok(()),
+            None,
+            admit,
+        )
+    }
+
     /// The one import body both callers share. `select`, when given, keeps
     /// the paths a run's import may read; `admit` runs first in the final
     /// writer.
@@ -159,11 +184,10 @@ impl Vault {
         let files = blobs
             .iter()
             .map(|blob| {
-                Ok(CodebaseFileEntry::new(
-                    blob.path.clone(),
-                    blob.content_hash,
-                    blob.size_bytes,
-                ))
+                Ok(
+                    CodebaseFileEntry::new(blob.path.clone(), blob.content_hash, blob.size_bytes)
+                        .with_mode(blob.mode),
+                )
             })
             .collect::<Result<Vec<_>>>()?;
         let snapshot = CodebaseSnapshot::new(

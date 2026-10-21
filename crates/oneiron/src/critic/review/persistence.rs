@@ -450,3 +450,52 @@ pub(super) fn reviews_with_dissent(vault: &Vault) -> Result<Vec<ReviewResult>> {
         })
         .collect()
 }
+
+/// The persisted review `verdict` of `target`, read back through its
+/// producer's own rows (FIX 6869, G4 PR1): the verdict claim must be the
+/// trusted, active `review.verdict` about `target`, and its stored result
+/// must name exactly that verdict. The saved triage and artifacts come
+/// from the store, never from a caller. `None` when no stored review or
+/// live claim names `verdict` about `target`; a stamp or identity that no
+/// longer matches its producer is an error.
+pub(crate) fn trusted_review_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    verdict: &EntityId,
+    target: &EntityId,
+) -> Result<Option<ReviewResult>> {
+    let Some(pointer) = RESULT_ID.get(&vault.store, txn, verdict)? else {
+        return Ok(None);
+    };
+    let hash: [u8; 32] = pointer
+        .strip_prefix(RESULT.decl().prefix)
+        .and_then(|hash| hash.try_into().ok())
+        .ok_or(Error::CorruptedIndex("review result identity"))?;
+    let stored = RESULT
+        .get(&vault.store, txn, &hash)?
+        .ok_or(Error::CorruptedIndex("review result identity"))?;
+    if stored.verdict != verdict.to_hex() {
+        return Err(Error::CorruptedIndex("review result identity"));
+    }
+    let Some(body) = vault.get_claim_in_txn(txn, verdict)? else {
+        return Ok(None);
+    };
+    if !trusted_claim(vault, txn, verdict, &body)? {
+        return Err(Error::CorruptedIndex(
+            "review verdict changed outside its producer",
+        ));
+    }
+    if body.predicate != "review.verdict"
+        || body.subject != ClaimSubject::Entity(*target)
+        || body.lifecycle != ClaimLifecycleStatus::Active
+    {
+        return Ok(None);
+    }
+    Ok(Some(ReviewResult {
+        verdict_claim: *verdict,
+        triage: stored.triage,
+        artifacts: stored.artifacts,
+        receipts: Vec::new(),
+        spawn_attempt: stored.spawn_attempt,
+    }))
+}

@@ -182,10 +182,13 @@ impl Memory<'_> {
             .get_code_revision(&input.revision)?
             .ok_or_else(|| refusal_error(RepoAccessRefusal::NoMembership))?;
         self.repo_lane_reads(binding, &[revision.revision_id, revision.session_id])?;
+        // Every path the revision's tree holds: its documents and its
+        // untouched blobs (FIX 7346), so the Grant covers the whole export.
         let paths: BTreeSet<String> = revision
             .file_frontiers
             .values()
             .map(|frontier| frontier.path.clone())
+            .chain(revision.blob_frontiers.keys().cloned())
             .collect();
         let own = self.repo_run_checkout(
             binding,

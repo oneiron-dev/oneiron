@@ -8,7 +8,9 @@
 //! mode; every untouched path must be the promoted parent's own entry. A
 //! slow pass is never counted as review. The chain's root, a checked
 //! baseline, holds untouched imported bytes: their admission is G4's
-//! reviewed import manifest, so here it is a named gap, never an approval.
+//! reviewed import manifest (FIX 6869, G4 PR1). The root's receipt is
+//! exactly its typed import approval, judged again on every read, and
+//! without one it is a named gap, never an approval.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::CodeRevision;
@@ -48,6 +50,9 @@ impl Vault {
     /// # Errors
     /// A gap, an immutable receipt that differs, or a store failure.
     pub fn promote_queue_code_revision(&self, green: &GreenQueueRevision) -> Result<()> {
+        if let Some(gap) = self.queue_root_gap(green.revision_id())? {
+            return Err(gap.error());
+        }
         for revision in self
             .unpromoted_queue_chain(green.revision_id())?
             .iter()
@@ -98,9 +103,15 @@ impl Vault {
             ));
         }
         match self.queue_promotion_receipt(&revision)? {
-            Ok(ids) if ids == stored => Ok(()),
-            Ok(_) => Err(Error::ConcurrentWrite("revision promotion is immutable")),
-            Err(gap) => Err(gap.error()),
+            Ok(ids) if ids == stored => {}
+            Ok(_) => return Err(Error::ConcurrentWrite("revision promotion is immutable")),
+            Err(gap) => return Err(gap.error()),
+        }
+        // The root's import approval is judged again, never inherited from
+        // its receipt's presence (G4 PR1).
+        match self.queue_root_gap(revision_id)? {
+            Some(gap) => Err(gap.error()),
+            None => Ok(()),
         }
     }
 
@@ -113,12 +124,69 @@ impl Vault {
         &self,
         revision_id: EntityId,
     ) -> Result<Option<QueuePromotionGap>> {
+        if let Some(gap) = self.queue_root_gap(revision_id)? {
+            return Ok(Some(gap));
+        }
         for revision in self.unpromoted_queue_chain(revision_id)?.iter().rev() {
             if let Err(gap) = self.queue_promotion_receipt(revision)? {
                 return Ok(Some(gap));
             }
         }
         Ok(None)
+    }
+
+    /// The gap at `revision_id`'s chain root, the checked baseline: `None`
+    /// once its import approval holds now (G4 PR1).
+    fn queue_root_gap(&self, revision_id: EntityId) -> Result<Option<QueuePromotionGap>> {
+        let root = {
+            let txn = self.store.env.read_txn()?;
+            let mut root = read_code_revision_record_in_txn(&self.store, &txn, &revision_id)?
+                .ok_or(Error::EntityNotFound)?;
+            for _ in 0..crate::limits::MAX_ANCESTOR_DEPTH {
+                let Some(parent) = root.parent_revision_id else {
+                    break;
+                };
+                root = read_code_revision_record_in_txn(&self.store, &txn, &parent)?
+                    .ok_or(Error::EntityNotFound)?;
+            }
+            root
+        };
+        if root.parent_revision_id.is_some() {
+            return Err(Error::IndexOverflow("tested queue revision chain"));
+        }
+        Ok(self.baseline_promotion_receipt(&root)?.err())
+    }
+
+    /// The root's receipt: exactly its typed import approval, judged again
+    /// (G4 PR1). No approval, or one that no longer holds, is the named
+    /// untouched-bytes gap.
+    fn baseline_promotion_receipt(
+        &self,
+        revision: &CodeRevision,
+    ) -> Result<std::result::Result<Vec<String>, QueuePromotionGap>> {
+        let tested = revision
+            .tested_queue
+            .as_ref()
+            .ok_or(Error::InvalidClaimBody("not a tested queue revision"))?;
+        let gap = |detail: String| Ok(Err(QueuePromotionGap::UntouchedBytes(detail)));
+        if revision.parent_revision_id.is_some() || tested.target != QueueTestedTarget::Baseline {
+            return gap(format!(
+                "the checked baseline {} holds untouched bytes no reviewed import admitted",
+                tested.commit
+            ));
+        }
+        let txn = self.store.env.read_txn()?;
+        let Some(stored) = promotion_receipt_in_txn(&self.store, &txn, &revision.revision_id)?
+        else {
+            return gap(format!(
+                "the checked baseline {} holds untouched bytes no reviewed import admitted",
+                tested.commit
+            ));
+        };
+        match self.require_imported_baseline_promotion_in_txn(&txn, revision, &stored)? {
+            Ok(()) => Ok(Ok(stored)),
+            Err(detail) => gap(format!("the checked baseline {}: {detail}", tested.commit)),
+        }
     }
 
     /// `revision_id` and its ancestors back to, not including, the first
@@ -161,10 +229,7 @@ impl Vault {
         let (Some(parent_id), QueueTestedTarget::Landed { applied, .. }) =
             (revision.parent_revision_id, &tested.target)
         else {
-            return Ok(Err(QueuePromotionGap::UntouchedBytes(format!(
-                "the checked baseline {} holds untouched bytes no reviewed import admitted",
-                tested.commit
-            ))));
+            return self.baseline_promotion_receipt(revision);
         };
         let parent = self
             .get_code_revision(&parent_id)?

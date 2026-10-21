@@ -254,7 +254,7 @@ impl Vault {
                 .get_code_revision(&parent_id)?
                 .ok_or(Error::EntityNotFound)?;
             if !revision.file_frontiers.iter().any(|(id, file)| {
-                file_mode(&revision, id) != 0o100644
+                file_mode(&revision, id) != crate::codebase::DEFAULT_CODE_FILE_MODE
                     && parent.file_frontiers.get(id) == Some(file)
                     && file_mode(&parent, id) == file_mode(&revision, id)
             }) {
@@ -334,7 +334,7 @@ fn file_mode(revision: &super::CodeRevision, document: &[u8; 32]) -> u32 {
         .as_ref()
         .and_then(|metadata| metadata.file_modes.get(document))
         .copied()
-        .unwrap_or(0o100644)
+        .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE)
 }
 
 /// OF-222 (FIX 2768) archive seam: the promotion receipts a whole-vault archive carries beside

@@ -78,6 +78,8 @@ pub(super) fn artifact_hash(
         && revision.commit_metadata.is_none()
         && revision.blob_frontiers.is_empty()
         && revision.tested_queue.is_none()
+        && revision.snapshot_anchor.is_none()
+        && revision.retired_paths.is_empty()
     {
         return Ok(body_hash);
     }
@@ -107,5 +109,7 @@ pub(super) fn artifact_hash(
     // A tested queue revision's blobs and record fold after its documents;
     // an ordinary revision adds nothing (G2 PR3).
     super::tree_codec::hash_queue_fields(&mut h, revision)?;
+    // Its import binding and retirements fold last; none adds nothing (G4).
+    super::tree_codec::hash_import_fields(&mut h, revision)?;
     Ok(h.finalize().into())
 }

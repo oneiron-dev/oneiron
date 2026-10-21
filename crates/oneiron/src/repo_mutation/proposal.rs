@@ -177,7 +177,7 @@ impl RepoProposal {
             .iter()
             .find(|entry| entry.path == self.path)
         {
-            None => Ok(0o100644),
+            None => Ok(crate::codebase::DEFAULT_CODE_FILE_MODE),
             Some(entry) if entry.kind == super::snapshot::StoredRepoSnapshotEntryKind::File => {
                 Ok(if entry.executable { 0o100755 } else { 0o100644 })
             }

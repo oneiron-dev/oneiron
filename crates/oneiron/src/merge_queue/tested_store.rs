@@ -7,7 +7,8 @@
 //! same writer that finalizes its revision. A batch the owner's unchanged
 //! settlement made green gets its intent here, on the driver's first look.
 use super::check_store::{
-    CHECK_WORK, QueueCheckConfiguration, QueueCheckInitStage, QueueCheckStatus, put_work,
+    CHECK_CONFIGS, CHECK_WORK, QueueCheckConfiguration, QueueCheckInitStage, QueueCheckStatus,
+    put_work,
 };
 use super::storage::{BATCHES, check_row_size};
 use super::tested_types::QueueSealSource;
@@ -16,7 +17,8 @@ use super::{
     QueueExportHoldReason, QueueRevisionIntent, QueueRevisionLink, QueueRevisionSeal,
     QueueSealTarget,
 };
-use crate::code_revision::{queue_aggregation_session, queue_revision_id};
+use super::{CheckPhase, QueueCheckTarget, QueueReceiptLink, QueueTestedTarget};
+use crate::code_revision::{CodeRevision, queue_aggregation_session, queue_revision_id};
 use crate::error::{Error, Result};
 use crate::git_wire::lock_repository;
 use crate::{EntityId, Vault};
@@ -382,5 +384,94 @@ impl QueueRevisionSeal {
             }
         }
         Ok(())
+    }
+}
+
+impl Vault {
+    /// The checked baseline evidence the finalized `revision` stands on,
+    /// read again in `txn` (FIX 6869, G4 PR1): its queue's checked
+    /// configuration still initialized at exactly this baseline, commit,
+    /// tree and plan; the checked-init work sealed to this revision; and
+    /// its fast and slow links naming that work's passing, run, unreused
+    /// baseline receipts of one generation, each input digest stable. A
+    /// baseline records no verdict, so none is asked for. `Ok(Err(_))`
+    /// names what is gone; nothing is sealed, checked or approved here.
+    ///
+    /// # Errors
+    /// A revision that is no tested queue revision, or a store failure.
+    pub(crate) fn require_tested_baseline_evidence_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        revision: &CodeRevision,
+    ) -> Result<std::result::Result<(), String>> {
+        let tested = revision
+            .tested_queue
+            .as_ref()
+            .ok_or(Error::InvalidClaimBody("not a tested queue revision"))?;
+        let gone = |detail: &str| Ok(Err(detail.to_owned()));
+        let [fast_link] = tested.fast.as_slice() else {
+            return gone("a checked baseline keeps exactly one fast receipt");
+        };
+        if tested.target != QueueTestedTarget::Baseline
+            || revision.parent_revision_id.is_some()
+            || tested.commit != tested.baseline_commit
+            || tested.tree != tested.baseline_tree
+        {
+            return gone("the revision is not a checked baseline");
+        }
+        let Some(config) = CHECK_CONFIGS.get(&self.store, txn, &tested.store)? else {
+            return gone("the queue has no checked configuration");
+        };
+        if !matches!(
+            &config.stage,
+            QueueCheckInitStage::Initialized { baseline_id } if *baseline_id == tested.oracle_baseline
+        ) || config.store != tested.store
+            || config.repo != tested.repo
+            || config.init_work != tested.init_work
+            || config.plan.digest != tested.plan_digest
+            || config.baseline_commit != tested.commit
+            || config.baseline_tree != tested.tree
+        {
+            return gone("the baseline is no longer its queue's checked configuration");
+        }
+        let Some(work) = CHECK_WORK.get(&self.store, txn, &tested.init_work)? else {
+            return gone("the checked-init work is gone");
+        };
+        if work
+            .baseline_seal
+            .as_ref()
+            .and_then(QueueRevisionLink::sealed)
+            != Some(revision.revision_id)
+        {
+            return gone("the checked-init work is not sealed to this baseline");
+        }
+        let passing = |link: &QueueReceiptLink, phase: CheckPhase| {
+            if link.phase != phase || link.mask != 0 || link.work_ref != work.work_ref() {
+                return None;
+            }
+            work.receipts.iter().find(|receipt| {
+                let inputs = &receipt.inputs;
+                receipt.inputs_digest == link.inputs_digest
+                    && receipt.verdict_ref == link.verdict_ref
+                    && matches!(
+                        &inputs.target,
+                        QueueCheckTarget::Baseline { commit, tree, phase: ran }
+                            if *commit == tested.commit && *tree == tested.tree && *ran == phase
+                    )
+                    && inputs.plan_digest == tested.plan_digest
+                    && receipt.tests_passed == Some(true)
+                    && receipt.run.is_some()
+                    && inputs
+                        .digest()
+                        .is_ok_and(|digest| digest == receipt.inputs_digest)
+            })
+        };
+        match (
+            passing(fast_link, CheckPhase::Fast),
+            passing(&tested.slow, CheckPhase::Slow),
+        ) {
+            (Some(fast), Some(slow)) if fast.generation == slow.generation => Ok(Ok(())),
+            _ => gone("the checked baseline's passing fast and slow receipts are gone"),
+        }
     }
 }

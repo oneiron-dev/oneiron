@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1120 facade rows, 3826 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1072.
+// UniFFI census: 1121 facade rows, 3833 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1073.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -32628,6 +32628,141 @@ pub struct CodeExportResult {
     pub wire_rejected: bool,
 }
 
+/// `oneiron::code_revision::import_types::CodeImportAcceptance`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeImportAcceptance {
+    #[serde(rename = "manifest_digest")]
+    pub manifest_digest: String,
+    #[serde(rename = "baseline_revision")]
+    pub baseline_revision: String,
+    #[serde(rename = "catalog")]
+    pub catalog: LensCatalog,
+    #[serde(
+        rename = "review_verdict",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub review_verdict: Option<String>,
+}
+
+/// `oneiron::memory::origin_doors::import_types::CodeRepoImportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRepoImportRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "project")]
+    pub project: String,
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "source_commit")]
+    pub source_commit: String,
+    #[serde(rename = "admission_receipt")]
+    pub admission_receipt: String,
+    #[serde(rename = "accept", default, skip_serializing_if = "Option::is_none")]
+    pub accept: Option<CodeImportAcceptance>,
+}
+
+/// `oneiron::code_revision::import_types::CodeImportAnchor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeImportAnchor {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "project")]
+    pub project: String,
+    #[serde(rename = "served_repo")]
+    pub served_repo: String,
+    #[serde(rename = "object_store")]
+    pub object_store: String,
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "source_commit")]
+    pub source_commit: String,
+    #[serde(rename = "source_tree")]
+    pub source_tree: String,
+    #[serde(rename = "admission_receipt")]
+    pub admission_receipt: String,
+    #[serde(rename = "receive_provenance")]
+    pub receive_provenance: String,
+    #[serde(rename = "snapshot")]
+    pub snapshot: String,
+    #[serde(rename = "snapshot_fork_hash")]
+    pub snapshot_fork_hash: String,
+}
+
+/// `oneiron::memory::codebase_doors::types::CodeSnapshotFile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeSnapshotFile {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "content_hash_blake3")]
+    pub content_hash_blake3: String,
+    #[serde(rename = "size_bytes")]
+    pub size_bytes: u64,
+    #[serde(rename = "mode")]
+    pub mode: u32,
+}
+
+/// `oneiron::memory::origin_doors::import_types::CodeImportManifestFile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeImportManifestFile {
+    #[serde(rename = "git_oid")]
+    pub git_oid: String,
+    #[serde(rename = "file")]
+    pub file: CodeSnapshotFile,
+}
+
+/// `oneiron::memory::origin_doors::import_types::CodeImportManifestView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeImportManifestView {
+    #[serde(rename = "manifest_ref")]
+    pub manifest_ref: String,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "anchor")]
+    pub anchor: CodeImportAnchor,
+    #[serde(rename = "inventory_digest")]
+    pub inventory_digest: String,
+    #[serde(rename = "files")]
+    pub files: Vec<CodeImportManifestFile>,
+}
+
+/// `oneiron::memory::origin_doors::import_types::CodeRepoImportState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeRepoImportState {
+    #[serde(rename = "manifest_ready")]
+    ManifestReady,
+    #[serde(rename = "held_baseline")]
+    HeldBaseline,
+    #[serde(rename = "held_review")]
+    HeldReview,
+    #[serde(rename = "promoted")]
+    Promoted,
+}
+
+/// `oneiron::memory::origin_doors::import_types::CodeRepoImportView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRepoImportView {
+    #[serde(rename = "manifest")]
+    pub manifest: CodeImportManifestView,
+    #[serde(rename = "state")]
+    pub state: CodeRepoImportState,
+    #[serde(
+        rename = "baseline_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub baseline_revision: Option<String>,
+    #[serde(
+        rename = "promotion_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub promotion_receipt: Option<String>,
+}
+
 /// `oneiron::memory::origin_doors::types::OriginRegisterRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -33852,17 +33987,6 @@ pub struct CodeSnapshotIngestRequest {
     pub project_id: String,
     #[serde(rename = "pointer")]
     pub pointer: CodeRepoPointer,
-}
-
-/// `oneiron::memory::codebase_doors::types::CodeSnapshotFile`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct CodeSnapshotFile {
-    #[serde(rename = "path")]
-    pub path: String,
-    #[serde(rename = "content_hash_blake3")]
-    pub content_hash_blake3: String,
-    #[serde(rename = "size_bytes")]
-    pub size_bytes: u64,
 }
 
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotView`.

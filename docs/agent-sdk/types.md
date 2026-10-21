@@ -2796,6 +2796,8 @@ class Oneiron:
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
         def export(self, spec: Facade.CodeExportRequest) -> Facade.CodeExportResult:
             """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
+        def import_(self, spec: Facade.CodeRepoImportRequest) -> Facade.CodeRepoImportView:
+            """Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only."""
         @property
         def origin(self) -> "Oneiron._VaultCodeOriginVerbs": ...
         @property

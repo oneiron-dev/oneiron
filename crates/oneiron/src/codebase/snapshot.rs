@@ -30,7 +30,7 @@ pub const CODEBASE_SNAPSHOT_BODY_KEYS: [&str; 6] = [
     "files",
 ];
 
-pub const CODEBASE_FILE_ENTRY_KEYS: [&str; 3] = ["path", "content_hash", "size_bytes"];
+pub const CODEBASE_FILE_ENTRY_KEYS: [&str; 4] = ["path", "content_hash", "size_bytes", "mode"];
 
 const KEY_PROJECT_ID: &str = CODEBASE_SNAPSHOT_BODY_KEYS[0];
 
@@ -50,6 +50,8 @@ const KEY_FILE_CONTENT_HASH: &str = CODEBASE_FILE_ENTRY_KEYS[1];
 
 const KEY_FILE_SIZE_BYTES: &str = CODEBASE_FILE_ENTRY_KEYS[2];
 
+const KEY_FILE_MODE: &str = CODEBASE_FILE_ENTRY_KEYS[3];
+
 const CODEBASE_FORK_HASH_DOMAIN: &[u8] = b"oneiron:codebase-forkhash:v1";
 
 const CODEBASE_SCOPE_KEY_DOMAIN: &[u8] = b"oneiron:codebase-scope:v1";
@@ -60,9 +62,14 @@ pub struct CodebaseFileEntry {
     pub path: String,
     pub content_hash: [u8; CODEBASE_CONTENT_HASH_LEN],
     pub size_bytes: u64,
+    /// The file's Git mode: 100644, 100755 or 120000 (FIX 6869).
+    pub mode: u32,
 }
 
 impl CodebaseFileEntry {
+    /// An ordinary new file, at [`DEFAULT_CODE_FILE_MODE`].
+    ///
+    /// [`DEFAULT_CODE_FILE_MODE`]: super::DEFAULT_CODE_FILE_MODE
     #[must_use]
     pub fn new(
         path: impl Into<String>,
@@ -73,7 +80,15 @@ impl CodebaseFileEntry {
             path: path.into(),
             content_hash,
             size_bytes,
+            mode: super::DEFAULT_CODE_FILE_MODE,
         }
+    }
+
+    /// This entry at the exact Git mode an import read.
+    #[must_use]
+    pub fn with_mode(mut self, mode: u32) -> Self {
+        self.mode = mode;
+        self
     }
 }
 
@@ -177,6 +192,10 @@ pub fn encode_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<Vec<u8>> 
                     Value::from(KEY_FILE_SIZE_BYTES),
                     Value::Integer(entry.size_bytes.into()),
                 ),
+                (
+                    Value::from(KEY_FILE_MODE),
+                    Value::Integer(entry.mode.into()),
+                ),
             ])
         })
         .collect();
@@ -227,10 +246,10 @@ impl RawValue for CodebaseSnapshot {
 }
 
 /// What a snapshot body may unfold into before its schema is read: a root
-/// map of six fields whose `files` array holds entry maps of three, and no
+/// map of six fields whose `files` array holds entry maps of four, and no
 /// field longer than a path.
 const SNAPSHOT_SHAPE: ShapeBudget = ShapeBudget {
-    max_values: 7 * CODEBASE_SNAPSHOT_MAX_FILES as u64 + 64,
+    max_values: 9 * CODEBASE_SNAPSHOT_MAX_FILES as u64 + 64,
     max_depth: 4,
     max_scalar_bytes: CODEBASE_FILE_PATH_MAX_BYTES,
 };
@@ -398,6 +417,7 @@ fn decode_codebase_file_entry(value: &Value) -> Result<CodebaseFileEntry> {
     let mut path: Option<String> = None;
     let mut content_hash: Option<[u8; CODEBASE_CONTENT_HASH_LEN]> = None;
     let mut size_bytes: Option<u64> = None;
+    let mut mode: Option<u32> = None;
     let mut seen = [false; CODEBASE_FILE_ENTRY_KEYS.len()];
 
     for (key, value) in entries {
@@ -451,6 +471,16 @@ fn decode_codebase_file_entry(value: &Value) -> Result<CodebaseFileEntry> {
                     ),
                 ))?);
             }
+            KEY_FILE_MODE => {
+                let value = value
+                    .as_u64()
+                    .and_then(|value| u32::try_from(value).ok())
+                    .ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                        "mode must be an unsigned 32-bit integer",
+                    )))?;
+                super::validate_code_file_mode(value)?;
+                mode = Some(value);
+            }
             _ => unreachable!("index resolved from CODEBASE_FILE_ENTRY_KEYS"),
         }
     }
@@ -464,6 +494,9 @@ fn decode_codebase_file_entry(value: &Value) -> Result<CodebaseFileEntry> {
         )))?,
         size_bytes: size_bytes.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "missing required file entry key size_bytes",
+        )))?,
+        mode: mode.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+            "missing required file entry key mode",
         )))?,
     })
 }
@@ -505,6 +538,7 @@ pub(super) fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<
     let mut previous: Option<&str> = None;
     for entry in &snapshot.files {
         validate_manifest_path(&entry.path)?;
+        super::validate_code_file_mode(entry.mode)?;
         if let Some(prev) = previous
             && prev >= entry.path.as_str()
         {
@@ -536,6 +570,7 @@ fn codebase_fork_hash(files: &[CodebaseFileEntry]) -> Result<CodebaseForkHash> {
         write_hash_str(&mut hasher, &entry.path)?;
         hasher.update(&entry.content_hash);
         hasher.update(&entry.size_bytes.to_le_bytes());
+        hasher.update(&entry.mode.to_le_bytes());
     }
     Ok(hasher.finalize().into())
 }

@@ -1741,6 +1741,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.waits.resolve"
         | "vault.code.waits.receipt"
         | "vault.code.export"
+        | "vault.code.import"
         | "vault.code.origin.register"
         | "vault.code.origin.mirror.get"
         | "vault.code.origin.mirror.set"

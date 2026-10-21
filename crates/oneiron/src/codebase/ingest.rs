@@ -106,6 +106,9 @@ pub(super) struct RepoIngestBlob {
     pub(super) content_hash: [u8; CODEBASE_CONTENT_HASH_LEN],
     pub(super) size_bytes: u64,
     pub(super) data: Vec<u8>,
+    /// The entry's exact Git mode; a link is its target text, never read
+    /// through (FIX 6869).
+    pub(super) mode: u32,
 }
 
 pub(super) fn check_hosted_media_hash_matches(
@@ -258,8 +261,13 @@ pub(super) fn collect_repo_blobs(
                 })?;
                 collect_repo_blobs(&subtree, &path, out)?;
             }
-            EntryKind::Blob | EntryKind::BlobExecutable | EntryKind::Link => {
+            kind @ (EntryKind::Blob | EntryKind::BlobExecutable | EntryKind::Link) => {
                 validate_manifest_path(&path)?;
+                let mode = match kind {
+                    EntryKind::BlobExecutable => 0o100_755,
+                    EntryKind::Link => 0o120_000,
+                    _ => super::DEFAULT_CODE_FILE_MODE,
+                };
                 let blob_object = entry.object().map_err(|_| {
                     Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                         "Git blob object could not be read",
@@ -279,6 +287,7 @@ pub(super) fn collect_repo_blobs(
                     content_hash,
                     size_bytes,
                     data,
+                    mode,
                 });
             }
             EntryKind::Commit => {}

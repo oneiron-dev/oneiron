@@ -1,3 +1,4 @@
+mod file_mode;
 mod ingest;
 mod instructions;
 mod repo_ref;
@@ -11,6 +12,8 @@ pub(crate) use self::store::{archive_codebase_asset_id, archive_codebase_tables}
 // The ASSET a snapshot file's bytes are stored as, for a door that lists it.
 pub(crate) use self::store::codebase_asset_entity_id as snapshot_asset_entity_id;
 
+pub use self::file_mode::DEFAULT_CODE_FILE_MODE;
+pub(crate) use self::file_mode::validate_code_file_mode;
 pub use self::ingest::{
     HostedMediaHashMatchDecision, HostedMediaHashMatchInput, HostedMediaHashMatchProvider,
     NoopHostedMediaHashMatchProvider, RepoIngestConfig, RepoIngestResult,
