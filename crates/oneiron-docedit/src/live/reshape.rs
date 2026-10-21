@@ -15,6 +15,7 @@
 mod chart;
 mod dataset;
 mod layout;
+mod points;
 mod series;
 mod table;
 mod workbook;
@@ -25,13 +26,14 @@ pub(super) use table::table;
 
 use super::LiveError;
 use super::held::{self, C};
-use super::pptx::{ChartKind, NodePayload};
+use super::pptx::{ChartKind, NodePayload, draws_categories, effective_categories};
 use crate::design_plan::Cell;
 use crate::edit::xml::{self, P, R};
 use crate::native_patch::{Target, chart_data, number};
 use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::retained_opc::Package;
 use layout::number_cells;
+use points::{Points, carried, remap};
 
 /// The one sheet of a rewritten chart's embedded workbook.
 const SHEET: &str = "Sheet1";
@@ -204,8 +206,9 @@ fn is_axis(node: &Node) -> bool {
 
 /// A kept series with its sequences replaced: `idx` and `order` as held,
 /// `tx` (inserted after `order` when it had none), the category (or x)
-/// slot before the value slot, and data points and labels past the new
-/// point count dropped. Everything else keeps its bytes.
+/// slot before the value slot, and its data points' formatting and labels
+/// carried to their points' new places ([`Points`]), those of points gone
+/// dropped. Everything else keeps its bytes.
 fn kept_ser(
     bytes: &[u8],
     tree: &XmlTree,
@@ -213,10 +216,11 @@ fn kept_ser(
     (idx, order): (u32, u32),
     writer: &Writer,
     [tx, cat, val]: [&str; 3],
-    count: usize,
+    points: &Points,
 ) -> Result<Vec<u8>, LiveError> {
     let mut out = xml::open_tag(bytes, &tree.nodes[ser]);
     let (mut named, mut cat_done, mut data_done) = (false, false, false);
+    let mut points_done = false;
     let push = |out: &mut Vec<u8>, text: &str| out.extend_from_slice(text.as_bytes());
     for &child in &tree.nodes[ser].children {
         let node = &tree.nodes[child];
@@ -254,17 +258,26 @@ fn kept_ser(
                 data_done = true;
             }
             "dPt" => {
-                if int(tree, child, "idx").is_some_and(|point| (point as usize) < count) {
-                    out.extend_from_slice(piece(bytes, tree, child));
+                if !points_done {
+                    out.extend(carried(
+                        bytes,
+                        tree,
+                        &tree.nodes[ser].children,
+                        "dPt",
+                        points,
+                    ));
+                    points_done = true;
                 }
             }
             "dLbls" if !node.empty => {
                 out.extend(xml::open_tag(bytes, node));
+                let mut labels_done = false;
                 for &label in &node.children {
-                    let kept = !tree.nodes[label].is(C, "dLbl")
-                        || int(tree, label, "idx").is_some_and(|point| (point as usize) < count);
-                    if kept {
+                    if !tree.nodes[label].is(C, "dLbl") {
                         out.extend_from_slice(piece(bytes, tree, label));
+                    } else if !labels_done {
+                        out.extend(carried(bytes, tree, &node.children, "dLbl", points));
+                        labels_done = true;
                     }
                 }
                 out.extend(close(node));
@@ -567,25 +580,34 @@ pub(super) fn plan(
             if held.cache != cells {
                 writes.push((index, Target::Categories, cells));
             }
-        } else if now.family.unwrap_or(*want_family) != ChartKind::Scatter
-            && held_categories != categories
-        {
-            let held = line.categories.as_ref()?;
-            if held.cache.len() != categories.len() {
-                return None;
+        } else if draws_categories(*want_family, now) {
+            let (was_set, set) = (
+                effective_categories(held_categories, was),
+                effective_categories(categories, now),
+            );
+            if was_set.depth() != set.depth() || !was_set.same_labels(set) {
+                // A hierarchy is written by the full rewrite.
+                if set.depth() > 1 || was_set.depth() > 1 {
+                    return None;
+                }
+                let held = line.categories.as_ref()?;
+                if held.cache.len() != set.len() {
+                    return None;
+                }
+                // A number category stays a number.
+                let cells = set
+                    .labels()
+                    .into_iter()
+                    .zip(&held.cache)
+                    .map(|(category, cell)| match cell {
+                        Cell::Number(_) => category
+                            .parse()
+                            .map_or_else(|_| Cell::Text(category.clone()), Cell::Number),
+                        _ => Cell::Text(category),
+                    })
+                    .collect();
+                writes.push((index, Target::Categories, cells));
             }
-            // A number category stays a number.
-            let cells = categories
-                .iter()
-                .zip(&held.cache)
-                .map(|(category, cell)| match cell {
-                    Cell::Number(_) => category
-                        .parse()
-                        .map_or_else(|_| Cell::Text(category.clone()), Cell::Number),
-                    _ => Cell::Text(category.clone()),
-                })
-                .collect();
-            writes.push((index, Target::Categories, cells));
         }
         let len = line
             .values
@@ -607,9 +629,11 @@ pub(super) fn plan(
     Some(writes)
 }
 
-/// `read` reads as `wanted`: the same family, categories and series names,
-/// each series in the same plot family, and the same values (as numbers;
-/// a shorter wanted sequence ends in missing points).
+/// `read` reads as `wanted`: the same family and series names, each series
+/// in the same plot family drawing the same categories (by label, level by
+/// level, whatever their identities and whichever set holds them), and the
+/// same values and x values (as numbers; a sequence ending in missing
+/// points reads as one without them).
 pub(super) fn same_data(read: &NodePayload, wanted: &NodePayload) -> bool {
     let (
         NodePayload::Chart {
@@ -629,13 +653,12 @@ pub(super) fn same_data(read: &NodePayload, wanted: &NodePayload) -> bool {
         return false;
     };
     let padded = |read: &[Option<serde_json::Number>], wanted: &[Option<serde_json::Number>]| {
-        let number = |value: &Option<serde_json::Number>| value.as_ref().and_then(|n| n.as_f64());
-        read.len() >= wanted.len()
-            && read.iter().zip(wanted).all(|(a, b)| number(a) == number(b))
-            && read[wanted.len()..].iter().all(Option::is_none)
+        let number = |value: Option<&Option<serde_json::Number>>| {
+            value.and_then(|value| value.as_ref()?.as_f64())
+        };
+        (0..read.len().max(wanted.len())).all(|at| number(read.get(at)) == number(wanted.get(at)))
     };
     family == want_family
-        && categories == want_categories
         && series.len() == want_series.len()
         && series.iter().zip(want_series).all(|(a, b)| {
             a.name == b.name
@@ -646,5 +669,12 @@ pub(super) fn same_data(read: &NodePayload, wanted: &NodePayload) -> bool {
                     (None, None) => true,
                     _ => false,
                 }
+                && (!draws_categories(*family, a) || {
+                    let (read, want) = (
+                        effective_categories(categories, a),
+                        effective_categories(want_categories, b),
+                    );
+                    read.depth() == want.depth() && read.same_labels(want)
+                })
         })
 }

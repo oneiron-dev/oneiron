@@ -697,6 +697,7 @@ pub(crate) fn live_refused(error: LiveError) -> Error {
         LiveError::HeadAdvanced => LiveDeckRefusal::HeadAdvanced,
         LiveError::UnboundNodes(_) => LiveDeckRefusal::UnboundNodes,
         LiveError::Encoding(_) => LiveDeckRefusal::Encoding,
+        LiveError::MemoryFloor { .. } => LiveDeckRefusal::MemoryFloor,
     };
     let nodes = match &error {
         LiveError::UnboundNodes(nodes) => nodes.iter().map(|node| node.0).collect(),

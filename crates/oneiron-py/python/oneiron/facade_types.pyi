@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1131 facade rows, 3942 declarations.
+Census: 1131 facade rows, 3945 declarations.
 Inputs: 1066 of 1131 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1018 of 1131 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -16887,12 +16887,19 @@ class TableBody(TypedDict):
     cells: NotRequired[dict[str, dict[str, str]]]
     merges: NotRequired[list[TableMerge]]
 ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar"]
+class ChartCategory(TypedDict):
+    id: NotRequired[NodeId | None]
+    levels: NotRequired[list[str | None]]
+class ChartCategories(TypedDict):
+    level_count: NotRequired[int]
+    points: NotRequired[list[ChartCategory]]
 class ChartSeries(TypedDict):
     id: NotRequired[NodeId | None]
     name: str
     values: list[float | None]
     family: NotRequired[ChartKind | None]
     x: NotRequired[list[float | None] | None]
+    categories: NotRequired[ChartCategories | None]
 ChartSource = Literal["workbook", "literal", "cached"]
 ConnectorPreset = Literal["straight", "elbow", "curved"]
 class ConnectorEnd(TypedDict):
@@ -16953,7 +16960,7 @@ class NodePayloadTable(TypedDict):
     table: TableBody
 class NodePayloadChartBody(TypedDict):
     family: ChartKind
-    categories: list[str]
+    categories: ChartCategories
     series: list[ChartSeries]
     source: NotRequired[ChartSource]
 class NodePayloadChart(TypedDict):
@@ -17190,6 +17197,7 @@ class ChartEditInsertSeriesBody(TypedDict):
     values: NotRequired[list[float | None]]
     family: NotRequired[ChartKind | None]
     x: NotRequired[list[float | None] | None]
+    categories: NotRequired[ChartCategories | None]
 class ChartEditInsertSeries(TypedDict):
     insert_series: ChartEditInsertSeriesBody
 class ChartEditDeleteSeriesBody(TypedDict):
@@ -17226,14 +17234,47 @@ class ChartEditSetFamilyBody(TypedDict):
 class ChartEditSetFamily(TypedDict):
     set_family: ChartEditSetFamilyBody
 class ChartEditSetCategoriesBody(TypedDict):
-    categories: list[str]
+    categories: ChartCategories
 class ChartEditSetCategories(TypedDict):
     set_categories: ChartEditSetCategoriesBody
+class ChartEditSetSeriesCategoriesBody(TypedDict):
+    series: NodeId
+    categories: NotRequired[ChartCategories | None]
+class ChartEditSetSeriesCategories(TypedDict):
+    set_series_categories: ChartEditSetSeriesCategoriesBody
+class ChartEditInsertCategoryBody(TypedDict):
+    owner: NotRequired[NodeId | None]
+    id: NotRequired[NodeId | None]
+    after: NotRequired[NodeId | None]
+    levels: NotRequired[list[str | None]]
+class ChartEditInsertCategory(TypedDict):
+    insert_category: ChartEditInsertCategoryBody
+class ChartEditDeleteCategoryBody(TypedDict):
+    owner: NotRequired[NodeId | None]
+    category: NodeId
+class ChartEditDeleteCategory(TypedDict):
+    delete_category: ChartEditDeleteCategoryBody
+class ChartEditMoveCategoryBody(TypedDict):
+    owner: NotRequired[NodeId | None]
+    category: NodeId
+    after: NotRequired[NodeId | None]
+class ChartEditMoveCategory(TypedDict):
+    move_category: ChartEditMoveCategoryBody
+class ChartEditSetCategoryLevelsBody(TypedDict):
+    owner: NotRequired[NodeId | None]
+    category: NodeId
+    levels: list[str | None]
+class ChartEditSetCategoryLevels(TypedDict):
+    set_category_levels: ChartEditSetCategoryLevelsBody
+class ChartEditReserveCategoriesBody(TypedDict):
+    ids: list[NodeId]
+class ChartEditReserveCategories(TypedDict):
+    reserve_categories: ChartEditReserveCategoriesBody
 class ChartEditSetSourceBody(TypedDict):
     source: ChartSource
 class ChartEditSetSource(TypedDict):
     set_source: ChartEditSetSourceBody
-ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSource
+ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSeriesCategories | ChartEditInsertCategory | ChartEditDeleteCategory | ChartEditMoveCategory | ChartEditSetCategoryLevels | ChartEditReserveCategories | ChartEditSetSource
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):
@@ -17509,7 +17550,8 @@ class OpaqueChange(TypedDict):
     part: str
     base: NotRequired[list[int] | None]
     proposal: NotRequired[list[int] | None]
-SeriesField = Literal["name", "values", "family", "x", "order", "existence"]
+SeriesField = Literal["name", "values", "family", "x", "categories", "order", "existence"]
+CategoryField = Literal["levels", "order", "existence"]
 class ConflictBothMovedBody(TypedDict):
     node: NodeId
 class ConflictBothMoved(TypedDict):
@@ -17547,7 +17589,14 @@ class ConflictSeriesVsSeriesBody(TypedDict):
     field: SeriesField
 class ConflictSeriesVsSeries(TypedDict):
     series_vs_series: ConflictSeriesVsSeriesBody
-Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload | ConflictCellVsCell | ConflictSeriesVsSeries
+class ConflictCategoryVsCategoryBody(TypedDict):
+    node: NodeId
+    owner: NotRequired[NodeId | None]
+    category: NodeId
+    field: CategoryField
+class ConflictCategoryVsCategory(TypedDict):
+    category_vs_category: ConflictCategoryVsCategoryBody
+Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload | ConflictCellVsCell | ConflictSeriesVsSeries | ConflictCategoryVsCategory
 class RelationshipChange(TypedDict):
     source: str
     id: str

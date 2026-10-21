@@ -1,5 +1,6 @@
 //! A chart reference's cells as the workbook edit reads them: a direct
-//! one-row or one-column range on one sheet.
+//! one-row or one-column range on one sheet, and a multi-level category
+//! reference's rectangle, one such line per level (FIX 3493).
 
 use super::Key;
 use crate::live::conversion::RebuildReason;
@@ -20,6 +21,13 @@ pub(super) struct Line {
 impl Line {
     /// `Sheet1!$B$2:$B$5`, `'My sheet'!B1`.
     pub(super) fn parse(formula: &str) -> Option<Self> {
+        Self::parse_block(formula)
+            .filter(|line| line.first.0 == line.last.0 || line.first.1 == line.last.1)
+    }
+
+    /// A reference to any rectangle on one sheet, as a multi-level
+    /// category reference names its block.
+    pub(super) fn parse_block(formula: &str) -> Option<Self> {
         let formula = formula.trim();
         if formula.contains('[') {
             return None;
@@ -33,11 +41,66 @@ impl Line {
         let (from, to) = (parse_a1(from)?, parse_a1(to)?);
         let first = (from.0.min(to.0), from.1.min(to.1));
         let last = (from.0.max(to.0), from.1.max(to.1));
-        (!sheet.is_empty() && (first.0 == last.0 || first.1 == last.1)).then_some(Self {
-            sheet,
-            first,
-            last,
-        })
+        (!sheet.is_empty()).then_some(Self { sheet, first, last })
+    }
+
+    /// The rectangle `lines` on one sheet cover together.
+    pub(super) fn around(lines: &[Self]) -> Option<Self> {
+        let (head, rest) = lines.split_first()?;
+        let mut out = head.clone();
+        for line in rest {
+            if line.sheet != out.sheet {
+                return None;
+            }
+            out.first = (out.first.0.min(line.first.0), out.first.1.min(line.first.1));
+            out.last = (out.last.0.max(line.last.0), out.last.1.max(line.last.1));
+        }
+        Some(out)
+    }
+
+    /// A block's line of cells for each of its `levels` levels, leaf first,
+    /// and the way its points run (down a column, `Some(true)`): the levels
+    /// stand side by side, the outermost first, when it is `levels` columns
+    /// wide (the way a down-column block is written), else stacked when it
+    /// is `levels` rows tall; `None` when neither shape fits. One level is
+    /// the block itself, running its own way.
+    pub(super) fn levels(&self, levels: usize) -> Option<(Vec<Self>, Option<bool>)> {
+        if levels <= 1 {
+            return Some((vec![self.clone()], self.down()));
+        }
+        let span = |first: u32, last: u32| usize::try_from(last - first).ok()?.checked_add(1);
+        let (width, height) = (
+            span(self.first.0, self.last.0)?,
+            span(self.first.1, self.last.1)?,
+        );
+        let down = if width == levels {
+            true
+        } else if height == levels {
+            false
+        } else {
+            return None;
+        };
+        let lines = (0..levels)
+            .map(|level| {
+                let step = u32::try_from(levels - 1 - level).unwrap_or(u32::MAX);
+                if down {
+                    let col = self.first.0 + step;
+                    Self {
+                        sheet: self.sheet.clone(),
+                        first: (col, self.first.1),
+                        last: (col, self.last.1),
+                    }
+                } else {
+                    let row = self.first.1 + step;
+                    Self {
+                        sheet: self.sheet.clone(),
+                        first: (self.first.0, row),
+                        last: (self.last.0, row),
+                    }
+                }
+            })
+            .collect();
+        Some((lines, Some(down)))
     }
 
     /// The range's first cell alone.

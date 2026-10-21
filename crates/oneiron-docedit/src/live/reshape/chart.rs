@@ -2,18 +2,20 @@
 //! FIX 3493): its plots, axes and series, and its own embedded workbook
 //! edited in place or rebuilt.
 
-use super::dataset::{Refs, workbook_dataset};
+use super::dataset::{self, Refs, workbook_dataset};
 use super::layout::{self, Layout, Resolved, Wanted, first_category, wanted};
 use super::{
-    READ_BACK, SHEET, Writer, axes, close, format_code, fresh_plot, int, is_axis, kept_plot,
-    kept_ser, own_workbook, piece, retyped_axis, same_data, series, workbook,
+    Points, READ_BACK, SHEET, Writer, axes, close, format_code, fresh_plot, int, is_axis,
+    kept_plot, kept_ser, own_workbook, piece, remap, retyped_axis, same_data, series, workbook,
 };
 use crate::edit::xml;
 use crate::live::LiveError;
 use crate::live::conversion::{Conversion, RebuildReason};
 use crate::live::convert;
 use crate::live::held::{self, C, children};
-use crate::live::pptx::{ChartKind, ChartSource, NodeId, NodePayload, WRITTEN_FRAME};
+use crate::live::pptx::{
+    ChartKind, ChartSource, NodeId, NodePayload, SeriesBinding, WRITTEN_FRAME,
+};
 use crate::native_patch::{chart_data, chart_workbook};
 use crate::retained_opc::Package;
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,29 +47,34 @@ pub(in crate::live) fn chart(
     package: &mut Package,
     chart: &str,
     payload: &NodePayload,
-    bound: &[NodeId],
+    bound: &SeriesBinding,
     done: &mut Vec<Conversion>,
 ) -> Result<(Vec<String>, Vec<NodeId>), LiveError> {
     let (part, reason) = match workbook::original(package, chart, payload)? {
-        workbook::Original::Absent => return rewrite(package, chart, payload, bound, done, None),
+        workbook::Original::Absent => {
+            return rewrite(package, chart, payload, bound, done, Mode::Rebuild(None));
+        }
         workbook::Original::Replaced(part, reason) => (part, reason),
         workbook::Original::Own(part) => {
             // The edit runs on a copy: whatever stops it, the rebuild below
             // starts from the package as it was.
             let mut candidate = package.clone();
             let mut kept = Vec::new();
-            let reason = match layout::resolve(&candidate, chart, payload, bound, None) {
+            let reason = match layout::resolve(&candidate, chart, payload, &bound.series, None) {
                 Err(_) => RebuildReason::Unreadable,
                 Ok(read) => match workbook::in_place(&candidate, &part, &read) {
                     Err(reason) => reason,
                     Ok(edit) => {
-                        let planned = Some((edit, read));
+                        let planned = Mode::Edit(edit, read);
                         match rewrite(&mut candidate, chart, payload, bound, &mut kept, planned) {
                             Ok(written) => {
                                 *package = candidate;
                                 done.extend(kept);
                                 return Ok(written);
                             }
+                            // What the host cannot hold is no reason to
+                            // rebuild (FIX 8589).
+                            Err(error @ LiveError::MemoryFloor { .. }) => return Err(error),
                             Err(_) => RebuildReason::ReadBack,
                         }
                     }
@@ -76,9 +83,14 @@ pub(in crate::live) fn chart(
             (part, reason)
         }
     };
-    let written = rewrite(package, chart, payload, bound, done, None)?;
-    done.push(Conversion::WorkbookRebuilt { part, reason });
-    Ok(written)
+    rewrite(
+        package,
+        chart,
+        payload,
+        bound,
+        done,
+        Mode::Rebuild(Some((part, reason))),
+    )
 }
 
 /// Rewrite a live-born chart's native seed to `payload`, its workbook
@@ -91,11 +103,44 @@ pub(in crate::live) fn reseed(
     chart: &str,
     payload: &NodePayload,
 ) -> Result<(Vec<String>, Vec<NodeId>), LiveError> {
-    let seeded: Vec<NodeId> = match payload {
-        NodePayload::Chart { series, .. } => series.iter().filter_map(|line| line.id).collect(),
-        _ => Vec::new(),
+    let seeded = SeriesBinding {
+        series: match payload {
+            NodePayload::Chart { series, .. } => series.iter().filter_map(|line| line.id).collect(),
+            _ => Vec::new(),
+        },
+        categories: Vec::new(),
     };
-    rewrite(package, chart, payload, &seeded, &mut Vec::new(), None)
+    rewrite(
+        package,
+        chart,
+        payload,
+        &seeded,
+        &mut Vec::new(),
+        Mode::Seed,
+    )
+}
+
+/// How a rewrite writes the chart's workbook.
+enum Mode {
+    /// Edited in place as [`workbook::in_place`] planned it, over the
+    /// resolution that plan read.
+    Edit(workbook::InPlace, Resolved),
+    /// Rebuilt from the live data: the chart's own workbook keeps its
+    /// sheets, the data on a new one beside them (FIX 6714); one the chart
+    /// does not own is replaced. The workbook not edited in place, and why,
+    /// for the receipt.
+    Rebuild(Option<(String, RebuildReason)>),
+    /// A live-born chart's seed, the engine's own, rebuilt afresh.
+    Seed,
+}
+
+/// The sheet the rebuilt data goes on in the chart's own workbook `book`:
+/// a new one beside its sheets, or, `None`, none (the rebuild is afresh).
+fn rebuilt_sheet(package: &Package, book: &str, mode: &Mode) -> Option<String> {
+    if !matches!(mode, Mode::Rebuild(Some(_))) {
+        return None;
+    }
+    dataset::free_sheet(&package.part(book).ok()??, package.limits())
 }
 
 /// [`chart`]'s rewrite: into the chart's own workbook as `in_place` edits
@@ -105,9 +150,9 @@ fn rewrite(
     package: &mut Package,
     chart: &str,
     payload: &NodePayload,
-    bound: &[NodeId],
+    bound: &SeriesBinding,
     done: &mut Vec<Conversion>,
-    in_place: Option<(workbook::InPlace, Resolved)>,
+    mode: Mode,
 ) -> Result<(Vec<String>, Vec<NodeId>), LiveError> {
     let NodePayload::Chart {
         family,
@@ -119,40 +164,43 @@ fn rewrite(
         return Err(LiveError::Invalid(WRITTEN_FRAME));
     };
     let mut changed = vec![chart.to_owned()];
-    let (edit, read, book) = match in_place {
-        Some((edit, read)) => {
+    let mut beside = None;
+    let (edit, read, book, note) = match mode {
+        Mode::Edit(edit, read) => {
             let book = Some(edit.part.clone());
-            (Some(edit), read, book)
+            (Some(edit), read, book, None)
         }
-        None => {
+        mode => {
             let (_, first) = xml::read(package, chart)?;
-            let wanted = wanted(&first, *family, categories, series);
+            let wanted = wanted(&first, *family, categories, series, &bound.series);
             let book = match own_workbook(package, chart, &first)? {
-                Some(book) => Some(book),
+                Some(book) => {
+                    beside = rebuilt_sheet(package, &book, &mode);
+                    Some(book)
+                }
                 None if *source == ChartSource::Literal => None,
                 None => {
-                    let dataset = workbook_dataset(categories, &wanted);
+                    let dataset = workbook_dataset(&wanted);
                     let workbook = chart_workbook(&dataset, SHEET, package.limits())?;
                     let (book, embedded) = convert::embed_workbook(package, chart, workbook)?;
                     done.extend(embedded);
                     Some(book)
                 }
             };
-            let read = layout::resolve(package, chart, payload, bound, Some(wanted))?;
-            (None, read, book)
+            let read = layout::resolve(package, chart, payload, &bound.series, Some(wanted))?;
+            let note = match mode {
+                Mode::Rebuild(reason) => reason,
+                _ => None,
+            };
+            (None, read, book, note)
         }
     };
-    let dataset = workbook_dataset(categories, &read.wanted);
+    let sheet = beside.clone().unwrap_or_else(|| SHEET.to_owned());
+    let dataset = workbook_dataset(&read.wanted);
     let Resolved {
         bytes,
         tree,
-        wanted:
-            Wanted {
-                numeric_cats,
-                category_cells,
-                data,
-                ..
-            },
+        wanted: Wanted { sets, data, .. },
         layout:
             Layout {
                 area,
@@ -303,7 +351,7 @@ fn rewrite(
                 Some(edit) => &edit.refs[index],
                 None => {
                     rebuilt = if book.is_some() {
-                        Refs::rebuilt(line, categories.len())
+                        Refs::rebuilt(line, &sets, &sheet)
                     } else {
                         Refs::default()
                     };
@@ -322,19 +370,25 @@ fn rewrite(
             let val_slot = seat
                 .template
                 .and_then(|ser| xml::child(&tree, ser, C, val_name));
-            let cat_xml = match (&line.x, scatter) {
-                (Some(x), true) => writer.slot(
+            // Each category series writes the set it draws, flat or
+            // multi-level, its own reference to it.
+            let set = line.set.and_then(|set| sets.get(set));
+            let cat_xml = match (&line.x, scatter, set) {
+                (Some(x), true, _) => writer.slot(
                     cat_name,
                     true,
                     refs.first.as_deref(),
                     x,
                     &format_code(&bytes, &tree, cat_slot),
                 ),
-                (None, false) if !categories.is_empty() => writer.slot(
+                (None, false, Some(set)) if set.multi() => {
+                    writer.levels(cat_name, refs.first.as_deref(), &set.levels)
+                }
+                (None, false, Some(set)) => writer.slot(
                     cat_name,
-                    numeric_cats,
+                    set.numeric,
                     refs.first.as_deref(),
-                    &category_cells,
+                    set.leaf(),
                     &format_code(&bytes, &tree, cat_slot.or(first_cat)),
                 ),
                 _ => String::new(),
@@ -347,7 +401,12 @@ fn rewrite(
                 &format_code(&bytes, &tree, val_slot),
             );
             let tx = writer.tx(&line.name, refs.name.as_deref());
-            let count = line.values.len();
+            // A survivor's point formatting and labels follow its category
+            // points by identity; without that evidence, its points by place.
+            let points = Points {
+                count: line.values.len(),
+                remap: remap(bound, series[index].id, set),
+            };
             // A survivor keeps its own series' bytes in the plot that held
             // it; drawn in another plot, it is formatted after its own.
             let own_plot = seat.held.and_then(|ser| tree.nodes[ser].parent);
@@ -360,7 +419,7 @@ fn rewrite(
                     (idx, order),
                     &writer,
                     [&tx, &cat_xml, &val_xml],
-                    count,
+                    &points,
                 )?,
                 None => series::fresh(
                     &bytes,
@@ -427,10 +486,22 @@ fn rewrite(
     if let Some(book) = &book {
         let (workbook, notes) = match edit {
             Some(edit) => (edit.bytes, edit.notes),
-            None => (
-                Some(chart_workbook(&dataset, SHEET, package.limits())?),
-                Vec::new(),
-            ),
+            None => {
+                let limits = package.limits();
+                // The chart's own workbook keeps every other sheet, name and
+                // table; where its editor refuses, the rebuild is afresh.
+                let kept = beside.as_deref().and_then(|name| {
+                    dataset::beside(&package.part(book).ok()??, &dataset, name, limits)
+                });
+                if kept.is_none() {
+                    beside = None;
+                }
+                let workbook = match kept {
+                    Some(workbook) => workbook,
+                    None => chart_workbook(&dataset, &sheet, limits)?,
+                };
+                (Some(workbook), Vec::new())
+            }
         };
         if let Some(workbook) = workbook {
             package.replace_nested_package(book, workbook)?;
@@ -461,9 +532,16 @@ fn rewrite(
         series: emitted.iter().map(|&index| series[index].clone()).collect(),
         source: *source,
     };
-    let read = held::chart(package, chart).ok_or(LiveError::Invalid(READ_BACK))?;
+    let read = held::chart(package, chart)?.ok_or(LiveError::Invalid(READ_BACK))?;
     if !same_data(&read, &written) {
         return Err(LiveError::Invalid(READ_BACK));
+    }
+    if let Some((part, reason)) = note {
+        done.push(Conversion::WorkbookRebuilt {
+            part,
+            reason,
+            sheet: beside,
+        });
     }
     let order = emitted
         .iter()

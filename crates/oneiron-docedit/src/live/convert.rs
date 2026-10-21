@@ -429,8 +429,8 @@ pub(super) fn embed_workbook(
         {
             continue;
         }
-        let text: String = held::points(&tree, at)
-            .map(|points| points.cells.iter().map(held::label).collect())
+        let text: String = held::points(&tree, at)?
+            .map(|points| points.cells().iter().map(held::label).collect())
             .unwrap_or_default();
         let rich = format!(
             r#"<{tx}><{rich}><a:bodyPr xmlns:a="{A}"/><a:p xmlns:a="{A}"><a:r><a:t>{}</a:t></a:r></a:p></{rich}></{tx}>"#,

@@ -39,6 +39,18 @@ pub(super) struct Range {
 impl Range {
     /// Parse a chart `c:f`: `Sheet1!$B$2:$B$5`, `'My sheet'!B1`.
     pub(super) fn parse(formula: &str) -> Result<Self, NativeRefusal> {
+        let range = Self::parse_block(formula)?;
+        if range.first.0 != range.last.0 && range.first.1 != range.last.1 {
+            return Err(NativeRefusal::AmbiguousChartData(
+                "series range is not one row or one column",
+            ));
+        }
+        Ok(range)
+    }
+
+    /// Parse a multi-level category reference: a rectangle, one line of
+    /// cells per level (FIX 3493). Every other sequence is one line.
+    pub(super) fn parse_block(formula: &str) -> Result<Self, NativeRefusal> {
         let direct =
             NativeRefusal::AmbiguousChartData("series reference is not a direct cell range");
         if formula.contains('[') {
@@ -59,17 +71,16 @@ impl Range {
         let (Some(first), Some(last)) = (cell_ref(first), cell_ref(last)) else {
             return Err(direct);
         };
-        let range = Self {
+        Ok(Self {
             sheet,
             first: (first.0.min(last.0), first.1.min(last.1)),
             last: (first.0.max(last.0), first.1.max(last.1)),
-        };
-        if range.first.0 != range.last.0 && range.first.1 != range.last.1 {
-            return Err(NativeRefusal::AmbiguousChartData(
-                "series range is not one row or one column",
-            ));
-        }
-        Ok(range)
+        })
+    }
+
+    /// Its first and last cells, (column, row).
+    pub(super) fn corners(&self) -> ((u32, u32), (u32, u32)) {
+        (self.first, self.last)
     }
 
     pub(super) fn column(sheet: &str, col: u32, rows: (u32, u32)) -> Self {

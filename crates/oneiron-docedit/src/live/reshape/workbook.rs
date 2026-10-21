@@ -123,16 +123,16 @@ pub(super) fn in_place(
         .zip(&wanted.resolved)
         .map(|(line, kind)| Want {
             name: &line.name,
-            first: match (&line.x, *kind == ChartKind::Scatter) {
-                (Some(x), true) => Some(First {
-                    cells: x,
+            first: match (&line.x, *kind == ChartKind::Scatter, line.set) {
+                (Some(x), true, _) => Some(First {
+                    levels: std::slice::from_ref(x),
                     numeric: true,
-                    shared: false,
+                    set: None,
                 }),
-                (None, false) if !wanted.category_cells.is_empty() => Some(First {
-                    cells: &wanted.category_cells,
-                    numeric: wanted.numeric_cats,
-                    shared: true,
+                (None, false, Some(set)) => wanted.sets.get(set).map(|held| First {
+                    levels: &held.levels,
+                    numeric: held.numeric,
+                    set: Some(set),
                 }),
                 _ => None,
             },
@@ -140,32 +140,38 @@ pub(super) fn in_place(
         })
         .collect();
     let mut refs = vec![Refs::default(); wants.len()];
-    // Held series first, at their own cells: the chart's categories are
-    // the first such series' that draws them.
-    let mut shared: Option<Line> = None;
+    // Held series first, at their own cells: each category set takes the
+    // cells of the first held series that draws it, and a set whose cells
+    // another set holds moves to free ones.
+    let mut placed: BTreeMap<usize, Vec<Line>> = BTreeMap::new();
     for ((want, seat), refs) in wants.iter().zip(seats).zip(&mut refs) {
-        if let Some(ser) = seat.cells {
-            let cats = plan.held(&held_refs(tree, ser)?, want, refs)?;
-            if shared.is_none() && want.first.as_ref().is_some_and(|first| first.shared) {
-                shared = cats;
-            }
+        if let Some(ser) = seat.cells
+            && let Some((set, lines)) = plan.held(&held_refs(tree, ser)?, want, refs)?
+        {
+            placed.entry(set).or_insert(lines);
         }
     }
     // Then a held series' categories it had no cells for, and each new
     // series beside its template.
     for ((want, seat), refs) in wants.iter().zip(seats).zip(&mut refs) {
+        let set = want.first.as_ref().and_then(|first| first.set);
         match (seat.cells, seat.template) {
             (Some(_), _) => {
                 if refs.first.is_none()
-                    && let (Some(first), Some(line)) = (&want.first, &shared)
-                    && first.shared
+                    && let (Some(first), Some(lines)) =
+                        (&want.first, set.and_then(|set| placed.get(&set)))
                 {
-                    plan.take(line, first.cells, first.numeric, line)?;
-                    refs.first = Some(line.formula());
+                    plan.fill(lines, first)?;
+                    refs.first = Line::around(lines).map(|line| line.formula());
                 }
             }
             (None, Some(template)) => {
-                plan.added(&held_refs(tree, template)?, want, shared.as_ref(), refs)?;
+                let shared = set.and_then(|set| placed.get(&set)).cloned();
+                if let Some((set, lines)) =
+                    plan.added(&held_refs(tree, template)?, want, shared.as_deref(), refs)?
+                {
+                    placed.entry(set).or_insert(lines);
+                }
             }
             (None, None) => {}
         }
@@ -204,11 +210,14 @@ pub(super) fn in_place(
 type Key = (String, u32, u32);
 
 /// A held sequence's reference: its range and its text as the chart holds
-/// it.
+/// it, and its line of cells for each level, leaf first (a flat one's is
+/// its range), with the way its points run when its shape says.
 #[derive(Debug, Clone)]
 struct Held {
     line: Line,
     text: String,
+    levels: Vec<Line>,
+    down: Option<bool>,
 }
 
 impl Held {
@@ -219,6 +228,11 @@ impl Held {
         } else {
             line.formula()
         }
+    }
+
+    /// The reference to the block `lines` cover.
+    fn to_block(&self, lines: &[Line]) -> Option<String> {
+        Line::around(lines).map(|line| self.to(&line))
     }
 }
 
@@ -231,18 +245,28 @@ struct HeldRefs {
     values: Option<Held>,
 }
 
+/// A held series' references, read without expanding any cache's points.
 fn held_refs(tree: &XmlTree, ser: usize) -> Result<HeldRefs, RebuildReason> {
     let slot = |names: &[&str]| -> Result<Option<Held>, RebuildReason> {
         let Some(at) = names.iter().find_map(|name| xml::child(tree, ser, C, name)) else {
             return Ok(None);
         };
-        let points = held::points(tree, at).ok_or(RebuildReason::Unreadable)?;
-        points
-            .formula
+        let read = held::descriptor(tree, at).ok_or(RebuildReason::Unreadable)?;
+        read.formula
             .map(|text| {
-                Line::parse(&text)
-                    .map(|line| Held { line, text })
-                    .ok_or(RebuildReason::Unreadable)
+                let line = if read.levels > 1 {
+                    Line::parse_block(&text)
+                } else {
+                    Line::parse(&text)
+                }
+                .ok_or(RebuildReason::Unreadable)?;
+                let (levels, down) = line.levels(read.levels).ok_or(RebuildReason::Unreadable)?;
+                Ok(Held {
+                    line,
+                    text,
+                    levels,
+                    down,
+                })
             })
             .transpose()
     };
@@ -261,11 +285,19 @@ struct Want<'a> {
     values: &'a [Cell],
 }
 
-/// A series' categories (the chart's one list, `shared`) or x values.
+/// A series' categories (one category set, `set`, level by level, leaf
+/// first) or x values (one level, no set).
 struct First<'a> {
-    cells: &'a [Cell],
+    levels: &'a [Vec<Cell>],
     numeric: bool,
-    shared: bool,
+    set: Option<usize>,
+}
+
+impl First<'_> {
+    /// How many points it holds.
+    fn count(&self) -> usize {
+        self.levels.first().map_or(0, Vec::len)
+    }
 }
 
 /// One cell the edit writes: its value, whether its sequence holds
@@ -297,6 +329,8 @@ struct Plan<'b> {
     named: BTreeSet<Key>,
     down: bool,
     planned: BTreeMap<Key, Planned>,
+    /// The category set each planned category cell holds.
+    owners: BTreeMap<Key, usize>,
 }
 
 impl<'b> Plan<'b> {
@@ -304,8 +338,10 @@ impl<'b> Plan<'b> {
         let mut named = BTreeSet::new();
         let mut down = None;
         for node in tree.nodes.iter().filter(|node| node.is(C, "f")) {
-            let line = Line::parse(&node.text).ok_or(RebuildReason::Unreadable)?;
-            down = down.or(line.down());
+            let line = Line::parse_block(&node.text).ok_or(RebuildReason::Unreadable)?;
+            if Line::parse(&node.text).is_some() {
+                down = down.or(line.down());
+            }
             named.extend(line.keys());
         }
         let sheets = book
@@ -339,6 +375,7 @@ impl<'b> Plan<'b> {
             named,
             down: down.unwrap_or(true),
             planned: BTreeMap::new(),
+            owners: BTreeMap::new(),
         })
     }
 
@@ -468,13 +505,14 @@ impl<'b> Plan<'b> {
 
     /// A held series' sequences at its held references, grown or shrunk:
     /// its name in the first cell of its name's, its values, its categories
-    /// or x values. The categories it planned, if it drew them.
+    /// (each level's line) or x values. The category set it planned and its
+    /// lines, if it drew one.
     fn held(
         &mut self,
         held: &HeldRefs,
         want: &Want<'_>,
         refs: &mut Refs,
-    ) -> Result<Option<Line>, RebuildReason> {
+    ) -> Result<Option<(usize, Vec<Line>)>, RebuildReason> {
         if let Some(name) = &held.name {
             let line = name.line.head();
             self.take(
@@ -495,55 +533,119 @@ impl<'b> Plan<'b> {
         let (Some(at), Some(first)) = (&held.first, &want.first) else {
             return Ok(None);
         };
-        let down = self.down_of(&at.line, None);
-        let Some(line) = self.grown(&at.line, first.cells.len(), down)? else {
-            return Ok(None);
-        };
-        self.take(&line, first.cells, first.numeric, &at.line)?;
-        refs.first = Some(at.to(&line));
-        Ok(Some(line))
+        if at.levels.len() != first.levels.len() {
+            return Err(RebuildReason::LevelsChanged);
+        }
+        let down = at.down.unwrap_or_else(|| self.down_of(&at.line, None));
+        let mut grown = Vec::with_capacity(at.levels.len());
+        for line in &at.levels {
+            match self.grown(line, first.count(), down)? {
+                Some(line) => grown.push(line),
+                None => return Ok(None),
+            }
+        }
+        let lines = self.place(first, grown, &at.levels, down)?;
+        refs.first = at.to_block(&lines);
+        Ok(first.set.map(|set| (set, lines)))
     }
 
-    /// A new series' sequences: its categories the chart's (else its
-    /// template's), its x values the template's where those cells already
-    /// hold them, and its values, name and other x values shifted from the
-    /// template's into the first free cells beside them.
+    /// Plan `first`'s levels into `lines` (leaf first), each formatted
+    /// after its line of `like`: a category set whose cells another set
+    /// holds moves to the first free cells beside them, so changing one
+    /// series' categories never writes over another's. The lines planned.
+    fn place(
+        &mut self,
+        first: &First<'_>,
+        lines: Vec<Line>,
+        like: &[Line],
+        down: bool,
+    ) -> Result<Vec<Line>, RebuildReason> {
+        let lines = match first.set {
+            Some(set)
+                if lines
+                    .iter()
+                    .flat_map(Line::keys)
+                    .any(|key| self.owners.get(&key).is_some_and(|owner| *owner != set)) =>
+            {
+                self.room(&lines, down)?
+            }
+            _ => lines,
+        };
+        for ((line, cells), like) in lines.iter().zip(first.levels).zip(like) {
+            self.take(line, cells, first.numeric, like)?;
+            if let Some(set) = first.set {
+                for key in line.keys() {
+                    self.owners.insert(key, set);
+                }
+            }
+        }
+        Ok(lines)
+    }
+
+    /// Plan `first`'s levels into a set's planned `lines`.
+    fn fill(&mut self, lines: &[Line], first: &First<'_>) -> Result<(), RebuildReason> {
+        for (line, cells) in lines.iter().zip(first.levels) {
+            self.take(line, cells, first.numeric, line)?;
+        }
+        Ok(())
+    }
+
+    /// A new series' sequences: its categories the cells its set already
+    /// took (else its template's, moved where another set holds them), its
+    /// x values the template's where those cells already hold them, and
+    /// its values, name and other x values shifted from the template's into
+    /// the first free cells beside them. The category set it planned and
+    /// its lines, when it planned one.
     fn added(
         &mut self,
         template: &HeldRefs,
         want: &Want<'_>,
-        shared: Option<&Line>,
+        shared: Option<&[Line]>,
         refs: &mut Refs,
-    ) -> Result<(), RebuildReason> {
+    ) -> Result<Option<(usize, Vec<Line>)>, RebuildReason> {
         let mut x = None;
-        if let (Some(first), Some(at)) = (&want.first, &template.first) {
-            let down = self.down_of(&at.line, None);
-            let line = match shared.filter(|_| first.shared) {
-                Some(line) => Some(line.clone()),
-                None if first.shared => self.grown(&at.line, first.cells.len(), down)?,
-                None => at.line.fit(first.cells.len(), down)?,
-            };
-            match line {
-                Some(line) if first.shared || self.holds(&line, first.cells) => {
-                    self.take(&line, first.cells, first.numeric, &at.line)?;
-                    refs.first = Some(line.formula());
-                }
-                Some(line) => x = Some((line, at.line.clone(), first.cells)),
-                None => {}
+        let mut planned = None;
+        match (&want.first, shared, &template.first) {
+            (Some(first), Some(lines), _) if first.set.is_some() => {
+                self.fill(lines, first)?;
+                refs.first = Line::around(lines).map(|line| line.formula());
             }
-        } else if let (Some(first), Some(line)) = (&want.first, shared)
-            && first.shared
-        {
-            self.take(line, first.cells, first.numeric, line)?;
-            refs.first = Some(line.formula());
+            (Some(first), _, Some(at)) if first.set.is_some() => {
+                if at.levels.len() != first.levels.len() {
+                    return Err(RebuildReason::LevelsChanged);
+                }
+                let down = at.down.unwrap_or_else(|| self.down_of(&at.line, None));
+                let mut grown = Vec::with_capacity(at.levels.len());
+                for line in &at.levels {
+                    grown.extend(self.grown(line, first.count(), down)?);
+                }
+                if grown.len() == at.levels.len() {
+                    let lines = self.place(first, grown, &at.levels, down)?;
+                    refs.first = Line::around(&lines).map(|line| line.formula());
+                    planned = first.set.map(|set| (set, lines));
+                }
+            }
+            (Some(first), _, Some(at)) => {
+                let down = self.down_of(&at.line, None);
+                let cells = first.levels.first().map_or(&[][..], Vec::as_slice);
+                match at.line.fit(cells.len(), down)? {
+                    Some(line) if self.holds(&line, cells) => {
+                        self.take(&line, cells, first.numeric, &at.line)?;
+                        refs.first = Some(line.formula());
+                    }
+                    Some(line) => x = Some((line, at.line.clone(), cells)),
+                    None => {}
+                }
+            }
+            _ => {}
         }
         let Some(values) = &template.values else {
-            return Ok(());
+            return Ok(planned);
         };
         let name = template.name.as_ref().map(|name| name.line.head());
         let down = self.down_of(&values.line, name.as_ref());
         let Some(line) = values.line.fit(want.values.len(), down)? else {
-            return Ok(());
+            return Ok(planned);
         };
         let mut lines = vec![line];
         lines.extend(name.clone());
@@ -561,7 +663,7 @@ impl<'b> Plan<'b> {
             self.take(&line, cells, true, like)?;
             refs.first = Some(line.formula());
         }
-        Ok(())
+        Ok(planned)
     }
 
     /// The cell writes: each planned cell that does not already read as
