@@ -229,36 +229,60 @@ pub(crate) fn has_finalized_code_revision_in_txn(
 }
 
 fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRevisionWriteOutcome> {
+    // Blob and queue evidence are minted by the queue seal alone (G2 PR3).
+    if revision.tested_queue.is_some() || !revision.blob_frontiers.is_empty() {
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "a tested queue revision is finalized by its queue seal alone",
+        )));
+    }
     validate_code_revision_shape(revision)?;
     RECORDS.encode_value(revision)?;
     let mut wtxn = store.env.write_txn()?;
-    backfill_code_revision_integrity_for_session_in_txn(store, &mut wtxn, &revision.session_id)?;
-    let artifact_body = require_code_artifact_body(store, &wtxn, &revision.revision_id)?;
+    let (outcome, written) = write_code_revision_in_txn(store, &mut wtxn, revision)?;
+    if written {
+        wtxn.commit()?;
+    }
+    Ok(outcome)
+}
+
+/// [`write_code_revision`]'s body in the caller's writer: the same
+/// validation, lifecycle edges, indexes and retained-proposal behavior.
+/// `true` means the writer holds writes the caller commits.
+pub(super) fn write_code_revision_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    revision: &CodeRevision,
+) -> Result<(CodeRevisionWriteOutcome, bool)> {
+    backfill_code_revision_integrity_for_session_in_txn(store, wtxn, &revision.session_id)?;
+    let artifact_body = require_code_artifact_body(store, wtxn, &revision.revision_id)?;
     // A retained proposal stays retained even if its old parent later becomes
     // the head. Resolution must submit a new revision identity explicitly.
-    if let Some(existing) = super::proposals::load(store, &wtxn, &revision.revision_id)? {
+    if let Some(existing) = super::proposals::load(store, wtxn, &revision.revision_id)? {
         if existing.revision != *revision || existing.artifact_body != artifact_body {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "stranded revision identity reused",
             )));
         }
-        return Ok(CodeRevisionWriteOutcome::Proposed(Box::new(existing)));
+        return Ok((
+            CodeRevisionWriteOutcome::Proposed(Box::new(existing)),
+            false,
+        ));
     }
 
     require_entity_type(
         store,
-        &wtxn,
+        wtxn,
         &revision.session_id,
         ENTITY_TYPE_SESSION,
         "session_id must be a SESSION entity",
     )?;
     let parent_revision = revision
         .parent_revision_id
-        .map(|parent_id| require_known_code_revision(store, &wtxn, &parent_id))
+        .map(|parent_id| require_known_code_revision(store, wtxn, &parent_id))
         .transpose()?;
     let reverted_to_revision = revision
         .reverted_to_revision_id
-        .map(|reverted_to_id| require_known_code_revision(store, &wtxn, &reverted_to_id))
+        .map(|reverted_to_id| require_known_code_revision(store, wtxn, &reverted_to_id))
         .transpose()?;
     if let Some(parent_revision) = &parent_revision {
         require_revision_session(
@@ -278,38 +302,37 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRev
         revision.parent_revision_id,
         revision.reverted_to_revision_id,
     ) {
-        require_code_revision_ancestor(store, &wtxn, &parent_id, &reverted_to_id)?;
+        require_code_revision_ancestor(store, wtxn, &parent_id, &reverted_to_id)?;
     }
     if let Some(provenance_claim_id) = revision.provenance_claim_id {
         require_entity_type(
             store,
-            &wtxn,
+            wtxn,
             &provenance_claim_id,
             ENTITY_TYPE_CLAIM,
             "provenance_claim_id must be a CLAIM entity",
         )?;
     }
-    if RECORDS.contains(store, &wtxn, &revision.revision_id)? {
+    if RECORDS.contains(store, wtxn, &revision.revision_id)? {
         return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision is already finalized",
         )));
     }
-    let integrity = build_code_revision_integrity_record(store, &wtxn, revision, &artifact_body)?;
+    let integrity = build_code_revision_integrity_record(store, wtxn, revision, &artifact_body)?;
     let update_frontier =
-        match validate_code_revision_frontier_update(store, &wtxn, revision, &integrity)? {
+        match validate_code_revision_frontier_update(store, wtxn, revision, &integrity)? {
             FrontierUpdate::Advance => true,
             FrontierUpdate::Converged => false,
             FrontierUpdate::Diverged(head) => {
                 let proposal = super::proposals::retain(
                     store,
-                    &mut wtxn,
+                    wtxn,
                     revision,
                     &head,
                     &integrity,
                     &artifact_body,
                 )?;
-                wtxn.commit()?;
-                return Ok(CodeRevisionWriteOutcome::Proposed(Box::new(proposal)));
+                return Ok((CodeRevisionWriteOutcome::Proposed(Box::new(proposal)), true));
             }
         };
     let frontier = CodeRevisionFrontierRecord {
@@ -322,7 +345,7 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRev
     let mut graph_changed = false;
     put_lifecycle_edge(
         store,
-        &mut wtxn,
+        wtxn,
         &revision.revision_id,
         EdgeKind::DerivedFrom,
         &revision.session_id,
@@ -332,7 +355,7 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRev
     if let Some(parent_id) = revision.parent_revision_id {
         put_lifecycle_edge(
             store,
-            &mut wtxn,
+            wtxn,
             &revision.revision_id,
             EdgeKind::Supersedes,
             &parent_id,
@@ -343,7 +366,7 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRev
     if let Some(reverted_to_id) = revision.reverted_to_revision_id {
         put_lifecycle_edge(
             store,
-            &mut wtxn,
+            wtxn,
             &revision.revision_id,
             EdgeKind::DerivedFrom,
             &reverted_to_id,
@@ -352,25 +375,24 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRev
         )?;
     }
 
-    RECORDS.put(store, &mut wtxn, &revision.revision_id, revision)?;
-    INTEGRITY.put(store, &mut wtxn, &revision.revision_id, &integrity)?;
+    RECORDS.put(store, wtxn, &revision.revision_id, revision)?;
+    INTEGRITY.put(store, wtxn, &revision.revision_id, &integrity)?;
     if update_frontier {
-        FRONTIER.put(store, &mut wtxn, &revision.session_id, &frontier)?;
+        FRONTIER.put(store, wtxn, &revision.session_id, &frontier)?;
     }
     SESSION_INDEX.put(
         store,
-        &mut wtxn,
+        wtxn,
         &(revision.session_id, revision.revision_id),
         &(),
     )?;
     if let Some(parent_id) = revision.parent_revision_id {
-        PARENT_INDEX.put(store, &mut wtxn, &(parent_id, revision.revision_id), &())?;
+        PARENT_INDEX.put(store, wtxn, &(parent_id, revision.revision_id), &())?;
     }
     if graph_changed {
-        ppr::increment_graph_version(store, &mut wtxn)?;
+        ppr::increment_graph_version(store, wtxn)?;
     }
-    wtxn.commit()?;
-    Ok(CodeRevisionWriteOutcome::Finalized)
+    Ok((CodeRevisionWriteOutcome::Finalized, true))
 }
 
 pub(super) fn get_code_revision_in_txn(

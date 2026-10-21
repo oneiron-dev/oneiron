@@ -438,7 +438,9 @@ pub(crate) struct ChatReused {
 /// reply as saved now and, when the rung cannot continue a trailing reply
 /// itself, the continuation ask, after its cache boundary. The prefix is
 /// admitted again as exactly its model, then sent on its captured rung with
-/// no second prompt and no other route. A breakpoint that is missing, kept
+/// no second prompt. Like any ladder stream it keeps that rung's quota
+/// fallback, which may answer it on another route (FIX 7282; the board's
+/// locality bound covers that route). A breakpoint that is missing, kept
 /// for another reader, stale, or not admitted again is unavailable: the
 /// action runs as it always did, and nothing is rebuilt and called the same
 /// fork. With the row on the retained turns nothing changes.
