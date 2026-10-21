@@ -241,10 +241,10 @@ pub(crate) fn validate_queue_revision_in_txn(
     if tested.schema_version != 1
         || revision.revision_id != expected
         || revision.reverted_to_revision_id.is_some()
-        // No seal carries an import binding or a retired path before their
-        // reviewed producers land (G4 PR1): the resolver reads the root.
+        // No seal carries an import binding before its reviewed producer
+        // lands (G4 PR1): the resolver reads the root. A retired path is
+        // proved below from its reviewed removal (G4 PR2).
         || revision.snapshot_anchor.is_some()
-        || !revision.retired_paths.is_empty()
         || revision.session_id != queue_aggregation_session(&tested.store, &tested.init_work)?
         || revision.provenance_claim_id != Some(queue_provenance_id(revision.revision_id)?)
         || tested.inventory_digest != CodeTreeInventory::digest(revision)?
@@ -256,6 +256,7 @@ pub(crate) fn validate_queue_revision_in_txn(
     {
         return Err(invalid("tested queue revision identity or evidence"));
     }
+    validate_queue_retirements_in_txn(vault, txn, revision, tested)?;
     let metadata = revision
         .commit_metadata
         .as_ref()
@@ -287,6 +288,55 @@ pub(crate) fn validate_queue_revision_in_txn(
         }
         _ => Err(invalid("a tested queue revision's parent is its target's")),
     }
+}
+
+/// The first producer of retired paths (G4 PR2): each one is a removal one
+/// of this seal's own applied received bundles reviewed, under its
+/// deterministic child operation, with the document that operation left
+/// when the path had one. The checked baseline retires nothing.
+///
+/// # Errors
+/// A retirement no applied reviewed removal proves.
+fn validate_queue_retirements_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    revision: &CodeRevision,
+    tested: &QueueTestedRevision,
+) -> Result<()> {
+    if revision.retired_paths.is_empty() {
+        return Ok(());
+    }
+    let QueueTestedTarget::Landed { applied, .. } = &tested.target else {
+        return Err(invalid("the checked baseline retires no path"));
+    };
+    for (path, retirement) in &revision.retired_paths {
+        let source = applied
+            .iter()
+            .find(|source| source.proposal == retirement.review_ref)
+            .ok_or_else(|| invalid("a retired path's review is not an applied source"))?;
+        let proposal = vault
+            .repo_proposal_in_txn(txn, source.proposal)?
+            .ok_or(Error::EntityNotFound)?;
+        let removal = proposal
+            .files
+            .iter()
+            .find(|file| file.path == *path && file.content.is_none());
+        let proved = proposal.received_candidate().is_some()
+            && proposal.status == crate::repo_mutation::proposal::RepoProposalStatus::Applied
+            && removal
+                .and_then(|file| file.source_operation)
+                .map(|op| crate::repo_mutation::received_file_operation(proposal.id, op))
+                .transpose()?
+                == Some(retirement.operation_receipt);
+        if !proved {
+            return Err(invalid("a retired path is no applied reviewed removal"));
+        }
+        let receipt = vault.code_file_edit_receipt_in_txn(txn, retirement.operation_receipt)?;
+        if receipt.map(|receipt| receipt.after) != retirement.document {
+            return Err(invalid("a retired path's document is not its removal's"));
+        }
+    }
+    Ok(())
 }
 
 /// Records `seal`'s aggregate provenance claim: derived engine work naming

@@ -204,3 +204,45 @@ pub(crate) async fn vault_code_origin_mirror_push(
     )
     .await
 }
+
+pub(crate) async fn vault_code_repos_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeRepoGetRequest,
+) -> Listed<Option<CodeRepoView>> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.repos.get",
+        move |memory, owner| memory.code_repo_get_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_forks_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeForkGetRequest,
+) -> Listed<Option<CodeForkView>> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.forks.get",
+        move |memory, owner| memory.code_fork_get_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_ingress_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodePushIngressGetRequest,
+) -> Listed<Option<CodePushIngressView>> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.ingress.get",
+        move |memory, owner| memory.code_push_ingress_get_as(owner, input),
+    )
+    .await
+}

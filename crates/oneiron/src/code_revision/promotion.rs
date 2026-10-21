@@ -141,7 +141,10 @@ impl Vault {
             if edit.session_id != proposal.session
                 || edit.actor.map(|actor| actor.entity_ref()) != proposal.actor.id()
                 || edit.provenance != proposal.op_provenance
-                || edit.edit.path != proposal.path
+                // A received bundle promotes through its queue only.
+                || !proposal
+                    .ordinary_file()
+                    .is_ok_and(|(path, _)| edit.edit.path == path)
                 || reviews
                     .insert(edit.document_id, (proposal, edit, reviewed_mode))
                     .is_some()

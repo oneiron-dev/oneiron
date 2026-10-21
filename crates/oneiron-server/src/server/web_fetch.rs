@@ -7,16 +7,25 @@
 //! to, a redirect's included, with the same [`HostedEgressGuard`]. The guard
 //! reads the node's own addresses afresh at each check, and a ladder the host
 //! supplied carries it too (FIX 6101). A self-hosted node fetches as before.
+//!
+//! A managed node whose host names a `[browser]` guest renders its default
+//! ladder's second rung in a fresh guest of that image per render (FIX 7122,
+//! `headless`): every request, redirect and connection of the render is
+//! checked with the same guard. Without `[browser]`, and on a self-hosted
+//! node, the default ladder is readability only, as before.
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::web_fetch::{
-    HostedEgressGuard, NativeReadabilityRenderer, WebFetcher, build_web_fetch_client,
+    HostedEgressGuard, NativeHeadlessRenderer, NativeReadabilityRenderer, WebFetchError,
+    WebFetcher, build_web_fetch_client,
 };
 
-use super::SyncServer;
+use super::{HandleLine, SyncServer};
+
+mod headless;
 
 impl SyncServer {
     /// Supplies the host's fixed renderer ladder, including any isolated
@@ -34,9 +43,10 @@ impl SyncServer {
     }
 
     /// Called off the async runtime. The default rung is a credential-free
-    /// native GET; a host that supplies a ladder keeps that exact ladder. On
-    /// a managed node every ladder, a supplied one included, carries the
-    /// hosted egress guard.
+    /// native GET, with the host's headless browser after it on a managed
+    /// node with a `[browser]` guest (FIX 7122); a host that supplies a
+    /// ladder keeps that exact ladder. On a managed node every ladder, a
+    /// supplied one included, carries the hosted egress guard.
     pub(crate) fn web_fetcher(&self) -> MemoryResult<Arc<WebFetcher>> {
         // The managed switch every hosted-only rule reads: set only by
         // managed boot.
@@ -47,7 +57,17 @@ impl SyncServer {
         let fetcher = match self.web_fetcher.get() {
             Some(fetcher) => Arc::clone(fetcher),
             None => {
-                let fetcher = default_web_fetcher(guard.as_ref())?;
+                // A managed node with a `[browser]` guest renders the second
+                // rung in it (FIX 7122); every other default ladder is
+                // readability only.
+                let headless = guard.as_ref().and(self.browser_guest()).map(|guest| {
+                    headless::GuestHeadless::new(
+                        guest.clone(),
+                        HandleLine::of(self),
+                        Arc::clone(self.vault()),
+                    )
+                });
+                let fetcher = default_web_fetcher(guard.as_ref(), headless)?;
                 Arc::clone(self.web_fetcher.get_or_init(|| Arc::new(fetcher)))
             }
         };
@@ -63,12 +83,24 @@ impl SyncServer {
 }
 
 /// The default ladder: one credential-free native GET rung, its client
-/// refusing hosted infrastructure at every connection on a managed node.
-fn default_web_fetcher(guard: Option<&Arc<HostedEgressGuard>>) -> MemoryResult<WebFetcher> {
+/// refusing hosted infrastructure at every connection on a managed node,
+/// then the host's `headless` browser where a managed node has one.
+fn default_web_fetcher(
+    guard: Option<&Arc<HostedEgressGuard>>,
+    headless: Option<headless::GuestHeadless>,
+) -> MemoryResult<WebFetcher> {
     let client = build_web_fetch_client(guard.cloned())
         .map_err(|_| MemoryError::new("WEB_FETCH_FAILED", "web HTTP client unavailable", &[]))?;
-    WebFetcher::new(Arc::new(NativeReadabilityRenderer::new(client)))
-        .map_err(|error| MemoryError::new("WEB_FETCH_FAILED", error.to_string(), &[]))
+    let failed =
+        |error: WebFetchError| MemoryError::new("WEB_FETCH_FAILED", error.to_string(), &[]);
+    let fetcher =
+        WebFetcher::new(Arc::new(NativeReadabilityRenderer::new(client))).map_err(failed)?;
+    match headless {
+        Some(headless) => fetcher
+            .with_headless(Arc::new(NativeHeadlessRenderer::new(Arc::new(headless))))
+            .map_err(failed),
+        None => Ok(fetcher),
+    }
 }
 
 /// This node's own addresses, as far as the standard library reaches them:

@@ -21,6 +21,7 @@
 //! tick asks a held check or landing again.
 
 mod executor;
+mod received;
 mod tree;
 
 use std::sync::Arc;
@@ -117,11 +118,20 @@ impl SyncServer {
         };
         let mut admission = Some(first);
         let mut driven = Vec::new();
+        let mut intaken = Vec::new();
         let mut ran = 0_usize;
         loop {
             let Some(moved) = self.drive_queues(&mut admission, admit, pass, &mut driven)? else {
                 break;
             };
+            // Accepted pushes become Proposed bundles after the queues'
+            // own steps, before their checks, once a drain (G4 PR2).
+            let Some(proposed) =
+                self.intake_received_candidates(&mut admission, admit, &mut intaken)?
+            else {
+                break;
+            };
+            let moved = moved + proposed;
             let mut checked = 0_usize;
             for key in vault.pending_queue_checks()? {
                 if self.housekeeping_passes.stopping() {
