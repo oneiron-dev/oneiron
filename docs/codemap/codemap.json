@@ -87647,6 +87647,7 @@
      "path": "src/config/merge_queue.rs",
      "purpose": "`[merge_queue]`: the executor the queue checker runs a repository's frozen check plan in (FIX 6868)",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
       "enum": 2,
       "fn": 4,

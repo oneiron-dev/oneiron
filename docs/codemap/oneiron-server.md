@@ -679,7 +679,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/linear.rs` | src | m | 1 struct · 1 enum · 8 crate-vis | LinearConfig, LinearMode | `[linear]`: the Linear mirror this server runs and the tracker mapping its signed webhook applies under… |
 | `src/config/lookup.rs` | src | s | 11 crate-vis | — | Leaf config helpers: env lookups, value parsing, and secret redaction |
 | `src/config/merge.rs` | src | L | 1 struct · 6 fn · 6 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
-| `src/config/merge_queue.rs` | src | s | 1 struct · 2 enum · 4 fn · 2 crate-vis | CheckerBackend, CheckerNetwork, MergeQueueCheckerConfig | `[merge_queue]`: the executor the queue checker runs a repository's frozen check plan in (FIX 6868) |
+| `src/config/merge_queue.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 const · 2 crate-vis | CheckerBackend, CheckerNetwork, MergeQueueCheckerConfig | `[merge_queue]`: the executor the queue checker runs a repository's frozen check plan in (FIX 6868) |
 | `src/config/mod.rs` | src | s | 15 mod · 26 re-export · 3 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/models/compaction.rs` | src | s | 1 struct · 2 crate-vis | CompactionSettings | `[models.code_mode.compaction]`: each code-mode run's window compacts by itself (agent-runtime-v1 §d7) |
 | `src/config/models/decision_read.rs` | src | m | 4 struct · 1 enum · 8 fn · 2 crate-vis | DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal | `[models.decision_read]`: the house model's decision read on the `local_reasoner` rung, and the recipe it… |
