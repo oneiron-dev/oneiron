@@ -16858,6 +16858,7 @@ class XlsxTable(TypedDict):
     totals_rows: int
     columns: list[str]
     worksheet: bool
+    calculated: NotRequired[list[str | None]]
 XlsxSheetVisibility = Literal["visible", "hidden", "veryHidden"]
 class XlsxSheetView(TypedDict):
     name: str

@@ -29,8 +29,8 @@ use crate::error::Result;
 use loro::{Container, LoroDoc, LoroMap, LoroMapValue, LoroValue, ValueOrContainer};
 use oneiron_docedit::xlsx_body::{
     SheetFate, XlsxArea, XlsxAxis, XlsxAxisEdit, XlsxBook, XlsxChange, XlsxFormat, XlsxLock,
-    XlsxSheetPlan, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue, a1, check_cell,
-    check_format, check_name, check_sheet_name, drop_tables, parse_a1, retarget_sheets,
+    XlsxSheetPlan, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue, a1, calculated_fill,
+    check_cell, check_format, check_name, check_sheet_name, drop_tables, parse_a1, retarget_sheets,
     shift_axis_formula,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -798,7 +798,11 @@ fn neighbour_formats(body: &mut XlsxBody, key: &str, edit: &XlsxAxisEdit) {
 /// columns inserted or deleted inside them, as the export's do: a new
 /// column's header cell holds its `ColumnN` name in the format of the header
 /// cell to its left, and a structured reference to a deleted column reads
-/// `#REF!`. With `check`, refuse what an export could not write: a shared
+/// `#REF!`, an unqualified one (`[@Price]`) in a formula inside the table
+/// too. Rows inserted inside a table's data area take its calculated
+/// columns' formulas, each in the format of the neighbour row's writable
+/// cell in its column, as the export's do. With `check`, refuse what an
+/// export could not write: a shared
 /// formula the body cannot write out, a read-only range the edit would split
 /// or cut, a table's header or totals row or all of a table deleted, a column
 /// edit inside a query or XML table, a cell pushed off the sheet.
@@ -822,6 +826,10 @@ fn axis(
     }
     // Each table that loses columns, as it was, with the names it loses.
     let mut dropped: Vec<(XlsxTable, Vec<String>)> = Vec::new();
+    // Each moved table (by its index) whose calculated columns rows
+    // inserted inside it take, with its first data row as the edit moves
+    // it (FIX 3695).
+    let mut fills: Vec<(usize, u32)> = Vec::new();
     if let Some(sheet) = body.sheets.iter_mut().find(|sheet| sheet.key == key) {
         let end = edit.at + edit.count - 1;
         let mut locked = Vec::with_capacity(sheet.locked.len());
@@ -882,6 +890,16 @@ fn axis(
             if !shift.deleted.is_empty() {
                 dropped.push((table.clone(), shift.deleted));
             }
+            if !edit.delete
+                && edit.axis == XlsxAxis::Row
+                && let Some(anchor) = table
+                    .first
+                    .1
+                    .checked_add(table.header_rows)
+                    .and_then(|row| edit.moved(row))
+            {
+                fills.push((tables.len(), anchor));
+            }
             tables.push(shift.table);
         }
         sheet.tables = tables;
@@ -923,21 +941,75 @@ fn axis(
         }
     }
     for sheet in &mut body.sheets {
-        let home = sheet.name.as_str();
-        for cell in sheet.cells.values_mut() {
-            if let Some(formula) = cell
-                .formula
-                .as_deref()
-                .and_then(|formula| shift_axis_formula(formula, Some(home), name, edit, &dropped))
-            {
+        let BodySheet {
+            name: home,
+            cells,
+            tables,
+            ..
+        } = sheet;
+        let home = home.as_str();
+        for (&(row, col), cell) in cells.iter_mut() {
+            // An unqualified structured reference is to the table holding
+            // the cell (FIX 3438).
+            let own = tables
+                .iter()
+                .find(|table| table.contains(col, row))
+                .map(|table| table.name.as_str());
+            if let Some(formula) = cell.formula.as_deref().and_then(|formula| {
+                shift_axis_formula(formula, Some(home), name, edit, &dropped, own)
+            }) {
                 cell.formula = Some(formula);
                 cell.value = XlsxValue::Blank;
             }
         }
+        // A table's calculated formulas follow as its part's do.
+        for table in tables.iter_mut() {
+            let own = table.name.clone();
+            for formula in table.calculated.iter_mut().flatten() {
+                if let Some(moved) = shift_axis_formula(
+                    formula.as_str(),
+                    Some(home),
+                    name,
+                    edit,
+                    &dropped,
+                    Some(&own),
+                ) {
+                    *formula = moved;
+                }
+            }
+        }
     }
     for held in body.names.values_mut() {
-        if let Some(formula) = shift_axis_formula(&held.formula, None, name, edit, &dropped) {
+        if let Some(formula) = shift_axis_formula(&held.formula, None, name, edit, &dropped, None) {
             held.formula = formula;
+        }
+    }
+    if let Some(sheet) = body.sheets.iter_mut().find(|sheet| sheet.key == key) {
+        let source = if edit.at > 1 {
+            edit.at - 1
+        } else {
+            edit.at.saturating_add(edit.count)
+        };
+        for (at, anchor) in fills {
+            for (col, row, formula) in calculated_fill(&sheet.tables[at], anchor, edit) {
+                let like = sheet
+                    .cells
+                    .get(&(source, col))
+                    .filter(|cell| cell.locked.is_none());
+                let (style, format) =
+                    like.map_or((None, None), |cell| (cell.style, cell.format.clone()));
+                sheet.cells.insert(
+                    (row, col),
+                    BodyCell {
+                        address: a1(col, row),
+                        value: XlsxValue::Blank,
+                        formula: Some(formula),
+                        style,
+                        format,
+                        locked: None,
+                    },
+                );
+            }
         }
     }
     Ok(())
@@ -993,6 +1065,17 @@ fn retarget(
         if let Some(formula) = cell.formula.as_deref().and_then(&rewrite) {
             cell.formula = Some(formula);
             cell.value = XlsxValue::Blank;
+        }
+    }
+    // A table's calculated formulas follow as its part's do (FIX 3695).
+    for formula in body
+        .sheets
+        .iter_mut()
+        .flat_map(|sheet| sheet.tables.iter_mut())
+        .flat_map(|table| table.calculated.iter_mut().flatten())
+    {
+        if let Some(moved) = rewrite(formula.as_str()) {
+            *formula = moved;
         }
     }
     for held in body.names.values_mut() {

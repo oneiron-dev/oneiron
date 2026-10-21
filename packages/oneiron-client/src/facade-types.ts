@@ -6693,7 +6693,7 @@ export type BodyCell = { address: string; value: XlsxValue; formula?: string | n
 /** `oneiron_docedit::xlsx_body::XlsxArea` */
 export type XlsxArea = { first: [number, number]; last: [number, number]; lock: XlsxLock }
 /** `oneiron_docedit::xlsx_body::XlsxTable` */
-export type XlsxTable = { name: string; first: [number, number]; last: [number, number]; header_rows: number; totals_rows: number; columns: string[]; worksheet: boolean }
+export type XlsxTable = { name: string; first: [number, number]; last: [number, number]; header_rows: number; totals_rows: number; columns: string[]; worksheet: boolean; calculated?: (string | null)[] }
 /** `oneiron_docedit::xlsx_body::XlsxSheetVisibility` */
 export type XlsxSheetVisibility = "visible" | "hidden" | "veryHidden"
 /** `oneiron::office_body::verbs::XlsxSheetView` */

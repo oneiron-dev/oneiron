@@ -1,8 +1,9 @@
 //! Byte-span writing over a parsed part: every edit is a list of splices on
 //! the retained bytes, so whatever it does not name keeps its bytes.
 use super::EditRefusal;
-use crate::ooxml::{Node, XmlTree};
+use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::retained_opc::Package;
+use quick_xml::events::Event;
 use std::ops::Range;
 
 pub(crate) const P: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
@@ -126,6 +127,96 @@ pub(crate) fn insert_last(bytes: &[u8], node: &Node, inner: &str) -> Splice {
             inner.as_bytes().to_vec(),
         )
     }
+}
+
+/// Insert `inner` just before `node`'s close tag. An empty element opens
+/// (`<x a="1"/>` to `<x a="1">inner</x>`) without rewriting its open tag,
+/// so a splice of one of its attributes still applies beside this one.
+pub(crate) fn insert_end(bytes: &[u8], node: &Node, inner: &[u8]) -> Splice {
+    if node.empty {
+        let mut value = b">".to_vec();
+        value.extend_from_slice(inner);
+        value.extend(format!("</{}>", node.qualified).into_bytes());
+        (attribute_point(bytes, node)..node.span.end, value)
+    } else {
+        (node.content.end..node.content.end, inner.to_vec())
+    }
+}
+
+/// The splices that make `text` (escaped here) `node`'s own character
+/// data: its first run of text rewritten and every later run removed, while
+/// the comments, processing instructions and child elements between them
+/// keep their bytes and places. An empty element opens as
+/// [`insert_end`] opens it. `None` when its content does not read as XML.
+pub(crate) fn replace_text(bytes: &[u8], node: &Node, text: &str) -> Option<Vec<Splice>> {
+    let escaped = escape_text(text).into_bytes();
+    if node.empty {
+        return Some(if escaped.is_empty() {
+            Vec::new()
+        } else {
+            vec![insert_end(bytes, node, &escaped)]
+        });
+    }
+    let mut runs = direct_text(bytes, node)?.into_iter();
+    let mut edits = Vec::new();
+    match runs.next() {
+        Some(first) => edits.push((first, escaped)),
+        None if escaped.is_empty() => {}
+        None => edits.push((node.content.start..node.content.start, escaped)),
+    }
+    edits.extend(runs.map(|run| (run, Vec::new())));
+    Some(edits)
+}
+
+/// The byte ranges of `node`'s own character data (text, references and
+/// CDATA directly inside it, not inside a child), adjacent pieces joined.
+fn direct_text(bytes: &[u8], node: &Node) -> Option<Vec<Range<usize>>> {
+    let base = node.content.start;
+    let content = std::str::from_utf8(bytes.get(node.content.clone())?).ok()?;
+    let mut reader = quick_xml::Reader::from_str(content);
+    let mut depth = 0_usize;
+    let mut runs: Vec<Range<usize>> = Vec::new();
+    loop {
+        let start = reader.buffer_position() as usize;
+        let event = reader.read_event().ok()?;
+        let end = reader.buffer_position() as usize;
+        match event {
+            Event::Start(_) => depth += 1,
+            Event::End(_) => depth = depth.checked_sub(1)?,
+            Event::Text(_) | Event::GeneralRef(_) | Event::CData(_) if depth == 0 => {
+                let run = base + start..base + end;
+                match runs.last_mut() {
+                    Some(last) if last.end == run.start => last.end = run.end,
+                    _ => runs.push(run),
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Some(runs)
+}
+
+/// The splices renaming `node`'s open and close tags to `qualified`; its
+/// attributes, namespace bindings and content keep their bytes.
+#[allow(
+    dead_code,
+    reason = "the QName half of the shared retention helpers; L12-B's retyped chart axis (FIX 8587) renames in place with it"
+)]
+pub(crate) fn rename_element(node: &Node, qualified: &str) -> Vec<Splice> {
+    let open = node.span.start + 1;
+    let mut edits = vec![(
+        open..open + node.qualified.len(),
+        qualified.as_bytes().to_vec(),
+    )];
+    if !node.empty {
+        let close = node.content.end + 2;
+        edits.push((
+            close..close + node.qualified.len(),
+            qualified.as_bytes().to_vec(),
+        ));
+    }
+    edits
 }
 
 pub(crate) fn escape_attribute(value: &str) -> String {
