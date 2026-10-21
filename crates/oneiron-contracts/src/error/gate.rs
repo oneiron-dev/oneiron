@@ -86,15 +86,6 @@ pub enum GateDenialReason {
     /// target is outside the sender's reach, or a live dispatch of the target
     /// hears only its parent and its children.
     DenyMessageAddress,
-    /// GATE-13: a Dreamer write on a persona-core predicate is held for
-    /// review, never Auto (FIX 5753: typed so a responder's Keep can
-    /// approve it).
-    PendingPersonaIsolation,
-    /// GATE-13: a Dreamer write on a mirroring-prone predicate is held for
-    /// review, never Auto.
-    PendingMirroringIsolation,
-    /// A forward claim lacks the confidence its subtype needs for Auto.
-    PendingCarryForwardConfidence,
 }
 
 impl GateDenialReason {
@@ -125,9 +116,6 @@ impl GateDenialReason {
                 "gate.deny.witness_message.author_not_authorized"
             }
             Self::DenyMessageAddress => "gate.deny.message_address",
-            Self::PendingPersonaIsolation => "gate.pending.persona_isolation",
-            Self::PendingMirroringIsolation => "gate.pending.mirroring_isolation",
-            Self::PendingCarryForwardConfidence => "gate.pending.carry_forward_confidence",
         }
     }
 
@@ -160,9 +148,6 @@ impl GateDenialReason {
                 Some(Self::DenyWitnessMessageAuthorNotAuthorized)
             }
             "gate.deny.message_address" => Some(Self::DenyMessageAddress),
-            "gate.pending.persona_isolation" => Some(Self::PendingPersonaIsolation),
-            "gate.pending.mirroring_isolation" => Some(Self::PendingMirroringIsolation),
-            "gate.pending.carry_forward_confidence" => Some(Self::PendingCarryForwardConfidence),
             _ => None,
         }
     }
@@ -187,10 +172,7 @@ impl GateDenialReason {
             | Self::PendingPolicyManifestAuthority
             | Self::PendingExternalEffectAuthority
             | Self::PendingChecker
-            | Self::PendingCheckerUnavailable
-            | Self::PendingPersonaIsolation
-            | Self::PendingMirroringIsolation
-            | Self::PendingCarryForwardConfidence => GateDenialOutcome::Pending,
+            | Self::PendingCheckerUnavailable => GateDenialOutcome::Pending,
         }
     }
 }

@@ -55,7 +55,8 @@ const KEEP_PENDING_APPROVES_EXACT: bool = true;
 /// transaction after the one before aborted whole.
 const KEEP_PENDING_APPROVAL_RETRIES: u8 = 1;
 /// The Gate receipt naming a responder's approval of the alternative its
-/// Keep landed (FIX 5753): the settled receipt's `approval_ref`.
+/// Keep landed (FIX 5753), minted only when the approval closed no tray row
+/// and so left no receipt of its own: the settled receipt's `approval_ref`.
 const APPROVAL_KIND: &str = "conflict_keep_approval";
 const APPROVAL_REASON: &str = "gate.memory.conflict_keep_approval";
 
@@ -314,27 +315,34 @@ impl Memory<'_> {
             }
         };
         // The retry approved exactly the alternative its Keep selected, or
-        // it settles nothing.
+        // it settles nothing. Its ref is the receipt of the tray row the
+        // approval closed; one is minted only when it closed none.
         let approval_ref = match (&approval, settlement) {
             (None, _) => None,
             (Some(approval), ConflictSettlement::Keep(selector)) => {
                 let approved = approval.approved().ok_or_else(not_approved)?;
                 *consolidate = approved.dreamer_run.then_some(approved.claim);
-                let mut record = decision(
-                    actor,
-                    APPROVAL_KIND,
-                    "approved",
-                    APPROVAL_REASON,
-                    Some(approved.claim),
-                    [marker, selector, approved.claim]
-                        .iter()
-                        .flat_map(|id| *id.as_bytes())
-                        .collect(),
-                    now,
-                );
-                record.grant_ref.clone_from(&grant_ref);
-                self.vault.store.append_gate_decision_in_txn(txn, &record)?;
-                Some(format!("gate:{}", record.decision_id.to_hex()))
+                let receipt = match approved.receipt {
+                    Some(receipt) => receipt,
+                    None => {
+                        let mut record = decision(
+                            actor,
+                            APPROVAL_KIND,
+                            "approved",
+                            APPROVAL_REASON,
+                            Some(approved.claim),
+                            [marker, selector, approved.claim]
+                                .iter()
+                                .flat_map(|id| *id.as_bytes())
+                                .collect(),
+                            now,
+                        );
+                        record.grant_ref.clone_from(&grant_ref);
+                        self.vault.store.append_gate_decision_in_txn(txn, &record)?;
+                        record.decision_id
+                    }
+                };
+                Some(format!("gate:{}", receipt.to_hex()))
             }
             (Some(_), _) => return Err(not_approved().into()),
         };

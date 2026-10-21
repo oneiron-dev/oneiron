@@ -5,7 +5,9 @@
 //! the Dreamer's claim from its round ([`KeepAs::Auto`]); that path is
 //! unchanged. When the Gate holds exactly that landing for review, on reasons
 //! that are all in [`KEEP_APPROVABLE_PENDING_REASONS`], the landing notes it
-//! and the settlement still aborts whole. The responder's door
+//! and the settlement still aborts whole. The hold is read from the Gate
+//! refusal's typed fields against the Gate's own reason codes, never from its
+//! text, and every other reader of that refusal reads it as before. The responder's door
 //! (`Memory::settle_conflict`) may then retry once, in a fresh write
 //! transaction ([`KeepAs::Approved`]): the same alternative is born Proposed,
 //! with the same source, provenance and signed MACHINE birth, and the
@@ -18,8 +20,10 @@ use std::cell::Cell;
 
 use crate::claim::ClaimApprovalStatus;
 use crate::consent::OwnerAuthoredWrite;
-use crate::error::{Error, GateDenialOutcome, GateDenialReason, Result};
+use crate::error::{Error, GateDenialOutcome, GateError, Result};
+use crate::gate::GateReasonCode;
 use crate::run_tree::GateConsentBundleAction;
+use crate::store::GateDecisionId;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -27,18 +31,18 @@ use crate::{EntityId, Vault};
 /// actor, source and criticality ceilings, a missing signed policy authority,
 /// the automatic checker's hold or silence, the Dreamer's persona and
 /// mirroring isolation, and a forward claim's low confidence. Every reason of
-/// the hold must be one of these; a Deny, an external-effect hold or a reason
-/// the typed taxonomy does not know never is.
-pub(crate) const KEEP_APPROVABLE_PENDING_REASONS: [GateDenialReason; 9] = [
-    GateDenialReason::PendingActorCeiling,
-    GateDenialReason::PendingSourceTrust,
-    GateDenialReason::PendingCriticalityFloor,
-    GateDenialReason::PendingPolicyManifestAuthority,
-    GateDenialReason::PendingChecker,
-    GateDenialReason::PendingCheckerUnavailable,
-    GateDenialReason::PendingPersonaIsolation,
-    GateDenialReason::PendingMirroringIsolation,
-    GateDenialReason::PendingCarryForwardConfidence,
+/// the hold must be one of these; a Deny, an external-effect hold or any
+/// other reason never is.
+pub(crate) const KEEP_APPROVABLE_PENDING_REASONS: [GateReasonCode; 9] = [
+    GateReasonCode::PendingActorCeiling,
+    GateReasonCode::PendingSourceTrust,
+    GateReasonCode::PendingCriticalityFloor,
+    GateReasonCode::PendingPolicyManifestAuthority,
+    GateReasonCode::PendingChecker,
+    GateReasonCode::PendingCheckerUnavailable,
+    GateReasonCode::PendingPersonaIsolation,
+    GateReasonCode::PendingMirroringIsolation,
+    GateReasonCode::PendingCarryForwardConfidence,
 ];
 
 /// How a Keep lands the retained alternative it selected.
@@ -67,6 +71,9 @@ pub(crate) struct KeepApproval {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ApprovedKeep {
     pub(crate) claim: EntityId,
+    /// The resolution receipt of the tray row the approval closed, when the
+    /// landing waited in the tray: the Approve's own Gate record.
+    pub(crate) receipt: Option<GateDecisionId>,
     /// Whether its approval consolidates VAD once the transaction commits.
     pub(crate) dreamer_run: bool,
 }
@@ -136,21 +143,29 @@ impl KeepAs<'_> {
         )?;
         approval.approved.set(Some(ApprovedKeep {
             claim,
+            receipt: settled.tray_receipt.map(|receipt| receipt.decision_id),
             dreamer_run: settled.dreamer_run,
         }));
         Ok(())
     }
 }
 
-/// Whether `error` is a typed Gate hold whose every reason a responder's
-/// Keep approves. Read from the typed taxonomy only, never from its text.
+/// Whether `error` is a Gate hold whose every reason a responder's Keep
+/// approves: the refusal's typed outcome and reason-code fields, matched
+/// against the Gate's own codes, never its text.
 fn approvable_hold(error: &Error) -> bool {
-    error.gate_denial().is_some_and(|denial| {
-        denial.outcome() == GateDenialOutcome::Pending
-            && !denial.reason_codes().is_empty()
-            && denial
-                .reason_codes()
+    let Error::Gate(GateError::GateWriteRejected {
+        outcome,
+        reason_codes,
+    }) = error
+    else {
+        return false;
+    };
+    GateDenialOutcome::parse(outcome) == Some(GateDenialOutcome::Pending)
+        && !reason_codes.is_empty()
+        && reason_codes.iter().all(|code| {
+            KEEP_APPROVABLE_PENDING_REASONS
                 .iter()
-                .all(|reason| KEEP_APPROVABLE_PENDING_REASONS.contains(reason))
-    })
+                .any(|reason| reason.as_str() == *code)
+        })
 }
