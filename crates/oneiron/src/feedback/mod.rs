@@ -33,6 +33,10 @@
 //!   [`Vault::dispatch_outbound_intent`](crate::Vault::dispatch_outbound_intent)
 //!   ([`send_feedback`]) and an air-gapped export
 //!   ([`export_feedback_bundle`]).
+//! - The triage custody over the open inbox ([`COACH_FEEDBACK_SWEEP_FACET`],
+//!   [`FeedbackTriageHandoff`]): each note's revision handed once to a Coach
+//!   job on the skill the owner bound, its result committed with the
+//!   Proposed findings it files.
 //!
 //! # What does NOT ship here
 //!
@@ -109,6 +113,7 @@ pub mod intake;
 mod preview_store;
 mod redaction;
 mod report;
+mod triage;
 
 pub use self::bundle::{
     FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING, FEEDBACK_BUNDLE_ENCODING_V2,
@@ -156,6 +161,15 @@ pub use self::report::{
     ReportReceipt, ReportRequest, ReportReview, ReportRoute, ReportRoutedPayload, ReportSignature,
     ReportStatus,
 };
+pub use self::triage::{
+    COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET, FEEDBACK_TRIAGE_FINDING_PREDICATE,
+    FEEDBACK_TRIAGE_INBOX_SOURCE, FeedbackTriageBinding, FeedbackTriageBindingRequest,
+    FeedbackTriageChild, FeedbackTriageContinuation, FeedbackTriageFinding, FeedbackTriageHandoff,
+    FeedbackTriageHold, FeedbackTriageInput, FeedbackTriageJob, FeedbackTriageOutput,
+    FeedbackTriageResult, FeedbackTriageRun, FeedbackTriageRunRequest, FeedbackTriageSourceRef,
+    FeedbackTriageStatus, FeedbackTriageStatusRequest, FeedbackTriageSweep,
+};
+pub(crate) use self::triage::{acknowledge_feedback_triage_in_txn, job_handoff_in_txn};
 
 #[cfg(test)]
 mod tests;

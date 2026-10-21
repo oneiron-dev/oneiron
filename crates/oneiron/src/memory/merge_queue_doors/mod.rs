@@ -17,6 +17,7 @@
 //! Authority is the owner's live proof alone (`Memory::merge_queue_owner`),
 //! checked before any id resolves, so a refusal is no existence oracle.
 
+mod check_receipt;
 mod checker;
 mod checker_types;
 mod export;
@@ -25,6 +26,9 @@ mod observation;
 mod operations;
 mod types;
 
+pub use check_receipt::{
+    CodeCheckAttemptView, CodeCheckCommandResult, CodeCheckReceiptRequest, CodeCheckReceiptView,
+};
 pub use checker_types::*;
 pub use export_types::*;
 pub use types::*;

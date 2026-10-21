@@ -27,6 +27,7 @@ pub use contribution::{ContributionForks, ContributionReplayHost};
 mod curator;
 pub mod detectors;
 mod evaluation;
+mod feedback_triage;
 pub mod fork_promote;
 pub mod honesty;
 pub mod identity;

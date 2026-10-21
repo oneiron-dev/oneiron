@@ -74,6 +74,24 @@ impl Vault {
             .map(|oid| GitOid::parse_hex(&oid))
             .transpose()
     }
+    /// Every finalized revision of `repo`'s object store whose stable Git
+    /// projection is `oid`, by a read-only scan of the same typed table
+    /// (G4 PR2): no second index. A pushed old tip resolves its base here.
+    pub(crate) fn exported_engine_revisions(
+        &self,
+        repo: &GitWireRepo,
+        oid: &GitOid,
+    ) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let store = repo.identity().as_hex();
+        let prefix = format!("{store}:");
+        Ok(ENGINE_EXPORTS
+            .scan_from(&self.store, &txn, prefix.as_bytes())?
+            .into_iter()
+            .filter(|(key, exported)| key.repo_hex == store && exported == oid.as_str())
+            .map(|(key, _)| key.revision)
+            .collect())
+    }
     /// No caller-supplied tree is accepted: bytes regenerate from authenticated
     /// file frontiers on the persisted CodeRevision. Git remains a projection.
     pub fn export_engine_commit(
