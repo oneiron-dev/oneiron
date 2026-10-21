@@ -15,11 +15,12 @@
 //!
 //! Han-only runs can receive explicit or detector-derived `Ja`/`Zh` hints
 //! and route directly to the hinted analyzer. If no usable hint exists,
-//! they invoke the "DualHanFallback" of plan §1.2: prefer the Japanese dict
-//! when both JP and ZH dicts are loaded, else use whichever is present, else
-//! fall through to [`cjk_ngram::analyze`]. The picked backend still emits on
-//! `Surface` + `CjkNgram`; the ambiguity matters only for morpheme
-//! segmentation, not for the character-bigram overlay.
+//! they invoke the "DualHanFallback (Sudachi + jieba)" of ARCH-0031: with
+//! both JP and ZH dicts loaded, both analyses run and the run carries the
+//! union of their tokens (FIX 8632); with one, that one; with neither,
+//! [`cjk_ngram::analyze`]. Each backend still emits on `Surface` +
+//! `CjkNgram`; the ambiguity matters only for morpheme segmentation, not for
+//! the character-bigram overlay.
 
 pub mod chinese;
 pub mod cjk_ngram;
@@ -33,8 +34,9 @@ pub mod manifest;
 pub mod normalize;
 pub mod script;
 pub mod token;
+pub mod vietnamese;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 pub use detect::DETECT_WINDOW_BYTES;
@@ -124,13 +126,14 @@ impl MultilingualAnalyzer {
         // Pre-tokenization normalization (plan §6). Segmentation and
         // every sub-analyzer see the *normalized* slice so NFKC'd forms
         // like ＡＢＣ or ｶﾀｶﾅ reach the same postings as their canonical
-        // counterparts. Emitted offsets are remapped at the end.
+        // counterparts. Emitted offsets are remapped run by run. A
+        // Vietnamese run alone reads its original bytes instead, so the
+        // global fold never reaches it (FIX 7780).
         let normalized = normalize::normalize_with_offset_map(text, &self.normalization);
         let analysis_text = normalized.as_str();
 
         let runs = self.splitter.runs(analysis_text);
         let mut position: u32 = 0;
-        let token_start = out.len();
 
         for run in &runs {
             let slice = run.as_slice(analysis_text);
@@ -148,13 +151,20 @@ impl MultilingualAnalyzer {
                         None
                     }
                 });
+            if run.script == ScriptClass::Latin && run_hint == Some(LanguageHint::Vi) {
+                let start = normalized.remap(run.byte_start);
+                let end = normalized.remap_end(run.byte_end);
+                let original = &text[start as usize..end as usize];
+                position = vietnamese::analyze(original, start, position, out);
+                continue;
+            }
+            let run_start = out.len();
             position = self.dispatch_run(run, slice, run_hint, ctx.query_mode, position, out);
-        }
-
-        if !normalized.is_unchanged() {
-            for tok in &mut out[token_start..] {
-                tok.byte_start = normalized.remap(tok.byte_start);
-                tok.byte_end = normalized.remap_end(tok.byte_end);
+            if !normalized.is_unchanged() {
+                for tok in &mut out[run_start..] {
+                    tok.byte_start = normalized.remap(tok.byte_start);
+                    tok.byte_end = normalized.remap_end(tok.byte_end);
+                }
             }
         }
 
@@ -217,9 +227,9 @@ impl MultilingualAnalyzer {
     /// route to the hinted analyzer regardless of dict presence, and the
     /// sub-analyzer's portable path handles the dict-absent case.
     ///
-    /// If no usable hint exists, DualHanFallback (plan §1.2) prefers
-    /// whichever dict is loaded (JP first when both); with neither loaded we
-    /// fall through to [`cjk_ngram::analyze`].
+    /// If no usable hint exists, DualHanFallback (ARCH-0031) runs every
+    /// loaded dict: with both, [`Self::dual_han`]; with one, that one; with
+    /// neither loaded we fall through to [`cjk_ngram::analyze`].
     fn dispatch_han(
         &self,
         slice: &str,
@@ -246,7 +256,9 @@ impl MultilingualAnalyzer {
         let ja_has_dict = matches!(self.japanese.mode(), AnalyzerMode::Morphological);
         let zh_has_dict = matches!(self.chinese.mode(), AnalyzerMode::Morphological);
 
-        if ja_has_dict {
+        if ja_has_dict && zh_has_dict {
+            self.dual_han(slice, offset_base, position_base, query_mode, out)
+        } else if ja_has_dict {
             self.japanese
                 .analyze(slice, offset_base, position_base, query_mode, out)
         } else if zh_has_dict {
@@ -255,6 +267,34 @@ impl MultilingualAnalyzer {
         } else {
             cjk_ngram::analyze(slice, offset_base, position_base, out)
         }
+    }
+
+    /// Both dicts' analyses of one ambiguous Han run (FIX 8632): Sudachi's
+    /// tokens, then each jieba token Sudachi did not already emit on the same
+    /// channel and span. Both start at `position_base` as parallel readings
+    /// of the run, each with its own offsets; the run ends at the later of
+    /// their next positions.
+    fn dual_han(
+        &self,
+        slice: &str,
+        offset_base: u32,
+        position_base: u32,
+        query_mode: bool,
+        out: &mut Vec<Token>,
+    ) -> u32 {
+        let mut japanese = Vec::new();
+        let japanese_end = self
+            .japanese
+            .analyze(slice, offset_base, position_base, query_mode, &mut japanese);
+        let mut chinese = Vec::new();
+        let chinese_end = self
+            .chinese
+            .analyze(slice, offset_base, position_base, query_mode, &mut chinese);
+        let emitted: HashSet<_> = japanese.iter().map(span_key).collect();
+        chinese.retain(|token| !emitted.contains(&span_key(token)));
+        out.extend(japanese);
+        out.extend(chinese);
+        japanese_end.max(chinese_end)
     }
 
     /// Canonical manifest for this analyzer configuration. Gates LMDB
@@ -327,6 +367,11 @@ impl MultilingualAnalyzer {
             ],
         }
     }
+}
+
+/// A token's channel, term and span: what makes two analyses' tokens one.
+fn span_key(token: &Token) -> (AnalyzerChannel, &str, u32, u32) {
+    (token.channel, &*token.term, token.byte_start, token.byte_end)
 }
 
 fn whichlang_eligible(class: ScriptClass) -> bool {

@@ -386,12 +386,6 @@ pub(super) fn apply_recency_blend(
         return Ok(());
     }
 
-    let seconds_per_half_life = recency.half_life_days * 86_400.0;
-    if seconds_per_half_life <= 0.0 {
-        return Ok(());
-    }
-    let decay = std::f64::consts::LN_2 / seconds_per_half_life;
-
     for (id, score) in scores {
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, id)? else {
             continue;
@@ -399,6 +393,14 @@ pub(super) fn apply_recency_blend(
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
+        let half_life_days = f64::from(
+            crate::pipeline::retrieval_recency_half_life_days_for_type(header.entity_type),
+        );
+        let seconds_per_half_life = half_life_days * 86_400.0;
+        if seconds_per_half_life <= 0.0 {
+            continue;
+        }
+        let decay = std::f64::consts::LN_2 / seconds_per_half_life;
         let age_secs = recency.now_secs.saturating_sub(header.learned_at) as f64;
         let freshness = (-decay * age_secs).exp();
         *score *= 1.0 + recency.boost * freshness;
@@ -415,7 +417,10 @@ pub(crate) fn search_text(
     query: &str,
     limit: usize,
 ) -> Result<Vec<ScoredEntity>> {
-    search_text_with_recency(store, rtxn, analyzer, config, query, limit, None)
+    // Direct keyword search blends recency by default (FIX 7781); a caller
+    // with its own blend, or none, passes it through `Bm25SearchOptions`.
+    let recency = Bm25RecencyConfig::table_default(store.clock().peek_recorded_at());
+    search_text_with_recency(store, rtxn, analyzer, config, query, limit, Some(recency))
 }
 
 pub(super) fn search_text_with_recency(

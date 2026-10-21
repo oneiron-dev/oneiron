@@ -479,10 +479,9 @@ pub use crate::outbound::{
     unsupported_outbound_connector,
 };
 pub use crate::pipeline::{
-    ActiveWorldSelection, MAX_WORLD_ACCESS_MEMBERS, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
-    PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, PipelineBuilder, ResolvedWorldAuthority, ScoredEntity,
-    Signal, WORLD_ACCESS_SCHEMA_VERSION, WorldAuthoritySet, decode_world_access_claim_value,
-    world_access_claim_body,
+    ActiveWorldSelection, PREDICATE_WORLD_ACCESS_ALLOWED_SET, PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+    PipelineBuilder, ResolvedWorldAuthority, ScoredEntity, Signal, WORLD_ACCESS_SCHEMA_VERSION,
+    WorldAuthoritySet, decode_world_access_claim_value, world_access_claim_body,
 };
 pub use crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT;
 pub use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
