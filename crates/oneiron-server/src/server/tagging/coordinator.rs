@@ -15,12 +15,15 @@
 //! for its backoff (a live failure or a store error holds both classes),
 //! while every call already issued settles and wakes stay observed. A call
 //! already claimed can outlast the managed reap's bound: nothing times it
-//! out, cancels it or refuses it.
+//! out, cancels it or refuses it. A stop from the host (FIX 7252) ends new
+//! claims and upkeep, and the loop returns once every call it made has
+//! settled.
 
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::FutureExt;
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
 use oneiron::memory::extraction::{EncoderAttempt, ExtractionWork};
@@ -46,6 +49,8 @@ type Settled = (ExtractionWork, Result<Box<Settlement>, JoinError>);
 type SettleFuture = Pin<Box<dyn std::future::Future<Output = Settled> + Send>>;
 /// The probe of the tagger between rounds.
 type ProbeFuture = Pin<Box<dyn std::future::Future<Output = bool> + Send>>;
+/// The host's stop: once it resolves, no new claim and no upkeep.
+pub(super) type StopFuture = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 /// A call whose worker answered, with what its settlement needs.
 struct Called {
@@ -90,6 +95,8 @@ pub(super) struct Coordinator {
     calls: FuturesUnordered<CallFuture>,
     settlements: FuturesUnordered<SettleFuture>,
     probe: Option<ProbeFuture>,
+    /// The host's stop, until it comes.
+    stop: Option<StopFuture>,
     /// Markers resident in each class, claimed through settled.
     resident: [usize; 2],
     backoff: [Backoff; 2],
@@ -107,19 +114,21 @@ pub(super) struct Coordinator {
     probe_due: bool,
     /// Claims since the round began.
     claimed: usize,
-    /// The tagger is not the configured one, or a unit ended for good: no
-    /// new claim, and the loop ends once what it owns has settled.
+    /// The tagger is not the configured one, a unit ended for good or the
+    /// stop came: no new claim, and the loop ends once what it owns has
+    /// settled.
     stopping: bool,
 }
 
 impl Coordinator {
     /// The coordinator of `server`'s tagger over `reconciler`, waking on
-    /// `wake`; `None` when no tagger is configured.
+    /// `wake` and stopping on `stop`; `None` when no tagger is configured.
     pub(super) fn new(
         server: Arc<SyncServer>,
         reconciler: Arc<TaggingReconciler>,
         control: PassControl,
         wake: broadcast::Receiver<()>,
+        stop: StopFuture,
     ) -> Option<Self> {
         let slot = server.tagger.as_ref()?;
         let tagger = Arc::clone(slot.tagger());
@@ -145,6 +154,7 @@ impl Coordinator {
             calls: FuturesUnordered::new(),
             settlements: FuturesUnordered::new(),
             probe: None,
+            stop: Some(stop),
             resident: [0; 2],
             backoff: [backoff; 2],
             paused_until: None,
@@ -159,16 +169,21 @@ impl Coordinator {
         })
     }
 
-    /// Runs until the tagger is refused or a unit ends for good, and what it
-    /// owns has settled.
+    /// Runs until the tagger is refused, a unit ends for good or the stop
+    /// comes, and what it owns has settled.
     pub(super) async fn run(mut self) {
         loop {
-            if self.stopping && self.calls.is_empty() && self.settlements.is_empty() {
+            self.read_stop();
+            if self.drained() {
                 return;
             }
             self.refill().await;
+            if self.drained() {
+                return;
+            }
             let deadline = self.deadline();
             tokio::select! {
+                () = wait_on(self.stop.as_mut()) => self.on_stop(),
                 claim = wait_on(self.want.as_mut().map(|(_, room)| room)) => {
                     self.on_room(claim).await;
                 }
@@ -276,6 +291,8 @@ impl Coordinator {
         let Some((work, _)) = self.want.take() else {
             return;
         };
+        // A stop that came with the room goes first.
+        self.read_stop();
         if self.stopping || self.held(work) {
             return;
         }
@@ -444,6 +461,32 @@ impl Coordinator {
             self.stopping = true;
             self.want = None;
         }
+    }
+
+    /// The stop came (FIX 7252): the room a claim awaits and the probe go,
+    /// no claim or upkeep starts after, and every call already made settles
+    /// before the loop ends. The stop is read once.
+    fn on_stop(&mut self) {
+        self.stop = None;
+        self.stopping = true;
+        self.want = None;
+        self.probe = None;
+    }
+
+    /// Takes the stop if it has come, without waiting for it.
+    fn read_stop(&mut self) {
+        if self
+            .stop
+            .as_mut()
+            .is_some_and(|stop| stop.as_mut().now_or_never().is_some())
+        {
+            self.on_stop();
+        }
+    }
+
+    /// Whether the loop is stopping and owns nothing left to settle.
+    fn drained(&self) -> bool {
+        self.stopping && self.calls.is_empty() && self.settlements.is_empty()
     }
 
     /// A hold or the idle wait ran out. The idle wait's end starts a round,
