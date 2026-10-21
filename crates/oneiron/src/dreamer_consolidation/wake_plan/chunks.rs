@@ -6,60 +6,62 @@
 //!
 //! A sibling owes exactly its turns. Each passed the retry's own admission at
 //! the wake's snapshot (readable by the Dreamer, an admissible role, the
-//! partition's world and facet); the sibling carries no branch scope of its
-//! own, sits under the retry's own parent, and reads its turns again through
-//! the same scoped read at its own wake. A source that fails there refuses or
+//! part's world and facet); the sibling carries no branch scope of its own,
+//! sits under the retry's own parent, and reads its turns again through the
+//! same scoped read at its own wake. A source that fails there refuses or
 //! defers that chunk alone, never the retry.
+//!
+//! A multi-part branch's part that cannot be read whole at the snapshot is
+//! owed the same way (FIX 7524, Engine ruling B): a one-part sibling of the
+//! same thing and watermark, so the other parts run. Every sibling names the
+//! attempt that first owed its work (`origin`), which the nightly merge fans
+//! it in beside.
 
 use crate::attempt_queue::AttemptId;
-use crate::dreamer_consolidation::{
-    ConsolidationPartitionKey, ConsolidationPartitionPlan, WorkingSetTurn,
-};
+use crate::dreamer_consolidation::ConversationPart;
+use crate::dreamer_consolidation::branch::QueuedBranch;
 use crate::dreamer_runner::{
     DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
     EnqueueDreamerConsolidationAttempt,
 };
 use crate::entity_id::bytes_to_hex_lower;
-use crate::{Result, Vault};
+use crate::{EntityId, Result, Vault};
+
+use super::retry::Lineage;
 
 /// The widening floor a sibling chunk is queued with. No TURN is learned at
 /// or after it, so a retry of the chunk itself reads its own turns only: a
 /// deferred chunk never splits its conversation again.
 const CHUNK_WIDENS_NOTHING: u64 = u64::MAX;
 
-/// The overflow of one selection retry, split into owed sibling chunks.
+/// The work one prepared attempt owes as siblings.
 #[derive(Debug, Clone)]
 pub(super) struct WakePreparationChunks {
-    retry: [u8; 16],
-    partition: ConsolidationPartitionKey,
+    /// The attempt whose preparation owed them.
+    source: [u8; 16],
+    origin: AttemptId,
     parent: Option<AttemptId>,
     run_id: Option<String>,
-    chunks: Vec<Vec<WorkingSetTurn>>,
+    chunks: Vec<QueuedBranch>,
 }
 
 impl WakePreparationChunks {
-    /// `overflow`, in the retry's selection order, split into chunks of the
-    /// resolved source budget `size`; `None` when nothing overflowed.
-    pub(super) fn split(
-        retry: [u8; 16],
-        partition: ConsolidationPartitionKey,
-        parent: Option<AttemptId>,
-        run_id: Option<String>,
-        overflow: &[WorkingSetTurn],
-        size: usize,
+    /// `chunks` owed by `source` under its `lineage`; `None` when there are
+    /// none.
+    pub(super) fn new(
+        source: [u8; 16],
+        lineage: &Lineage,
+        chunks: Vec<QueuedBranch>,
     ) -> Option<Self> {
-        if overflow.is_empty() {
+        if chunks.is_empty() {
             return None;
         }
         Some(Self {
-            retry,
-            partition,
-            parent,
-            run_id,
-            chunks: overflow
-                .chunks(size.max(1))
-                .map(<[WorkingSetTurn]>::to_vec)
-                .collect(),
+            source,
+            origin: lineage.origin,
+            parent: lineage.parent,
+            run_id: lineage.run_id.clone(),
+            chunks,
         })
     }
 
@@ -73,19 +75,14 @@ impl WakePreparationChunks {
         let store = DreamerRunnerStore::new(vault);
         let now = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
         let mut queued = 0_usize;
-        for turns in &self.chunks {
-            let plan = ConsolidationPartitionPlan {
-                key: self.partition,
-                turns: turns.clone(),
-                watermark_last_learned_at: CHUNK_WIDENS_NOTHING,
-            };
+        for chunk in &self.chunks {
             let outcome = store.enqueue_consolidation_in_txn(
                 txn,
                 EnqueueDreamerConsolidationAttempt {
                     scope,
-                    input: super::super::partition::encode_partition_payload(&plan),
+                    input: super::super::partition::encode_branch_payload(chunk, Some(self.origin)),
                     parent_attempt: self.parent,
-                    dedupe_key: Some(self.chunk_key(turns)),
+                    dedupe_key: Some(self.chunk_key(chunk)),
                     run_id: self.run_id.clone(),
                     now,
                 },
@@ -98,12 +95,14 @@ impl WakePreparationChunks {
     }
 
     /// One chunk's advisory dedupe key, by the exact turns it owes under its
-    /// parent and partition: a retry prepared again re-queues no chunk that
-    /// is still pending.
-    fn chunk_key(&self, turns: &[WorkingSetTurn]) -> String {
+    /// parent and branch: a retry prepared again re-queues no chunk that is
+    /// still pending. A one-part chunk's branch identity is its partition's
+    /// hash, the key it had.
+    fn chunk_key(&self, chunk: &QueuedBranch) -> String {
+        let turns = chunk.turn_ids();
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"oneiron:dreamer:retry-chunk:v1");
-        hasher.update(&self.partition.partition_hash());
+        hasher.update(&chunk.identity());
         match self.parent {
             Some(parent) => {
                 hasher.update(&[1]);
@@ -114,16 +113,66 @@ impl WakePreparationChunks {
             }
         }
         hasher.update(&(turns.len() as u64).to_be_bytes());
-        for turn in turns {
-            hasher.update(turn.turn_id.as_bytes());
+        for turn in &turns {
+            hasher.update(turn.as_bytes());
         }
         format!("retry-chunk:{}", hasher.finalize().to_hex())
     }
 }
 
-/// Queues each retry's owed chunks, one commit per retry. A commit that
-/// fails is logged and leaves that retry as it ran before chunks: its
-/// originals and the sources that fit still run.
+/// The parts of `branch` at `indexes`, each a one-part sibling of the same
+/// thing that owes exactly its queued turns from its own watermark.
+pub(super) fn split_parts(branch: &QueuedBranch, indexes: &[usize]) -> Vec<QueuedBranch> {
+    indexes
+        .iter()
+        .filter_map(|index| branch.parts.get(*index))
+        .map(|part| QueuedBranch {
+            world_ref: branch.world_ref,
+            facet_ref: branch.facet_ref,
+            thing: branch.thing,
+            parts: vec![part.clone()],
+        })
+        .collect()
+}
+
+/// A retry's `overflow` (each TURN by its part index, in selection order),
+/// split per conversation into chunks of the resolved source budget `size`.
+/// A chunk names no thing: what widening found may be another thing's, and
+/// it stays in its own conversation's structural grain.
+pub(super) fn overflow_chunks(
+    branch: &QueuedBranch,
+    overflow: Vec<(usize, EntityId)>,
+    size: usize,
+) -> Vec<QueuedBranch> {
+    let mut by_part: Vec<(usize, Vec<EntityId>)> = Vec::new();
+    for (index, turn) in overflow {
+        match by_part.iter_mut().find(|(part, _)| *part == index) {
+            Some((_, turns)) => turns.push(turn),
+            None => by_part.push((index, vec![turn])),
+        }
+    }
+    let mut chunks = Vec::new();
+    for (index, turns) in by_part {
+        let Some(part) = branch.parts.get(index) else {
+            continue;
+        };
+        chunks.extend(turns.chunks(size.max(1)).map(|chunk| QueuedBranch {
+            world_ref: branch.world_ref,
+            facet_ref: branch.facet_ref,
+            thing: None,
+            parts: vec![ConversationPart {
+                conversation_ref: part.conversation_ref,
+                turns: chunk.to_vec(),
+                watermark_last_learned_at: CHUNK_WIDENS_NOTHING,
+            }],
+        }));
+    }
+    chunks
+}
+
+/// Queues each attempt's owed chunks, one commit per attempt. A commit that
+/// fails is logged and leaves that attempt as it ran before chunks: what it
+/// kept still runs.
 pub(super) fn owe(
     vault: &Vault,
     scope: DreamerConsolidationScope,
@@ -135,14 +184,14 @@ pub(super) fn owe(
             Ok(queued) => {
                 queued_any |= queued > 0;
                 tracing::debug!(
-                    retry = %bytes_to_hex_lower(&set.retry),
+                    retry = %bytes_to_hex_lower(&set.source),
                     chunks = set.chunks.len(),
                     queued,
                     "selection retry overflow owed as sibling chunks"
                 );
             }
             Err(error) => tracing::warn!(
-                retry = %bytes_to_hex_lower(&set.retry),
+                retry = %bytes_to_hex_lower(&set.source),
                 chunks = set.chunks.len(),
                 kind = ?error.kind(),
                 "selection retry overflow chunks were not queued"

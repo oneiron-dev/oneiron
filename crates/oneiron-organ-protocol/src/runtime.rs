@@ -25,9 +25,9 @@ use crate::frame::{FrameError, recv_frame, send_frame};
 use crate::region::{MappedRegion, SharedRegion};
 use crate::wire::{
     Ask, AskAnswer, AskCode, AskData, AskOutcome, AskRefusal, Call, ErrorCode, FromOrgan, Hash32,
-    HelloAck, INLINE_MAX_BYTES, Input, Limits, MAX_FDS_PER_FRAME, Notes, OrganError, OrganIdentity,
-    Outcome, Output, PROTOCOL, Payload, Proposal, ProtocolVersion, Reply, ToOrgan, TypedBody,
-    VerbSpec,
+    HelloAck, INITIAL_HANDSHAKE_FRAME_BYTES, INLINE_MAX_BYTES, Input, Limits, MAX_FDS_PER_FRAME,
+    Notes, OrganError, OrganIdentity, Outcome, Output, PROTOCOL, Payload, Proposal,
+    ProtocolVersion, Reply, ToOrgan, TypedBody, VerbSpec,
 };
 
 /// Reads every input byte and folds it; the host's read-throughput probe.
@@ -398,9 +398,10 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// # Errors
 /// A broken frame or a protocol violation by the engine.
 pub fn serve_stream<O: Organ>(organ: Arc<O>, stream: &UnixStream) -> Result<(), FrameError> {
-    // The hello is read under the wire's own bound: no frame limit holds
-    // until the handshake sets one.
-    let (first, _) = recv_frame::<ToOrgan>(stream, u32::MAX)?;
+    // The hello and the ack cross under the pre-session bound alone
+    // (FIX 7648): no session's frame limit holds until the handshake sets
+    // one.
+    let (first, _) = recv_frame::<ToOrgan>(stream, INITIAL_HANDSHAKE_FRAME_BYTES)?;
     let ToOrgan::Hello(hello) = first else {
         return Err(FrameError::Protocol("the first frame must be hello"));
     };
@@ -411,7 +412,7 @@ pub fn serve_stream<O: Organ>(organ: Arc<O>, stream: &UnixStream) -> Result<(), 
         organ: organ.identity(),
         verbs: verbs.clone(),
     });
-    send_frame(stream, &ack, &[], hello.limits.max_reply_frame)?;
+    send_frame(stream, &ack, &[], INITIAL_HANDSHAKE_FRAME_BYTES)?;
     let limits = hello.limits;
     let session = PROTOCOL.session(hello.protocol).unwrap_or(ProtocolVersion {
         major: PROTOCOL.major,

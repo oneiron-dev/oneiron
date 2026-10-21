@@ -107,20 +107,27 @@ pub enum WorldPrivacySetOutput {
     Applied { receipt: String },
     /// A tighten no Grant line names waits for a holder: the proposal id,
     /// and the handle `wait` (or the run's `tasks.wait({request})`) waits on
-    /// it by, until a holder applies or declines it.
+    /// it by, until a holder applies or declines it. `grant_omitted` names
+    /// why a Grant that named it was passed over (`pact_standing_lapsed`,
+    /// FIX 7548), when one was.
     Proposed {
         proposal: String,
         wait: TaskAskHandle,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        grant_omitted: Option<String>,
     },
     /// A widen waits for the holders' yes: the request id, the decision ask
     /// its holders see once queued, and the handle `wait` (or the run's
     /// `tasks.wait({request})`) waits on it by, until a holder applies or
-    /// declines it. The widen is never the agent's own act.
+    /// declines it. The widen is never the agent's own act. `grant_omitted`
+    /// as for a proposal.
     Asked {
         ask: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ask_seq: Option<u64>,
         wait: TaskAskHandle,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        grant_omitted: Option<String>,
     },
 }
 
@@ -143,11 +150,13 @@ impl TryFrom<&WorldPrivacyOutcome> for WorldPrivacySetOutput {
             WorldPrivacyOutcome::Proposed(request) => Self::Proposed {
                 proposal: request.request_id.clone(),
                 wait: wait(request)?,
+                grant_omitted: request.grant_omitted.clone(),
             },
             WorldPrivacyOutcome::Asked(request) => Self::Asked {
                 ask: request.request_id.clone(),
                 ask_seq: request.ask,
                 wait: wait(request)?,
+                grant_omitted: request.grant_omitted.clone(),
             },
         })
     }

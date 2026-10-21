@@ -866,7 +866,7 @@ declare namespace Sdk {
   type WeaveScheduleCleared = { cleared: boolean };
   type WeaveDigestSettingChangeStatus = "pending" | "applied" | "accepted" | "declined" | "superseded" | "undone";
   type WeaveDigestSettings = { cadence: WeaveDigestCadence; sections: WeaveSectionKind[] };
-  type WeaveDigestSettingChange = { change_ref: string; status: WeaveDigestSettingChangeStatus; before: WeaveDigestSettings; after: WeaveDigestSettings; reason: string; coach_ref: string; grant_ref?: string | null; base_generation: number; after_generation?: number | null; undone_generation?: number | null; created_at: number; settled_at?: number | null };
+  type WeaveDigestSettingChange = { change_ref: string; status: WeaveDigestSettingChangeStatus; before: WeaveDigestSettings; after: WeaveDigestSettings; reason: string; coach_ref: string; grant_ref?: string | null; base_generation: number; after_generation?: number | null; undone_generation?: number | null; created_at: number; settled_at?: number | null; grant_omitted?: string | null };
   type WeaveDigestSettingAnswer = { change_ref: string; accept: boolean };
   type WeaveDigestSettingUndo = { change_ref: string };
   type WeaveDigestFeedback = { preferred_cadence?: WeaveDigestCadence | null; lead_section?: WeaveSectionKind | null; keep_current?: boolean };
@@ -3887,7 +3887,7 @@ declare namespace Sdk {
   type WorldReadInput = { kind: "one_machine"; machine: string } | { kind: "my_machines" } | { kind: "everywhere" };
   type WorldSealedInput = "off" | "my_machines" | "cloud_and_my_machines";
   type WorldPrivacySetInput = { world: string; read: WorldReadInput; sealed: WorldSealedInput; models?: string[] | null; seen?: string | null };
-  type WorldPrivacySetOutput = { kind: "applied"; receipt: string } | { kind: "proposed"; proposal: string; wait: TaskAskHandle } | { kind: "asked"; ask: string; ask_seq?: number | null; wait: TaskAskHandle };
+  type WorldPrivacySetOutput = { kind: "applied"; receipt: string } | { kind: "proposed"; proposal: string; wait: TaskAskHandle; grant_omitted?: string | null } | { kind: "asked"; ask: string; ask_seq?: number | null; wait: TaskAskHandle; grant_omitted?: string | null };
   type MemorySearchInput = { query: string; limit?: number | null };
   type MemorySearchHit = { id: EntityId; score: number };
   type SessionHookPhase = "pre" | "post";

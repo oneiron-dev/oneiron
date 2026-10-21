@@ -461,6 +461,23 @@ pub fn recv_frame_until<T: DeserializeOwned>(
         .map(|(msg, fds, ..)| (msg, fds))
 }
 
+/// [`recv_frame_until`], with room for the body reserved before it is
+/// read, as [`recv_frame_polled_reserved`] reserves it: once the header is
+/// in and its length is within `limit`, `reserve` gets that length before
+/// anything is allocated for the body. `deadline` bounds the reads, not
+/// `reserve`'s own wait, which should end by it too.
+///
+/// # Errors
+/// As [`recv_frame_until`], plus whatever `reserve` returns.
+pub fn recv_frame_until_reserved<T: DeserializeOwned, L>(
+    stream: &UnixStream,
+    limit: u32,
+    deadline: Option<Instant>,
+    reserve: impl FnOnce(u32) -> Result<L, FrameError>,
+) -> Result<(T, Vec<OwnedFd>, u32, L), FrameError> {
+    recv_frame_with(stream, limit, Wait::until(deadline), reserve)
+}
+
 fn recv_frame_with<T: DeserializeOwned, L>(
     stream: &UnixStream,
     limit: u32,
