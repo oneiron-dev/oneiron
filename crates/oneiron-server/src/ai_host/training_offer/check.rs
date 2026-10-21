@@ -57,7 +57,13 @@ pub(in crate::ai_host) fn check(
             if let Some(run) = &run {
                 sources.set(run.source_rows.as_deref());
             }
-            let Some(run) = run.filter(|run| run.state == TrainingState::Bound) else {
+            // Only a role run binds the seat's model; a question head never
+            // counts as the seat's savings.
+            let Some((_, binding)) = run
+                .as_ref()
+                .filter(|run| run.state == TrainingState::Bound)
+                .and_then(|run| run.plan.target.role_binding())
+            else {
                 return Unverifiable::unread(
                     Alone::NotBound,
                     vault,
@@ -67,7 +73,7 @@ pub(in crate::ai_host) fn check(
                     now,
                 );
             };
-            run.plan.output_binding.model.as_str().to_owned()
+            binding.model.as_str().to_owned()
         }
     };
     let Some(meter) = server.vault_usage() else {

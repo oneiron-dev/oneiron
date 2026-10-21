@@ -9295,6 +9295,40 @@
       "openapi": true
     },
     {
+      "name": "vault.code.export.preview",
+      "description": "Read the complete raw-byte and Git-mode delta for one explicit sealed export revision and ref expectation. Live owner or a caller under one covering Grant. Missing, withheld or masked sources return a typed hold; no export or ref is written.",
+      "input": "crate::memory::origin_doors::CodeExportPreviewRequest",
+      "output": "crate::memory::origin_doors::CodeExportPreviewAnswer",
+      "call": "memory.code_export_preview_as(&memory.code_export_preview_proof(\"vault.code.export.preview\"), input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.export.preview.read",
+      "description": "Read the exact bytes and mode of one changed preview side by its recomputed handle. Live owner or a caller under one covering preview Grant. Missing, withheld or masked sources return a typed hold; no caller-selected host file is read.",
+      "input": "crate::memory::origin_doors::CodeExportFileReadRequest",
+      "output": "crate::memory::origin_doors::CodeExportFileReadAnswer",
+      "call": "memory.code_export_preview_read_as(&memory.code_export_preview_proof(\"vault.code.export.preview.read\"), input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.import",
       "description": "Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only.",
       "input": "crate::memory::origin_doors::CodeRepoImportRequest",

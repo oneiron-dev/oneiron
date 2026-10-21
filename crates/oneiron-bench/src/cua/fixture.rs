@@ -6,12 +6,15 @@ use tokio::{io::{AsyncBufReadExt, BufReader}, time::Instant};
 use super::{Result, config::Config, served::{Process, isolated}, taskgen::{Cell, Plan}, write_json};
 
 pub(super) fn transport_ready(_config: &Config) -> Result<()> {
-    // BrowserConfig::guest currently constructs fixture: None. A file fixture
-    // is not S1's dynamic API. FIX 8061 belongs to the engine lane.
+    // FIX 8061 integration seam: [browser] bench_fixture_forward =
+    // "172.30.91.1:8765". The guest opens http://127.0.0.1:8080 plus
+    // PRIVATE /reset's relative entry, with ONEIRON_EGRESS_CONFIG set to
+    // {"allowed_domains": []}. BrowserConfig on this head has no such door.
+    // A file mount, operator assertion or directly networked guest is not it.
     Err("fixture_transport_unavailable".into())
 }
 pub(super) struct Fixture {
-    process: Process, client: reqwest::Client, token: String, pub events: PathBuf,
+    process: Process, client: reqwest::Client, token: String, pub(crate) events: PathBuf,
 }
 impl Fixture {
     pub(crate) async fn start(plan: &Plan, dir: &Path, deadline: Instant) -> Result<Self> {

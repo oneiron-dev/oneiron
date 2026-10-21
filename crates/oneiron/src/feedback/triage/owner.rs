@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     BINDING, COACH_FEEDBACK_SWEEP_FACET, FeedbackTriageBinding, FeedbackTriageContinuation,
     FeedbackTriageResult, FeedbackTriageSourceRef, HANDOFFS, SOURCES, STALE_BINDING, attempt_id,
-    attempt_ref, binding_in_txn, handoff_key,
+    attempt_ref, binding_in_txn, erased, handoff_key,
 };
 use crate::attempt_queue::{AttemptQueue, AttemptState};
 use crate::consent::AuthenticatedOwner;
@@ -74,6 +74,23 @@ pub struct FeedbackTriageStatus {
     pub children: Vec<FeedbackTriageChild>,
     /// What holds triage back now, across every sweep.
     pub holds: Vec<FeedbackTriageHold>,
+    /// Each unacknowledged revision whose evidence the owner erased, across
+    /// every sweep, in erased form; none of them is a child or a hold.
+    pub erased: Vec<FeedbackTriageErased>,
+}
+
+/// A revision whose evidence ASSET the owner erased, in erased form: its
+/// name, with no content, revision digest or evidence id. It is settled: no
+/// sweep queues it again, and its evidence is never retained again.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FeedbackTriageErased {
+    /// The source, as [`FeedbackTriageSourceRef::source`] names it.
+    pub source: String,
+    /// The item's id in its source, in decimal.
+    pub id: String,
+    /// Vault seconds a sweep settled it erased; `None` until one does.
+    pub erased_at: Option<u64>,
 }
 
 /// One revision a sweep handed off or queued again, and its triage job.
@@ -102,7 +119,7 @@ pub enum FeedbackTriageHold {
     /// job already queued fails, until the owner binds one.
     SkillUnbound,
     /// A revision handed off with no committed result. A job that failed
-    /// is queued again by the next sweep.
+    /// is queued again by the next sweep, unless its evidence was erased.
     Unacknowledged {
         /// The item and revision.
         source_ref: FeedbackTriageSourceRef,
@@ -225,8 +242,10 @@ impl Vault {
 
     /// One sweep's status: its queue state, the binding, each source's
     /// continuation, each revision it handed off or queued again with its
-    /// job's state and committed result, and what holds triage back across
-    /// every sweep. `None` when the queue holds no such attempt.
+    /// job's state and committed result, what holds triage back across
+    /// every sweep, and each unacknowledged revision whose evidence the
+    /// owner erased, by name only. `None` when the queue holds no such
+    /// attempt.
     ///
     /// # Errors
     ///
@@ -258,6 +277,7 @@ impl Vault {
         let queue = AttemptQueue::new(self);
         let mut children = Vec::new();
         let mut holds = Vec::new();
+        let mut erased = Vec::new();
         if binding.skill.is_none() {
             holds.push(FeedbackTriageHold::SkillUnbound);
         }
@@ -268,6 +288,14 @@ impl Vault {
         for (key, handoff) in handoffs {
             if handoff_key(&handoff.source_ref) != key {
                 return Err(Error::CorruptedIndex("feedback triage handoff identity"));
+            }
+            if handoff.result.is_none() && erased::evidence_erased_in_txn(self, &txn, &handoff)? {
+                erased.push(FeedbackTriageErased {
+                    source: handoff.source_ref.source,
+                    id: handoff.source_ref.id,
+                    erased_at: handoff.erased_at,
+                });
+                continue;
             }
             let mine = handoff.sweep == input.attempt || handoff.queued_by == input.attempt;
             if !mine && handoff.result.is_some() {
@@ -304,6 +332,7 @@ impl Vault {
             continuations,
             children,
             holds,
+            erased,
         }))
     }
 }
