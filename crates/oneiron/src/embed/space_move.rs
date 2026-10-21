@@ -147,6 +147,22 @@ pub struct KindProbeCheck {
     /// The sufficiency card the reading was read on as the move concluded (FIX 1638).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card: Option<SufficiencyCard>,
+    /// The probes that ran from a cut cohort, as the check's cohort metadata held them (FIX
+    /// 6744): an owner's later yes counts its swap on their cohorts (FIX 7040).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cohort_members: Vec<CohortProbe>,
+}
+
+/// One probe a check ran whose date window had ended: a member of a cut cohort.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CohortProbe {
+    /// 32 hex.
+    pub probe: String,
+    /// Its source document.
+    pub source: EntityId,
+    /// Its date window, vault seconds: `from` up to, not including, `until`.
+    pub from: u64,
+    pub until: u64,
 }
 
 /// One paired probe run over every kind a move carries.
@@ -157,6 +173,10 @@ pub struct SpaceMoveCheck {
     pub kinds: Vec<KindProbeCheck>,
     /// Not worse when every kind is; worse when any kind is; unknown otherwise.
     pub verdict: NotWorse,
+    /// The token the check's probe cohorts counted it under (FIX 6744); `None` when it kept
+    /// no cohort metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cohort_check: Option<String>,
 }
 
 /// Where a move stands.
@@ -430,6 +450,7 @@ fn judge_kind(kind: InputKind, runs: &[&ProbeRun], margin: Option<f32>) -> KindP
         set_version: None,
         rubric: None,
         card: None,
+        cohort_members: Vec::new(),
     };
     if let Some(scored) = read_axis(runs, margin, |rank| rank) {
         check.verdict = scored.verdict;
@@ -901,11 +922,14 @@ impl Vault {
                 check
             })
             .collect();
-        let check = SpaceMoveCheck {
+        let mut check = SpaceMoveCheck {
             checked_at: self.store.clock.now_recorded_at(),
             verdict: move_verdict(&kinds),
             kinds,
+            cohort_check: None,
         };
+        // Kept with the check, so an owner's later yes counts its swap on the same cohorts.
+        ledger.keep_on(&mut check, runs.iter().map(|run| run.probe));
         let checked_at = check.checked_at;
         rows.sort_unstable();
         rows.dedup();
@@ -979,7 +1003,14 @@ impl Vault {
             }
             moving.last_check
         };
-        self.conclude_space_move(candidate, check, true).map(|_| ())
+        // The swap counts on the cohorts the check it acts on ran, after its write committed
+        // and best effort, as a passing check's does (FIX 7040).
+        if let SpaceMoveOutcome::SwappedIn(check) =
+            self.conclude_space_move(candidate, check, true)?
+        {
+            ProbeCohortLedger::promoted_from(self, candidate, &check);
+        }
+        Ok(())
     }
 
     /// Binds a swapped-in move's incumbent again for every kind it moved: the one-click undo.
@@ -1198,6 +1229,7 @@ impl Vault {
             checked_at: at,
             kinds: Vec::new(),
             verdict,
+            cohort_check: None,
         });
         Ok(match moving.state {
             SpaceMoveState::SwappedIn { .. } => SpaceMoveOutcome::SwappedIn(check),
