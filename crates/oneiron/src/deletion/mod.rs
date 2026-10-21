@@ -14,6 +14,8 @@ mod legal_hold;
 mod publish;
 mod receipt;
 mod receipt_completion;
+mod receipt_final;
+mod receipt_grammar;
 mod rendezvous;
 mod sweep_queue;
 mod timeline;
@@ -89,11 +91,16 @@ pub(crate) use delete::{ConfirmedEraseOutcome, due_erase_requester_in_txn};
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use erase::TombstoneScopeProbes;
 pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion, GuestRevokeAuthority};
-pub(crate) use receipt::{decode_redaction_audit_receipt, validate_redaction_receipt_body};
+pub(crate) use receipt::decode_redaction_audit_receipt;
 pub(crate) use receipt_completion::{
     append_redaction_sweep_completion_in_txn, redaction_sweep_completion_id,
     redaction_sweep_completion_in_txn,
 };
+// An erase's overall final row (FIX 5844).
+pub(crate) use receipt_final::{
+    finish_redaction_erase_in_txn, redaction_erase_final_id, redaction_erase_final_in_txn,
+};
+pub(crate) use receipt_grammar::validate_redaction_receipt_body;
 #[cfg(feature = "sync")]
 pub(crate) use sweep_queue::withdrawn_generation_cutoff_in_txn;
 pub(crate) use sweep_queue::{
@@ -129,10 +136,7 @@ pub(crate) use tombstone::ReplayedTombstoneOutcome;
 pub(crate) use tombstone::PENDING_TOMBSTONE_PREFIX;
 
 #[cfg(feature = "sync")]
-pub(crate) use receipt::{
-    ATT_EMPTY_MAP_BYTE, RECEIPT_ATT_DOMAIN, receipt_attestation_parts,
-    redaction_receipt_is_stale_finalization_echo,
-};
+pub(crate) use receipt::{ATT_EMPTY_MAP_BYTE, RECEIPT_ATT_DOMAIN, receipt_attestation_parts};
 
 // Crate-facing paths whose consumers are all `#[cfg(test)]`; the re-export
 // carries the same gate so a non-test build re-exports nothing it never uses.

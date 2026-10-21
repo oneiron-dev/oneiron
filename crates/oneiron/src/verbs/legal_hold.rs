@@ -53,8 +53,10 @@ pub struct LegalHoldLiftAndEraseRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LegalHoldEraseState {
-    /// The hold is lifted and the record erased: its deletion receipt has
-    /// both completion times (C4). No receipt when nothing was there.
+    /// The hold is lifted and the record erased: its deletion receipt's
+    /// signed final row is appended, its hard purge, historical sweep and
+    /// every custody retirement it bound finished (C4, FIX 5844). No receipt
+    /// when nothing was there.
     Erased { receipt_ref: Option<String> },
     /// "erase confirmed; completion pending"
     /// ([`crate::deletion::ERASE_COMPLETION_PENDING`]): the erase ran and

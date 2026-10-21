@@ -95,20 +95,19 @@
 //!
 //! # Receipt finalization (pinned)
 //!
-//! `sweep_complete_at` None→Some on the OWN node's receipt is the single
-//! sanctioned mutation of the otherwise-immutable REDACTION_AUDIT record.
-//! It is LOCAL-LMDB-ONLY: the CRDT mirror keeps the pre-finalization bytes
-//! (replicated receipt copies are informational; GDPR Art. 5(2)
-//! accountability lives on the node that erased). The replay doors get the
-//! matching narrow exception — see
-//! [`crate::deletion::redaction_receipt_is_stale_finalization_echo`].
-//! The rewritten body is re-validated against the pinned field set before
-//! the put, and the 25 B entity envelope is preserved byte-exactly.
+//! A sweep never changes a stored REDACTION_AUDIT receipt. It appends a linked,
+//! freshly signed sweep-completion row at the receipt's derived completion id;
+//! the erase's overall final row follows at its own derived id once every
+//! custody retirement the receipt binds has finished too (FIX 5844). The
+//! initial receipt and its CRDT mirror keep their original bytes; both
+//! appended rows stay local. A retry reads the linked row instead of
+//! appending it twice. Divergent bytes at an existing receipt id remain a
+//! replay-door divergence; there is no stale-mutation echo exception.
 //!
 //! # Audit path (ONE-1091)
 //!
-//! After processing, every receipt with `sweep_queued_at` set and
-//! `sweep_complete_at` still nil must be covered by a pending `h:` row
+//! After processing, every initial receipt with `sweep_queued_at` set and
+//! no valid linked sweep-completion row must be covered by a pending `h:` row
 //! whose scope contains the receipt's scope — a dropped obligation (e.g. a
 //! manually deleted row) is surfaced as `sweep_obligations_missing` plus a
 //! `tracing::error`, never silent. `SyncQueue::clear_all` re-bootstrap

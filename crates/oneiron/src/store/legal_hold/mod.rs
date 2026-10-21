@@ -629,11 +629,12 @@ pub(crate) fn link_erase_in_txn(
     Ok(())
 }
 
-/// "Erase completed" (C4): the linked receipt pair over `records` is now
-/// complete, the deletion receipt's `hard_purge_complete_at` and its appended
-/// completion row's `sweep_complete_at` both written. Logs one event, with
-/// the receipt's `request_id`, for each hold an owner's confirm lifted or met
-/// on each record, then drops the link, so a retried sweep logs it once.
+/// "Erase completed" (C4): the erase over `records` is now complete, its
+/// deletion receipt's signed final row appended once the hard purge, the
+/// historical sweep and every custody retirement it bound had finished (FIX
+/// 5844). Logs one event, with the receipt's `request_id`, for each hold an
+/// owner's confirm lifted or met on each record, then drops the link, so a
+/// retried finalization logs it once.
 pub(crate) fn note_erase_completed_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,

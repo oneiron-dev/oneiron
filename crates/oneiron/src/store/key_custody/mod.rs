@@ -14,6 +14,7 @@
 mod anchor;
 mod body_history;
 mod credential_faults;
+mod erase_binding;
 mod files;
 mod folder;
 mod fork;

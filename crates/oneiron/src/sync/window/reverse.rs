@@ -901,10 +901,12 @@ pub(super) fn crdt_carrier_is_admissible_authority_row(id: &EntityId, carrier: &
     crate::authority::authority_log_entity_id(&entry).is_ok_and(|derived| derived == *id)
 }
 
-/// REDACTION_AUDIT finalization is local-LMDB-only. Reverse remat is the
-/// outgoing replay door, so it must not copy finalized receipt bytes into the
-/// CRDT mirror. Undecodable REDACTION_AUDIT bodies also stay local: fail closed
-/// rather than replicate raw accountability bytes whose shape is unknown.
+/// Appended REDACTION_AUDIT rows stay local: an erase's sweep-completion row
+/// and its overall final row (FIX 5844). Reverse remat must not copy those
+/// rows into the CRDT mirror; the initial receipt is never mutated and
+/// replicates as before. Undecodable REDACTION_AUDIT bodies also stay local:
+/// fail closed rather than replicate raw accountability bytes whose shape is
+/// unknown.
 pub(super) fn reverse_remat_skip_redaction_receipt_mirror(raw: &[u8]) -> bool {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return raw.first().copied() == Some(crate::registry::ENTITY_TYPE_REDACTION_AUDIT);
@@ -918,7 +920,7 @@ pub(super) fn reverse_remat_skip_redaction_receipt_mirror(raw: &[u8]) -> bool {
         &[]
     };
     match crate::deletion::decode_redaction_audit_receipt(body) {
-        Ok(receipt) => receipt.sweep_complete_at.is_some(),
+        Ok(receipt) => !receipt.is_initial(),
         Err(_) => true,
     }
 }

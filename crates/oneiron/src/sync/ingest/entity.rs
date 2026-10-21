@@ -715,9 +715,8 @@ fn withdrawn_generation_here(
 /// 1. the body must satisfy the pinned receipt field set, including the ONE-1140 v2 att_
 ///    verification grammar;
 /// 2. immutability, before any crypto (accepted local bytes always win): a byte-identical
-///    local receipt, or the ONE-1087 stale pre-finalization echo of the sweep's LOCAL-only
-///    finalization, is an idempotent skip (`None`); any other local receipt at this id is a
-///    divergence, and the local bytes are kept;
+///    local receipt is an idempotent skip; any other local receipt at this id is a divergence,
+///    and the local bytes are kept;
 /// 3. a NEW receipt verifies its Ed25519 transcript against the embedded att_pk (OD-6) and
 ///    reads its `ls:` lease binding in this same transaction (OD-3/OD-7), then debits the
 ///    maintenance-ingest quota.
@@ -734,9 +733,7 @@ fn admit_receipt(
     let vault = ctx.vault;
     crate::deletion::validate_redaction_receipt_body(data)?;
     if let Some(local) = vault.store.port_entity_raw(wtxn, id)? {
-        if *local == *blob
-            || crate::deletion::redaction_receipt_is_stale_finalization_echo(&local, blob)
-        {
+        if *local == *blob {
             return Ok(ReceiptAdmission::LocalEcho);
         }
         return Err(Error::Sync(SyncError::RedactionReceiptDivergence {
@@ -762,7 +759,7 @@ fn admit_receipt(
 
 /// The receipt door's verdict when it admits the bytes at all.
 enum ReceiptAdmission {
-    /// The local receipt already holds these bytes, or their stale pre-finalization echo.
+    /// The local receipt already holds these exact bytes.
     LocalEcho,
     /// A new receipt passed its origin predicate; the put rolls back the debit if it fails.
     New(Option<quota::MaintenanceIngestQuotaDebit>),

@@ -2849,7 +2849,7 @@ export type RecordEraseSweepRequest = { receipt_ref: string }
 /** `oneiron::memory::erase_sweep::RecordEraseCustody` */
 export type RecordEraseCustody = { state: string; pending: string[]; recall: string; note?: string | null }
 /** `oneiron::memory::erase_sweep::RecordEraseSweep` */
-export type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null; custody?: RecordEraseCustody | null }
+export type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null; erase_complete_at?: number | null; final_ref?: string | null; custody?: RecordEraseCustody | null }
 /** `oneiron::verbs::research::ResearchChildWire` */
 export type ResearchChildWire = { root: EntityId; parent: EntityId; agent: EntityId; intent_key: string; briefing: string }
 /** `oneiron::verbs::research::ResearchChildReceipt` */
@@ -3373,7 +3373,7 @@ export type LegalHoldEvent = { hold_id: EntityId; kind: LegalHoldKind; targets: 
 /** `oneiron::verbs::legal_hold::LegalHoldLiftAndEraseRequest` */
 export type LegalHoldLiftAndEraseRequest = { records: EntityId[] }
 /** `oneiron::deletion::legal_hold::types::ErasePendingReason` */
-export type ErasePendingReason = "historical_sweep"
+export type ErasePendingReason = "historical_sweep" | "custody_retirement"
 /** `oneiron_contracts::error::legal_hold::LegalHoldBoundKind` */
 export type LegalHoldBoundKind = "law"
 /** `oneiron_contracts::error::legal_hold::LegalHoldBound` */

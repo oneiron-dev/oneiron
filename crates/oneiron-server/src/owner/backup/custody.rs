@@ -312,7 +312,8 @@ fn log_pass(status: &CustodyStatus, anchored: bool) {
 impl SyncServer {
     /// Starts the custody publication of a server that keeps backups: a
     /// pass at start, then one on each tick whose status read shows the head
-    /// behind or a step pending.
+    /// behind or a step pending. Every tick, settled or not, appends the
+    /// final receipt row of each erase whose custody retirements finished.
     pub(crate) fn spawn_custody_publication(
         self: &Arc<Self>,
     ) -> Option<tokio::task::JoinHandle<()>> {
@@ -354,6 +355,10 @@ impl SyncServer {
                         && let Ok(status) = vault.custody_status()
                         && settled(&status, anchored)
                     {
+                        // A settled publication still retries each erase
+                        // final receipt row a crash or a fault left owed
+                        // (FIX 5844); a pass that runs appends them itself.
+                        vault.finish_redaction_erases_logged();
                         return status;
                     }
                     publish(vault, &host.backups, true)

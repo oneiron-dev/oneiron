@@ -89,15 +89,15 @@ pub struct MaintenanceReport {
     /// row their compaction would destroy (OF-470). SIBLING of the live and
     /// raced deferrals.
     pub sweep_windows_deferred_held: u64,
-    /// REDACTION_AUDIT receipts whose `sweep_complete_at` was finalized.
+    /// Initial REDACTION_AUDIT receipts given a linked signed sweep-completion row.
     pub sweep_receipts_finalized: u64,
     /// Pending jobs observed past their `deadline_at` (queued_at + 30 d,
     /// GDPR Art. 12(3)) — each is also a `tracing::error`.
     pub sweep_deadline_breaches: u64,
     /// Stale `x:` quarantine rows evicted by the on-demand retention pass.
     pub sweep_quarantine_rows_expired: u64,
-    /// ONE-1091 audit: receipts with `sweep_queued_at` set, no
-    /// `sweep_complete_at`, and NO covering pending `h:` row — a dropped
+    /// ONE-1091 audit: initial receipts with `sweep_queued_at` set, no valid
+    /// linked sweep-completion row, and NO covering pending `h:` row — a dropped
     /// erasure obligation (each is also a `tracing::error`).
     pub sweep_obligations_missing: u64,
     /// Audit: REDACTION_AUDIT receipts whose stored body could not be
@@ -215,8 +215,8 @@ impl<'a> MaintenanceBuilder<'a> {
     /// obligations, shallow-compacts every CLOSED persisted window doc
     /// (dropping the pre-delete Loro op history — the dominant residual
     /// byte carrier — while preserving live state, doc identity and VV),
-    /// scrubs live-map residue for `dt:`-marked ids, finalizes matching
-    /// receipts' `sweep_complete_at`, expires stale `x:` quarantine rows,
+    /// scrubs live-map residue for `dt:`-marked ids, appends matching signed
+    /// sweep-completion rows, expires stale `x:` quarantine rows,
     /// and audits for dropped obligations. Fail closed throughout: open
     /// windows defer, failed windows keep the obligation rows with
     /// `retry_state` rewritten in place, and delete semantics are never
