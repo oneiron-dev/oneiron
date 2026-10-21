@@ -157,6 +157,8 @@ impl Vault {
     /// sequences its act would take, until the tips fit; the joins land in
     /// one put, and the fold read back is returned, for the act's sequence
     /// and parents. `None` when the heads fit: today's path, nothing written.
+    /// A wide frontier is measured on Phase2 A's `authority_record_items`
+    /// row, which asks past it and never waits or refuses.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] when a join did not
@@ -174,6 +176,7 @@ impl Vault {
         if fold.append_heads.len() <= room {
             return Ok(None);
         }
+        measure_authority_work(self.limit_watch(), fold.append_heads.len());
         let now = self.instant_in_txn(txn)?.secs();
         let at = TimeRange {
             start: now,
