@@ -15,7 +15,8 @@ mod request;
 mod session;
 mod status;
 pub use derivation::{
-    ScopeSummaryMetadata, SummaryDerivation, SummaryLineSources, SummarySourceVersion,
+    ScopeSummaryMetadata, SummaryDerivation, SummaryLineSources, SummaryLineSpan,
+    SummarySourceVersion,
 };
 pub(crate) use derivation::{rederive_changed_in_txn, roll_back_summary_in_txn};
 pub use purpose::SummaryPurpose;
@@ -29,7 +30,7 @@ pub use doors::LandedHeader;
 pub(crate) use doors::{
     body_covers_in_txn, merge_summary_ref, merge_word_sources_in_txn, validate_summary_put,
 };
-pub(crate) use request::ComposedSummary;
+pub(crate) use request::{ComposedSummary, ScopeSummaryPlan};
 pub use request::{ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget};
 pub(crate) use session::enqueue_session_summary_in_txn;
 pub(crate) use word_sources::{WordSources, word_sources_in, word_sources_through_in};

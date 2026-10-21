@@ -2,9 +2,10 @@
 //! gap 7, the slice a correction needs to bind). Shown only
 //! `[turn speaker] text`, a model mints a new subject each pass and can never
 //! name the claim a later turn corrects. So each entity the passage names
-//! that already exists is listed with its id, its label and its newest
-//! claims: a TURN's PERSON byline, or a whole word span equal to a stored
-//! identity hint. Nothing is guessed; a span is a stored hint or it is not.
+//! that already exists is listed with its label and its newest claims, each
+//! named by its call's own short label, never its id (FIX 7506): a TURN's
+//! PERSON byline, or a whole word span equal to a stored identity hint.
+//! Nothing is guessed; a span is a stored hint or it is not.
 //!
 //! Every row is read through the Dreamer's scoped read in the wake's one
 //! snapshot. On an unscoped branch each listed claim is granted to the
@@ -16,6 +17,8 @@
 //! JointIE and typed supersede or merge questions are separate jobs.
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
+
+mod render;
 
 use super::PriorHead;
 use super::resources::{document_version, standing};
@@ -113,19 +116,6 @@ impl Neighbourhood {
             .flat_map(|entity| &entity.claims)
             .chain(&self.unlisted)
             .map(|claim| (claim.id, &claim.version))
-    }
-
-    /// The listing as transcript lines, each claim only while `admitted`
-    /// holds it as a prior head.
-    pub(super) fn render(&self, admitted: impl Fn(&EntityId) -> bool) -> String {
-        let mut out = String::new();
-        for entity in &self.entities {
-            out.push_str(&entity_line(entity.id, entity.label.as_deref()));
-            for claim in entity.claims.iter().filter(|claim| admitted(&claim.id)) {
-                out.push_str(&claim_line(claim));
-            }
-        }
-        out
     }
 
     /// The exact versions of the heads the branch holds but the listing does
@@ -381,7 +371,7 @@ fn fresh_in(
             break;
         }
         let label = label(&body);
-        bytes += entity_line(id, label.as_deref()).len();
+        bytes += render::entity_line_bytes(id, label.as_deref());
         if bytes > MAX_BYTES {
             break;
         }
@@ -395,7 +385,7 @@ fn fresh_in(
             None => Vec::new(),
         };
         for (claim, row) in claims {
-            bytes += claim_line(&claim).len();
+            bytes += render::claim_line_bytes(&claim);
             if bytes > MAX_BYTES {
                 entities.push(entity);
                 break 'entities;
@@ -592,22 +582,6 @@ fn label(body: &[u8]) -> Option<String> {
         .trim()
         .to_owned();
     (!name.is_empty()).then(|| cut(&name, LABEL_BYTES))
-}
-
-fn entity_line(id: EntityId, label: Option<&str>) -> String {
-    match label {
-        Some(label) => format!("entity {} {}\n", id.to_hex(), serde_json::json!(label)),
-        None => format!("entity {}\n", id.to_hex()),
-    }
-}
-
-fn claim_line(claim: &KnownClaim) -> String {
-    format!(
-        "  claim {} {} = {}\n",
-        claim.id.to_hex(),
-        claim.predicate,
-        claim.value
-    )
 }
 
 /// `text` cut to at most `limit` bytes on a character boundary, marked.

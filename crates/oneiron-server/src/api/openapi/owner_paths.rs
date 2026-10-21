@@ -761,6 +761,24 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "put",
+        path: "/feedback/delivery/binding",
+        summary: "Binds a publisher (`publisher_ref`) to this server's feedback destination, its channel and exact endpoint as configured now (`bound: true`), or unbinds it (`false`); binding needs a configured destination. Its content-free issue signatures go only there, and a lane that froze another destination holds as `changed_binding`, never redirected. Answers `{publisher_ref, endpoint}`.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/feedback/delivery/run",
+        summary: "Queues the Coach's publisher delivery now (`{}`), joining one already queued: every report routed to a publisher gets its content-free ED-08 issue signature, sent to the endpoint the owner bound while \"Help improve Oneiron\" and the publisher dial are both on. Text never leaves this way. Answers `{attempt}`.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/feedback/delivery/status",
+        summary: "One report issue's signature delivery (`issue_ref`, 32 hex): whether it is routed to a publisher, the publisher's binding, and its lane (key, frozen signature and send, hold, receipt and outcome). Holds: `metadata_unresolved` with its reason, `endpoint_unbound`, `destination_unsupported`, `changed_binding`, `withheld`. Not found when the vault holds no such issue.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/feedback/inbox",
         summary: "Feedback inbox.",

@@ -67,6 +67,24 @@ pub struct SummaryLineSources {
     pub output_start: usize,
     pub output_end: usize,
     pub turn_refs: Vec<String>,
+    /// The exact slices a paged sitting's line cites by part (FIX 7509
+    /// P7b), in citation order; empty, and not written, for a line citing
+    /// whole TURNs only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_spans: Vec<SummaryLineSpan>,
+}
+
+/// One slice of a TURN a paged session summary's line came from (FIX 7509
+/// P7b): byte offsets, MESSAGE-local when `message` is set, else into the
+/// TURN's own text. The revisions those bytes were read at are the
+/// derivation's `sources`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SummaryLineSpan {
+    pub turn: String,
+    pub message: Option<String>,
+    pub start: usize,
+    pub end: usize,
 }
 
 /// The summary's own document metadata. `keep` is read before every generation.
