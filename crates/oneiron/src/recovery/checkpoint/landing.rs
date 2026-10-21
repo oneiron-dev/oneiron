@@ -194,6 +194,15 @@ impl Vault {
             // An erased actor's name, carried back by the image's rows, goes
             // again, now the type index is back.
             crate::deletion::rerun_actor_scrubs_in_txn(&vault, txn, erased)?;
+            // A step claim's response pins go with what the rows no longer
+            // hold, now the type index is back: an erased shell's release,
+            // an omitted claim's or version's pin goes alone (FIX 6225).
+            crate::llm::prune_step_response_pins_in_txn(
+                &vault.store,
+                txn,
+                &BTreeSet::new(),
+                &BTreeSet::new(),
+            )?;
             #[cfg(test)]
             fail_at(RestoreStep::ImageWrite)?;
             Ok(())

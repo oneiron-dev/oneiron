@@ -186,6 +186,10 @@ pub(crate) use body_envelope::{
     prune_retired_bodies_in_rows, release_body_in_txn, require_body_instances,
     retire_body_key_in_txn, sealed_body_file_name,
 };
+// FIX 6225: a step response's ASSET under its claim's erase, and the debt
+// a shared one's final teardown settles.
+#[cfg(unix)]
+pub(crate) use body_envelope::{erase_bodies_for_owner_in_txn, settle_inline_asset_in_txn};
 // KS-2B1: row-held responses under body custody.
 #[cfg(unix)]
 pub(crate) use body_envelope::{

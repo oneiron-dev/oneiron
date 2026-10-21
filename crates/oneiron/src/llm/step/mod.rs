@@ -21,6 +21,8 @@ mod schema_runtime;
 pub use schema::validate_json_schema;
 mod peer_wait;
 mod response_bodies;
+// FIX 6225: a step claim holds its oversize response's exact version.
+mod response_pins;
 mod settled;
 mod step_claim;
 mod step_only;
@@ -71,6 +73,11 @@ pub(crate) use self::step_claim::{
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use self::response_bodies::{
     retire_step_claim_in_rows, retire_step_claim_in_txn, step_claim_carriage,
+};
+// FIX 6225: a claim's teardown, a restore and an activation take its pins.
+pub(crate) use self::response_pins::{
+    prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
+    retire_erased_step_responses_in_rows,
 };
 pub(crate) use self::step_state::{
     erase_step_state_owner_in_txn, owner_gone_in_txn, step_state_carriage, step_state_owners,

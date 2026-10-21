@@ -243,6 +243,14 @@ pub(crate) fn erase_row_provenance_without_attempt_payloads_in_txn(
     // the hold log like every other door's.
     store.reject_legal_hold_in_txn(txn, row.as_bytes())?;
     crate::world_keys::reject_held_pad_world_in_txn(store, txn, &[*row])?;
+    // A step claim's response pins go before anything of it does, on an
+    // erase and a delete alike: each exact version no other claim holds goes
+    // with them, and an erase retires or owes its kept copies (FIX 6225).
+    crate::llm::release_step_response_pins_in_txn(store, txn, row, erase)?;
+    // An earlier erase's debt on this row's inline ASSET body settles at
+    // its final teardown, by any door (FIX 6225).
+    #[cfg(unix)]
+    crate::store::settle_inline_asset_in_txn(store, txn, row, erase)?;
     birth::erase_row_birth_in_txn(store, txn, row)?;
     // The cause is read before the descriptors go.
     let held: Vec<[u8; 32]> = if erase {

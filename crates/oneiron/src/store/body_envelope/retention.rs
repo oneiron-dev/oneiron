@@ -90,12 +90,34 @@ pub(crate) fn erase_bodies_in_txn(
     owner: &EntityId,
     held: &[[u8; 32]],
 ) -> Result<()> {
+    erase_bodies_for_owner_in_txn(store, wtxn, owner, owner, held, false)
+}
+
+/// [`erase_bodies_in_txn`] when the erase and the body are two rows' (FIX
+/// 6225): `erase_owner`'s erase, whose receipt names each instance, reaches
+/// the bodies `held` and the inline ASSET instance of `body_owner` (a step
+/// claim's erase, its response version's ASSET). `retain_inline`: another
+/// holder still keeps that ASSET, so its instance keeps its key and binding
+/// and the erase owes its retirement, as a file another descriptor holds
+/// does, until that ASSET's final teardown ([`settle_inline_asset_in_txn`]).
+///
+/// # Errors
+///
+/// Storage and custody errors.
+pub(crate) fn erase_bodies_for_owner_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    erase_owner: &EntityId,
+    body_owner: &EntityId,
+    held: &[[u8; 32]],
+    retain_inline: bool,
+) -> Result<()> {
     for digest in held {
         let row = BODY_KEYS.get(store, wtxn, digest)?;
         if crate::provenance::body::digest_is_held_in_txn(store, wtxn, digest)? {
             if let Some(row) = row {
                 ERASE_PENDING.put(store, wtxn, &row.instance, digest)?;
-                ERASED.put(store, wtxn, &(*owner, row.instance), &Vec::new())?;
+                ERASED.put(store, wtxn, &(*erase_owner, row.instance), &Vec::new())?;
             }
             continue;
         }
@@ -104,14 +126,53 @@ pub(crate) fn erase_bodies_in_txn(
         drop_inline_result_in_txn(store, wtxn, digest)?;
         if let Some(row) = row {
             ERASE_PENDING.delete(store, wtxn, &row.instance)?;
-            stage_erase(store, wtxn, Some(owner), &row.instance)?;
+            stage_erase(store, wtxn, Some(erase_owner), &row.instance)?;
         }
     }
-    if let Some(instance) = INLINE_ASSETS.get(store, wtxn, owner)? {
-        INLINE_ASSETS.delete(store, wtxn, owner)?;
-        stage_erase(store, wtxn, Some(owner), &instance)?;
+    let Some(instance) = INLINE_ASSETS.get(store, wtxn, body_owner)? else {
+        return Ok(());
+    };
+    if retain_inline {
+        // The digest an inline ASSET holds is its row body's: its content
+        // hash.
+        let digest = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, body_owner)?
+            .and_then(|raw| {
+                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                    .map(|body| *blake3::hash(body).as_bytes())
+            })
+            .unwrap_or_default();
+        ERASE_PENDING.put(store, wtxn, &instance, &digest)?;
+        ERASED.put(store, wtxn, &(*erase_owner, instance), &Vec::new())?;
+        return Ok(());
     }
-    Ok(())
+    INLINE_ASSETS.delete(store, wtxn, body_owner)?;
+    ERASE_PENDING.delete(store, wtxn, &instance)?;
+    stage_erase(store, wtxn, Some(erase_owner), &instance)
+}
+
+/// The final teardown of `owner`'s row, by any door, in its transaction:
+/// when an erase of an earlier holder owes its inline ASSET instance a
+/// retirement (a shared step response's, FIX 6225), the intent is staged
+/// now and the binding goes; `erase` notes it for `owner`'s receipt too.
+/// Nothing else: a delete keeps the key of an instance no erase owes.
+///
+/// # Errors
+///
+/// Storage and custody errors.
+pub(crate) fn settle_inline_asset_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    owner: &EntityId,
+    erase: bool,
+) -> Result<()> {
+    let Some(instance) = INLINE_ASSETS.get(store, wtxn, owner)? else {
+        return Ok(());
+    };
+    if !ERASE_PENDING.delete(store, wtxn, &instance)? {
+        return Ok(());
+    }
+    INLINE_ASSETS.delete(store, wtxn, owner)?;
+    stage_erase(store, wtxn, erase.then_some(owner), &instance)
 }
 
 /// The content handle of the result body `digest`.

@@ -206,7 +206,7 @@ impl Store {
 
     /// Applies `prune` in `wtxn`: its row deletions and rewrites, each
     /// pruned inline ASSET's shell, and each pruned response's erased
-    /// disposition.
+    /// disposition, then the step response pins it leaves (FIX 6225).
     fn prune_bodies_in_txn(&self, wtxn: &mut heed::RwTxn<'_>, prune: &ArchivePrune) -> Result<()> {
         destination::delete_vault_meta_in_txn(&self.env, wtxn, &prune.deleted)?;
         for (key, value) in &prune.rewritten {
@@ -241,7 +241,12 @@ impl Store {
                 family.retire_in_txn(self, wtxn, key, &carriage)?;
             }
         }
-        Ok(())
+        // A step claim whose response's artifact version rests in a body its
+        // source retired takes its erased disposition too, and every pin
+        // goes with what the archive no longer holds (FIX 6225). The retired
+        // ASSETs and files were read off the bindings before they went.
+        let files: BTreeSet<[u8; 32]> = prune.files.iter().copied().collect();
+        crate::llm::prune_step_response_pins_in_txn(self, wtxn, &prune.assets, &files)
     }
 
     /// Reads back, under the custody `txn` binds (the forked one), every

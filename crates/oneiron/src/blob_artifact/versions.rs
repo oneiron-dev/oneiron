@@ -235,9 +235,9 @@ impl Vault {
     }
 
     /// Appends a new version descending from any existing version of this artifact.
-    /// The scalar version number still advances at head+1; only the ancestry
-    /// pointer branches. Unlike an ordinary append, identical bytes do not
-    /// suppress the explicit fork event.
+    /// The scalar version number still advances past the high-water mark;
+    /// only the ancestry pointer branches. Unlike an ordinary append,
+    /// identical bytes do not suppress the explicit fork event.
     #[expect(clippy::too_many_arguments)]
     pub fn fork_blob_artifact_version(
         &self,
@@ -443,9 +443,11 @@ impl Vault {
             crate::ingest::prepare_blob_artifact_birth(&self.store, wtxn, artifact_id, bytes)?;
         let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
         let highwater = read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?;
+        // HEAD is the greatest version that stays; a released one (FIX 6225)
+        // leaves the high-water mark above it, never below.
         if head
             .as_ref()
-            .is_some_and(|head| highwater != Some(head.version))
+            .is_some_and(|head| highwater.is_none_or(|highwater| highwater < head.version))
         {
             return Err(Error::CorruptedIndex("blob artifact version highwater"));
         }
@@ -483,10 +485,10 @@ impl Vault {
             None => default_version_made_by(&actor, provenance, parent_claim, learned_at),
         };
         let made_by_json = made_by_text(&made_by)?;
-        // Deletion removes the current chain but never its high-water mark.
-        let previous_version = head
-            .as_ref()
-            .map_or(highwater.unwrap_or(0), |head| head.version);
+        // Deletion removes the current chain, and a response pin's release
+        // one version (FIX 6225), but never the high-water mark: the next
+        // number is above every one ever issued, never reused.
+        let previous_version = highwater.unwrap_or(0);
         let next_version = previous_version
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))?;

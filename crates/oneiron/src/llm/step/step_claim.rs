@@ -5,6 +5,7 @@ use super::codec::{
     decode_attempt_id_value, decode_entity_id_value, decode_hash_hex, expect_key, expect_map,
     expect_string, expect_u64, invalid_step, pinned_key_index,
 };
+use super::response_pins::{StepResponseRef, register_step_response_pin_in_txn};
 use super::step_state::{
     StepStateDisposition, StepStateOwners, StepStateRow, step_state_put_in_txn, step_state_read,
 };
@@ -223,6 +224,11 @@ pub(super) fn log_terminal_step(
                 .batch_in()
                 .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
                 .apply(wtxn)?;
+            // The claim holds the exact version its response lives in, so
+            // its erase reaches that version (FIX 6225).
+            if let Some(pin) = &response_ref {
+                register_step_response_pin_in_txn(&ctx.vault.store, wtxn, &claim_id, pin)?;
+            }
             let claimed = StepClaimed {
                 attempt_id: ctx.attempt_id,
                 step_hash: *step_hash,
@@ -337,16 +343,6 @@ pub(super) fn dreamer_runtime_envelope(ctx: &DurableStepContext<'_>) -> Result<W
         WriteProvenance::new(Value::Map(entries))?,
         ClaimApprovalStatus::Proposed,
     ))
-}
-
-/// Where an oversize step response lives: its artifact, and the one version
-/// the step appended there, by number and content hash. Replay reads exactly
-/// that version.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct StepResponseRef {
-    pub(crate) artifact_id: EntityId,
-    pub(crate) version: u64,
-    pub(crate) content_hash: [u8; 32],
 }
 
 pub(super) struct EncodedStepClaim {

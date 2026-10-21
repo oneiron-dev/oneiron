@@ -12,7 +12,7 @@
 //! marked soft-deleted and fenced, as a soft erase leaves it: never a
 //! response edited to empty.
 //! A response held in an artifact version is the artifact's ASSET body
-//! (KS-2A).
+//! (KS-2A), the exact version pinned to its claim (FIX 6225).
 
 use std::collections::BTreeMap;
 
@@ -114,11 +114,12 @@ pub(crate) fn retire_step_claim_in_rows(
 /// The erased disposition of the live claim `key` whose instance its
 /// source retired, in `wtxn` (an activation's prune): the erase's shell,
 /// its header alone, its claim projection and step-index rows gone (FIX 6231)
-/// and its soft-delete marker and fence set, as a soft erase leaves it.
+/// and its soft-delete marker and fence set, as a soft erase leaves it. Its
+/// response pins go first, as an erase takes them (FIX 6225).
 ///
 /// # Errors
 ///
-/// Storage errors.
+/// Storage and custody errors.
 pub(crate) fn retire_step_claim_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -127,6 +128,7 @@ pub(crate) fn retire_step_claim_in_txn(
     let Some(claim) = claim_of(key)? else {
         return Ok(());
     };
+    super::response_pins::release_step_response_pins_in_txn(store, wtxn, &claim, true)?;
     let recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     store.port_entity_scrub(wtxn, &claim, ScrubbedRecord::Shell, recorded_at)?;
     crate::claim::remove_claim_projection_index(store, wtxn, claim)?;
