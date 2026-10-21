@@ -84,8 +84,15 @@ impl Vault {
         if !caller.host {
             return Err(refused(&served.name, IN_PROCESS_OWNER_ONLY));
         }
-        if let Some(stamp) = self.git_push_grant_admits_in_txn(txn, caller, served)? {
-            return Ok(GitPushAdmission::sealed(stamp));
+        // A Grant read that fails refuses only a push no other arm admits:
+        // it is logged, and a checkout's own fence and Grant still decide.
+        match self.git_push_grant_admits_in_txn(txn, caller, served) {
+            Ok(Some(stamp)) => return Ok(GitPushAdmission::sealed(stamp)),
+            Ok(None) => {}
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "git push: the git_push Grants did not read; no git_push Grant admits"
+            ),
         }
         let Some(ticket) = ticket else {
             return Err(refused(&served.name, NO_GRANT));
@@ -298,7 +305,21 @@ impl Vault {
         let principal = EntityId::from_hex(&stamp.principal)
             .map_err(|_| refused(&stamp.served, NO_LONGER_STANDS))?;
         let stands = match stamp.arm {
-            GitPushArm::Owner => self.git_push_owner_in_txn(txn, principal)?,
+            // A recheck that cannot read refuses no owner push it admitted:
+            // it is logged, and the push lands as it did before G1-PUSH.
+            GitPushArm::Owner => {
+                return match self.git_push_owner_rechecks_in_txn(txn, stamp, principal) {
+                    Ok(true) => Ok(()),
+                    Ok(false) => Err(refused(&stamp.served, NO_LONGER_STANDS)),
+                    Err(error) => {
+                        tracing::warn!(
+                            kind = ?error.kind(),
+                            "git push: an owner push's recheck did not read; it lands as admitted"
+                        );
+                        Ok(())
+                    }
+                };
+            }
             GitPushArm::Grant => self.git_push_grant_rechecks_in_txn(txn, stamp, principal)?,
             GitPushArm::Checkout => {
                 let changes = changes.ok_or_else(|| refused(&stamp.served, PATHS_UNKNOWN))?;
@@ -310,6 +331,17 @@ impl Vault {
             return Err(refused(&stamp.served, NO_LONGER_STANDS));
         }
         self.git_push_credential_rechecks_in_txn(txn, stamp)
+    }
+
+    /// The owner, read again: still a live owner, his credential unrevoked.
+    fn git_push_owner_rechecks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        stamp: &GitPushStamp,
+        principal: EntityId,
+    ) -> Result<bool> {
+        Ok(self.git_push_owner_in_txn(txn, principal)?
+            && self.git_push_credential_live_in_txn(txn, stamp)?)
     }
 
     /// The same GitPush grant, read again: it still names the pusher and
@@ -397,24 +429,39 @@ impl Vault {
         self.git_push_credential_rechecks_in_txn(txn, stamp)
     }
 
-    /// The credential the push was admitted under is still unrevoked: its
-    /// capability slip is live, and its token carries no revocation mark.
+    /// The credential the push was admitted under is still unrevoked, or
+    /// the typed refusal naming it.
     fn git_push_credential_rechecks_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         stamp: &GitPushStamp,
     ) -> Result<()> {
+        if self.git_push_credential_live_in_txn(txn, stamp)? {
+            Ok(())
+        } else {
+            Err(refused(&stamp.served, CREDENTIAL_REVOKED))
+        }
+    }
+
+    /// Whether the credential is still unrevoked: its capability slip is
+    /// live, and its token carries no revocation mark.
+    fn git_push_credential_live_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        stamp: &GitPushStamp,
+    ) -> Result<bool> {
         if let Some(slip) = stamp.slip.as_ref()
             && !self.capability_slip_id_is_live_in_txn(txn, slip)?
         {
-            return Err(refused(&stamp.served, CREDENTIAL_REVOKED));
+            return Ok(false);
         }
-        if let Some(marker) = stamp.revoked_marker.as_deref()
-            && self.store.sync_state.get(txn, marker)?.is_some()
-        {
-            return Err(refused(&stamp.served, CREDENTIAL_REVOKED));
-        }
-        Ok(())
+        Ok(stamp
+            .revoked_marker
+            .as_deref()
+            .map(|marker| self.store.sync_state.get(txn, marker))
+            .transpose()?
+            .flatten()
+            .is_none())
     }
 }
 
