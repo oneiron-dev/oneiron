@@ -20,6 +20,13 @@
 //! and every use the handle resolves for writes one value-free Gate use
 //! record. Each mint writes one value-free Gate record of where the secret
 //! was found.
+//!
+//! The model reads a run-bound value only through `reveal`, its one check
+//! and its receipt, as any found secret's: the record is active, device-bound
+//! (the floor's default band reaches T1) and its one binding reaches T1. A
+//! reveal is tied to the run that found the record
+//! ([`reveal_run_admission`]): an asker another run binds is refused before
+//! the check; one no run binds takes the check alone.
 
 use zeroize::Zeroizing;
 
@@ -31,6 +38,7 @@ use super::types::{
     SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
 };
 use super::use_handle::{SECRET_USE_REASON, handle_record_in_txn};
+use crate::AttemptId;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
@@ -99,6 +107,42 @@ pub(crate) fn is_run_bound_name(name: &str) -> bool {
         name.strip_prefix(seat.word())
             .is_some_and(|rest| rest.starts_with('/'))
     })
+}
+
+/// Whether a reveal of the custody record named `name` (handle `handle`) by
+/// an asker whose run holds the leased try `attempt` goes on to the one
+/// reveal check (`reveal_run_tie`, CALLS row; FIX 8028). A record that is
+/// not run-bound does, as before; a run-bound one does for the run that
+/// found it (its executor run is that try), and for an asker no run binds,
+/// whose reveal the check alone decides. The seat's end erases the record,
+/// so a reveal asked after it finds nothing.
+///
+/// # Errors
+/// [`SecretError::SecretBindingDenied`], naming the effector the asking run
+/// would need, for an asker bound to another run.
+pub(crate) fn reveal_run_admission(
+    name: &str,
+    handle: &str,
+    attempt: Option<&AttemptId>,
+) -> Result<()> {
+    let Some(attempt) = attempt else {
+        return Ok(());
+    };
+    let Some(seat) = RUN_SEATS.into_iter().find(|seat| {
+        name.strip_prefix(seat.word())
+            .is_some_and(|rest| rest.starts_with('/'))
+    }) else {
+        return Ok(());
+    };
+    let asking = EntityId::from_bytes(*attempt.as_bytes()).ok();
+    if asking.is_some_and(|asking| name.starts_with(&seat.names(&asking))) {
+        return Ok(());
+    }
+    let effector = asking.map_or_else(|| seat.word().to_owned(), |run| seat.effector(&run));
+    Err(Error::Secret(SecretError::SecretBindingDenied {
+        effector,
+        secret_ref: handle.to_owned(),
+    }))
 }
 
 impl Vault {

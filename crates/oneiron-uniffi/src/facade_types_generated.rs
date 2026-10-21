@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1127 facade rows, 3893 generated types.
+// UniFFI census: 1127 facade rows, 3894 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1079.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -59983,6 +59983,16 @@ pub struct EffectReceipt {
     pub duration_ms: u64,
 }
 
+/// `oneiron_browser::library::secret_slots::SecretParam`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretParam {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "kind")]
+    pub kind: SecretKind,
+}
+
 /// `oneiron_browser::library::admission::RecentCounts`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RecentCounts {
@@ -60025,6 +60035,12 @@ pub struct LibraryCard {
     pub type_ref: String,
     #[serde(rename = "params")]
     pub params: Vec<String>,
+    #[serde(
+        rename = "secret_params",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub secret_params: Option<Vec<SecretParam>>,
     #[serde(rename = "runs")]
     pub runs: u32,
     #[serde(rename = "failures")]
@@ -60946,6 +60962,8 @@ pub enum WorkflowCheck {
     Solved,
     #[serde(rename = "replay")]
     Replay,
+    #[serde(rename = "secret_replay")]
+    SecretReplay,
     #[serde(rename = "held_out")]
     HeldOut,
     #[serde(rename = "fresh_guest")]
@@ -60997,6 +61015,11 @@ pub enum AdmissionRefusal {
         workflow: String,
         #[serde(rename = "why")]
         why: SupersedeRefusal,
+    },
+    #[serde(rename = "secret_replay")]
+    SecretReplay {
+        #[serde(rename = "slots")]
+        slots: Vec<String>,
     },
 }
 

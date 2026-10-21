@@ -387,6 +387,7 @@ impl Handles {
             let info = HandleInfo {
                 locator: line.row.locator.clone(),
                 scope: scope.clone(),
+                secret: line.row.secret.as_ref().map(|secret| secret.kind),
             };
             self.strings = self
                 .strings

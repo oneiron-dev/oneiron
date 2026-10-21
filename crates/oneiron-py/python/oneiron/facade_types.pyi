@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1127 facade rows, 3911 declarations.
+Census: 1127 facade rows, 3912 declarations.
 Inputs: 1062 of 1127 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1014 of 1127 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -19495,6 +19495,9 @@ class EffectReceipt(TypedDict):
     fact: NotRequired[ActionFact | None]
     engine_switch: NotRequired[EngineSwitchRecord | None]
     duration_ms: int
+class SecretParam(TypedDict):
+    name: str
+    kind: SecretKind
 RecentCounts = TypedDict("RecentCounts", {"pass": int, "miss": int, "repair": int, "of": int})
 class WorkflowSeed(TypedDict):
     pack: str
@@ -19508,6 +19511,7 @@ class LibraryCard(TypedDict):
     subgoal: str
     type_ref: str
     params: list[str]
+    secret_params: NotRequired[list[SecretParam]]
     runs: int
     failures: int
     recent: RecentCounts
@@ -19748,7 +19752,7 @@ class ProposeInput(TypedDict):
     replay_args: NotRequired[dict[str, str]]
     supersedes: NotRequired[str | None]
     seed: NotRequired[WorkflowSeed | None]
-WorkflowCheck = Literal["solved", "replay", "held_out", "fresh_guest", "supersedes"]
+WorkflowCheck = Literal["solved", "replay", "secret_replay", "held_out", "fresh_guest", "supersedes"]
 SupersedeRefusal = Literal["malformed", "not_on_site", "same_record", "not_filer"]
 class AdmissionRefusalHeldOut(TypedDict):
     cause: Literal["held_out"]
@@ -19765,7 +19769,10 @@ class AdmissionRefusalSupersedes(TypedDict):
     cause: Literal["supersedes"]
     workflow: str
     why: SupersedeRefusal
-AdmissionRefusal = AdmissionRefusalHeldOut | AdmissionRefusalFreshGuest | AdmissionRefusalSupersedes
+class AdmissionRefusalSecretReplay(TypedDict):
+    cause: Literal["secret_replay"]
+    slots: list[str]
+AdmissionRefusal = AdmissionRefusalHeldOut | AdmissionRefusalFreshGuest | AdmissionRefusalSupersedes | AdmissionRefusalSecretReplay
 class ReplayGuest(TypedDict):
     engine: BrowserEngine
     carried: list[SwitchCarried]

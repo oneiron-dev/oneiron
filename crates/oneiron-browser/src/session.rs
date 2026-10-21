@@ -95,9 +95,9 @@ use crate::{
     LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider,
     Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput,
     ProposeOutput, ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
-    ScreenshotTrigger, SecretCustody, SelectInput, SendPolicy, StoragePhase, SwitchEngineInput,
-    SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TypeInput, ViewInput, WaitForInput,
-    WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
+    ScreenshotTrigger, SecretCustody, SecretKind, SelectInput, SendPolicy, StoragePhase,
+    SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TypeInput,
+    ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -877,6 +877,10 @@ impl BrowserDriver for BrowserSession {
 
     fn handle_info(&self, handle: &str) -> Option<HandleInfo> {
         self.driver.handle_info(handle)
+    }
+
+    fn secret_kind(&self, handle: &str) -> Option<SecretKind> {
+        self.secrets.kind_of(handle)
     }
 
     fn library_find(&mut self, input: LibraryFindInput) -> Result<LibraryFindOutput, BrowserError> {

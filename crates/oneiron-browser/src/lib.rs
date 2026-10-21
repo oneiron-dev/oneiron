@@ -57,9 +57,9 @@ pub use library::{
     AdmissionRefusal, Admitted, FiledWorkflow, LibraryCard, LibraryFindInput, LibraryFindOutput,
     LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput,
     LibraryRunInput, LibraryRunMode, LibraryRunOutput, ProposeInput, ProposeOutput, RecentCounts,
-    ReplayGuest, RetiredCard, RunOutcome, SupersedeOutcome, SupersedeRefusal, WorkflowCheck,
-    WorkflowLibrary, WorkflowProgram, WorkflowProof, WorkflowSeed, default_mode, effective_mode,
-    model_free, site_of, validate_replay_args,
+    ReplayGuest, RetiredCard, RunOutcome, SecretParam, SupersedeOutcome, SupersedeRefusal,
+    WorkflowCheck, WorkflowLibrary, WorkflowProgram, WorkflowProof, WorkflowSeed, default_mode,
+    effective_mode, model_free, site_of, validate_replay_args,
 };
 pub use observation::{
     HandleInfo, ObservationBase, Rebound, RowSplice, StepRebound, is_live_handle,
@@ -1235,6 +1235,13 @@ pub trait BrowserDriver: Send {
     /// What the driver knows of a live handle it minted: its locator and
     /// last scope. A driver with no live handles knows none.
     fn handle_info(&self, _handle: &str) -> Option<HandleInfo> {
+        None
+    }
+
+    /// The kind of secret a run-bound handle (`scN`, or as a row shows it)
+    /// holds, when a read of this session took it (FIX 8028). A driver that
+    /// holds no secrets knows none.
+    fn secret_kind(&self, _handle: &str) -> Option<SecretKind> {
         None
     }
 
