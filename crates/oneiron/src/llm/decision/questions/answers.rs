@@ -100,7 +100,9 @@ pub fn question_answers(
     let Some(token) = request.cursor.as_deref() else {
         let graph = super::answer_records(vault, principal, request.id)?;
         let asks = artifact_ask_records(vault, principal, request.id)?;
-        return Ok(QuestionAnswersReply::All(QuestionAnswer::union(graph, asks)));
+        return Ok(QuestionAnswersReply::All(QuestionAnswer::union(
+            graph, asks,
+        )));
     };
     let limit = request.page_size.filter(|size| *size > 0);
     let (entries, next) = {

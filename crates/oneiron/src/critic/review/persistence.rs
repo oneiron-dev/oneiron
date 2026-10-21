@@ -385,7 +385,12 @@ pub(super) fn dissent_state(
     vault: &Vault,
     verdict: &EntityId,
     artifact: &str,
-) -> Result<(EntityId, Option<crate::EdgeActorClass>, ReviewDissent, CritiqueVerdict)> {
+) -> Result<(
+    EntityId,
+    Option<crate::EdgeActorClass>,
+    ReviewDissent,
+    CritiqueVerdict,
+)> {
     let txn = vault.store.env.read_txn()?;
     let body = vault
         .get_claim_in_txn(&txn, verdict)?

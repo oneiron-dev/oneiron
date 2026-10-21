@@ -50,12 +50,7 @@ impl Asking<'_> {
             vault.with_write_txn_grouped(|wtxn| {
                 let proposed = match &run.proposal {
                     Some(proposal) => Some(vault.retain_edit_proposal_in_txn(
-                        wtxn,
-                        &artifact,
-                        proposal,
-                        None,
-                        self.actor,
-                        self.now,
+                        wtxn, &artifact, proposal, None, self.actor, self.now,
                     )?),
                     None => None,
                 };
