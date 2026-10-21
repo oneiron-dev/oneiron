@@ -167,6 +167,9 @@ impl CoreAuth {
         // longer a stranger's. The read-only check above does not say so,
         // since a replay passes it and is refused only here.
         crate::http_listener::authenticated();
+        // Its body, if it has one, now counts under this slip in the owner's
+        // connection-pool pressure check (FIX 7656).
+        super::body_credential::attach_slip(&auth);
         Ok(auth)
     }
     pub(super) fn from_verified(

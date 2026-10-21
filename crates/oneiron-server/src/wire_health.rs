@@ -400,6 +400,11 @@ fn unread(server: &SyncServer) -> Result<Vec<Crossing>> {
         }
     }
     for (key, question) in telemetry.kept_limit_questions()? {
+        // The connection pool's check is its live pressure check (FIX 7656),
+        // not a second ask on the ladder.
+        if question.row == crate::wire_telemetry::LimitRow::Connections.key() {
+            continue;
+        }
         let after = cursor(vault, &format!("{CURSOR_LIMIT}{}", question.row))?;
         if after.is_none_or(|after| key > after) {
             unread.push(limit_crossing(key, &question));

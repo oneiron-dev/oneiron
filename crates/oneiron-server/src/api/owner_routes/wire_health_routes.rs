@@ -19,6 +19,7 @@ use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, entity_id};
 use crate::server::SyncServer;
 use crate::wire_health::{self, HealthCheck};
+use crate::wire_telemetry::ConnectionPoolPressure;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -29,6 +30,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 #[derive(Debug, Serialize)]
 struct HealthChecks {
     checks: Vec<HealthCheck>,
+    /// The shared connection pool's live pressure check (FIX 7656).
+    connection_pool_pressure: ConnectionPoolPressure,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,6 +54,10 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
     let checks = blocking(move || -> OwnerResult<HealthChecks> {
         Ok(HealthChecks {
             checks: wire_health::checks(server.vault())?,
+            connection_pool_pressure: server
+                .wire_telemetry
+                .limit_questions()
+                .connection_pool_pressure(),
         })
     })
     .await?;
