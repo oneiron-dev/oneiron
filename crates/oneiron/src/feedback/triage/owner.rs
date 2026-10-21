@@ -66,7 +66,9 @@ pub struct FeedbackTriageStatus {
     pub last_error: Option<String>,
     /// The binding now.
     pub binding: FeedbackTriageBinding,
-    /// Each source's continuation; empty before the first handoff.
+    /// Each source's state: its continuation, the walk that last reached
+    /// its end, and what stopped it last, with any retry time it named.
+    /// Empty before the first sweep.
     pub continuations: Vec<FeedbackTriageContinuation>,
     /// Each revision the sweep handed off or queued again.
     pub children: Vec<FeedbackTriageChild>,
@@ -96,8 +98,8 @@ pub struct FeedbackTriageChild {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "hold", rename_all = "snake_case")]
 pub enum FeedbackTriageHold {
-    /// No skill is bound: every sweep and triage job fails until the owner
-    /// binds one.
+    /// No skill is bound: every sweep completes doing nothing, and a triage
+    /// job already queued fails, until the owner binds one.
     SkillUnbound,
     /// A revision handed off with no committed result. A job that failed
     /// is queued again by the next sweep.
@@ -127,8 +129,8 @@ fn source_order(source_ref: &FeedbackTriageSourceRef) -> (&str, usize, &str, &st
 impl Vault {
     /// Queues the Coach's feedback sweep now, coalescing with a sweep
     /// already queued, and answers its attempt. The sweep runs on the bound
-    /// skill; with none bound it fails, and its status shows
-    /// `skill_unbound`.
+    /// skill; with none bound it completes doing nothing, and its status
+    /// shows `skill_unbound`.
     ///
     /// # Errors
     ///

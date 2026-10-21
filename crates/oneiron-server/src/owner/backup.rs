@@ -283,6 +283,7 @@ pub(crate) fn prune(
     if vault.legal_hold_keeps_backups()? {
         return Ok(Vec::new());
     }
+    checkpoint_fact::sweep(vault, plan);
     let records: Vec<_> = list(plan)?
         .into_iter()
         .filter(|record| Some(record.file.as_str()) != spared)
