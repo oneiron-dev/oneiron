@@ -74157,7 +74157,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 40,
       "trait": 2
      }
@@ -74280,6 +74280,18 @@
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/progress.rs",
+     "purpose": "A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 1
      }
     },
     {
@@ -74568,6 +74580,13 @@
      "layout": "file",
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…"
     },
+    "progress": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]…"
+    },
     "receipt_evidence": {
      "files": 1,
      "impl_vault": false,
@@ -74634,7 +74653,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 44,
+   "source_files": 45,
    "test_files": 0
   },
   "oneiron-code-check": {
