@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1129 facade rows, 3931 declarations.
-Inputs: 1064 of 1129 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1016 of 1129 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1131 facade rows, 3938 declarations.
+Inputs: 1066 of 1131 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1018 of 1131 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -10274,7 +10274,7 @@ class CodeProposalSubmitRequest(TypedDict):
     content: list[int]
     message: str
     op_provenance: CodeOpProvenance
-    catalog: LensCatalog
+    catalog: NotRequired[LensCatalog | None]
 class CodeProposalSubmitted(TypedDict):
     proposal: EntityId
     repo: EntityId
@@ -11535,6 +11535,26 @@ class CodeCheckReceiptView(TypedDict):
     work_ref: str
     receipt_ref: str
     receipts: list[CodeCheckAttemptView]
+QueueReviewPolicyState = Literal["absent", "set", "unreadable"]
+QueueReviewMode = Literal["land_on_green", "review", "held"]
+class QueueReviewThresholds(TypedDict):
+    critics: NotRequired[int]
+    votes: NotRequired[int]
+class QueueReviewPolicy(TypedDict):
+    catalog: LensCatalog
+    thresholds: QueueReviewThresholds
+    set_by: EntityId
+    set_at: int
+class QueueReviewPolicyView(TypedDict):
+    state: QueueReviewPolicyState
+    mode: QueueReviewMode
+    policy: NotRequired[QueueReviewPolicy | None]
+    hold: NotRequired[str | None]
+class QueueReviewPolicyInput(TypedDict):
+    catalog: LensCatalog
+    thresholds: NotRequired[QueueReviewThresholds]
+class QueueReviewPolicySetRequest(TypedDict):
+    policy: NotRequired[QueueReviewPolicyInput | None]
 class MergeQueueGreenExportRequest(TypedDict):
     repo: EntityId
     served_repo: str

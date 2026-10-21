@@ -1540,6 +1540,8 @@ fn mcp_agent_verb_input(
         "vault.code.merge_queue.diagnose" => a.spec.clone().ok_or_else(invalid),
         "vault.code.merge_queue.check_status" => a.spec.clone().ok_or_else(invalid),
         "vault.code.checks.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.merge_queue.review_policy.get" => Ok(Value::Object(serde_json::Map::new())),
+        "vault.code.merge_queue.review_policy.set" => a.spec.clone().ok_or_else(invalid),
         "vault.code.merge_queue.export_green" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.create" => a.spec.clone().ok_or_else(invalid),
@@ -4152,6 +4154,10 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.checks.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.merge_queue.review_policy.get" => {}
+        "vault.code.merge_queue.review_policy.set" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.merge_queue.export_green" => {
@@ -15448,6 +15454,60 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_checks_get(server, auth, input).await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.merge_queue.review_policy.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.code.merge_queue.review_policy.get",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_merge_queue_review_policy_get(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.code.merge_queue.review_policy.get",
+                    ),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.merge_queue.review_policy.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.code.merge_queue.review_policy.set",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::merge_queue_doors::QueueReviewPolicySetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_merge_queue_review_policy_set(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.code.merge_queue.review_policy.set",
+                    ),
+                    input,
+                )
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
