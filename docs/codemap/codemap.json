@@ -21248,6 +21248,7 @@
       "RunnerWork",
       "SeatAuth",
       "SeatIdentity",
+      "SeatPassedOver",
       "SeatRoute",
       "SeatSpent",
       "SkippedRunnerSeat"
@@ -21257,7 +21258,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 3,
-      "enum": 5,
+      "enum": 6,
       "fn": 13,
       "struct": 5
      }
@@ -21277,7 +21278,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ByoaInputStager",
@@ -21286,7 +21287,7 @@
      "path": "src/dispatch_byoa/staged_input.rs",
      "purpose": "A CLI run's job carried as a file in its checkout, never in argv: one argv entry has an OS limit (Linux…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -21340,6 +21341,7 @@
      "notable": [
       "BindRunnerWork",
       "RunnerSeatChoice",
+      "RunnerTaskSource",
       "RunnerWorkBinding",
       "RunnerWorkBindingId",
       "RunnerWorkBound",
@@ -21351,9 +21353,19 @@
      "purpose": "A Dreamer's runner work, bound once and handed seat to seat (OF-137): \"the router mints the next attempt on…",
      "surface": {
       "crate-vis": 3,
-      "enum": 4,
+      "enum": 5,
       "fn": 6,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/work_hand_off.rs",
+     "purpose": "A spent seat's work handed to the next seat (OF-137): \"the router mints the next attempt on the next seat…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -68083,7 +68095,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69142,7 +69154,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4372,
+   "source_files": 4373,
    "test_files": 902
   },
   "oneiron-android": {
