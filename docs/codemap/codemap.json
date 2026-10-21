@@ -3724,7 +3724,7 @@
      "path": "src/authority/principal_standing.rs",
      "purpose": "FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 8
      }
     },
     {
@@ -12228,6 +12228,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/loop_decision_read.rs",
+     "purpose": "An authorised read of loop admissions and rejections for the weave (OF-499 A2): the gate decisions a Dreamer…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -15141,7 +15151,7 @@
      "path": "src/code_sandbox/egress/mod.rs",
      "purpose": "The engine's open egress proxy",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "re-export": 1,
       "struct": 2
      }
@@ -22058,6 +22068,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/output.rs",
+     "purpose": "A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came from by the labels the engine…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SelectionCandidate",
       "SelectionConfig",
@@ -23523,6 +23543,17 @@
       "crate-vis": 2,
       "fn": 3,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/feedback_triage.rs",
+     "purpose": "The Coach's feedback triage findings (OF-420 T1)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -28979,8 +29010,9 @@
      "path": "src/feedback/mod.rs",
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export",
      "surface": {
+      "crate-vis": 1,
       "mod": 1,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -29074,6 +29106,52 @@
      "path": "src/feedback/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FeedbackTriageBinding",
+      "FeedbackTriageContinuation",
+      "FeedbackTriageFinding",
+      "FeedbackTriageHandoff",
+      "FeedbackTriageInput",
+      "FeedbackTriageJob",
+      "FeedbackTriageOutput",
+      "FeedbackTriageResult",
+      "FeedbackTriageSourceRef",
+      "FeedbackTriageSweep"
+     ],
+     "path": "src/feedback/triage.rs",
+     "purpose": "Feedback triage custody (OF-420 T1, ARCH-0056 #open-inbox): the sweep that hands each open-inbox note to the…",
+     "surface": {
+      "const": 4,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FeedbackTriageBindingRequest",
+      "FeedbackTriageChild",
+      "FeedbackTriageHold",
+      "FeedbackTriageRun",
+      "FeedbackTriageRunRequest",
+      "FeedbackTriageStatus",
+      "FeedbackTriageStatusRequest"
+     ],
+     "path": "src/feedback/triage/owner.rs",
+     "purpose": "The owner's feedback triage doors: run the sweep now, read a sweep's status, and read or set the skill binding",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 6
+     }
     },
     {
      "bucket": "s",
@@ -49519,6 +49597,7 @@
      "notable": [
       "ScopeSummaryMetadata",
       "SummaryDerivation",
+      "SummaryLineSources",
       "SummarySourceVersion"
      ],
      "path": "src/scope_summary/derivation.rs",
@@ -49526,7 +49605,7 @@
      "surface": {
       "crate-vis": 8,
       "fn": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -49550,7 +49629,7 @@
      "path": "src/scope_summary/mod.rs",
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 7
      }
     },
@@ -49629,10 +49708,20 @@
      "path": "src/scope_summary/request.rs",
      "purpose": "Scope-only declarations, exact-source fences and atomic Dreamer landings",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/session.rs",
+     "purpose": "A sitting's summary (FIX 7509, ARCH-0026 Dreamer row 4): queued by the sitting's close, written from the…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -49646,7 +49735,7 @@
      "purpose": "Caller-visible queued completion and failure, without exposing runner payloads",
      "surface": {
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -51288,7 +51377,7 @@
      "path": "src/session_lifecycle.rs",
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 3,
       "fn": 13,
       "re-export": 1,
@@ -55070,6 +55159,16 @@
      "purpose": "ORCB v1: schema-only dictionary and per-claim hot-value AEAD, keyed by the claim's typed custody entry…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/read_items.rs",
+     "purpose": "A tolerant streaming read of the gate-decision ledger (OF-499 A2): each row reaches the caller as its own…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -59424,7 +59523,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -59581,6 +59680,16 @@
       "enum": 16,
       "fn": 7,
       "struct": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_world_hold.rs",
+     "purpose": "The ask path's world-setting refusals, named (FIX 7463a)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -68157,7 +68266,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 81,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68437,7 +68546,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 84,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68465,7 +68574,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 114,
+     "files": 115,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68584,7 +68693,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 32,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69095,7 +69204,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69256,7 +69365,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 128,
+     "files": 129,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69312,7 +69421,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 204,
+     "files": 205,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69482,7 +69591,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4400,
+   "source_files": 4408,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73749,7 +73858,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 5
+      "re-export": 7
      }
     },
     {
@@ -73765,7 +73874,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 17,
+      "const": 19,
       "fn": 7,
       "struct": 5,
       "type": 1
@@ -82316,6 +82425,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/feedback_triage.rs",
+     "purpose": "The Coach's feedback triage on the host (OF-420 T1; ARCH-0056: \"We sweep both on a schedule with the triage…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/harness.rs",
      "purpose": "The Dreamer's tuning config, recorded as a versioned vault artifact so the nightly harness self-audit…",
      "surface": {
@@ -86397,6 +86516,16 @@
      "notable": [],
      "path": "src/api/owner_routes/federation_connect_routes.rs",
      "purpose": "`/v1/owner/federation/connect`: the owner's Connect (ARCH-0043 #relationship-lifecycle, FIX 323), behind the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/feedback_triage_routes.rs",
+     "purpose": "`/v1/owner/feedback/triage`: the owner runs the Coach's feedback triage now, reads one run's status, and…",
      "surface": {
       "crate-vis": 1
      }
@@ -94071,6 +94200,36 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/web_fetch/headless.rs",
+     "purpose": "The host's headless browser rung (FIX 7122): one fresh browser guest per render, from the host's `[browser]`…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/web_fetch/headless/handler.rs",
+     "purpose": "A render's custody of its pages' requests (FIX 7122, FIX 7332): each HTTP(S) request the browser pauses (a…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/web_fetch/headless/relay.rs",
+     "purpose": "A render's relay (FIX 7333): every connection and datagram the guest's sockets reach for off the guest's own…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -94914,14 +95073,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 67,
+     "files": 68,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 493,
+     "files": 494,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -95299,7 +95458,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 54,
+     "files": 57,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95371,7 +95530,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1037,
+   "source_files": 1042,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -99012,6 +99171,7 @@
       "SummaryForkView",
       "SummaryKeepRequest",
       "SummaryKeepResult",
+      "SummaryLineSources",
       "SummaryMutationResult",
       "SummaryPatchRequest",
       "SummaryPath",
@@ -99431,7 +99591,7 @@
      "purpose": "—",
      "surface": {
       "enum": 928,
-      "struct": 2930
+      "struct": 2931
      }
     },
     {

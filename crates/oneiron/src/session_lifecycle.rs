@@ -161,6 +161,11 @@ pub struct SessionLifecycleRecord {
     /// before them.
     #[serde(default)]
     pub speakers: SessionSpeakers,
+    /// The summary attempt this sitting's close queued (FIX 7509), which
+    /// writes its summary from the turns it retained. `None` while it is
+    /// open, and on a sitting that closed with none queued.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_attempt: Option<[u8; 16]>,
 }
 
 /// The currently open session, if any.
@@ -374,8 +379,17 @@ impl Vault {
         id: &EntityId,
     ) -> Result<Option<SessionLifecycleRecord>> {
         let rtxn = self.store.env.read_txn()?;
+        self.session_lifecycle_record_in_txn(&rtxn, id)
+    }
+
+    /// [`Self::session_lifecycle_record`] in the caller's transaction.
+    pub(crate) fn session_lifecycle_record_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<SessionLifecycleRecord>> {
         RECORDS
-            .get(&self.store, &rtxn, id)?
+            .get(&self.store, txn, id)?
             .map(validated_record)
             .transpose()
     }
@@ -439,6 +453,7 @@ impl Vault {
             explicit_end_hint: None,
             close_hook_stop: None,
             speakers: SessionSpeakers::default(),
+            summary_attempt: None,
         };
         let mut body = Vec::new();
         rmpv::encode::write_value(
@@ -689,7 +704,9 @@ impl Vault {
     /// * **(e) distill job**: the CHAT-lane `actor.*` distill job is registered
     ///   for this sitting (ONE-1739), also in the SAME transaction;
     /// * **(f) substitution mine**: ED-04's recurring-substitution miner pass
-    ///   (ONE-1760) is registered on the same Meso queue, same transaction.
+    ///   (ONE-1760) is registered on the same Meso queue, same transaction;
+    /// * **(g) summary**: the sitting's summary attempt (FIX 7509) is queued,
+    ///   unchecked, in the same transaction, and its id kept on the record.
     ///
     /// "Exactly-once wake" is therefore structural: a attempt row exists ⟺ this
     /// end committed, and re-ending an already-ended session is a no-op that
@@ -762,7 +779,6 @@ impl Vault {
             record.last_effective_ms = record.last_effective_ms.max(timestamp.effective_ms);
             record.explicit_end_hint = Some(timestamp);
         }
-        RECORDS.put(&self.store, wtxn, &id, &record)?;
         OPEN_POINTER.delete(&self.store, wtxn, &key.pointer())?;
 
         // (e) The CHAT-lane actor-distill job (ARCH-0053 §3, ONE-1739),
@@ -796,6 +812,15 @@ impl Vault {
             None,
             now,
         )?;
+
+        // (g) The sitting's summary (FIX 7509, ARCH-0026: the completion
+        // event fires right then), same commit. Nothing is checked or read
+        // for it here: its actor, sources and readability are judged when it
+        // runs, and their failure is the attempt's, never the close's. The
+        // record keeps its id, so its status is found from the sitting.
+        let summary = crate::scope_summary::enqueue_session_summary_in_txn(self, wtxn, &id, now)?;
+        record.summary_attempt = Some(*summary.as_bytes());
+        RECORDS.put(&self.store, wtxn, &id, &record)?;
 
         Ok(Some(EndedSession {
             session: id,
