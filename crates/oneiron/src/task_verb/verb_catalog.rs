@@ -442,6 +442,8 @@ pub enum AgentVerb {
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultRootsRequestsCancel,
     VaultCleanupRun,
+    VaultArchiveDeletePreview,
+    VaultArchiveDeleteConfirm,
     VaultUsageEventsUndecodable,
     VaultUsageEventsRemoveUndecodable,
     VaultEntitiesMention,
@@ -905,6 +907,8 @@ pub enum AgentVerb {
     SelfDesktopWindows,
     SelfDesktopWindow,
     SelfDesktopHandover,
+    SelfDreamerThingExtract,
+    SelfDreamerThingDecide,
     VaultCommit,
     VaultRemember,
     VaultClaimsRetract,
@@ -1123,6 +1127,7 @@ pub enum AgentVerb {
     VaultIdentityEventsGet,
     VaultIdentityProposalsResolve,
     VaultIdentityProposalsForPair,
+    ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -1598,6 +1603,8 @@ impl AgentVerb {
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultRootsRequestsCancel,
         Self::VaultCleanupRun,
+        Self::VaultArchiveDeletePreview,
+        Self::VaultArchiveDeleteConfirm,
         Self::VaultUsageEventsUndecodable,
         Self::VaultUsageEventsRemoveUndecodable,
         Self::VaultEntitiesMention,
@@ -2061,6 +2068,8 @@ impl AgentVerb {
         Self::SelfDesktopWindows,
         Self::SelfDesktopWindow,
         Self::SelfDesktopHandover,
+        Self::SelfDreamerThingExtract,
+        Self::SelfDreamerThingDecide,
         Self::VaultCommit,
         Self::VaultRemember,
         Self::VaultClaimsRetract,
@@ -2279,6 +2288,7 @@ impl AgentVerb {
         Self::VaultIdentityEventsGet,
         Self::VaultIdentityProposalsResolve,
         Self::VaultIdentityProposalsForPair,
+        Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -2769,6 +2779,8 @@ impl AgentVerb {
             }
             Self::VaultRootsRequestsCancel => "vault.roots.requests.cancel",
             Self::VaultCleanupRun => "vault.cleanup.run",
+            Self::VaultArchiveDeletePreview => "vault.archive.delete.preview",
+            Self::VaultArchiveDeleteConfirm => "vault.archive.delete.confirm",
             Self::VaultUsageEventsUndecodable => "vault.usage.events.undecodable",
             Self::VaultUsageEventsRemoveUndecodable => "vault.usage.events.remove_undecodable",
             Self::VaultEntitiesMention => "vault.entities.mention",
@@ -3244,6 +3256,8 @@ impl AgentVerb {
             Self::SelfDesktopWindows => "self.desktop.windows",
             Self::SelfDesktopWindow => "self.desktop.window",
             Self::SelfDesktopHandover => "self.desktop.handover",
+            Self::SelfDreamerThingExtract => "self.dreamer.thing.extract",
+            Self::SelfDreamerThingDecide => "self.dreamer.thing.decide",
             Self::VaultCommit => "vault.commit",
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
@@ -3466,6 +3480,7 @@ impl AgentVerb {
             Self::VaultIdentityEventsGet => "vault.identity.events.get",
             Self::VaultIdentityProposalsResolve => "vault.identity.proposals.resolve",
             Self::VaultIdentityProposalsForPair => "vault.identity.proposals.for_pair",
+            Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -3943,6 +3958,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultArchiveDeletePreview
+                | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
@@ -4604,6 +4621,7 @@ impl AgentVerb {
                 | Self::VaultIdentityEventsGet
                 | Self::VaultIdentityProposalsResolve
                 | Self::VaultIdentityProposalsForPair
+                | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -5127,6 +5145,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultArchiveDeletePreview
+                | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
@@ -5788,6 +5808,7 @@ impl AgentVerb {
                 | Self::VaultIdentityEventsGet
                 | Self::VaultIdentityProposalsResolve
                 | Self::VaultIdentityProposalsForPair
+                | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -6439,6 +6460,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultArchiveDeletePreview
+                | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
@@ -6871,6 +6894,8 @@ impl AgentVerb {
                 | Self::SelfDesktopWindows
                 | Self::SelfDesktopWindow
                 | Self::SelfDesktopHandover
+                | Self::SelfDreamerThingExtract
+                | Self::SelfDreamerThingDecide
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
@@ -7055,6 +7080,7 @@ impl AgentVerb {
                 | Self::VaultIdentityEventsGet
                 | Self::VaultIdentityProposalsResolve
                 | Self::VaultIdentityProposalsForPair
+                | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -7361,6 +7387,7 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
@@ -7628,6 +7655,8 @@ impl AgentVerb {
                 | Self::SelfDesktopHotkey
                 | Self::SelfDesktopBatch
                 | Self::SelfDesktopHandover
+                | Self::SelfDreamerThingExtract
+                | Self::SelfDreamerThingDecide
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -7743,6 +7772,7 @@ impl AgentVerb {
                 | Self::VaultIdentityPropose
                 | Self::VaultIdentityUndo
                 | Self::VaultIdentityProposalsResolve
+                | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserClickAt
@@ -8258,6 +8288,8 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultRootsRequestsCancel => &["spec"],
             Self::VaultCleanupRun => &["spec"],
+            Self::VaultArchiveDeletePreview => &["spec"],
+            Self::VaultArchiveDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
             Self::VaultUsageEventsRemoveUndecodable => &["spec"],
             Self::VaultEntitiesMention => &["spec"],
@@ -8721,6 +8753,8 @@ impl AgentVerb {
             Self::SelfDesktopWindows => &["spec"],
             Self::SelfDesktopWindow => &["spec"],
             Self::SelfDesktopHandover => &["spec"],
+            Self::SelfDreamerThingExtract => &["spec"],
+            Self::SelfDreamerThingDecide => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -8939,6 +8973,7 @@ impl AgentVerb {
             Self::VaultIdentityEventsGet => &["spec"],
             Self::VaultIdentityProposalsResolve => &["spec"],
             Self::VaultIdentityProposalsForPair => &["spec"],
+            Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -9415,6 +9450,8 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultRootsRequestsCancel => &["spec"],
             Self::VaultCleanupRun => &["spec"],
+            Self::VaultArchiveDeletePreview => &["spec"],
+            Self::VaultArchiveDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
             Self::VaultUsageEventsRemoveUndecodable => &["spec"],
             Self::VaultEntitiesMention => &["spec"],
@@ -9878,6 +9915,8 @@ impl AgentVerb {
             Self::SelfDesktopWindows => &["spec"],
             Self::SelfDesktopWindow => &["spec"],
             Self::SelfDesktopHandover => &["spec"],
+            Self::SelfDreamerThingExtract => &["spec"],
+            Self::SelfDreamerThingDecide => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -10096,6 +10135,7 @@ impl AgentVerb {
             Self::VaultIdentityEventsGet => &["spec"],
             Self::VaultIdentityProposalsResolve => &["spec"],
             Self::VaultIdentityProposalsForPair => &["spec"],
+            Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -11427,6 +11467,12 @@ impl AgentVerb {
             Self::VaultCleanupRun => {
                 "The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."
             }
+            Self::VaultArchiveDeletePreview => {
+                "Previews explicit archived records under the caller's delete authority."
+            }
+            Self::VaultArchiveDeleteConfirm => {
+                "Deletes explicit archived records under the caller's current delete authority and returns each receipt."
+            }
             Self::VaultUsageEventsUndecodable => {
                 "Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb."
             }
@@ -12750,6 +12796,12 @@ impl AgentVerb {
             Self::SelfDesktopHandover => {
                 "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record."
             }
+            Self::SelfDreamerThingExtract => {
+                "Runs one lent slice's extraction on the parent's own wake and stages its draft, answering one engine-issued proposal ref per drafted candidate."
+            }
+            Self::SelfDreamerThingDecide => {
+                "Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt."
+            }
             Self::VaultCommit => {
                 "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."
             }
@@ -13397,6 +13449,9 @@ impl AgentVerb {
             }
             Self::VaultIdentityProposalsForPair => {
                 "The owner reads open merge proposals and effective distinctness claims for an unordered identity pair."
+            }
+            Self::ConnectorAnswer => {
+                "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."
             }
             Self::SelfBrowserOpen => {
                 "Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor."

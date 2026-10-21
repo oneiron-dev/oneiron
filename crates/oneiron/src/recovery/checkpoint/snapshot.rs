@@ -251,6 +251,15 @@ impl Vault {
             inline_bodies,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
+        // Every body instance the image carries is held for it, synced,
+        // before it is written (FIX 6022): no retention retires one while a
+        // copy of it is kept. A write that fails keeps the holder.
+        let holder = self.store.hold_image_bodies(
+            image
+                .databases
+                .get("vault_meta")
+                .map_or(&[][..], Vec::as_slice),
+        )?;
         let (id, head, evidence) = artifact::write_artifact(
             path,
             &key,
@@ -274,6 +283,16 @@ impl Vault {
                 return Err(error);
             }
         };
+        // Its holder is named by its checkpoint id, which its custodian
+        // knows it by; one that is not named stays kept.
+        if let Some(holder) = holder
+            && let Err(error) = holder.name(&id)
+        {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a checkpoint's body holder was not named; its bodies stay kept"
+            );
+        }
         // A backup's identity is complete and the chain took it: its
         // checkpoint fact is signed with the keys that signed it (FIX 7326).
         // A checkpoint publishes none.

@@ -37,6 +37,7 @@ mod plan;
 mod reader;
 mod response;
 mod retention;
+mod retention_policy;
 mod rows;
 mod spill;
 
@@ -59,11 +60,12 @@ pub(crate) use self::response::{
     response_binding_in_txn, response_carrier,
 };
 pub(crate) use self::retention::{
-    INLINE_ASSETS, erase_bodies_for_owner_in_txn, erase_bodies_in_txn, release_body_in_txn,
-    settle_inline_asset_in_txn,
+    INLINE_ASSETS, erase_bodies_for_owner_in_txn, erase_bodies_in_txn, note_settled_inline_in_txn,
+    release_body_in_txn, settle_inline_asset_in_txn,
 };
 pub(crate) use self::rows::{
-    BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn, retire_body_key_in_txn,
+    BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn,
+    remember_body_instances_in_txn, retire_body_key_in_txn,
 };
 pub(crate) use self::spill::{
     BodySpill, SpilledBody, StagedBodyKey, keep_promoted_body_key_in_txn,
@@ -213,6 +215,8 @@ impl Store {
     ///
     /// Storage and filesystem errors, and a key that does not open.
     pub(crate) fn body_file_present(&self, digest: &[u8; 32], len: u64) -> Result<bool> {
+        // Before the snapshot, through the key's use (FIX 6019).
+        let _custody = self.core.key_custody.read_guard()?;
         let row = {
             let rtxn = self.env.read_txn()?;
             body_key_row_in_txn(self, &rtxn, digest)?
