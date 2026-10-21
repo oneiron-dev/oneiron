@@ -15,11 +15,18 @@
 //! and on its receipt; the budget stays the target, and drains before any
 //! new call starts. Time spent waiting for room is the call's own, never
 //! counted against its deadline, and only a cancel or a revocation ends it.
+//!
+//! An organ's own buffers take room too (`memory.grow`, FIX 7654): leased
+//! from the machine's memory floor first, then held in the call's room as a
+//! class apart from what its answers and outputs hold, until the call ends.
+//! That growth waits within the call's deadline, and a revocation ends it.
 
+use std::fmt;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::error::HostError;
+use crate::resource_memory::{FloorRefusal, SharedFloor};
 use crate::spec::CallClass;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,11 +224,14 @@ pub(crate) struct Kept {
     memory: u64,
 }
 
-/// One live call's room: what its permit booked, grown as its answers and
-/// outputs need, and how much of it they hold.
+/// One live call's room: what its permit booked, grown as its answers,
+/// outputs and the organ's own buffers need, and how much of it they hold.
 #[derive(Debug)]
 pub(crate) struct CallRoom {
     state: Mutex<RoomState>,
+    /// The machine floor the organ's own buffers lease from; none on a host
+    /// built without one, which reserves them nothing.
+    floor: Option<SharedFloor>,
 }
 
 #[derive(Debug)]
@@ -229,21 +239,53 @@ struct RoomState {
     permit: Permit,
     /// Of the permit's memory, what answers lent and outputs kept hold.
     held: u64,
+    /// Of the permit's memory, what the organ's own buffers hold
+    /// (`memory.grow`). No answer's arithmetic reads it or gives it back: it
+    /// stays until the room drops with the call.
+    native: u64,
+    /// The machine's leases behind `native`, given back as the room drops.
+    leases: Leases,
     overcommit: u64,
     peak: u64,
     waited: Duration,
 }
 
+/// The machine's leases one room holds for the organ's own buffers.
+#[derive(Default)]
+struct Leases(Vec<Box<dyn Send>>);
+
+impl fmt::Debug for Leases {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Leases({})", self.0.len())
+    }
+}
+
+/// Why [`CallRoom::grow_native`] held nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NativeRefusal {
+    /// The host has no machine floor to lease from.
+    NoFloor,
+    /// The machine's floor: `needed` bytes cannot fit even with nothing
+    /// else leased; it has `available` at most.
+    Floor { needed: u64, available: u64 },
+    /// The deadline passed, or the wait was stopped, before both the
+    /// machine's lease and the room were held.
+    Deadline,
+}
+
 impl CallRoom {
-    pub(crate) fn new(permit: Permit) -> Self {
+    pub(crate) fn new(permit: Permit, floor: Option<SharedFloor>) -> Self {
         Self {
             state: Mutex::new(RoomState {
                 permit,
                 held: 0,
+                native: 0,
+                leases: Leases::default(),
                 overcommit: 0,
                 peak: 0,
                 waited: Duration::ZERO,
             }),
+            floor,
         }
     }
 
@@ -256,7 +298,11 @@ impl CallRoom {
     /// more is held.
     pub(crate) fn hold(&self, bytes: u64, stopped: &dyn Fn() -> bool) -> bool {
         let mut state = self.lock();
-        let need = state.held.saturating_add(bytes);
+        // The organ's own buffers fill the room beside answers and outputs.
+        let need = state
+            .held
+            .saturating_add(state.native)
+            .saturating_add(bytes);
         if need > state.permit.memory {
             let delta = need - state.permit.memory;
             let shared = Arc::clone(&state.permit.shared);
@@ -268,8 +314,58 @@ impl CallRoom {
             state.peak = state.peak.max(grown.peak);
             state.waited += grown.waited;
         }
-        state.held = need;
+        state.held = state.held.saturating_add(bytes);
         true
+    }
+
+    /// Holds `bytes` more for the organ's own buffers (`memory.grow`): leased
+    /// from the machine's floor first, with no lock of the room held while
+    /// that waits, then held in the room, its booking grown when they pass
+    /// it. The machine is asked even when the booking already covers them.
+    /// Both stay until the room drops. Waits no later than `deadline`, and
+    /// no longer than `stopped` allows; refused, nothing is held.
+    pub(crate) fn grow_native(
+        &self,
+        bytes: u64,
+        deadline: Instant,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), NativeRefusal> {
+        let Some(floor) = &self.floor else {
+            return Err(NativeRefusal::NoFloor);
+        };
+        let ended = || stopped() || Instant::now() >= deadline;
+        if ended() {
+            return Err(NativeRefusal::Deadline);
+        }
+        let lease = floor
+            .0
+            .lease(bytes, deadline, stopped)
+            .map_err(|refused| match refused {
+                FloorRefusal::Floor { needed, available } => {
+                    NativeRefusal::Floor { needed, available }
+                }
+                FloorRefusal::Deadline => NativeRefusal::Deadline,
+            })?;
+        let mut state = self.lock();
+        let need = state
+            .held
+            .saturating_add(state.native)
+            .saturating_add(bytes);
+        if need > state.permit.memory {
+            let delta = need - state.permit.memory;
+            let shared = Arc::clone(&state.permit.shared);
+            // Refused here, the machine's lease drops with it: nothing held.
+            let Some(grown) = shared.grow(delta, &ended) else {
+                return Err(NativeRefusal::Deadline);
+            };
+            state.permit.memory += delta;
+            state.overcommit = state.overcommit.saturating_add(grown.overcommit);
+            state.peak = state.peak.max(grown.peak);
+            state.waited += grown.waited;
+        }
+        state.native = state.native.saturating_add(bytes);
+        state.leases.0.push(lease);
+        Ok(())
     }
 
     /// Gives back `bytes` held for an answer the organ was never sent. The
@@ -290,7 +386,9 @@ impl CallRoom {
         }
     }
 
-    /// What answers lent and outputs kept hold of the call's room.
+    /// What answers lent and outputs kept hold of the call's room: never
+    /// what the organ's own buffers hold, which answers' arithmetic must not
+    /// give back.
     pub(crate) fn held(&self) -> u64 {
         self.lock().held
     }

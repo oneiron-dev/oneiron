@@ -3,8 +3,11 @@
 use const_oid::AssociatedOid;
 use der::{Decode, Encode};
 
-use crate::api::{FetchMethod, FetchPurpose, FetchRequest, SealConfig, SigningIdentity};
+use crate::api::{
+    FetchError, FetchMethod, FetchPurpose, FetchRequest, SealConfig, SigningIdentity,
+};
 use crate::error::{FatalCode, SealError, SealStage};
+use crate::memory::SharedBytes;
 
 use super::super::{cms, tsp, verify};
 use super::DssMaterial;
@@ -64,19 +67,15 @@ fn crl_urls_for(cert_der: &[u8]) -> Vec<url::Url> {
     urls
 }
 
-/// Fetch + minimally validate one CRL: parses, signature verifies against
-/// the issuing certificate, and is fresh at the applicable time
-/// (thisUpdate not in the future; a present nextUpdate not in the past).
-/// The issuer certificate must also AUTHORIZE CRL signing (the shared
-/// verify-side cRLSign KeyUsage gate): an unauthorized-issuer CRL embedded
-/// here would fail the mandatory self-verify, turning an expected B-LT
-/// degradation into a VerifyFailed for the whole seal.
+/// Fetch + minimally validate one CRL (see [`crl_valid`]). The CRL keeps
+/// the fetch's own admitted bytes. A fetch memory refused is the seal's own
+/// resource error; any other failed fetch is no CRL from this URL.
 pub(super) async fn fetch_valid_crl(
     ctx: &SealContext<'_>,
     issuer_cert_der: &[u8],
     url: url::Url,
-) -> Option<Vec<u8>> {
-    let resp = ctx
+) -> Result<Option<SharedBytes>, SealError> {
+    let response = ctx
         .fetcher
         .fetch(FetchRequest {
             purpose: FetchPurpose::Crl,
@@ -85,9 +84,27 @@ pub(super) async fn fetch_valid_crl(
             request_body: Vec::new(),
             content_type: None,
         })
-        .await
-        .ok()?;
-    let crl = x509_cert::crl::CertificateList::from_der(&resp.body).ok()?;
+        .await;
+    let resp = match response {
+        Ok(resp) => resp,
+        Err(FetchError::Memory(refusal)) => {
+            return Err(refusal.seal_error(SealStage::Revocation));
+        }
+        // Denied, unreachable, timed out or invalid: no CRL from here.
+        Err(_) => return Ok(None),
+    };
+    Ok(crl_valid(ctx, issuer_cert_der, &resp.body).map(|()| resp.body))
+}
+
+/// `Some` when `crl_der` is a valid CRL: it parses, its signature verifies
+/// against the issuing certificate, and it is fresh at the applicable time
+/// (thisUpdate not in the future; a present nextUpdate not in the past).
+/// The issuer certificate must also AUTHORIZE CRL signing (the shared
+/// verify-side cRLSign KeyUsage gate): an unauthorized-issuer CRL embedded
+/// here would fail the mandatory self-verify, turning an expected B-LT
+/// degradation into a VerifyFailed for the whole seal.
+fn crl_valid(ctx: &SealContext<'_>, issuer_cert_der: &[u8], crl_der: &[u8]) -> Option<()> {
+    let crl = x509_cert::crl::CertificateList::from_der(crl_der).ok()?;
     if !verify::crl_complete_scope(&crl) {
         return None; // delta / IDP-scoped CRL: not complete evidence
     }
@@ -109,7 +126,7 @@ pub(super) async fn fetch_valid_crl(
     ) {
         return None; // not yet valid, or stale
     }
-    Some(resp.body)
+    Some(())
 }
 
 /// Issuer of `cert_der` bound by key (the r4 lesson, seal side): the chain
@@ -144,24 +161,29 @@ pub(super) fn key_bound_issuer<'a>(
 /// so the gather fails closed (degrade to B-T) instead of self-reporting
 /// B-LT on zero-evidence material. OCSP is preferred when reachable; v1
 /// gathers CRLs through the guarded fetcher and treats unreachable/missing
-/// material as degradation, never as a seal failure.
+/// material as degradation (`Ok(None)`), never as a seal failure. A fetch
+/// memory refused is the seal's own resource error, never degradation.
 pub(super) async fn gather_validation_material(
     ctx: &SealContext<'_>,
     identity: &SigningIdentity,
     token: Option<&tsp::ValidatedToken>,
-) -> Option<DssMaterial> {
+) -> Result<Option<DssMaterial>, SealError> {
     let mut certs_der = vec![identity.signer_certificate_der.clone()];
     certs_der.extend(identity.certificate_chain_der.iter().cloned());
     if let Some(t) = token {
         certs_der.extend(t.tsa_chain_ders.iter().cloned());
     }
-    let anchors = trust_anchors(ctx.config).ok()?;
+    let Ok(anchors) = trust_anchors(ctx.config) else {
+        return Ok(None);
+    };
     // Chains must validate at the signing time before their material is
     // worth embedding.
     let signer_chain_ders: Vec<Vec<u8>> = std::iter::once(identity.signer_certificate_der.clone())
         .chain(identity.certificate_chain_der.iter().cloned())
         .collect();
-    verify::validate_chain(&signer_chain_ders, &anchors, ctx.clock_ms / 1000).ok()?;
+    if verify::validate_chain(&signer_chain_ders, &anchors, ctx.clock_ms / 1000).is_err() {
+        return Ok(None);
+    }
     let empty_chain: &[Vec<u8>] = &[];
     let tsa_chain = token.map_or(empty_chain, |t| t.tsa_chain_ders.as_slice());
     let mut crls_der = Vec::new();
@@ -182,7 +204,7 @@ pub(super) async fn gather_validation_material(
             // CRL against the wrong cert and falsely degrade.
             if let Some(issuer) = key_bound_issuer(cert, chain, &ctx.config.trust_anchors_der) {
                 for u in urls {
-                    if let Some(crl) = fetch_valid_crl(ctx, issuer, u).await {
+                    if let Some(crl) = fetch_valid_crl(ctx, issuer, u).await? {
                         crls_der.push(crl);
                         covered += 1;
                         break;
@@ -192,11 +214,11 @@ pub(super) async fn gather_validation_material(
         }
     }
     if covered < need {
-        return None;
+        return Ok(None);
     }
-    Some(DssMaterial {
+    Ok(Some(DssMaterial {
         certs_der,
         ocsps_der: Vec::new(),
         crls_der,
-    })
+    }))
 }

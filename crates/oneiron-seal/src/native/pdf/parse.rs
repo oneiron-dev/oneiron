@@ -2,6 +2,8 @@
 
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
+use super::decode::LoadError;
+use super::revision_facts::RevisionAnalysisError;
 use super::{decode, walk};
 use crate::api::{Counter, SealResourceLimits};
 use crate::error::{FatalCode, InputInvalidCode, SealError, SealStage};
@@ -346,11 +348,10 @@ pub(super) fn xref_offsets_consistent(doc: &Document, bytes: &[u8]) -> bool {
         })
 }
 
-/// A strict parse, each stream decoded whole; its object count and its
-/// largest stream go to the invocation's counts.
-fn load_strict(bytes: &[u8], limits: &SealResourceLimits) -> Result<Document, SealError> {
-    let doc = decode::load_strict(bytes, &limits.observed)
-        .map_err(|_| input_invalid(InputInvalidCode::MalformedXref))?;
+/// A strict parse, each stream decoded whole and its memory reserved first;
+/// its object count and its largest stream go to the invocation's counts.
+fn load_strict(bytes: &[u8], limits: &SealResourceLimits) -> Result<Document, LoadError> {
+    let doc = decode::load_strict(bytes, limits)?;
     limits.observed.note(Counter::PdfObjects, doc.objects.len());
     Ok(doc)
 }
@@ -374,7 +375,11 @@ pub(crate) fn validate_prepared(
     if !bytes.starts_with(b"%PDF-") {
         return Err(input_invalid(InputInvalidCode::NotPdf));
     }
-    let doc = load_strict(bytes, limits)?;
+    let doc = load_strict(bytes, limits).map_err(|err| {
+        err.seal_error(SealStage::InputValidation, || {
+            input_invalid(InputInvalidCode::MalformedXref)
+        })
+    })?;
     if doc.is_encrypted() || doc.was_encrypted() {
         return Err(input_invalid(InputInvalidCode::EncryptedPdf));
     }
@@ -391,10 +396,20 @@ pub(crate) fn validate_prepared(
         return Err(input_invalid(InputInvalidCode::MissingPage));
     }
     analyze_security(&doc, true)?;
-    if super::revision_facts::analyze(bytes, limits).is_err() {
-        return Err(input_invalid(InputInvalidCode::MalformedXref));
+    match super::revision_facts::analyze(bytes, limits) {
+        Ok(_) => {}
+        // Memory the analysis needed is not a malformed xref.
+        Err(RevisionAnalysisError::Memory(refusal)) => {
+            return Err(refusal.seal_error(SealStage::InputValidation));
+        }
+        Err(_) => return Err(input_invalid(InputInvalidCode::MalformedXref)),
     }
     let state = revision_state(&doc, bytes)?;
+    // The prepared copy is the seal's own buffer: reserved before it is made.
+    limits
+        .memory
+        .admit::<u8>(bytes.len())
+        .map_err(|refusal| refusal.seal_error(SealStage::InputValidation))?;
     Ok(PreparedInput {
         bytes: bytes.to_vec(),
         state,
@@ -409,6 +424,10 @@ pub(crate) fn reparse_revision(
     limits: &SealResourceLimits,
 ) -> Result<RevisionState, SealError> {
     let _analysis = limits.observed.enter();
-    let doc = load_strict(bytes, limits).map_err(|_| fatal_pdf(FatalCode::PdfInvariantFailed))?;
+    let doc = load_strict(bytes, limits).map_err(|err| {
+        err.seal_error(SealStage::PdfIncrementalUpdate, || {
+            fatal_pdf(FatalCode::PdfInvariantFailed)
+        })
+    })?;
     revision_state(&doc, bytes)
 }

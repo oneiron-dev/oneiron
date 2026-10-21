@@ -3,10 +3,11 @@
 use lopdf::Document;
 
 use crate::api::{
-    Counter, Modifications, SealConfig, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
-    VerifyReport,
+    Counter, Modifications, SealConfig, SealResourceLimits, VerifyCheckKind, VerifyCheckStatus,
+    VerifyFindingCode, VerifyReport,
 };
-use crate::error::{InputInvalidCode, SealError};
+use crate::error::{InputInvalidCode, SealError, SealStage};
+use crate::memory::{MemoryLedger, SealMemoryRefusal};
 
 use super::super::{cms, pdf};
 use super::evidence_time::{
@@ -19,17 +20,22 @@ use super::verify_sig_pipeline::{Checks, collect_signatures, evaluate_envelope};
 
 pub(crate) struct VerifyCtx<'a> {
     pub config: &'a SealConfig,
+    /// The config's limits, scoped to this verification's memory ledger
+    /// (FIX 7654): a seal's self-verification runs under its seal's.
+    pub limits: &'a SealResourceLimits,
     pub clock_ms: u64,
 }
-
-/// What one DSS stream may decode to: no bound (Rule 5). Each is decoded
-/// whole, and the largest goes to the `seal_stream_decode_bytes` row.
-const DSS_STREAM_WHOLE: usize = usize::MAX;
 
 pub(super) fn malformed_input() -> SealError {
     SealError::InputInvalid {
         code: InputInvalidCode::MalformedXref,
     }
+}
+
+/// Memory a verification's decode was refused: the verification's error,
+/// never a verdict on the PDF.
+fn memory_refused(refusal: SealMemoryRefusal) -> SealError {
+    refusal.seal_error(SealStage::Verification)
 }
 
 fn cert_path_err() -> SealError {
@@ -178,13 +184,15 @@ pub(super) fn anchors(config: &SealConfig) -> Vec<pkix_chain::TrustAnchor> {
 /// Retry only the reason for a failed DSS check: if fully parsed material
 /// validates with crypto-valid embedded chains treated as PROVISIONAL roots,
 /// root availability is NotRun. No provisional result grants trust or profile.
+/// Memory its decodes were refused ends it as itself, never as a failed or
+/// malformed DSS.
 fn classify_missing_material_root(
     doc: &Document,
     covered: &[EmbeddedCert],
     at: u64,
-    max_stream_bytes: usize,
+    memory: &MemoryLedger,
     checks: &mut Checks,
-) {
+) -> Result<(), SealMemoryRefusal> {
     let unresolved = checks.list.iter().any(|c| {
         c.status == VerifyCheckStatus::NotRun
             && matches!(
@@ -197,14 +205,14 @@ fn classify_missing_material_root(
             c.kind == VerifyCheckKind::ValidationMaterial && c.status == VerifyCheckStatus::Fail
         })
     {
-        return;
+        return Ok(());
     }
     let provisional: Vec<_> = covered
         .iter()
         .filter_map(|c| EmbeddedCert::from_der(&c.der))
         .collect();
     let mut probe = Checks::new();
-    verify_dss(doc, &provisional, covered, at, max_stream_bytes, &mut probe);
+    verify_dss(doc, &provisional, covered, at, memory, &mut probe)?;
     if probe.passed(VerifyCheckKind::ValidationMaterial)
         && let Some(check) = checks
             .list
@@ -214,17 +222,21 @@ fn classify_missing_material_root(
         check.status = VerifyCheckStatus::NotRun;
         check.finding = Some(VerifyFindingCode::TrustRootUnavailable);
     }
+    Ok(())
 }
 
 /// Full document verification and profile classification (§7.7). On size
 /// it refuses only past the format bounds (lopdf's u32 offsets, the ISO
 /// object count); every stream decodes whole, and what it counts goes to
-/// the invocation's observations (Rule 5).
+/// the invocation's observations (Rule 5). Every decode reserves its memory
+/// under `ctx.limits` first (FIX 7654); a refusal is the verification's
+/// typed error, never a verdict.
 pub(crate) fn verify_document(
     bytes: &[u8],
     ctx: &VerifyCtx<'_>,
 ) -> Result<VerifyReport, SealError> {
-    let limits = &ctx.config.resource_limits;
+    let limits = ctx.limits;
+    let memory = limits.memory.ledger().map_err(memory_refused)?;
     let _analysis = limits.observed.enter();
     let artifact_sha256 = cms::sha256(bytes);
     if bytes.is_empty() {
@@ -242,7 +254,8 @@ pub(crate) fn verify_document(
             code: InputInvalidCode::NotPdf,
         });
     }
-    let doc = pdf::load_strict(bytes, &limits.observed).map_err(|_| malformed_input())?;
+    let doc = pdf::load_strict(bytes, limits)
+        .map_err(|err| err.seal_error(SealStage::Verification, malformed_input))?;
     limits.observed.note(Counter::PdfObjects, doc.objects.len());
     // The loader decodes every stream whole; the ISO object bound, which it
     // does not hold, is enforced here exactly as the seal side does.
@@ -262,7 +275,7 @@ pub(crate) fn verify_document(
     // The same structural xref/EOF analysis used by prepared admission
     // accepts any final run of CR/LF bytes. Do not keep a competing
     // single-newline predicate on the verify side.
-    let revision_ends = pdf::revision_ends(bytes, &doc, limits);
+    let revision_ends = pdf::revision_ends(bytes, &doc, limits).map_err(memory_refused)?;
     checks.record(
         VerifyCheckKind::PdfRevision,
         revision_ends.is_some(),
@@ -309,9 +322,10 @@ pub(crate) fn verify_document(
         &anchor_certs,
         &covered,
         material_validation_time(&envelopes, dss_end, ctx.clock_ms / 1000),
-        DSS_STREAM_WHOLE,
+        &memory,
         &mut checks,
-    );
+    )
+    .map_err(memory_refused)?;
     limits.observed.note(Counter::DssDecodeBytes, decoded);
     let trust_pending = envelopes.iter().flat_map(|e| e.checks.iter()).any(|c| {
         c.kind == VerifyCheckKind::TimestampCertificatePath && c.status == VerifyCheckStatus::NotRun
@@ -323,9 +337,10 @@ pub(crate) fn verify_document(
             &doc,
             &covered,
             provisional_material_time(&envelopes, dss_end, None, ctx.clock_ms / 1000),
-            DSS_STREAM_WHOLE,
+            &memory,
             &mut checks,
-        );
+        )
+        .map_err(memory_refused)?;
         checks
             .list
             .retain(|c| c.kind != VerifyCheckKind::TimestampCertificatePath);
@@ -378,9 +393,10 @@ pub(crate) fn verify_document(
             archival
                 .as_ref()
                 .map_or(ctx.clock_ms / 1000, |proof| proof.at),
-            DSS_STREAM_WHOLE,
+            &memory,
             &mut material_checks,
-        );
+        )
+        .map_err(memory_refused)?;
         limits.observed.note(Counter::DssDecodeBytes, decoded);
         if envelopes[index].checks.iter().any(|c| {
             c.kind == VerifyCheckKind::TimestampCertificatePath
@@ -396,9 +412,10 @@ pub(crate) fn verify_document(
                     Some(&envelopes[index]),
                     ctx.clock_ms / 1000,
                 ),
-                DSS_STREAM_WHOLE,
+                &memory,
                 &mut material_checks,
-            );
+            )
+            .map_err(memory_refused)?;
             material_checks
                 .list
                 .retain(|c| c.kind != VerifyCheckKind::TimestampCertificatePath);
@@ -416,14 +433,19 @@ pub(crate) fn verify_document(
 
     // Stage 3: classify raw revision changes against the private evidence,
     // then project each final envelope into the public report exactly once.
-    let facts = pdf::analyze_revision_facts(bytes, limits).ok();
+    let facts = match pdf::analyze_revision_facts(bytes, limits) {
+        Ok(facts) => Some(facts),
+        Err(pdf::RevisionAnalysisError::Memory(refusal)) => return Err(memory_refused(refusal)),
+        Err(_) => None,
+    };
     let (revisions, modifications, anomalies) = verify_revisions::classify(
         bytes,
         &envelopes,
         revision_ends.as_deref(),
         facts.as_ref(),
         limits,
-    );
+    )
+    .map_err(memory_refused)?;
     match modifications {
         Modifications::Suspicious => checks.record(
             VerifyCheckKind::Modification,

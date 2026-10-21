@@ -4,14 +4,18 @@
 //! strict semantic parse; a lexical ambiguity never becomes an empty set.
 //! Revisions, prefix bytes, raw definitions, structural tokens, each
 //! stream header's tokens and each decoded stream are counted, never capped
-//! (Rule 5): the host measures each against its `[limits]` row.
+//! (Rule 5): the host measures each against its `[limits]` row. Each decode
+//! reserves its memory first (FIX 7654); a refusal is its own error, never
+//! a framing failure.
 
 use super::{
-    decode, last_startxref,
+    decode::{self, LoadError},
+    last_startxref,
     lex::{Kind, LexError, PdfLexer, Token, stream_delimiter},
     revision_ends, walk,
 };
 use crate::api::{Counter, SealResourceLimits};
+use crate::memory::SealMemoryRefusal;
 use lopdf::{
     Document, ObjectId,
     xref::{XrefEntry, XrefType},
@@ -26,6 +30,8 @@ pub(crate) enum RevisionAnalysisError {
     Framing,
     Limit,
     UnresolvedStream,
+    /// The memory a decode needed was not reserved.
+    Memory(SealMemoryRefusal),
 }
 impl From<LexError> for RevisionAnalysisError {
     fn from(err: LexError) -> Self {
@@ -101,8 +107,10 @@ impl RevisionFacts {
 }
 
 fn strict(bytes: &[u8], limits: &SealResourceLimits) -> Result<Document, RevisionAnalysisError> {
-    let doc =
-        decode::load_strict(bytes, &limits.observed).map_err(|_| RevisionAnalysisError::Framing)?;
+    let doc = decode::load_strict(bytes, limits).map_err(|err| match err {
+        LoadError::Memory(refusal) => RevisionAnalysisError::Memory(refusal),
+        LoadError::Malformed => RevisionAnalysisError::Framing,
+    })?;
     limits.observed.note(Counter::PdfObjects, doc.objects.len());
     // The ISO object bound, the one count a PDF cannot pass.
     if doc.objects.len() > limits.max_pdf_objects {
@@ -321,7 +329,9 @@ pub(crate) fn analyze(
     }
     let _analysis = limits.observed.enter();
     let final_doc = strict(bytes, limits)?;
-    let ends = revision_ends(bytes, &final_doc, limits).ok_or(RevisionAnalysisError::Framing)?;
+    let ends = revision_ends(bytes, &final_doc, limits)
+        .map_err(RevisionAnalysisError::Memory)?
+        .ok_or(RevisionAnalysisError::Framing)?;
     limits.observed.note(Counter::Revisions, ends.len());
     let mut previous_end = 0;
     let mut prefix_work = 0usize;

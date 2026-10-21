@@ -211,7 +211,10 @@ impl<'a> CallAsks<'a> {
         let mut running = line.clone();
         running.unanswered = Some(Unanswered::NotSent);
         self.receipts.push(running);
-        // A handler that reads a body holds room for it as it reads.
+        // A handler that reads a body holds room for it as it reads. Only
+        // answer bytes count here: what a `memory.grow` handler holds for
+        // the organ's own buffers is a class apart, which this arithmetic
+        // never reads or gives back (FIX 7654).
         let before = self.context.room.held();
         let answered = {
             let _scope = HandlerScope::enter();

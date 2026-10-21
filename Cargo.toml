@@ -6,7 +6,7 @@ members = ["crates/*", "apps/macos/src-tauri"]
 # it must not be reformatted, relinted, or test-run as if it were our code.
 # See the `[patch.crates-io]` entry at the bottom of this file and
 # `crates/heed/PROVENANCE.md`.
-exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/heed/vendor/lmdb-master3-sys-0.2.6", "crates/paste", "crates/paste/vendor/paste-1.0.15", "crates/oneiron-docedit/vendor/stemma-engine", "crates/oneiron-docedit/vendor/stemma-diff", "crates/loro", "crates/loro/vendor/loro-1.16.2", "crates/loro/vendor/loro-internal-1.16.2"]
+exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/heed/vendor/lmdb-master3-sys-0.2.6", "crates/paste", "crates/paste/vendor/paste-1.0.15", "crates/oneiron-docedit/vendor/stemma-engine", "crates/oneiron-docedit/vendor/stemma-diff", "crates/loro", "crates/loro/vendor/loro-1.16.2", "crates/loro/vendor/loro-internal-1.16.2", "crates/oneiron-seal/vendor/lopdf-0.44.0"]
 
 # Limited debug information keeps file/line backtraces while reducing build CPU,
 # peak memory and target size. Tests inherit this profile. For debugger locals:
@@ -127,6 +127,9 @@ loro-internal = { path = "crates/loro/vendor/loro-internal-1.16.2" }
 # Match .cargo/config.toml: trybuild copies manifest patches into its external
 # offline workspace, but does not copy the checkout's Cargo configuration.
 pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }
+# lopdf 0.44.0 snapshot with the additive DecodeAdmission hook (FIX 7654); see
+# crates/oneiron-seal/vendor/README.md. Matches .cargo/config.toml.
+lopdf = { path = "crates/oneiron-seal/vendor/lopdf-0.44.0" }
 # formualizer 0.9.3 from the org fork by rev (0.9.3-oneiron.13): the owned error-concatenation
 # patch plus the Excel parity work on `oneiron/parity`. See docs/ops/forked-dependencies.md.
 formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5" }

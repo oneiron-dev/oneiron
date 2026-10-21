@@ -4,8 +4,11 @@
 //! each classic section's tokens go to the invocation's counts (Rule 5).
 //! The CR/LF run after a revision's `%%EOF` belongs to that revision however
 //! long it is: only CR and LF bytes, never the next revision's content.
-use super::decode;
+//! Every snapshot's decodes reserve their memory first (FIX 7654); a refusal
+//! ends the walk as itself (`Err`), never as a revision that did not parse.
+use super::decode::{self, LoadError};
 use crate::api::{Counter, SealResourceLimits};
+use crate::memory::SealMemoryRefusal;
 use lopdf::{Document, Object};
 
 fn eol(b: u8) -> bool {
@@ -61,11 +64,19 @@ pub(crate) fn file_tail_covered(bytes: &[u8], covers_to: u64) -> bool {
 }
 
 /// A strict snapshot, each stream decoded whole, refused only past the ISO
-/// object bound.
-pub(crate) fn load_snapshot(bytes: &[u8], limits: &SealResourceLimits) -> Option<Document> {
-    let doc = decode::load_strict(bytes, &limits.observed).ok()?;
+/// object bound: `None` when the bytes are no such snapshot, `Err` when the
+/// memory its decodes needed was not reserved.
+pub(crate) fn load_snapshot(
+    bytes: &[u8],
+    limits: &SealResourceLimits,
+) -> Result<Option<Document>, SealMemoryRefusal> {
+    let doc = match decode::load_strict(bytes, limits) {
+        Ok(doc) => doc,
+        Err(LoadError::Memory(refusal)) => return Err(refusal),
+        Err(LoadError::Malformed) => return Ok(None),
+    };
     limits.observed.note(Counter::PdfObjects, doc.objects.len());
-    (doc.objects.len() <= limits.max_pdf_objects).then_some(doc)
+    Ok((doc.objects.len() <= limits.max_pdf_objects).then_some(doc))
 }
 
 /// Parse only `startxref <decimal> %%EOF` at an actual xref section's end.
@@ -77,13 +88,16 @@ fn find_end(
     stop: usize,
     limits: &SealResourceLimits,
     final_section: bool,
-) -> Option<(usize, usize, Document)> {
+) -> Result<Option<(usize, usize, Document)>, SealMemoryRefusal> {
     if xref >= stop || stop > bytes.len() {
-        return None;
+        return Ok(None);
     }
     let mut at = xref;
     while at + 9 <= stop {
-        let found = bytes[at..stop].windows(9).position(|w| w == b"startxref")? + at;
+        let Some(found) = bytes[at..stop].windows(9).position(|w| w == b"startxref") else {
+            return Ok(None);
+        };
+        let found = found + at;
         at = found + 9;
         if found > 0 && !eol(bytes[found - 1]) {
             continue;
@@ -108,21 +122,24 @@ fn find_end(
         while pos < stop && ws(bytes[pos]) {
             pos += 1;
         }
-        if bytes.get(pos..pos.checked_add(5)?) != Some(b"%%EOF".as_slice()) {
+        let Some(eof) = pos.checked_add(5) else {
+            return Ok(None);
+        };
+        if bytes.get(pos..eof) != Some(b"%%EOF".as_slice()) {
             continue;
         }
         let end = pos + 5;
         if final_section && !bytes[end..stop].iter().all(|b| eol(*b)) {
             continue;
         }
-        let Some(doc) = load_snapshot(&bytes[..end], limits) else {
+        let Some(doc) = load_snapshot(&bytes[..end], limits)? else {
             continue;
         };
         if doc.xref_start == xref {
-            return Some((end, found, doc));
+            return Ok(Some((end, found, doc)));
         }
     }
-    None
+    Ok(None)
 }
 
 /// Bind a classic xref's decoded trailer name to the shared PDF lexer.
@@ -170,34 +187,41 @@ fn section_prev(
     }
 }
 
-/// Return exact EOF ends in revision order, or no proof. A malicious or
-/// unsupported xref chain never becomes an empty/clean change list.
+/// Return exact EOF ends in revision order, or no proof (`Ok(None)`). A
+/// malicious or unsupported xref chain never becomes an empty/clean change
+/// list, and memory a snapshot was refused never becomes no proof.
 pub(crate) fn revision_ends(
     bytes: &[u8],
     doc: &Document,
     limits: &SealResourceLimits,
-) -> Option<Vec<usize>> {
+) -> Result<Option<Vec<usize>>, SealMemoryRefusal> {
     let mut ends = Vec::new();
     let mut xref = doc.xref_start;
     let mut stop = bytes.len();
     let mut final_section = true;
     let mut work = 0usize;
     loop {
-        let (end, marker, parsed) = find_end(bytes, xref, stop, limits, final_section)?;
+        let Some((end, marker, parsed)) = find_end(bytes, xref, stop, limits, final_section)?
+        else {
+            return Ok(None);
+        };
         work = work.saturating_add(end);
         ends.push(end);
         limits.observed.note(Counter::Revisions, ends.len());
         limits.observed.note(Counter::PrefixBytes, work);
-        let Some(prev) = section_prev(&parsed, bytes, xref, marker, limits)? else {
+        let Some(prev) = section_prev(&parsed, bytes, xref, marker, limits) else {
+            return Ok(None);
+        };
+        let Some(prev) = prev else {
             break;
         };
         if prev >= xref || end <= prev {
-            return None;
+            return Ok(None);
         }
         stop = xref;
         xref = prev;
         final_section = false;
     }
     ends.reverse();
-    Some(ends)
+    Ok(Some(ends))
 }

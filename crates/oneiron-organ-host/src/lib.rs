@@ -13,7 +13,10 @@
 //! Protocol 1.1 lets an organ ask the engine inside a call. The install
 //! grant names the asks and their caps, the caller supplies the handlers,
 //! and the receipt records every ask. `net.fetch` is the host's own
-//! handler: a guarded fetch inside the grant's allowlist.
+//! handler: a guarded fetch inside the grant's allowlist. So is
+//! `memory.grow` ([`MemoryGrow`]): an organ's own buffers, leased from the
+//! machine's memory floor ([`MachineFloor`]) and held in the call's room
+//! until the call ends.
 //!
 //! [`seal`] is the engine's seal port over the seal organ.
 //!
@@ -44,6 +47,7 @@ mod process;
 mod receipt;
 #[cfg(unix)]
 mod regions;
+mod resource_memory;
 mod route;
 #[cfg(unix)]
 mod sandbox;
@@ -71,6 +75,7 @@ pub use pin::{install_pinned_binary, pack_spec};
 pub use receipt::{
     AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered,
 };
+pub use resource_memory::{FloorRefusal, MachineFloor, MemoryGrow};
 pub use route::{
     NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes, can_start_organs,
 };

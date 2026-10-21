@@ -3,6 +3,7 @@
 use lopdf::{Document, Object};
 
 use crate::api::{Counter, VerifyCheckKind, VerifyFindingCode, note_current};
+use crate::memory::{MemoryLedger, SealMemoryRefusal};
 
 use super::super::pdf;
 use super::verify_revocation::{crl_entry_valid, issued_by, ocsp_entry_valid};
@@ -23,30 +24,23 @@ use super::verify_sig_pipeline::Checks;
 /// Invalid so a `/DSS` hidden inside it cannot dodge the failed-evidence
 /// classification.
 ///
-/// Each DSS stream decodes under `max_stream_bytes`, the per-stream bound
-/// the caller sets (the verifier sets none: every stream decodes whole);
-/// the material is read whole however much it decodes to in all (Rule 5).
-/// Returns the bytes this extraction decoded, for the `[limits]` DSS-decode
-/// row; the largest single stream goes to the running analysis's counts.
+/// Each DSS stream decodes whole, its memory reserved first under the
+/// verification's `memory` ledger (FIX 7654); the material is read whole
+/// however much it decodes to in all (Rule 5). Returns the bytes this
+/// extraction decoded, for the `[limits]` DSS-decode row; the largest single
+/// stream goes to the running analysis's counts. Memory a decode was refused
+/// is `Err`, never invalid or malformed material.
 pub(super) fn verify_dss(
     doc: &Document,
     anchors: &[EmbeddedCert],
     covered: &[EmbeddedCert],
     at_unix: u64,
-    max_stream_bytes: usize,
+    memory: &MemoryLedger,
     checks: &mut Checks,
-) -> usize {
+) -> Result<usize, SealMemoryRefusal> {
     let mut decoded = 0;
-    check_dss(
-        doc,
-        anchors,
-        covered,
-        at_unix,
-        max_stream_bytes,
-        &mut decoded,
-        checks,
-    );
-    decoded
+    check_dss(doc, anchors, covered, at_unix, memory, &mut decoded, checks)?;
+    Ok(decoded)
 }
 
 /// [`verify_dss`], adding what it decodes to `decoded`.
@@ -55,10 +49,10 @@ fn check_dss(
     anchors: &[EmbeddedCert],
     covered: &[EmbeddedCert],
     at_unix: u64,
-    max_stream_bytes: usize,
+    memory: &MemoryLedger,
     decoded: &mut usize,
     checks: &mut Checks,
-) {
+) -> Result<(), SealMemoryRefusal> {
     let catalog = match pdf::catalog(doc) {
         Some(c) => c,
         None => {
@@ -71,12 +65,12 @@ fn check_dss(
             } else {
                 checks.absent(VerifyCheckKind::ValidationMaterial);
             }
-            return;
+            return Ok(());
         }
     };
     let Ok(dss_obj) = catalog.get(b"DSS") else {
         checks.absent(VerifyCheckKind::ValidationMaterial);
-        return;
+        return Ok(());
     };
     let dss = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok());
     let Some(dss) = dss else {
@@ -85,7 +79,7 @@ fn check_dss(
             false,
             VerifyFindingCode::ValidationMaterialInvalid,
         );
-        return;
+        return Ok(());
     };
     if dss.has(b"VRI") {
         checks.record(
@@ -93,22 +87,15 @@ fn check_dss(
             false,
             VerifyFindingCode::ValidationMaterialInvalid,
         );
-        return;
+        return Ok(());
     }
-    let ok = dss_material_valid(
-        doc,
-        dss,
-        anchors,
-        covered,
-        at_unix,
-        max_stream_bytes,
-        decoded,
-    );
+    let ok = dss_material_valid(doc, dss, anchors, covered, at_unix, memory, decoded)?;
     checks.record(
         VerifyCheckKind::ValidationMaterial,
         ok,
         VerifyFindingCode::ValidationMaterialInvalid,
     );
+    Ok(())
 }
 
 fn dss_material_valid(
@@ -117,15 +104,29 @@ fn dss_material_valid(
     anchors: &[EmbeddedCert],
     covered: &[EmbeddedCert],
     at_unix: u64,
-    max_stream_bytes: usize,
+    memory: &MemoryLedger,
     decoded: &mut usize,
-) -> bool {
-    // Each entry decodes under the per-stream codec bound; the total across
+) -> Result<bool, SealMemoryRefusal> {
+    // Each entry decodes whole, its memory reserved first; the total across
     // all three arrays is counted, never capped, so material past the old
     // shared budget is read whole rather than called malformed.
-    let certs = dss_array(doc, dss, b"Certs", max_stream_bytes, decoded);
-    let crls = dss_array(doc, dss, b"CRLs", max_stream_bytes, decoded);
-    let ocsps = dss_array(doc, dss, b"OCSPs", max_stream_bytes, decoded);
+    let certs = dss_array(doc, dss, b"Certs", memory, decoded)?;
+    let crls = dss_array(doc, dss, b"CRLs", memory, decoded)?;
+    let ocsps = dss_array(doc, dss, b"OCSPs", memory, decoded)?;
+    Ok(material_valid(
+        certs, crls, ocsps, anchors, covered, at_unix,
+    ))
+}
+
+/// The decoded arrays, judged.
+fn material_valid(
+    certs: DssArray,
+    crls: DssArray,
+    ocsps: DssArray,
+    anchors: &[EmbeddedCert],
+    covered: &[EmbeddedCert],
+    at_unix: u64,
+) -> bool {
     // A present DSS with all arrays absent is evidence-free: it must not
     // inflate a B-T document into B-LT.
     if matches!(certs, DssArray::Absent)
@@ -248,38 +249,45 @@ pub(super) enum DssArray {
 }
 
 /// Extract the decoded stream contents of one DSS array. Filtered streams
-/// (e.g. a FlateDecode-wrapped CRL) are decoded through the bounded
-/// decompression path; a malformed filter, a failed decode, or one stream
-/// expanding past `max_stream_bytes` (a bound only a caller that sets one
-/// holds; the verifier decodes whole) is Malformed, never a silent skip.
+/// (e.g. a FlateDecode-wrapped CRL) are decoded whole, every buffer the
+/// decode allocates admitted first by `memory`, as is the array's own
+/// storage; a malformed filter or a failed decode is Malformed, never a
+/// silent skip, and memory a decode was refused is `Err`, never Malformed.
 /// Every decoded length is added to `decoded`, the extraction's total,
 /// which no bound stops, and noted as one stream's.
 pub(super) fn dss_array(
     doc: &Document,
     dss: &lopdf::Dictionary,
     key: &[u8],
-    max_stream_bytes: usize,
+    memory: &MemoryLedger,
     decoded: &mut usize,
-) -> DssArray {
+) -> Result<DssArray, SealMemoryRefusal> {
     let Ok(arr_obj) = dss.get(key) else {
-        return DssArray::Absent;
+        return Ok(DssArray::Absent);
     };
     let Some(arr) = pdf::resolve(doc, arr_obj).and_then(|o| o.as_array().ok()) else {
-        return DssArray::Malformed;
+        return Ok(DssArray::Malformed);
     };
+    memory.admit_len::<Vec<u8>>(arr.len())?;
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
         let Some(stream) = pdf::resolve(doc, item).and_then(|o| o.as_stream().ok()) else {
-            return DssArray::Malformed;
+            return Ok(DssArray::Malformed);
         };
-        let Ok(data) = stream.decompressed_content_with_limit(max_stream_bytes) else {
-            return DssArray::Malformed;
+        let data = match stream.decompressed_content_admitted(memory) {
+            Ok(data) => data,
+            Err(err) => {
+                return match memory.refusal_of(&err) {
+                    Some(refusal) => Err(refusal),
+                    None => Ok(DssArray::Malformed),
+                };
+            }
         };
         note_current(Counter::StreamDecodeBytes, data.len());
         *decoded = decoded.saturating_add(data.len());
         out.push(data);
     }
-    DssArray::Entries(out)
+    Ok(DssArray::Entries(out))
 }
 
 /// Follow a reference chain exactly as the evaluation's resolver does,

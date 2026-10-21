@@ -1,7 +1,8 @@
 //! The seal's fresh verification and its suffix gate (OF-415, C032, Engine
 //! ruling D). A sealed PDF that may carry revisions after the one the
 //! engine wrote is admitted only on a second `seal.verify` call, in a
-//! process of its own and with no handlers, over the exact output bytes:
+//! process of its own and with no handler but memory (it never signs or
+//! fetches), over the exact output bytes:
 //! its native verification must pass, cover the whole file with one proven
 //! revision chain, find the signature this call bound, and classify every
 //! later revision as validation data or a passed document timestamp.
@@ -10,6 +11,7 @@
 //! fence) and never parses a PDF: it compares offsets, digests and kinds.
 
 use oneiron::blob_artifact::esign::{EsignSealerError, EsignVerdict, SealProfile};
+use oneiron_organ_protocol::ASK_MEMORY_GROW;
 use oneiron_organ_protocol::seal::{
     SealCheckVerdict, SealModificationLevel, SealModifications, SealRevisionClassification,
     SealRevisionEvidence, SealRevisionKind, SealSignatureKind,
@@ -22,12 +24,14 @@ use super::{
     HostedSealer, PDF, VERB_VERIFY, VerifyArgs, VerifyReply, from_value, reply_invalid, to_value,
 };
 use crate::handlers::AskHandlers;
+use crate::resource_memory::MemoryGrow;
 use crate::spec::LentInput;
 
 impl HostedSealer<'_> {
     /// One `seal.verify` call over `pdf`, in a process of its own: never
     /// the one that sealed. Its verdict, and the revision classification
-    /// beside it.
+    /// beside it. Its one handler reserves its decodes' memory
+    /// (`memory.grow`); it is never given signing or fetch.
     pub(super) fn verify_classified(
         &self,
         pdf: &[u8],
@@ -42,8 +46,9 @@ impl HostedSealer<'_> {
             media_type: PDF.to_owned(),
             bytes: pdf.to_vec(),
         }];
-        let (reply, _) =
-            self.sized_call(self.call(VERB_VERIFY, 1, args), lent, &AskHandlers::none())?;
+        let memory = MemoryGrow;
+        let handlers = AskHandlers::none().with(ASK_MEMORY_GROW, &memory);
+        let (reply, _) = self.sized_call(self.call(VERB_VERIFY, 1, args), lent, &handlers)?;
         match from_value(&reply)? {
             VerifyReply::Verified(verdict) => {
                 measure_report(self.vault, &verdict.report_json);

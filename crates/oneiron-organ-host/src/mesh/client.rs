@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
 use oneiron_mesh_transport::{MeshConnection, MeshError, MeshStream};
-use oneiron_organ_protocol::{AskCode, AskRefusal, ByteBuf, Hash32};
+use oneiron_organ_protocol::{ASK_MEMORY_GROW, AskCode, AskRefusal, ByteBuf, Hash32};
 
 use super::{
     Carried, FailureKind, INLINE, Offer, PIECE, PeerAnswer, PeerAnswered, PeerAsk, PeerCall,
@@ -287,6 +287,16 @@ fn run_handler(
         );
         return (Err(refusal), None);
     };
+    // The organ's memory is its own host's to reserve, where the organ runs
+    // (FIX 7654): this node holds neither its room nor its machine, so a
+    // memory ask sent here is refused, never granted.
+    if ask.verb == ASK_MEMORY_GROW {
+        let refusal = AskRefusal::new(
+            AskCode::NotGranted,
+            "memory is reserved where the organ runs, never on the asking node",
+        );
+        return (Err(refusal), None);
+    }
     let signing = Mutex::new(None);
     // A fetch runs where the organ runs, under that install's allowlist.
     let fetch = FetchGrant::default();

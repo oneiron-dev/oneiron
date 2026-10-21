@@ -497,6 +497,31 @@ impl Drop for MemoryLease {
     }
 }
 
+/// The machine's memory as the organ host's floor (FIX 7654): an organ's
+/// own buffers lease from the same line as every other lease here, within
+/// their call's deadline, and leave it when their call is revoked. Each
+/// lease is held by the call's room until the call ends.
+#[cfg(unix)]
+pub(crate) struct OrganFloor(pub(crate) MachineMemory);
+
+#[cfg(unix)]
+impl oneiron_organ_host::MachineFloor for OrganFloor {
+    fn lease(
+        &self,
+        bytes: u64,
+        deadline: Instant,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<Box<dyn Send>, oneiron_organ_host::FloorRefusal> {
+        match self.0.lease_until(bytes, deadline, stopped) {
+            Ok(lease) => Ok(Box::new(lease)),
+            Err(MemoryRefusal::Floor { needed, available }) => {
+                Err(oneiron_organ_host::FloorRefusal::Floor { needed, available })
+            }
+            Err(MemoryRefusal::WaitedOut { .. }) => Err(oneiron_organ_host::FloorRefusal::Deadline),
+        }
+    }
+}
+
 /// The claim count changes in one step under its lock, so a holder that
 /// panicked left it whole.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

@@ -112,51 +112,93 @@ fn is_globally_routable(ip: IpAddr) -> bool {
 
 #[cfg(feature = "network-fetch")]
 mod http {
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     use async_trait::async_trait;
     use futures_util::StreamExt;
+    use sha2::Digest;
 
     use crate::api::{
         FetchError, FetchMethod, FetchPolicy, FetchRequest, FetchResponse, SealFetcher,
     };
+    use crate::error::{FatalCode, SealError, SealStage};
+    use crate::memory::{AdmittedBytes, Lease, SealMemoryProvider, SealMemoryRefusal, SharedBytes};
 
     use super::{addr_allowed, origin_allowed};
 
     const CACHE_MAX_ENTRIES: usize = 64;
     /// Conservative validity bound: well inside typical OCSP/CRL windows.
     const CACHE_TTL: Duration = Duration::from_secs(300);
+    /// The cache's table: one slot per entry it keeps before it evicts.
+    const TABLE_BYTES: usize = CACHE_MAX_ENTRIES * std::mem::size_of::<CacheEntry>();
+
+    /// A request's cache identity, as one digest (see `cache_key`): the key
+    /// sits in its entry's slot and allocates nothing of its own.
+    type CacheKey = [u8; 32];
 
     struct CacheEntry {
+        key: CacheKey,
         response_digest: [u8; 32],
-        body: Vec<u8>,
+        /// The response's own bytes: a hit shares them and their
+        /// reservation, and copies nothing.
+        body: SharedBytes,
         content_type: Option<String>,
+        /// Holds the entry's copy of `content_type`.
+        _content_type_held: Lease,
         inserted: Instant,
+    }
+
+    /// The cache's entries and the lease on their table. The table is
+    /// reserved whole, a slot for each of `CACHE_MAX_ENTRIES`, before the
+    /// first entry goes in. Eviction keeps the entries below that, so the
+    /// table never grows, and it keeps its lease for as long as it stays
+    /// allocated.
+    #[derive(Default)]
+    struct Cache {
+        entries: Vec<CacheEntry>,
+        table: Option<Lease>,
     }
 
     /// SSRF-guarded HTTP fetcher. Redirects are followed manually, with the
     /// complete policy re-run on every hop, for as long as the deadline
     /// allows. Environment/system proxies are disabled. Error values
-    /// never carry URL query strings or response bodies.
+    /// never carry URL query strings or response bodies. Every body it
+    /// reads and every cache entry it keeps reserves its memory first, from
+    /// the engine's own memory service (FIX 7655).
     pub struct SsrfGuardedHttpFetcher {
         policy: FetchPolicy,
-        cache: Mutex<HashMap<String, CacheEntry>>,
+        /// The service the engine's decodes reserve from. Bodies and cache
+        /// entries outlive one operation, so each takes a lease of its own.
+        memory: SealMemoryProvider,
+        cache: Mutex<Cache>,
     }
 
     impl SsrfGuardedHttpFetcher {
-        pub fn new(policy: FetchPolicy) -> Self {
-            Self {
-                policy,
-                cache: Mutex::new(HashMap::new()),
+        /// The fetcher under `policy`. What it reads and caches reserves
+        /// from `memory`, the engine's `SealResourceLimits::memory`.
+        ///
+        /// # Errors
+        /// A configuration error when `memory` names no service.
+        pub fn new(policy: FetchPolicy, memory: SealMemoryProvider) -> Result<Self, SealError> {
+            if !memory.is_configured() {
+                return Err(SealError::Fatal {
+                    stage: SealStage::InputValidation,
+                    code: FatalCode::InvalidConfiguration,
+                });
             }
+            Ok(Self {
+                policy,
+                memory,
+                cache: Mutex::default(),
+            })
         }
 
-        /// Cache identity: URL, method, purpose, and request-body digest. A
-        /// body cached under a larger purpose cap can never be replayed for a
-        /// smaller-cap purpose, and a GET hit never serves a POST.
-        fn cache_key(request: &FetchRequest) -> String {
+        /// Cache identity: URL, method, purpose, and request-body digest,
+        /// hashed together. A body cached under a larger purpose cap can
+        /// never be replayed for a smaller-cap purpose, and a GET hit never
+        /// serves a POST.
+        fn cache_key(request: &FetchRequest) -> CacheKey {
             let body_digest = super::super::cms::sha256(&request.request_body);
             let method = match request.method {
                 FetchMethod::Get => "GET",
@@ -168,51 +210,121 @@ mod http {
                 crate::api::FetchPurpose::Crl => "crl",
                 crate::api::FetchPurpose::Timestamp => "tsa",
             };
-            let mut key = format!("{purpose}\n{method}\n{}\n", request.url.as_str());
-            for b in body_digest {
-                key.push_str(&format!("{b:02x}"));
-            }
-            key
+            // Neither the purpose, the method nor a parsed URL holds a
+            // newline, so the fields cannot run into each other.
+            sha2::Sha256::new()
+                .chain_update(purpose)
+                .chain_update("\n")
+                .chain_update(method)
+                .chain_update("\n")
+                .chain_update(request.url.as_str())
+                .chain_update("\n")
+                .chain_update(body_digest)
+                .finalize()
+                .into()
         }
 
-        fn cache_get(&self, key: &str) -> Option<FetchResponse> {
+        fn cache_get(&self, key: &CacheKey) -> Option<FetchResponse> {
             let mut cache = self.cache.lock().ok()?;
-            let entry = cache.get(key)?;
-            if entry.inserted.elapsed() > CACHE_TTL {
-                cache.remove(key);
-                return None;
-            }
+            let at = cache.entries.iter().position(|e| e.key == *key)?;
+            let entry = &cache.entries[at];
             // Integrity self-check: the cached body must still match the
             // digest recorded under the canonical key.
-            if super::super::cms::sha256(&entry.body) != entry.response_digest {
-                cache.remove(key);
+            if entry.inserted.elapsed() > CACHE_TTL
+                || super::super::cms::sha256(&entry.body) != entry.response_digest
+            {
+                cache.entries.swap_remove(at);
                 return None;
             }
             Some(FetchResponse {
-                body: entry.body.clone(),
+                body: Arc::clone(&entry.body),
                 content_type: entry.content_type.clone(),
             })
         }
 
-        fn cache_put(&self, key: String, resp: &FetchResponse) {
+        /// Keeps `resp` for later requests with the same key. The cache is
+        /// optional: what an entry needs (the table the first time, the
+        /// copy of the content type) is reserved first, and when memory
+        /// refuses it, or the deadline passes, nothing is kept and the
+        /// caller has its response all the same.
+        async fn cache_put(
+            &self,
+            key: CacheKey,
+            resp: &FetchResponse,
+            deadline: tokio::time::Instant,
+        ) {
+            let tabled = {
+                let Ok(cache) = self.cache.lock() else {
+                    return;
+                };
+                cache.table.is_some()
+            };
+            let table = if tabled {
+                None
+            } else {
+                let Ok(held) = self.lease(TABLE_BYTES, deadline).await else {
+                    return;
+                };
+                Some(held)
+            };
+            let content_type_bytes = resp.content_type.as_ref().map_or(0, String::len);
+            let Ok(content_type_held) = self.lease(content_type_bytes, deadline).await else {
+                return;
+            };
+            let response_digest = super::super::cms::sha256(&resp.body);
             let Ok(mut cache) = self.cache.lock() else {
                 return;
             };
-            if cache.len() >= CACHE_MAX_ENTRIES {
-                cache.retain(|_, e| e.inserted.elapsed() <= CACHE_TTL);
-                if cache.len() >= CACHE_MAX_ENTRIES {
-                    cache.clear();
+            if cache.table.is_none() {
+                let Some(held) = table else {
+                    return;
+                };
+                if cache.entries.try_reserve_exact(CACHE_MAX_ENTRIES).is_err() {
+                    return;
+                }
+                cache.table = Some(held);
+            }
+            if cache.entries.len() >= CACHE_MAX_ENTRIES {
+                cache.entries.retain(|e| e.inserted.elapsed() <= CACHE_TTL);
+                if cache.entries.len() >= CACHE_MAX_ENTRIES {
+                    cache.entries.clear();
                 }
             }
-            cache.insert(
+            let entry = CacheEntry {
                 key,
-                CacheEntry {
-                    response_digest: super::super::cms::sha256(&resp.body),
-                    body: resp.body.clone(),
-                    content_type: resp.content_type.clone(),
-                    inserted: Instant::now(),
-                },
-            );
+                response_digest,
+                body: Arc::clone(&resp.body),
+                content_type: resp.content_type.clone(),
+                _content_type_held: content_type_held,
+                inserted: Instant::now(),
+            };
+            match cache.entries.iter_mut().find(|e| e.key == key) {
+                Some(slot) => *slot = entry,
+                None => cache.entries.push(entry),
+            }
+        }
+
+        /// Reserves `bytes` for an owner this fetcher makes (a body, a cache
+        /// entry, the cache's table). The service may wait, so the
+        /// reservation runs off the reactor thread, and the request's total
+        /// deadline bounds the wait: past it the wait is the deadline's
+        /// refusal, and whatever it reserves later goes straight back.
+        async fn lease(
+            &self,
+            bytes: usize,
+            deadline: tokio::time::Instant,
+        ) -> Result<Lease, SealMemoryRefusal> {
+            if bytes == 0 {
+                return self.memory.lease(0);
+            }
+            let memory = self.memory.clone();
+            let reserve = tokio::task::spawn_blocking(move || memory.lease(bytes));
+            match tokio::time::timeout_at(deadline, reserve).await {
+                Ok(Ok(leased)) => leased,
+                // The reservation's thread ended without an answer.
+                Ok(Err(_)) => Err(SealMemoryRefusal::Failed),
+                Err(_) => Err(SealMemoryRefusal::Deadline),
+            }
         }
 
         /// Resolve DNS once, apply the address policy, and return the pinned
@@ -284,8 +396,12 @@ mod http {
         /// Stream the whole body inside the request's total deadline: the
         /// header-phase timeout does not cover the body phase, so every chunk
         /// read races the same deadline (a stalled body is a Timeout, not an
-        /// unbounded wait). No size cuts it short (Rule 5).
+        /// unbounded wait). No size cuts it short (Rule 5). Before the buffer
+        /// grows, its new allocation is reserved while the old one's lease
+        /// still holds, so the moment both are live is reserved too. The
+        /// body keeps its lease; on an error the two drop together.
         async fn stream_body<S>(
+            &self,
             stream: &mut S,
             content_type: Option<String>,
             deadline: tokio::time::Instant,
@@ -293,16 +409,26 @@ mod http {
         where
             S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
         {
-            let mut body = Vec::new();
+            let mut body = AdmittedBytes::empty();
             loop {
                 let chunk = tokio::time::timeout_at(deadline, stream.next())
                     .await
                     .map_err(|_| FetchError::Timeout)?;
                 let Some(chunk) = chunk else { break };
                 let chunk = chunk.map_err(|_| FetchError::Unavailable)?;
-                body.extend_from_slice(&chunk);
+                if let Some(capacity) = body.growth(chunk.len()) {
+                    let held = self
+                        .lease(capacity, deadline)
+                        .await
+                        .map_err(FetchError::Memory)?;
+                    body.regrow(capacity, held).map_err(FetchError::Memory)?;
+                }
+                body.extend(&chunk).map_err(FetchError::Memory)?;
             }
-            Ok(FetchResponse { body, content_type })
+            Ok(FetchResponse {
+                body: Arc::new(body),
+                content_type,
+            })
         }
     }
 
@@ -363,8 +489,10 @@ mod http {
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
             let mut stream = response.bytes_stream();
-            let out = Self::stream_body(&mut stream, content_type, deadline).await?;
-            self.cache_put(key, &out);
+            let out = self
+                .stream_body(&mut stream, content_type, deadline)
+                .await?;
+            self.cache_put(key, &out, deadline).await;
             Ok(out)
         }
     }

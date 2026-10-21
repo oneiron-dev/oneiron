@@ -25,6 +25,10 @@ pub enum RetryableCode {
     ResourceBusy,
     TemporaryBackendFailure,
     TemporaryFetchFailure,
+    /// The machine could not hold the memory a decode needed (FIX 7654).
+    MemoryFloor,
+    /// The memory a decode needed did not fit before its deadline.
+    ResourceDeadline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

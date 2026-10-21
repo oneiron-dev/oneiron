@@ -21,6 +21,7 @@ use crate::measure::install_row;
 use crate::outcome::OrganOutcome;
 use crate::process::{CallFailure, Grant, OrganProcess, Revocations, Wait};
 use crate::regions::RegionCache;
+use crate::resource_memory::{MachineFloor, SharedFloor};
 use crate::slot::{OrganStatus, Slot};
 use crate::spec::{HostConfig, LentInput, OrganCall, OrganInput, OrganSpec, SightedInput};
 
@@ -63,9 +64,14 @@ pub struct OrganHost {
     /// theirs runs.
     retired: Mutex<Vec<Arc<Slot>>>,
     revoked: Revocations,
+    /// The machine's memory floor organs' own buffers lease from
+    /// (`memory.grow`, FIX 7654); none on a host built by [`Self::new`].
+    floor: Option<SharedFloor>,
 }
 
 impl OrganHost {
+    /// A host with no machine memory floor: it refuses every `memory.grow`
+    /// ask, so an organ that reserves its buffers cannot run on it.
     #[must_use]
     pub fn new(config: HostConfig) -> Self {
         Self {
@@ -75,6 +81,18 @@ impl OrganHost {
             slots: Mutex::new(HashMap::new()),
             retired: Mutex::new(Vec::new()),
             revoked: Revocations::default(),
+            floor: None,
+        }
+    }
+
+    /// A host whose organs' own buffers lease from `floor`, the machine's
+    /// memory (`memory.grow`, FIX 7654): each call holds what it leased
+    /// until it ends. Share one floor across the machine's work.
+    #[must_use]
+    pub fn with_floor(config: HostConfig, floor: Arc<dyn MachineFloor>) -> Self {
+        Self {
+            floor: Some(SharedFloor(floor)),
+            ..Self::new(config)
         }
     }
 
@@ -375,8 +393,10 @@ impl OrganHost {
         }
         let booking = how.booking(&slot.spec);
         // The call's room: its booking, grown as its answers and outputs
-        // need (FIX 5284).
-        let room = CallRoom::new(self.budget.admit(call.class, 1, booking, deadline)?);
+        // need (FIX 5284), and as the organ's own buffers lease the machine's
+        // floor (FIX 7654).
+        let permit = self.budget.admit(call.class, 1, booking, deadline)?;
+        let room = CallRoom::new(permit, self.floor.clone());
         let mut inputs = call
             .inputs
             .iter()
