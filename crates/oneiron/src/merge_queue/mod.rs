@@ -21,6 +21,9 @@ mod mirror_green;
 mod plan;
 mod reviewed;
 mod run;
+mod source;
+mod source_materialize;
+mod source_types;
 mod staging;
 mod storage;
 mod tested;
@@ -59,6 +62,8 @@ pub use driver_types::{
 pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
 pub use reviewed::ReviewedProposalLanding;
 pub use run::{RepoQueueOrder, RepoQueuePredecessor};
+// The served import's queue source (FIX 6869).
+pub use source_types::ServedQueueSource;
 // The tested-revision seal at green (FIX 6868, G2 PR3).
 pub(crate) use tested_types::QueueRevisionSeal;
 pub use tested_types::{

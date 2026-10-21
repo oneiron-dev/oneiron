@@ -3,6 +3,7 @@
 
 use super::decisions::{conflict_state, id_options, named_id};
 use super::*;
+use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::provenance::KeptDecision;
 use crate::dreamer_wake::WakePassDeadline;
 use crate::llm::decision::catalogue::CONFLICT_RESOLUTION;
@@ -40,7 +41,8 @@ impl ConflictAnswers {
 impl ConsolidationExecutor<'_> {
     /// The conflict's typed pack: how it resolves, and which listed candidate's identity a
     /// merge keeps (a merge across predicates must name one). An ask goes to the route of
-    /// the conflict's project. None when the step trapped.
+    /// the conflict's project. None when the step trapped. The pack shows its questions,
+    /// claims and identity options by its own call's labels (FIX 7506).
     #[expect(
         clippy::too_many_arguments,
         reason = "the step, its pass clock and branch join the conflict and the charge tally"
@@ -55,6 +57,7 @@ impl ConsolidationExecutor<'_> {
         resources: &BranchResources<'_>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<ConflictAnswers>> {
+        let mut labels = CallLabelMap::default();
         let mut questions = vec![
             CONFLICT_RESOLUTION.question(
                 &[b"resolution".as_slice()],
@@ -72,14 +75,20 @@ impl ConsolidationExecutor<'_> {
                 .is_ok_and(|facts| facts.predicate != conflict.identity.predicate)
         });
         let ids: Vec<EntityId> = members.iter().map(|member| member.claim_id).collect();
-        for (group, options) in id_options(&ids, !across).into_iter().enumerate() {
+        for (group, (options, shown)) in id_options(&ids, !across, &mut labels)
+            .into_iter()
+            .enumerate()
+        {
             let group = group.to_string();
-            questions.push(CONFLICT_RESOLUTION.question(
+            let question = CONFLICT_RESOLUTION.question(
                 &[b"identity".as_slice(), group.as_bytes()],
                 self.decisions.identity_wording.clone(),
                 AnswerContract::Choice { options },
-            )?);
+            )?;
+            labels.show_choices(question.id, shown);
+            questions.push(question);
         }
+        self.label_questions(&mut labels, &questions);
         // The pack reads the prior heads and candidates drawn from these turns. The
         // turns also keep one conflict's ask apart from another's on the same heads.
         let mut evidence: Vec<EntityId> = prior_heads.iter().map(|prior| prior.claim_id).collect();
@@ -91,14 +100,15 @@ impl ConsolidationExecutor<'_> {
         turns.sort_unstable();
         turns.dedup();
         evidence.extend(turns);
-        let state = conflict_state(&conflict.identity, members, prior_heads)?;
+        let state = conflict_state(&conflict.identity, members, prior_heads, &mut labels)?;
         let to = self.ask_route(step_ctx.vault, Some(conflict.identity.project))?;
         // The ask is this conflict's in this attempt: its open-marker id.
         let key =
             crate::dreamer_consolidation::conflict_open_marker_id(conflict, step_ctx.attempt_id)?;
         let Some(decided) = self
             .decide(
-                step_ctx, pass, resources, &to, key, &questions, &evidence, &state, charges,
+                step_ctx, pass, resources, &to, key, &questions, &evidence, &state, &labels,
+                charges,
             )
             .await?
         else {
@@ -178,6 +188,8 @@ impl ConsolidationExecutor<'_> {
         }))
     }
 
+    /// The resolved-value request: each claim by its call-local label
+    /// (FIX 7506), the map bound into the request's identity.
     fn value_request(
         call: &RoleCall<'_>,
         resolution: &str,
@@ -187,14 +199,19 @@ impl ConsolidationExecutor<'_> {
         prior_heads: &[super::super::PriorHead],
         scope: &crate::llm::Scope,
     ) -> Result<LlmRequest> {
+        let mut labels = CallLabelMap::default();
         let mut lines = format!("resolution {resolution}\n");
         if let Some(kept) = kept {
-            lines.push_str(&format!("keeps candidate_ref {}\n", kept.to_hex()));
+            lines.push_str(&format!(
+                "keeps candidate_ref {}\n",
+                labels.assign(LabelKind::Claim, kept)
+            ));
         }
         lines.push_str(&format!("predicate {}\n", identity.predicate));
         for prior in prior_heads {
+            let claim = labels.assign(LabelKind::Claim, prior.claim_id).to_string();
             lines.push_str(
-                &serde_json::json!({"prior_head": prior.claim_id.to_hex(),
+                &serde_json::json!({"prior_head": claim,
                 "predicate": prior.body.predicate,
                 "source": prior.body.source.map(crate::claim::ClaimSource::as_str),
                 "value": rmpv_to_json(&prior.body.value)})
@@ -206,7 +223,7 @@ impl ConsolidationExecutor<'_> {
             let facts = candidate_facts(&member.candidate)?;
             lines.push_str(&format!(
                 "- candidate_ref: {} predicate: {} value: {}\n",
-                member.claim_id.to_hex(),
+                labels.assign(LabelKind::Claim, member.claim_id),
                 facts.predicate,
                 serde_json::to_string(&rmpv_to_json(&facts.value)).unwrap_or_default()
             ));
@@ -215,7 +232,7 @@ impl ConsolidationExecutor<'_> {
              resolve into one claim. Respond with JSON: {\"value\": <the resolved claim's \
              value as JSON>}. On supersede the value is the newest one stated; on merge it is \
              one value that holds what the candidates state.";
-        Ok(LlmRequest {
+        let mut request = LlmRequest {
             model: call.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
@@ -254,7 +271,9 @@ impl ConsolidationExecutor<'_> {
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
-        })
+        };
+        labels.bind_request(&mut request, None);
+        Ok(request)
     }
 }
 

@@ -26,8 +26,8 @@ use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
     Ask, Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hash32, Hello, HelloAck,
-    Limits, PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame_polled_reserved,
-    recv_frame_until, send_frame_if, send_frame_until, spin,
+    INITIAL_HANDSHAKE_FRAME_BYTES, Limits, PROTOCOL, ProtocolVersion, Reply, ToOrgan,
+    recv_frame_polled_reserved, recv_frame_until_reserved, send_frame_if, send_frame_until, spin,
 };
 
 use crate::asks::{AskStep, CallAsks};
@@ -421,6 +421,9 @@ fn taken(reply: &mpsc::Receiver<Delivery>, asks: &mut CallAsks<'_>) -> Option<Re
 pub(crate) struct OrganProcess {
     pub(crate) pid: u32,
     pub(crate) hello: HelloAck,
+    /// Budget room for the `hello_ack`'s frame, made before its body was
+    /// read and held while the decoded `hello` lives (FIX 7648).
+    _hello_lease: Lease,
     /// The version the session speaks: one major, the lower minor.
     pub(crate) session: ProtocolVersion,
     pub(crate) spawn_time: Duration,
@@ -478,7 +481,15 @@ impl OrganProcess {
             socket: shutdown,
         });
         let mut guard = EndOnDrop(Some(Arc::clone(&lifeline)));
-        let hello = handshake(&ours, spec, config, handshake_by, handshake_by < own)?;
+        let (hello, hello_lease) = handshake(
+            &ours,
+            spec,
+            config,
+            &room,
+            &lifeline,
+            handshake_by,
+            handshake_by < own,
+        )?;
         let session = PROTOCOL.session(hello.protocol).unwrap_or(hello.protocol);
         let inbox = Arc::new(Inbox {
             asks: session.asks(),
@@ -497,6 +508,7 @@ impl OrganProcess {
         Ok(Arc::new(Self {
             pid,
             hello,
+            _hello_lease: hello_lease,
             session,
             spawn_time: started.elapsed(),
             net_isolated: sandbox::net_isolated(pid),
@@ -1054,13 +1066,20 @@ impl Drop for OrganProcess {
     }
 }
 
+/// Sends the `hello` and reads the `hello_ack` by `deadline`, both under
+/// the pre-session bound ([`INITIAL_HANDSHAKE_FRAME_BYTES`]). The ack's body
+/// gets budget room from `room` before a byte of it is allocated, waited
+/// for no later than `deadline` and no longer than the child lives; the
+/// lease comes back with the ack (FIX 7648).
 fn handshake(
     stream: &UnixStream,
     spec: &OrganSpec,
     config: &HostConfig,
+    room: &Room,
+    lifeline: &Lifeline,
     deadline: Instant,
     caller_cut: bool,
-) -> Result<HelloAck, HostError> {
+) -> Result<(HelloAck, Lease), HostError> {
     let hello = ToOrgan::Hello(Hello {
         protocol: PROTOCOL,
         engine: config.engine_version.clone(),
@@ -1087,17 +1106,46 @@ fn handshake(
         }
         other => HostError::Handshake(format!("no hello_ack: {other}")),
     };
-    send_frame_until(stream, &hello, &[], DEFAULT_FRAME_LIMIT, Some(deadline))
-        .map_err(start_failed)?;
-    let (ack, _) =
-        recv_frame_until::<FromOrgan>(stream, u32::MAX, Some(deadline)).map_err(start_failed)?;
+    send_frame_until(
+        stream,
+        &hello,
+        &[],
+        INITIAL_HANDSHAKE_FRAME_BYTES,
+        Some(deadline),
+    )
+    .map_err(start_failed)?;
+    // The room first, then the body. A frame over the pre-session bound is
+    // refused before this runs (`FrameError::TooLarge`, incompatible). The
+    // wait for room ends at the handshake's deadline, which is checked
+    // before it and after it too: room that fits at once is taken without
+    // a look at the clock.
+    let expired = || Instant::now() >= deadline;
+    let reserve = |len: u32| {
+        if expired() {
+            return Err(FrameError::TimedOut);
+        }
+        let lease = room.lease(u64::from(len), &|| expired() || lifeline.exited());
+        match lease {
+            Some(lease) if !expired() => Ok(lease),
+            Some(_) => Err(FrameError::TimedOut),
+            None if expired() => Err(FrameError::TimedOut),
+            None => Err(FrameError::Closed),
+        }
+    };
+    let (ack, _, _, lease) = recv_frame_until_reserved::<FromOrgan, Lease>(
+        stream,
+        INITIAL_HANDSHAKE_FRAME_BYTES,
+        Some(deadline),
+        reserve,
+    )
+    .map_err(start_failed)?;
     let FromOrgan::HelloAck(ack) = ack else {
         return Err(HostError::Handshake(
             "the first reply was not hello_ack".into(),
         ));
     };
     check_handshake(spec, &ack)?;
-    Ok(ack)
+    Ok((ack, lease))
 }
 
 fn check_handshake(spec: &OrganSpec, ack: &HelloAck) -> Result<(), HostError> {

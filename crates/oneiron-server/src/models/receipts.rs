@@ -129,6 +129,19 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "revision": revision,
             "from": from,
         }),
+        // FIX 2310: the planned child, the pick its plan named and the
+        // model that answered in its place.
+        RunEvent::PlanModelSubstituted {
+            child,
+            planned,
+            ran,
+        } => json!({
+            "event": "plan_model_substituted",
+            "revision": revision,
+            "child": child.to_hex(),
+            "planned": model(planned.as_str()),
+            "ran": model(ran.as_str()),
+        }),
     };
     row["run"] = Value::from(run_name(&receipt.run));
     row

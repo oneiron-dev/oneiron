@@ -228,10 +228,13 @@ impl MergeQueue<'_> {
                 ),
             );
         }
+        // A served import's queue saves its binding init work (FIX 6869).
+        let bound = work.source.is_some().then(|| config.init_work.clone());
         let pointers = match self.read_queue()? {
             Some(queue)
                 if queue.baseline_id == baseline_id
-                    && queue.pointers.green == config.baseline_commit =>
+                    && queue.pointers.green == config.baseline_commit
+                    && queue.source_init_work == bound =>
             {
                 queue.pointers
             }
@@ -242,12 +245,13 @@ impl MergeQueue<'_> {
                 );
                 return self.finish_status(work, QueueCheckStatus::NeedsConfiguration(need));
             }
-            None => self.initialize(&baseline_id, WorkspaceGraph::unfiltered())?,
+            None => self.initialize_bound(&baseline_id, WorkspaceGraph::unfiltered(), bound)?,
         };
         config.stage = QueueCheckInitStage::Initialized { baseline_id };
         // The attached branch at the approved baseline enrolls the queue for
-        // automatic driving; a detached HEAD enrolls nothing (G2 PR2).
-        config.driver_target = self.attached_target(config.repo)?;
+        // automatic driving; a detached HEAD enrolls nothing (G2 PR2). A
+        // served source enrolls its import's branch (FIX 6869, CALL 4).
+        config.driver_target = self.queue_source_driver_target(work, config.repo)?;
         self.vault.finish_queue_check(
             work,
             WorkUpdate {

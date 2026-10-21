@@ -24,7 +24,9 @@
 //!
 //! The host's replay library (OF-598) rides the session too: an `open`
 //! lists the site's library programs, and the library verbs check, replay
-//! and run programs through this session's own gated verbs.
+//! and run programs through this session's own gated verbs. A proposal's
+//! replay runs on a fresh guest the host starts for it (`fresh`), never on
+//! this session's page.
 //!
 //! A person can take the browser over (CUA-001), asked by the agent's
 //! `handover` or not, to sign in or pay inside the same guest. While the
@@ -61,11 +63,13 @@
 //! engine the session runs, and a destination refusal it gives answers the
 //! navigation or act it ended, or the host's own take (`request`).
 
+mod fresh;
 mod guest;
 mod request;
 pub(crate) mod storage;
 pub(crate) mod switch;
 
+pub use fresh::FreshGuest;
 pub use guest::{BrowserGuestStarter, StartedGuest};
 
 use self::guest::EngineGuest;
@@ -169,6 +173,9 @@ pub struct BrowserSession {
     /// engine's pipe: its handler, if it gave one, and the refusal not yet
     /// delivered.
     custody: Custody,
+    /// How the host starts the fresh guest a proposal's replay runs on;
+    /// none where the host gave none, and a proposal is refused.
+    fresh: Option<Box<dyn FreshGuest>>,
 }
 
 impl BrowserSession {
@@ -220,6 +227,7 @@ impl BrowserSession {
             history: OriginHistory::default(),
             snapshots,
             custody,
+            fresh: None,
         })
     }
 
@@ -830,13 +838,10 @@ impl BrowserDriver for BrowserSession {
 
     fn library_propose(&mut self, input: ProposeInput) -> Result<ProposeOutput, BrowserError> {
         self.agent_has()?;
-        let mut output = self.with_library(|session, library, decider| {
-            crate::library::propose(session, library, decider, input)
-        })?;
-        if let Some(replay) = output.replay.as_mut() {
-            self.page_batch(replay);
-        }
-        Ok(output)
+        let mut library = self.library.take().ok_or_else(no_library)?;
+        let output = self.propose(library.as_mut(), input);
+        self.library = Some(library);
+        output
     }
 
     fn library_run(&mut self, input: LibraryRunInput) -> Result<LibraryRunOutput, BrowserError> {

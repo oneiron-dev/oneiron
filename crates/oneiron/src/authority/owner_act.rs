@@ -9,6 +9,9 @@ use std::collections::BTreeMap;
 
 use crate::entity_id::EntityId;
 
+use super::principal_standing::{
+    grant_pact_standing_lapsed_in_txn, grant_row_pact_standing_lapsed_in_txn,
+};
 use super::*;
 
 /// Whether `key` may carry an owner act for `machine`, judged on `machine`'s
@@ -245,6 +248,62 @@ pub(crate) fn grant_standing_in_txn(
     )
 }
 
+/// Where an agent act's Grant takes the shared vault's pact test (CALLS
+/// `FIX 7548 replica pact check`, accepted by the Engine 10-21 22:4x).
+#[derive(Debug, Clone, Copy)]
+enum ReplicaPactCheck {
+    /// At the LIVE edges only: [`crate::Vault::granted_act`] and every
+    /// writer's recheck ([`crate::Vault::granted_act_owner_in_txn`]). The
+    /// replica's judge of a carried act, [`grant_standing_in_txn`], reads no
+    /// pact membership, so fold, replay and seal trust keep their meaning
+    /// (fold schema 11), and a Grant row this replica lacks still trusts the
+    /// carrier.
+    LiveAdmissionOnly,
+}
+
+const GRANT_SWEEP_REPLICA_PACT_CHECK: ReplicaPactCheck = ReplicaPactCheck::LiveAdmissionOnly;
+
+/// How a Grant reader that omitted a lapsed Grant says so (CALLS `FIX 7548
+/// omission reason`, accepted by the Engine 10-21 22:4x).
+#[derive(Debug, Clone, Copy)]
+enum OmissionReason {
+    /// The typed lapse rides the reader's existing fallback, a proposal or
+    /// an ask and never a refusal, as [`PACT_STANDING_LAPSED_CODE`] on what
+    /// that fallback opens. A Grant that is merely missing says nothing, and
+    /// any later standing Grant wins over the lapse.
+    CarryTypedLapseThroughExistingFallback,
+}
+
+const GRANT_SWEEP_OMISSION_REASON: OmissionReason =
+    OmissionReason::CarryTypedLapseThroughExistingFallback;
+
+/// The code a proposal carries when the Grant that would have applied it
+/// was omitted on its lapsed pact membership alone (FIX 7548).
+const PACT_STANDING_LAPSED_CODE: &str = "pact_standing_lapsed";
+
+/// What a proposal opened because no Grant stood records of why (FIX 7548,
+/// [`GRANT_SWEEP_OMISSION_REASON`]): [`PACT_STANDING_LAPSED_CODE`] when the
+/// selection omitted a Grant on its pact alone, else nothing.
+pub(crate) fn grant_omission(no_standing: NoStanding) -> Option<&'static str> {
+    match (GRANT_SWEEP_OMISSION_REASON, no_standing) {
+        (
+            OmissionReason::CarryTypedLapseThroughExistingFallback,
+            NoStanding::PactStandingLapsed,
+        ) => Some(PACT_STANDING_LAPSED_CODE),
+        (_, NoStanding::NotStanding) => None,
+    }
+}
+
+/// Why a Grant selection found none: the lapse when a Grant that met the
+/// selection's rule fell on its pact membership alone.
+const fn no_standing(lapsed: bool) -> NoStanding {
+    if lapsed {
+        NoStanding::PactStandingLapsed
+    } else {
+        NoStanding::NotStanding
+    }
+}
+
 /// The agent's Grant does not name the act here: absent, revoked, another
 /// agent's, expired, or naming other verbs. Authority; nothing was written.
 const GRANT_NAMES_NO_ACT: &str = "no live Grant of this agent names this act";
@@ -253,7 +312,8 @@ const NO_LIVE_OWNER: &str = "this vault has no live owner whose Grant an agent's
 
 impl crate::Vault {
     /// The agent `agent`'s act `act`, when its live Grant `grant` names it now
-    /// (mesh contract §1, `ActAuthority::Agent`). The door that takes it
+    /// (mesh contract §1, `ActAuthority::Agent`) and, on a shared vault, its
+    /// pact membership still stands (FIX 7548). The door that takes it
     /// checks the Grant again in its own transaction.
     pub fn granted_act(
         &self,
@@ -263,18 +323,15 @@ impl crate::Vault {
     ) -> crate::error::Result<GrantedAct> {
         let txn = self.store.env.read_txn()?;
         let now = self.instant_in_txn(&txn)?.secs();
-        if grant_standing_in_txn(&self.store, &txn, grant, agent, act, now)? != GrantStanding::Names
-        {
-            return Err(authority_refused(GRANT_NAMES_NO_ACT));
-        }
+        self.live_grant_names_act_in_txn(&txn, grant, agent, act, now)?;
         Ok(GrantedAct { agent, grant, act })
     }
 
     /// The writer's check of `granted` for `act` in its own transaction: the
-    /// Grant still names the act for the agent, now. Returns the vault owner
-    /// whose will the agent's act carries (the existing resolver: the
-    /// embedded PERSON, or the first live Owner-role member of a shared
-    /// vault).
+    /// Grant still names the act for the agent, now, and on a shared vault
+    /// keeps its pact membership (FIX 7548). Returns the vault owner whose
+    /// will the agent's act carries (the existing resolver: the embedded
+    /// PERSON, or the first live Owner-role member of a shared vault).
     pub(crate) fn granted_act_owner_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -282,16 +339,41 @@ impl crate::Vault {
         act: OwnerActKind,
     ) -> crate::error::Result<EntityId> {
         let now = self.instant_in_txn(txn)?.secs();
-        if granted.act != act
-            || grant_standing_in_txn(&self.store, txn, granted.grant, granted.agent, act, now)?
-                != GrantStanding::Names
-        {
+        if granted.act != act {
             return Err(authority_refused(GRANT_NAMES_NO_ACT));
         }
+        self.live_grant_names_act_in_txn(txn, granted.grant, granted.agent, act, now)?;
         crate::policy_model::owners_in_txn(self, txn)?
             .first()
             .copied()
             .ok_or_else(|| authority_refused(NO_LIVE_OWNER))
+    }
+
+    /// A LIVE edge's check of the Grant `grant` for `agent`'s act `act` at
+    /// `at` ([`GRANT_SWEEP_REPLICA_PACT_CHECK`]): the replica's rule
+    /// ([`grant_standing_in_txn`]) names the act, and on a shared vault the
+    /// Grant's own pact membership still stands (FIX 7548). The lapse alone
+    /// refuses with [`PACT_STANDING_LAPSED`]; a pact check that fails to read
+    /// is no lapse.
+    fn live_grant_names_act_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant: EntityId,
+        agent: EntityId,
+        act: OwnerActKind,
+        at: u64,
+    ) -> crate::error::Result<()> {
+        if grant_standing_in_txn(&self.store, txn, grant, agent, act, at)? != GrantStanding::Names {
+            return Err(authority_refused(GRANT_NAMES_NO_ACT));
+        }
+        match GRANT_SWEEP_REPLICA_PACT_CHECK {
+            ReplicaPactCheck::LiveAdmissionOnly => {
+                if grant_row_pact_standing_lapsed_in_txn(self, txn, grant) {
+                    return Err(authority_refused(PACT_STANDING_LAPSED));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -300,14 +382,17 @@ impl crate::Vault {
     /// now (FIX 4480), when one does: a FEDERATION_GRANT row whose member is
     /// the agent, that confers now, lists [`WORLD_PRIVACY_TIGHTEN_VERB`] among
     /// its verbs, and whose worlds axis covers `world` (by name, or as all
-    /// worlds). The first such row, in id order.
+    /// worlds). The first such row, in id order, whose pact membership, on
+    /// a shared vault, still stands (FIX 7548): a lapsed one is passed over
+    /// for a later one, and with none, the lapse.
     pub(crate) fn agent_world_grant_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         agent: EntityId,
         world: EntityId,
-    ) -> crate::error::Result<Option<EntityId>> {
+    ) -> crate::error::Result<std::result::Result<EntityId, NoStanding>> {
         let now = self.instant_in_txn(txn)?.secs();
+        let mut lapsed = false;
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.store,
             txn,
@@ -315,11 +400,16 @@ impl crate::Vault {
             None,
         )? {
             let id = id?;
-            if self.grant_names_world_act_in_txn(txn, id, agent, world, now)? {
-                return Ok(Some(id));
+            if !self.grant_names_world_act_in_txn(txn, id, agent, world, now)? {
+                continue;
             }
+            if grant_row_pact_standing_lapsed_in_txn(self, txn, id) {
+                lapsed = true;
+                continue;
+            }
+            return Ok(Ok(id));
         }
-        Ok(None)
+        Ok(Err(no_standing(lapsed)))
     }
 
     /// The writer's check of `granted` for a world's settings in its own
@@ -376,17 +466,20 @@ impl crate::Vault {
     /// [`WEAVE_DIGEST_SETTINGS_GRANT_VERB`] among an explicit verb set (a
     /// grant over every verb names nothing), and is this owner's: he
     /// delegated it, or he is the vault's one live owner (CALLS: FIX 5495
-    /// grant owner). The first such row, in id order. The Coach's writer
+    /// grant owner). The first such row, in id order, whose pact membership,
+    /// on a shared vault, still stands (FIX 7548): a lapsed one is passed
+    /// over for a later one, and with none, the lapse. The Coach's writer
     /// reads it inside the transaction that applies.
     pub(crate) fn coach_weave_digest_settings_grant_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         coach: EntityId,
         owner: EntityId,
-    ) -> crate::error::Result<Option<EntityId>> {
+    ) -> crate::error::Result<std::result::Result<EntityId, NoStanding>> {
         let now = self.instant_in_txn(txn)?.secs();
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
         let sole_owner = owners.len() == 1 && owners.first() == Some(&owner);
+        let mut lapsed = false;
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.store,
             txn,
@@ -413,10 +506,14 @@ impl crate::Vault {
                 )
                 && (grant.delegated_by == Some(owner) || sole_owner)
             {
-                return Ok(Some(id));
+                if grant_pact_standing_lapsed_in_txn(self, txn, id, grant.scope, grant.member_ref) {
+                    lapsed = true;
+                    continue;
+                }
+                return Ok(Ok(id));
             }
         }
-        Ok(None)
+        Ok(Err(no_standing(lapsed)))
     }
 }
 
