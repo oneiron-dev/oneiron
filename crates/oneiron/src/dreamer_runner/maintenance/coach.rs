@@ -20,6 +20,7 @@ use crate::actor_claims::{
     SessionActorDistiller, SessionDistillDrain, drain_pending_session_actor_distills,
 };
 use crate::attempt_queue::AttemptId;
+use crate::feedback::COACH_FEEDBACK_DELIVERY_FACET;
 use crate::llm::decision::{PersonChangedAnswer, PersonThreshold};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::skill_attribution::{
@@ -150,7 +151,7 @@ pub(crate) fn room_upkeep_nudge_in_txn(
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 14] = [
+const HOST_FACETS: [&str; 15] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -165,6 +166,7 @@ const HOST_FACETS: [&str; 14] = [
     COACH_JUDGE_LABEL_RECHECKS_FACET,
     COACH_WEAVE_DIGEST_SETTINGS_FACET,
     COACH_RESEARCH_SELECT_FACET,
+    COACH_FEEDBACK_DELIVERY_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
 const MAINTENANCE_FACETS: [&str; 9] = [

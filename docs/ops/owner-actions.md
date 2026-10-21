@@ -1250,6 +1250,26 @@ that fails (no skill bound, no Coach seat, a bad answer) leaves the note open, a
 tries it again. `GET /v1/owner/feedback/triage/status?attempt=<id>` shows the sweep, its cursor,
 each note's job and result, and the holds: `skill_unbound`, and every note still open.
 
+## Send issue signatures to publishers
+
+A report about a shipped skill can reach its publisher as a content-free issue signature: the
+issue category, the skill and its version, the model stack, outcome counts and a pattern hash.
+No text and no deltas leave this way. A report's text still needs your own approved send.
+
+Bind the publisher first. `PUT /v1/owner/feedback/delivery/binding` with
+`{"publisher_ref": "<publisher>", "bound": true}` binds it to this server's `[feedback]`
+destination (`"bound": false` unbinds). Signatures go only to a publisher you bound, and only
+while "Help improve Oneiron" and the publisher dial are both on. A GitHub issue destination
+takes no signatures.
+
+The Coach sends them nightly. `POST /v1/owner/feedback/delivery/run` with `{}` runs it now and
+returns `{attempt}`. `GET /v1/owner/feedback/delivery/status?issue_ref=<id>` shows one report's
+signature, where it goes, its receipt and outcome, and what holds it: `metadata_unresolved`
+(the report's subject is not a run whose skill, version and model resolve exactly),
+`endpoint_unbound`, `destination_unsupported`, `changed_binding` (bind again; nothing is
+redirected) or `withheld` (a switch is off). A delivered signature, or one that may have landed,
+is never sent again.
+
 ## Share failure signals
 
 A participating deployment sends its publisher two things, and nothing else: the content-free

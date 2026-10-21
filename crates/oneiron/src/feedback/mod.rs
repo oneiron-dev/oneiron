@@ -157,9 +157,15 @@ pub use self::redaction::{
     apply_recognised_spans,
 };
 pub use self::report::{
-    IssueCategory, REPORT_VERB, ReportDisclosure, ReportDisclosureChoice, ReportIssue, ReportKind,
-    ReportReceipt, ReportRequest, ReportReview, ReportRoute, ReportRoutedPayload, ReportSignature,
-    ReportStatus,
+    COACH_FEEDBACK_DELIVERY_FACET, IssueCategory, REPORT_SIGNATURE_LANE, REPORT_SIGNATURE_SCHEMA,
+    REPORT_SIGNATURE_VERB, REPORT_VERB, ReportDeliveryHold, ReportDeliveryKey,
+    ReportDeliveryOutcome, ReportDeliveryPass, ReportDeliveryRecord, ReportDeliveryRun,
+    ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest, ReportDisclosure,
+    ReportDisclosureChoice, ReportFrozenSend, ReportFrozenSignature, ReportIssue, ReportKind,
+    ReportPublisherBinding, ReportPublisherBindingRequest, ReportPublisherEndpoint,
+    ReportPublisherMetadata, ReportReceipt, ReportRequest, ReportReview, ReportRoute,
+    ReportRoutedPayload, ReportSignature, ReportSignatureTransport,
+    ReportSignatureTransportRequest, ReportStatus,
 };
 pub use self::triage::{
     COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET, FEEDBACK_TRIAGE_FINDING_PREDICATE,
