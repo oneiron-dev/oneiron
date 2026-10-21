@@ -1297,6 +1297,24 @@
       "section": true
     },
     {
+      "name": "tasks.redo",
+      "description": "Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written.",
+      "input": "crate::task_verb::TaskRedo",
+      "output": "crate::task_verb::TaskCallReceipt",
+      "mcp_served": "[input.task_ref]",
+      "call": "memory.tasks_redo(input)?",
+      "scope": "Write",
+      "task_decisions": true,
+      "proposes": true,
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "task_ref"
+        ]
+      },
+      "section": true
+    },
+    {
       "name": "vault.commit_message",
       "description": "Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes.",
       "input": "crate::memory::CommitMessageRequest",
@@ -6755,6 +6773,39 @@
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.archive.delete.preview",
+      "description": "Previews explicit archived records under the caller's delete authority.",
+      "input": "crate::memory::ArchiveDeletePreviewRequest",
+      "output": "crate::memory::ArchiveDeletePreviewView",
+      "call": "crate::memory::preview_archive_delete_wire(memory, &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.archive.delete.confirm",
+      "description": "Deletes explicit archived records under the caller's current delete authority and returns each receipt.",
+      "input": "crate::memory::ArchiveDeleteConfirmRequest",
+      "output": "crate::memory::ArchiveDeleteBatchResult",
+      "call": "crate::memory::confirm_archive_delete_wire(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
       },
       "section": false,
       "openapi": true
@@ -14339,6 +14390,28 @@
       "call": "oneiron_browser::DesktopAnswer::of(driver.handover(input)?)",
       "scope": "Write",
       "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.dreamer.thing.extract",
+      "description": "Runs one lent slice's extraction on the parent's own wake and stages its draft, answering one engine-issued proposal ref per drafted candidate.",
+      "input": "crate::dreamer_consolidation::ThingExtractInput",
+      "output": "crate::dreamer_consolidation::ThingExtractOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.dreamer.thing.extract\", &input)?",
+      "scope": "Write",
+      "context": "scoped_child",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.dreamer.thing.decide",
+      "description": "Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt.",
+      "input": "crate::dreamer_consolidation::ThingDecideInput",
+      "output": "crate::dreamer_consolidation::ThingDecideOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.dreamer.thing.decide\", &input)?",
+      "scope": "Write",
+      "context": "scoped_child",
       "mcp": "none",
       "section": false
     },

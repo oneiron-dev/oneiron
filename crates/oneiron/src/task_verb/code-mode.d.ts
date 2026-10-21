@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1182 code-mode rows (1142 host rows, 40 run rows), 4006 declarations.
-// Replies: 1062 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1187 code-mode rows (1147 host rows, 40 run rows), 4025 declarations.
+// Replies: 1067 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -443,6 +443,7 @@ declare namespace Sdk {
   type TaskUpdateReceipt = { task_ref: EntityId; acked: boolean; report?: TaskCallReceipt | null };
   type ReaderReportReceipt = { task: EntityId; ref: string; replay: boolean };
   type TaskAccept = { task_ref: EntityId; intent_key: string };
+  type TaskRedo = { task_ref: EntityId; intent_key: string };
   type WitnessAuthor = "user" | "companion" | "system";
   type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] };
   type QuoteSpan = { message: EntityId; start: number; end: number };
@@ -1670,6 +1671,19 @@ declare namespace Sdk {
   type CleanupKind = "claimless_extraction_person" | "empty_summary" | "completed_task" | "completed_attempt" | "retained_note";
   type CleanupCandidate = { entity: EntityId; kind: CleanupKind };
   type CleanupRunView = { attempt: string; posture: CleanupPosture; candidates: CleanupCandidate[]; proposal?: EntityId | null; archived: EntityId[]; digest?: EntityId | null };
+  type ArchiveDeletePreviewRequest = { targets: string[] };
+  type ArchiveDeleteExpectation = { record_hash: string; archive_marker: string };
+  type ArchiveDeletePreviewRow = { record_bytes: number; expected: ArchiveDeleteExpectation };
+  type ArchiveDeleteError = { code: string; message: string; suggestions: string[] };
+  type ArchiveDeletePreviewOutcome = (ArchiveDeletePreviewRow & { outcome: "previewed" }) | { outcome: "refused"; error: ArchiveDeleteError };
+  type ArchiveDeletePreviewEntry = { entity: string; result: ArchiveDeletePreviewOutcome };
+  type ArchiveDeletePreviewView = { entries: ArchiveDeletePreviewEntry[]; record_bytes: number };
+  type ArchiveDeleteItem = { entity: string; expected?: ArchiveDeleteExpectation | null };
+  type ArchiveDeleteConfirmRequest = { items: ArchiveDeleteItem[] };
+  type ArchiveDeleteReceiptView = { existed: boolean; reason: string; receipt_ref?: string | null; role: string; grant_ref?: string | null };
+  type ArchiveDeleteConfirmOutcome = (ArchiveDeleteReceiptView & { outcome: "deleted" }) | { outcome: "refused"; error: ArchiveDeleteError };
+  type ArchiveDeleteConfirmEntry = { entity: string; result: ArchiveDeleteConfirmOutcome };
+  type ArchiveDeleteBatchResult = { entries: ArchiveDeleteConfirmEntry[] };
   type UsageRepairListRequest = Record<string, never>;
   type UndecodableUsageReason = "stored_event_decode_failed";
   type UndecodableUsageRow = { rowRef: string; byteLength: number; hash: string; decodeReason: UndecodableUsageReason };
@@ -3177,6 +3191,11 @@ declare namespace Sdk {
   type WindowInput = { window: string };
   type HandoverInput = { reason: string };
   type HandoverOutput = { reason: string; asked_at_ms: number };
+  type ThingExtractInput = { input: string };
+  type ThingProposalRef = { child_run: string; output_path: string; candidate_id: string };
+  type ThingExtractOutput = { input: string; state: string; proposals: ThingProposalRef[]; persons: number; fallback: boolean };
+  type ThingDecideInput = { pack: string };
+  type ThingDecideOutput = { pack: string; state: string; questions: number; missing: string[] };
   type ScopedCommitRequest = { claims: ScopedClaimInput[] };
   type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
   type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string };
@@ -3665,7 +3684,7 @@ declare namespace Sdk {
   type SievePolicyRequest = Record<string, never>;
   type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: number; max_text_bytes_per_pass: number; date_interest: number; name_interest: number; absolute_date_confidence: number; relative_date_confidence: number; vague_date_confidence: number; name_confidence: number; initial_name_confidence: number; katakana_name_confidence: number; uncertain_low: number; uncertain_high: number };
   type SievePolicySetRequest = { policy: SievePolicy };
-  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; audit_window_instruction: string; follower_enabled: boolean; follower_instruction: string; follower_keyframe_instruction: string; follower_sizing_bytes_per_token: number };
+  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; audit_window_instruction: string; follower_enabled: boolean; follower_instruction: string; follower_keyframe_instruction: string; follower_sizing_bytes_per_token: number; thing_child_code_mode: boolean; thing_child_instruction: string; thing_child_input_window_divisor: number };
   type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy };
   type SieveLeaseRequest = { budget_id: string };
   type SieveLeaseCounter = { total_units: number; remaining_units: number; reserved_units: number; updated_at: number };
@@ -4358,6 +4377,14 @@ declare namespace self {
     /** Zooms into a rectangle of a held image. */
     zoom(input: Sdk.ZoomInput): Promise<Sdk.DesktopAnswer<Sdk.ImageOutput> | StoredResult>;
   };
+  const dreamer: {
+    thing: {
+      /** Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt. */
+      decide(input: Sdk.ThingDecideInput): Promise<Sdk.ThingDecideOutput | StoredResult>;
+      /** Runs one lent slice's extraction on the parent's own wake and stages its draft, answering one engine-issued proposal ref per drafted candidate. */
+      extract(input: Sdk.ThingExtractInput): Promise<Sdk.ThingExtractOutput | StoredResult>;
+    };
+  };
   const focus: {
     /** Re-renders the run's context board as one frame, at the frame epoch the caller last saw. */
     refresh(input: Sdk.BoardRefreshRequest): Promise<Sdk.BoardVerbOutput | StoredResult>;
@@ -4501,6 +4528,8 @@ declare const tasks: {
   create(input: Sdk.TaskCreateRequest): Promise<Sdk.TaskCreateReceipt | StoredResult>;
   /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
   outcomes(input: Sdk.TaskAskHandle): Promise<Sdk.CalibrationPair[] | StoredResult>;
+  /** Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written. */
+  redo(input: Sdk.TaskRedo): Promise<Sdk.TaskCallReceipt | StoredResult>;
   refuse(input: Sdk.TaskRefuseInput): Promise<Sdk.TaskRefuseOutput | StoredResult>;
   /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries. */
   update(input: Sdk.TaskUpdateRequest & { resultRef: NonNullable<Sdk.TaskUpdateRequest["resultRef"]> }): Promise<Sdk.ReaderReportReceipt | StoredResult>;
@@ -4571,6 +4600,14 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Appends one authored delta to this actor's generation-bound stream through its existing write gate. */
   append_to_stream(input: Sdk.AppendToStreamRequest): Promise<null | StoredResult>;
+  archive: {
+    delete: {
+      /** Deletes explicit archived records under the caller's current delete authority and returns each receipt. */
+      confirm(input: Sdk.ArchiveDeleteConfirmRequest): Promise<Sdk.ArchiveDeleteBatchResult | StoredResult>;
+      /** Previews explicit archived records under the caller's delete authority. */
+      preview(input: Sdk.ArchiveDeletePreviewRequest): Promise<Sdk.ArchiveDeletePreviewView | StoredResult>;
+    };
+  };
   artifacts: {
     /** Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard. */
     admit(input: Sdk.ArtifactAdmitSubmit): Promise<Sdk.ArtifactAskOutcome | StoredResult>;

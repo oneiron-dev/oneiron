@@ -29,8 +29,9 @@ pub(super) use self::field_validators::{
     validate_kind, validate_manifest_entry, validate_optional_cancel_status,
     validate_optional_dedupe, validate_optional_dedupe_actor_ref, validate_optional_failure_reason,
     validate_optional_intervention_note, validate_optional_result_ref,
-    validate_optional_resume_point, validate_optional_run_id, validate_reserve_percent,
-    validate_result_rebind, validate_result_ref, validate_resume_point, validate_transition_lease,
+    validate_optional_resume_point, validate_optional_run_id, validate_planned_binding,
+    validate_reserve_percent, validate_result_rebind, validate_result_ref, validate_resume_point,
+    validate_transition_lease,
 };
 
 // Names the sibling test suite reaches through `super::validate::` in

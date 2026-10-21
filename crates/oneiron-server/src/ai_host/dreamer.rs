@@ -42,6 +42,7 @@ use oneiron_driver::{
 
 use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extraction_egress};
 
+mod claim_authoring;
 mod compaction_check;
 mod free_time;
 mod run_log;
@@ -605,6 +606,17 @@ impl ObservedFactory {
             .get(DREAMER_EXTRACTION_ROLE)
             .cloned()
             .ok_or_else(|| oneiron::Error::InvalidConfig("dreamer extraction unrouted".into()))?;
+        // A thing's branch runs as a scoped code-mode agent on this server's
+        // code host, its own generation on the extraction route (FIX 7508).
+        let thing_route = routes
+            .iter()
+            .find(|(role, _)| *role == DREAMER_EXTRACTION_ROLE)
+            .map(|(_, route)| super::dreamer_thing::ThingRoute {
+                ladder: Arc::clone(&route.ladder),
+                model: route.model.clone(),
+                locality: route.locality,
+                window: self.windows.get(&route.model).copied(),
+            });
         let selected = routes.iter().map(|(_, route)| route.model.clone());
         let host = self.decisions.get();
         let sink = AttemptPromotionSink::new(Arc::clone(&self.vault))
@@ -644,6 +656,16 @@ impl ObservedFactory {
                     Arc::clone(&self.runtime),
                     self.serve.clone(),
                     Arc::clone(&self.question_timer),
+                ),
+            ));
+        }
+        if let Some(route) = thing_route {
+            factory = factory.with_thing_child_host(Arc::new(
+                super::dreamer_thing::ServedThingChildHost::new(
+                    Arc::clone(&self.vault),
+                    Arc::clone(&self.runtime),
+                    Arc::clone(&self.question_timer),
+                    route,
                 ),
             ));
         }
@@ -825,6 +847,15 @@ impl PassExecutorFactory for ObservedFactory {
                 guard.read().limit_units,
             ),
         )))
+    }
+
+    /// The claim-authoring campaign the pass's consolidation admissions
+    /// re-read (FIX 897), under the binding policy.
+    fn claim_authoring_selector(
+        &self,
+        vault: &Vault,
+    ) -> oneiron::Result<oneiron::dreamer_wake::ClaimAuthoringSelection> {
+        Ok(claim_authoring::claim_authoring_selection(vault))
     }
 
     /// The host's gate, asked as each pass starts and held until it ends. A

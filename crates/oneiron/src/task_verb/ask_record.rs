@@ -91,6 +91,22 @@ impl AskGroup {
             && self.requested.task_ref.is_none()
             && self.governed_task.is_none()
     }
+
+    /// The rows a read of the group answers from (DEC-0005): each member
+    /// TASK, the TASK its class came from, its question and its context.
+    pub(crate) fn answer_rows(&self) -> Vec<EntityId> {
+        let what = &self.effective.what;
+        self.members
+            .iter()
+            .filter_map(|member| EntityId::from_hex(&member.task).ok())
+            .chain(self.class_tasks())
+            .chain(
+                std::iter::once(what.reference)
+                    .chain(what.context_refs.iter().copied())
+                    .map(super::ConsultPayloadRef::entity_ref),
+            )
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,18 +369,7 @@ impl crate::memory::Memory<'_> {
         let Some(group) = read_group(self.vault(), txn, id)? else {
             return Ok(None);
         };
-        let what = &group.effective.what;
-        let rows = group
-            .members
-            .iter()
-            .filter_map(|member| EntityId::from_hex(&member.task).ok())
-            .chain(group.class_tasks())
-            .chain(
-                std::iter::once(what.reference)
-                    .chain(what.context_refs.iter().copied())
-                    .map(super::ConsultPayloadRef::entity_ref),
-            )
-            .collect::<Vec<_>>();
+        let rows = group.answer_rows();
         self.produced_from(rows.iter().copied());
         let store = &self.vault().store;
         let kept = crate::settings::device_local_worlds_for(self.vault(), txn, self.destination())?;

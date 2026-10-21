@@ -437,6 +437,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAccept>(),
             ),
             (
+                "tasks.redo",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskRedo>(),
+            ),
+            (
                 "vault.commit_message",
                 crate::code_run::vault_read::request_schema::<crate::memory::CommitMessageRequest>(
                 ),
@@ -2339,6 +2343,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.cleanup.run",
                 crate::code_run::vault_read::request_schema::<
                     crate::vault_cleanup::surface::CleanupRunRequest,
+                >(),
+            ),
+            (
+                "vault.archive.delete.preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ArchiveDeletePreviewRequest,
+                >(),
+            ),
+            (
+                "vault.archive.delete.confirm",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ArchiveDeleteConfirmRequest,
                 >(),
             ),
             (
@@ -4948,6 +4964,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<oneiron_browser::HandoverInput>(),
             ),
             (
+                "self.dreamer.thing.extract",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_consolidation::ThingExtractInput,
+                >(),
+            ),
+            (
+                "self.dreamer.thing.decide",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_consolidation::ThingDecideInput,
+                >(),
+            ),
+            (
                 "vault.commit",
                 crate::code_run::vault_read::request_schema::<crate::memory::ScopedCommitRequest>(),
             ),
@@ -6836,6 +6864,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.research.reserve_exploration",
     "vault.research.budget",
     "vault.cleanup.run",
+    "vault.archive.delete.preview",
+    "vault.archive.delete.confirm",
     "vault.usage.events.undecodable",
     "vault.usage.events.remove_undecodable",
     "vault.entities.mention",
@@ -8251,6 +8281,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
             crate::vault_cleanup::surface::CleanupRunView,
         >(),
+        "vault.archive.delete.preview" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ArchiveDeletePreviewView>()
+        }
+        "vault.archive.delete.confirm" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ArchiveDeleteBatchResult>()
+        }
         "vault.usage.events.undecodable" => crate::code_run::vault_read::request_schema::<
             crate::memory::usage_repair::UndecodableUsageList,
         >(),
@@ -10288,6 +10324,13 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/task_ref")?.clone(),
             );
             &["spec", "task_ref"]
+        }
+        "tasks.redo" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "vault.commit_message" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -12766,6 +12809,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.cleanup.run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.archive.delete.preview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.archive.delete.confirm" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -17892,6 +17949,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.accept" => {
             let _input: crate::task_verb::TaskAccept = decode(value.clone())?;
         }
+        "tasks.redo" => {
+            let _input: crate::task_verb::TaskRedo = decode(value.clone())?;
+        }
         "vault.commit_message" => {
             let _input: crate::memory::CommitMessageRequest = decode(value.clone())?;
         }
@@ -19053,6 +19113,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.cleanup.run" => {
             let _input: crate::vault_cleanup::surface::CleanupRunRequest = decode(value.clone())?;
+        }
+        "vault.archive.delete.preview" => {
+            let _input: crate::memory::ArchiveDeletePreviewRequest = decode(value.clone())?;
+        }
+        "vault.archive.delete.confirm" => {
+            let _input: crate::memory::ArchiveDeleteConfirmRequest = decode(value.clone())?;
         }
         "vault.usage.events.undecodable" => {
             let _input: crate::memory::usage_repair::UsageRepairListRequest =
@@ -20604,6 +20670,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.desktop.handover" => {
             let _input: oneiron_browser::HandoverInput = decode(value.clone())?;
         }
+        "self.dreamer.thing.extract" => {
+            let _input: crate::dreamer_consolidation::ThingExtractInput = decode(value.clone())?;
+        }
+        "self.dreamer.thing.decide" => {
+            let _input: crate::dreamer_consolidation::ThingDecideInput = decode(value.clone())?;
+        }
         "vault.commit" => {
             let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
@@ -21725,6 +21797,7 @@ pub fn invoke(
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "tasks.accept" => encode(tasks_accept(memory, decode(value)?)?),
+        "tasks.redo" => encode(tasks_redo(memory, decode(value)?)?),
         "vault.commit_message" => encode(vault_commit_message(memory, decode(value)?)?),
         "vault.begin_message_stream" => encode(vault_begin_message_stream(memory, decode(value)?)?),
         "vault.append_to_stream" => encode(vault_append_to_stream(memory, decode(value)?)?),
@@ -22446,6 +22519,12 @@ pub fn invoke(
             encode(vault_roots_requests_cancel(memory, decode(value)?)?)
         }
         "vault.cleanup.run" => encode(vault_cleanup_run(memory, decode(value)?)?),
+        "vault.archive.delete.preview" => {
+            encode(vault_archive_delete_preview(memory, decode(value)?)?)
+        }
+        "vault.archive.delete.confirm" => {
+            encode(vault_archive_delete_confirm(memory, decode(value)?)?)
+        }
         "vault.usage.events.undecodable" => {
             encode(vault_usage_events_undecodable(memory, decode(value)?)?)
         }
@@ -24649,6 +24728,12 @@ pub fn tasks_accept(
         &["/task_ref"],
     )?;
     memory.tasks_accept(input)
+}
+pub fn tasks_redo(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskRedo,
+) -> MemoryResult<crate::task_verb::TaskCallReceipt> {
+    memory.tasks_redo(input)
 }
 pub fn vault_commit_message(
     memory: &Memory<'_>,
@@ -27597,6 +27682,18 @@ pub fn vault_cleanup_run(
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_archive_delete_preview(
+    memory: &Memory<'_>,
+    input: crate::memory::ArchiveDeletePreviewRequest,
+) -> MemoryResult<crate::memory::ArchiveDeletePreviewView> {
+    crate::memory::preview_archive_delete_wire(memory, &input)
+}
+pub fn vault_archive_delete_confirm(
+    memory: &Memory<'_>,
+    input: crate::memory::ArchiveDeleteConfirmRequest,
+) -> MemoryResult<crate::memory::ArchiveDeleteBatchResult> {
+    crate::memory::confirm_archive_delete_wire(memory, &input)
 }
 pub fn vault_usage_events_undecodable(
     memory: &Memory<'_>,
@@ -31347,6 +31444,18 @@ pub fn self_desktop_handover(
     oneiron_browser::BrowserError,
 > {
     Ok(oneiron_browser::DesktopAnswer::of(driver.handover(input)?))
+}
+pub fn self_dreamer_thing_extract(
+    memory: &Memory<'_>,
+    input: crate::dreamer_consolidation::ThingExtractInput,
+) -> MemoryResult<crate::dreamer_consolidation::ThingExtractOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.dreamer.thing.extract", &input)
+}
+pub fn self_dreamer_thing_decide(
+    memory: &Memory<'_>,
+    input: crate::dreamer_consolidation::ThingDecideInput,
+) -> MemoryResult<crate::dreamer_consolidation::ThingDecideOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.dreamer.thing.decide", &input)
 }
 pub fn vault_commit(
     memory: &Memory<'_>,
