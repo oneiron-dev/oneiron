@@ -83,7 +83,34 @@ impl Vault {
         actor: WriteActor,
         facets: &ScopeAxis<ScopeId>,
     ) -> Result<()> {
-        let narrowed = !matches!(facets, ScopeAxis::All);
+        self.set_session_mode_in(session, mode, facet, actor, facets, None)
+    }
+    /// [`Self::set_session_mode_within`] by a writer that holds `proof` (FIX
+    /// 8218): in the same write transaction the credential must still be
+    /// live, and the session must sit inside its records and its worlds;
+    /// any other session answers as a missing one. Its facets stay
+    /// `facets`, as the door names them.
+    pub fn set_session_mode_bound(
+        &self,
+        session: EntityId,
+        mode: SessionMode,
+        facet: Option<EntityId>,
+        actor: WriteActor,
+        facets: &ScopeAxis<ScopeId>,
+        proof: &crate::authority::VerifiedSlip,
+    ) -> Result<()> {
+        self.set_session_mode_in(session, mode, facet, actor, facets, Some(proof))
+    }
+    fn set_session_mode_in(
+        &self,
+        session: EntityId,
+        mode: SessionMode,
+        facet: Option<EntityId>,
+        actor: WriteActor,
+        facets: &ScopeAxis<ScopeId>,
+        proof: Option<&crate::authority::VerifiedSlip>,
+    ) -> Result<()> {
+        let narrowed = !matches!(facets, ScopeAxis::All) || proof.is_some();
         self.with_write_txn_grouped(|txn| {
             authorize(self, txn, actor)?;
             let raw = match require_kind(self, txn, session, ENTITY_TYPE_SESSION) {
@@ -92,6 +119,11 @@ impl Vault {
                 }
                 raw => raw?,
             };
+            if let Some(proof) = proof
+                && !session_inside_credential_in(self, txn, session, proof)?
+            {
+                return Err(Error::EntityNotFound);
+            }
             if narrowed
                 && !session_facet_of(&raw)
                     .ok()
@@ -210,4 +242,21 @@ fn session_facet_of(raw: &[u8]) -> Result<Option<EntityId>> {
                 .ok_or(invalid("session facet"))
         })
         .transpose()
+}
+
+/// Whether the session `session` sits inside `proof`'s bounds in `txn` (FIX
+/// 8218): the credential is live, names the session among its records when
+/// it names any, and grants the base world a session sits in when it
+/// narrows worlds.
+fn session_inside_credential_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    session: EntityId,
+    proof: &crate::authority::VerifiedSlip,
+) -> Result<bool> {
+    let records = &proof.claims().records;
+    let base = ScopeId(crate::claim::base_world_id());
+    Ok(vault.capability_slip_is_live_in_txn(txn, proof)?
+        && (records.is_empty() || records.contains(&session.to_hex()))
+        && proof.scope().worlds.contains(&base))
 }

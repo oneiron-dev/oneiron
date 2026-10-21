@@ -34,8 +34,9 @@ const SECRET_TEARDOWN_RETRIES: usize = 64;
 /// Rows one cache-eviction page reads.
 const PPR_CACHE_PAGE: usize = 512;
 
-/// Draft claims one signing page reads, well inside the signing doors' batch
-/// bound of 100 documents.
+/// Draft claims one signing page reads. The signing doors sweep every
+/// document handed; past the `[limits] esign_sweep_documents` row they ask
+/// and go on, so this page only paces the walk.
 const ESIGN_PAGE: usize = 32;
 
 /// What one sweep run did.

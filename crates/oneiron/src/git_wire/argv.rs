@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use super::config::{GIT_WIRE_MAX_ARG_BYTES, GIT_WIRE_MAX_REF_BYTES};
 use super::failure::invalid;
 use super::objects::encode_mktree_entries;
+use super::retained_object::{GitRetainedObject, RetainedGitIo};
 use super::{
     GitCommitRequest, GitOid, GitRefName, GitRefPublication, GitTreeEntry, GitWireOperation,
     GitWireResult,
@@ -24,6 +25,9 @@ pub(super) struct FrozenGitArgv {
     args: Vec<OsString>,
     stdin: Option<Vec<u8>>,
     worktree: Option<(PathBuf, GitOid)>,
+    /// Spooled stdin and stdout (FIX 7608 slice 2b-i); none for a captured
+    /// call.
+    retained: RetainedGitIo,
 }
 
 impl FrozenGitArgv {
@@ -33,6 +37,7 @@ impl FrozenGitArgv {
             args: tail,
             stdin: None,
             worktree: None,
+            retained: RetainedGitIo::default(),
         }
     }
 
@@ -262,6 +267,32 @@ impl FrozenGitArgv {
         Ok(Self::frozen(GitWireOperation::WriteCommit, tail).with_stdin(payload))
     }
 
+    /// `hash-object -t <type> -w --literally --stdin` with one retained
+    /// object streamed from its spool (FIX 7608 slice 2b-i), for each of
+    /// the four types. `--literally` keeps a stored object's bytes exact
+    /// however old its format: the copy is the object, not a reparse.
+    pub(super) fn write_retained(object: &GitRetainedObject) -> Self {
+        let kind = object.kind();
+        let tail = os_args(&[
+            "hash-object",
+            "-t",
+            kind.as_str(),
+            "-w",
+            "--literally",
+            "--stdin",
+        ]);
+        let mut argv = Self::frozen(kind.write_operation(), tail);
+        argv.retained = RetainedGitIo::default().with_stdin(object.spool().clone());
+        argv
+    }
+
+    /// The same call with its stdout spooled whole instead of captured
+    /// (FIX 7608 slice 2b-i): no output or wall-clock bound.
+    pub(super) fn with_spooled_stdout(mut self) -> Self {
+        self.retained = self.retained.with_spooled_stdout();
+        self
+    }
+
     /// `update-ref --stdin --no-deref`: the one transactional publication.
     /// git applies the batch atomically, so no partial multi-ref state exists.
     pub(super) fn publish_refs(publications: &[GitRefPublication]) -> Self {
@@ -414,6 +445,10 @@ impl FrozenGitArgv {
 
     pub(super) fn stdin(&self) -> Option<&[u8]> {
         self.stdin.as_deref()
+    }
+
+    pub(super) const fn retained(&self) -> &RetainedGitIo {
+        &self.retained
     }
 
     pub(super) fn worktree_target(&self) -> Option<(&Path, &GitOid)> {

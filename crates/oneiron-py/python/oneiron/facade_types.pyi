@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1138 facade rows, 3979 declarations.
+Census: 1138 facade rows, 3981 declarations.
 Inputs: 1072 of 1138 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1024 of 1138 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
@@ -435,6 +435,7 @@ class AgentHealthPadReadRead(TypedDict):
     state: Literal["read"]
     read: NotRequired[EntityId | None]
     pads: int
+    pad_ids: list[EntityId]
 class AgentHealthPadReadPendingReview(TypedDict):
     state: Literal["pending_review"]
     request: EntityId
@@ -548,6 +549,7 @@ class AgentHealthCard(TypedDict):
     signal: AgentHealthSignal
     task: NotRequired[EntityId | None]
     attempt: NotRequired[EntityId | None]
+    witnessed_attempts: list[EntityId]
     tone: AgentHealthTone
     tier: int
     confidence: AgentHealthConfidence
@@ -7133,6 +7135,8 @@ class RecordEraseSweep(TypedDict):
     sweep_queued_at: NotRequired[int | None]
     deadline_at: NotRequired[int | None]
     sweep_complete_at: NotRequired[int | None]
+    erase_complete_at: NotRequired[int | None]
+    final_ref: NotRequired[str | None]
     custody: NotRequired[RecordEraseCustody | None]
 class ResearchChildWire(TypedDict):
     root: EntityId
@@ -8456,7 +8460,7 @@ class LegalHoldEvent(TypedDict):
     request_id: NotRequired[str | None]
 class LegalHoldLiftAndEraseRequest(TypedDict):
     records: list[EntityId]
-ErasePendingReason = Literal["historical_sweep"]
+ErasePendingReason = Literal["historical_sweep", "custody_retirement"]
 LegalHoldBoundKind = Literal["law"]
 class LegalHoldBound(TypedDict):
     kind: LegalHoldBoundKind
@@ -19083,6 +19087,25 @@ class ScopeSummaryResult(TypedDict):
     summary: str
     claim: NotRequired[str | None]
     record: NotRequired[str | None]
+class ArcPendingStatusArcLowerPending(TypedDict):
+    cause: Literal["arc_lower_pending"]
+    session: str
+class ArcPendingStatusArcSourceUnavailable(TypedDict):
+    cause: Literal["arc_source_unavailable"]
+    handle: str
+class ArcPendingStatusArcCompositionPending(TypedDict):
+    cause: Literal["arc_composition_pending"]
+    work_id: str
+    parts_done: int
+    parts_owed: int
+class ArcPendingStatusArcWindowTooSmall(TypedDict):
+    cause: Literal["arc_window_too_small"]
+    window: int
+    frame_tokens: int
+ArcPendingStatus = ArcPendingStatusArcLowerPending | ArcPendingStatusArcSourceUnavailable | ArcPendingStatusArcCompositionPending | ArcPendingStatusArcWindowTooSmall
+class SummaryStale(TypedDict):
+    reason: Literal["note_source_edited"]
+    notes: list[str]
 class ScopeSummaryStatus(TypedDict):
     attempt: str
     requester: str
@@ -19092,6 +19115,8 @@ class ScopeSummaryStatus(TypedDict):
     failure: NotRequired[str | None]
     retry_at: NotRequired[int | None]
     updated_at: int
+    arc_pending: NotRequired[ArcPendingStatus | None]
+    stale: NotRequired[SummaryStale | None]
 class SummaryKeepRequest(TypedDict):
     summary_ref: str
     frontier: list[int]

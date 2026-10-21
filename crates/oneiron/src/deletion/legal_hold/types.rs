@@ -193,7 +193,9 @@ pub enum LegalHoldReason {
     OwnerConfirmed,
     /// The owner's erase waits on a host order: completion pending.
     CompletionPending,
-    /// The ARCH-0038 receipt has both completion times.
+    /// The ARCH-0038 receipt's signed final row is appended: its hard purge,
+    /// its historical sweep and every custody retirement it bound finished
+    /// (FIX 5844).
     ReceiptCompleted,
     /// The authority's release notice.
     AuthorityReleased,
@@ -257,8 +259,9 @@ pub struct HostOrderHold {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiftAndEraseStatus {
     /// The hold is lifted and the record erased: its deletion receipt is
-    /// complete, hard purge and historical sweep both (C4). No receipt when
-    /// nothing was there to erase.
+    /// complete, its signed final row appended once the hard purge, the
+    /// historical sweep and every custody retirement the erase bound had
+    /// finished (C4, FIX 5844). No receipt when nothing was there to erase.
     Erased { receipt_ref: Option<String> },
     /// "Erase confirmed; completion pending" ([`ERASE_COMPLETION_PENDING`]):
     /// the erase ran and `reason` is still outstanding on its receipt, or,
@@ -278,9 +281,12 @@ pub enum LiftAndEraseStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErasePendingReason {
-    /// Its historical sweep is queued: the receipt has no
-    /// `sweep_complete_at` yet.
+    /// Its historical sweep is queued: the receipt has no linked sweep row
+    /// yet.
     HistoricalSweep,
+    /// Its sweep finished or none was queued, and a custody retirement it
+    /// bound has not finished on every required target yet (FIX 5844).
+    CustodyRetirement,
 }
 
 /// The owner's one confirm's result.
