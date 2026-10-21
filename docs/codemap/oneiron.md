@@ -4908,11 +4908,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_segment.rs` | src | s | 1 fn · 7 const · 1 crate-vis | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
 | `src/wave_orchestration.rs` | src | m | 8 struct · 2 enum · 2 trait · 18 fn · 3 const · 1 re-export | BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveApplyOutcome, WaveOrchestrator, WavePlan, WavePlanReceipt, WavePlanRequest +4 | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
 | `src/wave_orchestration/tests.rs` | test | s | — | — | Wave-orchestration tests (ONE-1905) |
-| `src/web_fetch.rs` | src | L | 13 struct · 6 enum · 2 trait · 22 fn · 2 type · 2 const · 2 re-export | CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope, FetchResult, FirecrawlRenderer +13 | OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a… |
+| `src/web_fetch.rs` | src | m | 13 struct · 6 enum · 2 trait · 22 fn · 2 type · 2 const · 2 re-export | CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope, FetchResult, FirecrawlRenderer +13 | OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a… |
 | `src/web_fetch/door.rs` | src | s | 2 struct · 1 fn | WebCrawlRequest, WebFetchRequest | Typed inputs for the two acquisition doors |
-| `src/web_fetch/egress.rs` | src | s | 2 struct · 3 fn · 1 const · 2 crate-vis | HostedEgressGuard, HostedInfrastructureRefusal | The managed (hosted) node's web-fetch egress guard (SCAN C447) |
+| `src/web_fetch/egress.rs` | src | s | 2 struct · 5 fn · 1 const · 4 crate-vis | HostedEgressGuard, HostedInfrastructureRefusal | The managed (hosted) node's web-fetch egress guard (SCAN C447) |
 | `src/web_fetch/ladder.rs` | src | m | 6 fn · 13 crate-vis | — | Private ladder-driver internals: the rung-slot requirement and check, the per-rung and per-page… |
 | `src/web_fetch/render.rs` | src | m | 16 crate-vis | — | Private rendering support for the OF-444 ladder: URL parsing, normalization, validation, and credential… |
+| `src/web_fetch/rungs.rs` | src | s | — | — | The built-in rungs' [`Renderer`] impls |
 | `src/web_fetch/tests.rs` | test | XL | — | — | — |
 | `src/work_line.rs` | src | m | 4 struct · 2 trait · 15 fn · 2 const | LineCrossing, LineObserver, LinePermit, TaskWorkTurn, WaitTimedOut, WorkLine | A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work… |
 | `src/workspace_roster/codec.rs` | src | L | 45 crate-vis | — | Roster reads, journal records, and canonical onboarding encodings |
