@@ -24,6 +24,7 @@ use oneiron::embed::{
 };
 use oneiron::error::StoreError;
 use oneiron::federation::derivation::DerivationScope;
+use oneiron::llm::returned_model_wire_id;
 use serde_json::value::RawValue;
 
 use super::brokered::Reach;
@@ -156,6 +157,14 @@ struct ModelRow {
     transform: Option<String>,
     #[serde(default)]
     profile: Option<serde_json::Value>,
+}
+
+/// Whether a listed `/models` row is the configured `model_key`: its id read
+/// through [`returned_model_wire_id`], so a house llama.cpp launch alias
+/// (FIX 7895) lists the key its route was configured with. Any other id is
+/// compared as it came.
+fn lists_model_key(row: &ModelRow, model_key: &str) -> bool {
+    returned_model_wire_id(&row.id, model_key) == model_key
 }
 
 /// What the vault admitted for a remote.
@@ -574,7 +583,8 @@ impl HttpEmbedder {
     fn listing_of(&self, listed: Option<&ModelsResponse>) -> Listing {
         let row = listed.and_then(|listed| {
             listed.data.iter().find(|row| {
-                row.id == self.model_key && row.oneiron_wire == Some(super::serve::ONEIRON_WIRE)
+                lists_model_key(row, &self.model_key)
+                    && row.oneiron_wire == Some(super::serve::ONEIRON_WIRE)
             })
         });
         match row {
@@ -1032,7 +1042,10 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
     // an unknown catalog: some servers omit `/models` entirely, and refusing
     // to start over a missing listing would be stricter than the contract.
     if let Some(listed) = &listed
-        && !listed.data.iter().any(|row| row.id == embedder.model_key)
+        && !listed
+            .data
+            .iter()
+            .any(|row| lists_model_key(row, &embedder.model_key))
     {
         return Err(ProbeError::ModelKeyMissing {
             endpoint: embedder.endpoint.clone(),

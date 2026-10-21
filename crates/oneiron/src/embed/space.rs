@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
 use crate::config::VectorEvidenceFloors;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::pipeline::ScoredEntity;
@@ -263,6 +264,35 @@ pub(crate) enum SetupActor {
 impl SetupActor {
     fn is_system(&self) -> bool {
         *self == Self::System
+    }
+}
+
+/// Who acts through an embedding setup write (FIX 8200): the owner, whose request's proof the
+/// committing transaction checks again, or the engine on its own, which has no proof to check.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SetupDoor<'a> {
+    /// The owner's request, with its credential-bound proof.
+    Owner(&'a AuthenticatedOwner),
+    /// A startup seed or an engine-driven move.
+    System,
+}
+
+impl SetupDoor<'_> {
+    /// Who the rows it writes name.
+    pub(crate) fn actor(self) -> SetupActor {
+        match self {
+            Self::Owner(_) => SetupActor::Owner,
+            Self::System => SetupActor::System,
+        }
+    }
+
+    /// The owner's proof, checked again in the committing `txn` after any hook or blocking
+    /// work before it: a revocation that commits first changes nothing. The engine passes.
+    pub(crate) fn admit_in_txn(self, vault: &Vault, txn: &RoTxn<'_>) -> Result<()> {
+        if let Self::Owner(owner) = self {
+            owner.revalidate_in_txn(vault, txn)?;
+        }
+        Ok(())
     }
 }
 
@@ -1150,11 +1180,31 @@ impl Vault {
         self.retry_embedding_setup_rows();
     }
 
-    /// Declares (or re-declares) an embedding space. A re-declaration may widen its accepted
-    /// inputs or towers but never change its width: a new width is a new space.
-    pub fn declare_embedding_space(&self, space: EmbeddingSpace) -> Result<()> {
+    /// Declares (or re-declares) an embedding space, by the owner whose proof the write checks
+    /// again (FIX 8200). A re-declaration may widen its accepted inputs or towers but never
+    /// change its width: a new width is a new space.
+    pub fn declare_embedding_space(
+        &self,
+        owner: &AuthenticatedOwner,
+        space: EmbeddingSpace,
+    ) -> Result<()> {
+        self.declare_embedding_space_as(space, SetupDoor::Owner(owner))
+    }
+
+    /// [`Self::declare_embedding_space`] as a host's config seeds it at startup: a system move,
+    /// with no owner's request behind it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::declare_embedding_space`].
+    pub fn seed_embedding_space(&self, space: EmbeddingSpace) -> Result<()> {
+        self.declare_embedding_space_as(space, SetupDoor::System)
+    }
+
+    fn declare_embedding_space_as(&self, space: EmbeddingSpace, by: SetupDoor<'_>) -> Result<()> {
         space.validate()?;
         let mut wtxn = self.store.env.write_txn()?;
+        by.admit_in_txn(self, &wtxn)?;
         declare_embedding_space_in_txn(&self.store, &mut wtxn, &space)?;
         let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
@@ -1238,10 +1288,12 @@ impl Vault {
             .and_then(|data| EmbeddingSetup::decode(data).ok()))
     }
 
-    /// Clears a kind slot's binding; its space keeps its rows. An unbound text slot is the
-    /// vault's own index again. A slot an open move carries is refused until the move ends.
-    pub fn unbind_kind_slot(&self, kind: InputKind) -> Result<()> {
+    /// Clears a kind slot's binding, by the owner whose proof the write checks again (FIX 8200);
+    /// its space keeps its rows. An unbound text slot is the vault's own index again. A slot an
+    /// open move carries is refused until the move ends.
+    pub fn unbind_kind_slot(&self, owner: &AuthenticatedOwner, kind: InputKind) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &wtxn)?;
         refuse_moving_slot_in_txn(&self.store, &wtxn, kind)?;
         EMBEDDING_SLOT.delete(&self.store, &mut wtxn, &[kind.byte()])?;
         let owned = BTreeSet::from([slot_setup_id(kind)?]);
@@ -1283,14 +1335,20 @@ impl Vault {
     }
 
     /// Retires a declared space no slot binds and no open version move names: its rows and its
-    /// declaration go. The owner's door: its row names the owner (FIX 6697).
-    pub fn retire_embedding_space(&self, space_id: &str) -> Result<()> {
-        self.retire_embedding_space_as(space_id, SetupActor::Owner)
+    /// declaration go. The owner's door: its row names the owner (FIX 6697), and the write
+    /// checks the owner's proof again (FIX 8200).
+    pub fn retire_embedding_space(&self, owner: &AuthenticatedOwner, space_id: &str) -> Result<()> {
+        self.retire_embedding_space_as(space_id, SetupDoor::Owner(owner))
     }
 
     /// [`Self::retire_embedding_space`], its retirement row naming `by` as who acted.
-    pub(crate) fn retire_embedding_space_as(&self, space_id: &str, by: SetupActor) -> Result<()> {
+    pub(crate) fn retire_embedding_space_as(
+        &self,
+        space_id: &str,
+        by: SetupDoor<'_>,
+    ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        by.admit_in_txn(self, &wtxn)?;
         let bindings = kind_slot_bindings_in_txn(&self.store, &wtxn)?;
         if InputKind::ALL
             .iter()
@@ -1308,7 +1366,7 @@ impl Vault {
         MEDIA_VECTOR.delete_from(&self.store, &mut wtxn, &space_key(space_id))?;
         MEDIA_REFUSED.delete_from(&self.store, &mut wtxn, &space_key(space_id))?;
         EMBEDDING_SPACE.delete(&self.store, &mut wtxn, &space_id.to_owned())?;
-        let owned = match by {
+        let owned = match by.actor() {
             SetupActor::Owner => BTreeSet::from([space_setup_id(space_id)?]),
             SetupActor::System => BTreeSet::new(),
         };
@@ -1350,9 +1408,15 @@ impl Vault {
 
     /// Forgets `space_id`'s refusal of `id` by the owner's hand, so the backfill tries the
     /// same bytes again (a provider whose policy moved, a model swapped behind the rung).
-    /// Returns whether a refusal was there.
-    pub fn clear_media_refusal(&self, space_id: &str, id: &EntityId) -> Result<bool> {
+    /// Returns whether a refusal was there. The write checks the owner's proof again (FIX 8200).
+    pub fn clear_media_refusal(
+        &self,
+        owner: &AuthenticatedOwner,
+        space_id: &str,
+        id: &EntityId,
+    ) -> Result<bool> {
         let mut wtxn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &wtxn)?;
         let cleared = MEDIA_REFUSED.delete(&self.store, &mut wtxn, &(space_key(space_id), *id))?;
         wtxn.commit()?;
         Ok(cleared)
