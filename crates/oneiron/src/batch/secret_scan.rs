@@ -1,6 +1,7 @@
 mod container;
 mod lift_history;
 mod mask;
+mod release_read;
 mod shapes;
 mod whole_read;
 mod wordlist;
@@ -36,6 +37,7 @@ pub(crate) use self::mask::spool::{
     BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
+pub(crate) use self::release_read::{scan_file_content_from, scan_file_content_reader};
 use self::shapes::Door;
 pub(crate) use self::whole_read::{
     Encoding, encode_as_stored, release_body_reads_whole_as_stored, release_parts_read_whole,
