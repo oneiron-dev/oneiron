@@ -1,0 +1,316 @@
+//! Retained ZIP admission, metadata inspection and expansion.
+//! Entry: `Package::open`.
+//! Package and its private state remain in the parent module.
+
+use super::*;
+
+impl Package {
+    /// Open a single-disk, non-ZIP64 OPC package under explicit limits.
+    /// Supported payload methods are STORED and DEFLATE. Every entry is CRC
+    /// checked; duplicate, unsafe or ambiguous names are rejected. An empty
+    /// entry whose name ends in `/` is a ZIP directory entry: its folder path
+    /// passes the same checks, and the archive keeps it, but it is no part.
+    pub fn open(source: &[u8], limits: Limits) -> Result<Self> {
+        check_limits(limits)?;
+        if source.len() > limits.archive_bytes {
+            return Err(Error::Invalid("archive size limit"));
+        }
+        let floor = source.len().saturating_sub(22 + u16::MAX as usize);
+        let eocd = (floor..source.len().saturating_sub(21))
+            .rev()
+            .find(|&at| {
+                get32(source, at).ok() == Some(EOCD)
+                    && get16(source, at + 20)
+                        .ok()
+                        .and_then(|n| at.checked_add(22 + n as usize))
+                        == Some(source.len())
+            })
+            .ok_or(Error::Invalid("missing end-of-central-directory"))?;
+        if get16(source, eocd + 4)? != 0
+            || get16(source, eocd + 6)? != 0
+            || get16(source, eocd + 8)? != get16(source, eocd + 10)?
+        {
+            return Err(Error::Invalid("multi-disk ZIP"));
+        }
+        let count = usize::from(get16(source, eocd + 10)?);
+        if count == usize::from(u16::MAX) || count > limits.entries {
+            return Err(Error::Invalid("entry limit or ZIP64"));
+        }
+        let cd_offset = get32(source, eocd + 16)? as usize;
+        let cd_size = get32(source, eocd + 12)? as usize;
+        if cd_offset == u32::MAX as usize
+            || cd_size == u32::MAX as usize
+            || cd_offset.checked_add(cd_size) != Some(eocd)
+        {
+            return Err(Error::Invalid("central directory bounds or ZIP64"));
+        }
+        let mut seen = HashSet::new();
+        let mut entries = Vec::with_capacity(count);
+        let mut cursor = cd_offset;
+        let mut total = 0usize;
+        for _ in 0..count {
+            if get32(source, cursor)? != CENTRAL || cursor + 46 > eocd {
+                return Err(Error::Invalid("central header"));
+            }
+            let flags = get16(source, cursor + 8)?;
+            let method = get16(source, cursor + 10)?;
+            let crc = get32(source, cursor + 16)?;
+            let compressed = get32(source, cursor + 20)? as usize;
+            let uncompressed = get32(source, cursor + 24)? as usize;
+            let n = get16(source, cursor + 28)? as usize;
+            let x = get16(source, cursor + 30)? as usize;
+            let c = get16(source, cursor + 32)? as usize;
+            let end = cursor
+                .checked_add(46)
+                .and_then(|v| v.checked_add(n))
+                .and_then(|v| v.checked_add(x))
+                .and_then(|v| v.checked_add(c))
+                .ok_or(Error::Invalid("central entry overflow"))?;
+            if end > eocd
+                || get16(source, cursor + 34)? != 0
+                || compressed == u32::MAX as usize
+                || uncompressed == u32::MAX as usize
+                || get32(source, cursor + 42)? == u32::MAX
+            {
+                return Err(Error::Invalid("central entry bounds or ZIP64"));
+            }
+            // Bits 1-2 encode the compressor's DEFLATE level in real Office
+            // archives (including PPTArena), not encryption. Bit 0 encrypts.
+            if flags & !0x080e != 0
+                || (method == 0 && flags & 6 != 0)
+                || !matches!(method, 0 | 8)
+                || has_zip64_extra(&source[cursor + 46 + n..cursor + 46 + n + x])?
+            {
+                return Err(Error::Invalid("encrypted or unsupported entry"));
+            }
+            let name_bytes = source
+                .get(cursor + 46..cursor + 46 + n)
+                .ok_or(Error::Invalid("name bounds"))?;
+            let name = std::str::from_utf8(name_bytes)
+                .map_err(|_| Error::Invalid("non-UTF8 entry name"))?;
+            // A directory entry (`xl/`) is empty, and its folder path takes the
+            // part-name checks, so it also collides with a part of that name.
+            let path = match name.strip_suffix('/') {
+                Some(_) if uncompressed != 0 => {
+                    return Err(Error::Invalid("directory entry with content"));
+                }
+                Some(folder) => folder,
+                None => name,
+            };
+            if path.is_empty()
+                || path.starts_with('/')
+                || path.contains('\\')
+                || path.contains('\0')
+                || path
+                    .split('/')
+                    .any(|part| part == ".." || part == "." || part.is_empty())
+                || !seen.insert(path.to_ascii_lowercase())
+            {
+                return Err(Error::Invalid("unsafe or duplicate entry name"));
+            }
+            total = total
+                .checked_add(uncompressed)
+                .ok_or(Error::Invalid("expanded size overflow"))?;
+            if uncompressed > limits.part_bytes || total > limits.expanded_bytes {
+                return Err(Error::Invalid("expanded size limit"));
+            }
+            let local_start = get32(source, cursor + 42)? as usize;
+            // Excel writes some local headers whose DEFLATE option hints (bits
+            // 1-2) differ from the central record; every other bit must agree.
+            let local_flags = get16(source, local_start + 6)?;
+            if get32(source, local_start)? != LOCAL
+                || (local_flags ^ flags) & !0x0006 != 0
+                || (method == 0 && local_flags & 6 != 0)
+                || get16(source, local_start + 8)? != method
+            {
+                return Err(Error::Invalid("local header mismatch"));
+            }
+            let ln = get16(source, local_start + 26)? as usize;
+            let lx = get16(source, local_start + 28)? as usize;
+            let data_start = local_start
+                .checked_add(30)
+                .and_then(|v| v.checked_add(ln))
+                .and_then(|v| v.checked_add(lx))
+                .ok_or(Error::Invalid("local bounds"))?;
+            let data_end = data_start
+                .checked_add(compressed)
+                .ok_or(Error::Invalid("data bounds"))?;
+            if data_end > cd_offset
+                || source.get(local_start + 30..local_start + 30 + ln) != Some(name_bytes)
+            {
+                return Err(Error::Invalid("local name or payload bounds"));
+            }
+            if flags & 8 == 0
+                && (get32(source, local_start + 14)? != crc
+                    || get32(source, local_start + 18)? as usize != compressed
+                    || get32(source, local_start + 22)? as usize != uncompressed)
+            {
+                return Err(Error::Invalid("local size or checksum mismatch"));
+            }
+            let trailer = if flags & 8 != 0 {
+                // The CRC of an unsigned descriptor can equal the optional
+                // signature word. Compare both complete layouts, never infer
+                // the layout from that first word alone.
+                let unsigned = get32(source, data_end).ok() == Some(crc)
+                    && get32(source, data_end + 4).ok() == Some(compressed as u32)
+                    && get32(source, data_end + 8).ok() == Some(uncompressed as u32);
+                let signed = get32(source, data_end).ok() == Some(0x0807_4b50)
+                    && get32(source, data_end + 4).ok() == Some(crc)
+                    && get32(source, data_end + 8).ok() == Some(compressed as u32)
+                    && get32(source, data_end + 12).ok() == Some(uncompressed as u32);
+                match (unsigned, signed) {
+                    (true, false) => data_end + 12,
+                    (false, true) => data_end + 16,
+                    _ => return Err(Error::Invalid("ambiguous or invalid data descriptor")),
+                }
+            } else {
+                data_end
+            };
+            if trailer > cd_offset || has_zip64_extra(&source[local_start + 30 + ln..data_start])? {
+                return Err(Error::Invalid("local descriptor or ZIP64 extra"));
+            }
+            let raw = &source[data_start..data_end];
+            let mut data = Vec::new();
+            if method == 0 {
+                data.extend_from_slice(raw);
+            } else {
+                DeflateDecoder::new(raw)
+                    .take(uncompressed as u64 + 1)
+                    .read_to_end(&mut data)
+                    .map_err(|_| Error::Invalid("deflate corruption"))?;
+            }
+            if data.len() != uncompressed || crc32fast::hash(&data) != crc {
+                return Err(Error::Invalid("entry size or CRC mismatch"));
+            }
+            entries.push(Entry {
+                name: name.to_owned(),
+                central: cursor..end,
+                local: local_start..data_end,
+                data: data_start..data_end,
+                trailer,
+                method,
+                flags,
+                uncompressed,
+                crc,
+                replacement: None,
+                removed: false,
+            });
+            cursor = end;
+        }
+        if cursor != eocd
+            || !entries
+                .iter()
+                .any(|entry| entry.name == "[Content_Types].xml")
+        {
+            return Err(Error::Invalid(
+                "central directory or OPC content types missing",
+            ));
+        }
+        let mut order: Vec<usize> = (0..entries.len()).collect();
+        order.sort_unstable_by_key(|&i| entries[i].local.start);
+        for (at, &index) in order.iter().enumerate() {
+            let next = order
+                .get(at + 1)
+                .map_or(cd_offset, |&i| entries[i].local.start);
+            if entries[index].trailer > next {
+                return Err(Error::Invalid("overlapping local records"));
+            }
+            entries[index].local.end = next; // Includes descriptor and non-entry padding.
+        }
+        let mut package = Self {
+            source: source.into(),
+            entries,
+            cd_offset,
+            eocd,
+            limits,
+            editability: Editability::Unsigned,
+            added: Vec::new(),
+        };
+        package.editability = package.signature_or_unsafe_metadata();
+        Ok(package)
+    }
+
+    /// Detect OPC digital signatures by type declarations and relationships,
+    /// not only their conventional path. Invalid metadata leaves the package
+    /// open for byte-exact no-op export but makes every edit read-only. Only
+    /// parts count on that path: an empty `_xmlsignatures/` folder entry
+    /// holds no signature.
+    pub(super) fn signature_or_unsafe_metadata(&self) -> Editability {
+        if self
+            .names()
+            .any(|name| name.to_ascii_lowercase().starts_with("_xmlsignatures/"))
+        {
+            return Editability::Signed;
+        }
+        let mut editability = Editability::Unsigned;
+        for entry in self.entries.iter().filter(|entry| {
+            entry.name == "[Content_Types].xml" || {
+                let lower = entry.name.to_ascii_lowercase();
+                lower.ends_with(".rels")
+                    && (lower.starts_with("_rels/") || lower.contains("/_rels/"))
+            }
+        }) {
+            match self.expanded(entry).and_then(|data| {
+                xml::ValidatedXmlPart::parse(&data, self.limits.xml).map(|part| part.signature())
+            }) {
+                Ok(true) => return Editability::Signed,
+                Ok(false) => {}
+                Err(_) => editability = Editability::MetadataUnsupported,
+            }
+        }
+        editability
+    }
+
+    pub(super) fn expanded(&self, entry: &Entry) -> Result<Vec<u8>> {
+        if let Some(ref replacement) = entry.replacement {
+            return Ok(replacement.clone());
+        }
+        let raw = &self.source[entry.data.clone()];
+        if entry.method == 0 {
+            return Ok(raw.to_vec());
+        }
+        let mut out = Vec::with_capacity(entry.uncompressed);
+        DeflateDecoder::new(raw)
+            .take(entry.uncompressed as u64 + 1)
+            .read_to_end(&mut out)
+            .map_err(|_| Error::Invalid("deflate corruption"))?;
+        if out.len() != entry.uncompressed || crc32fast::hash(&out) != entry.crc {
+            return Err(Error::Invalid("entry size or CRC mismatch"));
+        }
+        Ok(out)
+    }
+}
+
+pub(super) fn check_limits(limits: Limits) -> Result<()> {
+    if [
+        limits.archive_bytes,
+        limits.entries,
+        limits.part_bytes,
+        limits.expanded_bytes,
+        limits.xml.max_depth,
+        limits.xml.max_nodes,
+    ]
+    .contains(&0)
+    {
+        return Err(Error::Invalid("resource limits must be positive"));
+    }
+    Ok(())
+}
+
+pub(super) fn has_zip64_extra(mut extra: &[u8]) -> Result<bool> {
+    while !extra.is_empty() {
+        if extra.len() < 4 {
+            return Err(Error::Invalid("malformed ZIP extra"));
+        }
+        let id = u16::from_le_bytes([extra[0], extra[1]]);
+        let size = usize::from(u16::from_le_bytes([extra[2], extra[3]]));
+        extra = extra
+            .get(4..)
+            .and_then(|bytes| bytes.get(size..))
+            .ok_or(Error::Invalid("malformed ZIP extra"))?;
+        if id == 1 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}

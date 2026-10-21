@@ -8,7 +8,7 @@
 use crate::edit::xml::{escape_attribute, set_attribute, splice, writable};
 use crate::ooxml::{SPREADSHEET_MAIN as SML, XmlTree, escape_text};
 use crate::retained_opc::XmlLimits;
-use crate::xlsx_body::XlsxBodyError;
+use crate::xlsx_error::XlsxBodyError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
