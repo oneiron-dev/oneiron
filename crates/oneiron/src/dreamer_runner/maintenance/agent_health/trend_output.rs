@@ -193,7 +193,8 @@ fn content_hash(comparison: &HealthTrendComparison) -> [u8; 32] {
         }
         TrendMargin::Project(project) => {
             digest.update(b"project");
-            digest.update(project.as_ref().map_or(&[0_u8; 16], EntityId::as_bytes));
+            let bytes: [u8; 16] = project.as_ref().map_or([0_u8; 16], |id| *id.as_bytes());
+            digest.update(&bytes);
         }
     }
     field(&mut digest, comparison.stratum.type_node.as_bytes());
