@@ -114,6 +114,118 @@ pub struct NeighbourhoodExtraction<'a> {
     pub(in crate::dreamer_consolidation) width: usize,
 }
 
+impl<'a> SieveRungCall<'a> {
+    /// The rung's role.
+    #[must_use]
+    pub const fn role(&self) -> ModelRole {
+        self.role
+    }
+
+    /// Where the rung's calls go, as the executor resolves its role.
+    #[must_use]
+    pub const fn call(&self) -> &RoleCall<'a> {
+        &self.call
+    }
+
+    /// The rung's durable-step context.
+    #[must_use]
+    pub const fn step(&self) -> &'a DurableStepContext<'a> {
+        self.step
+    }
+
+    /// The wake pass the rung runs in.
+    #[must_use]
+    pub const fn pass(&self) -> &'a WakePassDeadline {
+        self.pass
+    }
+
+    /// The vault's authored instruction for the rung.
+    #[must_use]
+    pub const fn instruction(&self) -> &'a str {
+        self.instruction
+    }
+
+    /// The span's exact source grants.
+    #[must_use]
+    pub const fn scope(&self) -> &'a Scope {
+        self.scope
+    }
+
+    /// The body version of each source the span's read pinned.
+    #[must_use]
+    pub const fn versions(&self) -> &'a [EvidenceVersion] {
+        self.versions
+    }
+
+    /// The span's sources.
+    #[must_use]
+    pub const fn evidence(&self) -> &'a [EntityId] {
+        self.evidence
+    }
+
+    /// The work the pack's asks name: the rung's attempt.
+    #[must_use]
+    pub const fn correlation(&self) -> EntityId {
+        self.correlation
+    }
+
+    /// The pack's questions.
+    #[must_use]
+    pub const fn questions(&self) -> &'a [DecisionQuestion] {
+        self.questions
+    }
+
+    /// The pack's state, as its questions read it.
+    #[must_use]
+    pub const fn state(&self) -> &'a serde_json::Value {
+        self.state
+    }
+}
+
+impl<'a> NeighbourhoodExtraction<'a> {
+    /// The child's durable-step context: every slice's step is its.
+    #[must_use]
+    pub const fn step(&self) -> &'a DurableStepContext<'a> {
+        self.step
+    }
+
+    /// The guard every slice's step spends on.
+    #[must_use]
+    pub const fn guard(&self) -> &'a BudgetGuard {
+        self.guard
+    }
+
+    /// The extraction role, as the executor resolves it.
+    #[must_use]
+    pub const fn call(&self) -> &RoleCall<'a> {
+        &self.call
+    }
+
+    /// How many slices the child has.
+    #[must_use]
+    pub fn slice_count(&self) -> usize {
+        self.slices.len()
+    }
+
+    /// Slice `index`'s transcript, labels rendered in.
+    #[must_use]
+    pub fn slice_transcript(&self, index: usize) -> Option<&'a str> {
+        self.slices.get(index).map(|slice| slice.transcript)
+    }
+
+    /// Slice `index`'s exact scope.
+    #[must_use]
+    pub fn slice_scope(&self, index: usize) -> Option<&'a Scope> {
+        self.slices.get(index).map(|slice| slice.scope)
+    }
+
+    /// How many slices run together.
+    #[must_use]
+    pub const fn width(&self) -> usize {
+        self.width
+    }
+}
+
 /// One scoped slice of a child: its transcript, labels and exact scope.
 pub(in crate::dreamer_consolidation) struct SliceCall<'a> {
     pub(in crate::dreamer_consolidation) transcript: &'a str,

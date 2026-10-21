@@ -1191,6 +1191,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/scope.rs",
+     "purpose": "Project descent for a dispatched child's resource scope (FIX 8626): a child under a parent scope that names…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -14181,7 +14191,7 @@
      "surface": {
       "crate-vis": 26,
       "mod": 7,
-      "re-export": 23
+      "re-export": 24
      }
     },
     {
@@ -14530,6 +14540,22 @@
       "fn": 11,
       "struct": 4,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HostInput",
+      "ScopedChildHosts",
+      "ScopedChildProfile",
+      "ScopedChildStop"
+     ],
+     "path": "src/code_run/scoped_child_io.rs",
+     "purpose": "A host's own scoped child, end to end (FIX 7508): the inputs a host commits for it as its parent run's…",
+     "surface": {
+      "fn": 14,
+      "struct": 4
      }
     },
     {
@@ -22092,7 +22118,7 @@
      "surface": {
       "crate-vis": 26,
       "mod": 4,
-      "re-export": 23
+      "re-export": 24
      }
     },
     {
@@ -22236,7 +22262,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/parallel.rs",
@@ -22411,7 +22437,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "re-export": 1
      }
     },
@@ -22548,8 +22574,8 @@
      "purpose": "The Dreamer's model roles, and the backend each one calls out on",
      "surface": {
       "const": 4,
-      "crate-vis": 3,
-      "fn": 6,
+      "crate-vis": 4,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -22828,7 +22854,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 2,
+      "fn": 20,
       "struct": 7,
       "trait": 2,
       "type": 1
@@ -22841,7 +22867,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -23020,6 +23046,66 @@
      "path": "src/dreamer_consolidation/tests/witnessed_turns/support.rs",
      "purpose": "An attachment's Supports edge follows the MESSAGE words that justify it",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ThingChildEvent",
+      "ThingChildHost",
+      "ThingChildLaunch",
+      "ThingChildSession",
+      "ThingChildSettled",
+      "ThingChildStart",
+      "ThingDecideInput",
+      "ThingDecideOutput",
+      "ThingExtractInput",
+      "ThingExtractOutput",
+      "ThingPortCall",
+      "ThingPortRequest",
+      "ThingProposalRef"
+     ],
+     "path": "src/dreamer_consolidation/thing_agent.rs",
+     "purpose": "A thing-child as a scoped code-mode agent (FIX 7508, DREAMER ROW 3)",
+     "surface": {
+      "const": 18,
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 3,
+      "struct": 8,
+      "trait": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/thing_agent/input.rs",
+     "purpose": "The owned, framed inputs a thing's agent is lent (FIX 7508): each of the branch's extraction slices, its…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/thing_agent/proposals.rs",
+     "purpose": "The engine's own record of a thing's agent (FIX 7508): the host parent run of each lease generation, the…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/thing_agent/serve.rs",
+     "purpose": "The thing pass (FIX 7508): a thing branch's agent, launched, served and collected inside its parent's wake…",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "m",
@@ -32842,19 +32928,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HumanTaskFollowupDriver",
-      "OpenHumanAsk",
-      "OpenHumanAskKind",
-      "OpenHumanAsks"
+      "HumanTaskFollowupDriver"
      ],
      "path": "src/human_task/followup.rs",
      "purpose": "Native-human routing, follow-up cursor lifecycle and the wake driver",
      "surface": {
-      "const": 1,
       "crate-vis": 5,
-      "enum": 1,
-      "fn": 8,
-      "struct": 3
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -32876,7 +32957,7 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -32900,6 +32981,25 @@
       "fn": 1,
       "struct": 5,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OpenAskFollowup",
+      "OpenHumanAsk",
+      "OpenHumanAskKind",
+      "OpenHumanAsks",
+      "UncoveredHumanAskFamily"
+     ],
+     "path": "src/human_task/open_asks.rs",
+     "purpose": "The asks still open with one person (FIX 5908), read from the TASKs themselves",
+     "surface": {
+      "const": 2,
+      "enum": 3,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -42929,7 +43029,7 @@
      "path": "src/origin/lfs/lift.rs",
      "purpose": "LFS objects the historical lift sweep reads again (OF-067, Engine ruling D = a)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -43047,7 +43147,7 @@
      "purpose": "Bounded streaming ingress: validate before publishing, then commit small chunk transactions",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -51817,6 +51917,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/file/lfs.rs",
+     "purpose": "An agent's sight of a lift-marked LFS object (FIX 2897; ARCH-0069: \"granted agent: real bytes with a reason…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -58489,19 +58599,22 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ChunkPage",
+      "ChunkPageCursor",
       "ChunkSyncRequest",
       "ChunkSyncResponse",
-      "LfsHold"
+      "LfsHold",
+      "ManifestPage"
      ],
      "path": "src/sync/chunks.rs",
      "purpose": "Authenticated manifest-scoped have/want exchange",
      "surface": {
-      "const": 3,
-      "crate-vis": 2,
+      "const": 4,
+      "crate-vis": 3,
       "enum": 2,
-      "fn": 11,
-      "re-export": 1,
-      "struct": 1
+      "fn": 16,
+      "re-export": 2,
+      "struct": 4
      }
     },
     {
@@ -58513,8 +58626,36 @@
      "path": "src/sync/chunks/download.rs",
      "purpose": "One bounded in-flight have/want transfer, driven by real socket replies",
      "surface": {
+      "crate-vis": 3,
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/chunks/page.rs",
+     "purpose": "One page of a chunk exchange (FIX 8860, 8183): a manifest's canonical bytes from an offset, or a WANT's…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChunkMark",
+      "ChunkRead",
+      "LfsReadAuthority"
+     ],
+     "path": "src/sync/chunks/read.rs",
+     "purpose": "Who reads a lift-marked LFS object's real bytes over a chunk exchange (FIX 2897; ARCH-0069: \"the owner gets…",
+     "surface": {
+      "enum": 2,
+      "fn": 4,
+      "struct": 1,
+      "type": 1
      }
     },
     {
@@ -58611,8 +58752,8 @@
      "path": "src/sync/client/lfs.rs",
      "purpose": "Object-scoped have/want state on the existing owner-authenticated sync client",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3
+      "crate-vis": 2,
+      "fn": 4
      }
     },
     {
@@ -61314,7 +61455,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -61532,6 +61673,16 @@
       "enum": 2,
       "fn": 5,
       "struct": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/brief_history.rs",
+     "purpose": "A TASK's earlier briefs (FIX 8077)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -61889,7 +62040,7 @@
      "purpose": "The one task-domain door (OF-220): post, accept, report and status for MCP tool-first, the HTTP facade and…",
      "surface": {
       "crate-vis": 16,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -61919,7 +62070,17 @@
      "path": "src/task_verb/highway_post.rs",
      "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_redo.rs",
+     "purpose": "A TASK's redo (FIX 3153): a new TASK posted from an earlier one's content, through the post the highway…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -62007,6 +62168,7 @@
       "TaskOutcome",
       "TaskPhase",
       "TaskPost",
+      "TaskRedo",
       "TaskReport",
       "TaskReportBody",
       "TaskStatusQuery",
@@ -62022,7 +62184,7 @@
       "crate-vis": 11,
       "enum": 8,
       "fn": 3,
-      "struct": 11
+      "struct": 12
      }
     },
     {
@@ -62077,7 +62239,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 44,
+      "crate-vis": 47,
       "fn": 1,
       "mod": 6,
       "re-export": 28
@@ -62962,7 +63124,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1161
+      "fn": 1164
      }
     },
     {
@@ -69990,7 +70152,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70214,7 +70376,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 136,
+     "files": 137,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70452,7 +70614,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 122,
+     "files": 126,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70662,7 +70824,7 @@
      "purpose": "The engine's housekeeping pass: every sweep the engine relies on, run when due"
     },
     "human_task": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -71117,7 +71279,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 45,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71299,7 +71461,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 223,
+     "files": 225,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71327,7 +71489,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 208,
+     "files": 210,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71497,7 +71659,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4560,
+   "source_files": 4572,
    "test_files": 902
   },
   "oneiron-android": {
@@ -75239,7 +75401,7 @@
       "enum": 4,
       "fn": 6,
       "mod": 1,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 7,
       "trait": 1
      }
@@ -75286,18 +75448,42 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "TscRsBudget",
       "TscRsWasm"
      ],
      "path": "src/tsc_rs.rs",
-     "purpose": "tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime",
+     "purpose": "tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime…",
      "surface": {
       "const": 1,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TsrsWasm"
+     ],
+     "path": "src/tsrs.rs",
+     "purpose": "tsrs in process: the pinned Wasm build of oxc's Rust port of TypeScript 7 (`@tsrs/wasm`, vendored in…",
+     "surface": {
+      "const": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/wasm.rs",
+     "purpose": "The Wasmtime runner of the in-process backends: tsc-rs (`components/tsc-rs`) and tsrs (`vendor/tsrs`)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -75334,14 +75520,28 @@
     "tsc_rs": {
      "files": 1,
      "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime…"
+    },
+    "tsrs": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "tsrs in process: the pinned Wasm build of oxc's Rust port of TypeScript 7 (`@tsrs/wasm`, vendored in…"
+    },
+    "wasm": {
+     "files": 1,
+     "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime"
+     "purpose": "The Wasmtime runner of the in-process backends: tsc-rs (`components/tsc-rs`) and tsrs (`vendor/tsrs`)"
     }
    },
    "over_bar": 0,
    "purpose": "An optional type check of code-mode programs before they run",
-   "source_files": 6,
+   "source_files": 8,
    "test_files": 1
   },
   "oneiron-container": {
@@ -79053,7 +79253,7 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 15,
+      "fn": 16,
       "struct": 2,
       "trait": 1,
       "type": 1
@@ -81310,7 +81510,7 @@
      "path": "src/llm/budget/state.rs",
      "purpose": "Budget meter core: reserve planning and admission",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 23
      }
     },
     {
@@ -81750,7 +81950,7 @@
      "purpose": "Four-axis branch scope and exact readable/writable resource identities",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -81882,7 +82082,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1132
+      "fn": 1133
      }
     },
     {
@@ -83143,7 +83343,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1133
+      "fn": 1134
      }
     },
     {
@@ -84916,6 +85116,36 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/dreamer_thing.rs",
+     "purpose": "The served thing-child host (FIX 7508): what this server lends a thing branch's scoped code-mode agent",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/dreamer_thing/ports.rs",
+     "purpose": "A thing agent's two lent ports (FIX 7508, FIX 7733): the adapter its host registers for exactly…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/dreamer_thing/profile.rs",
+     "purpose": "The served agent's own generation and the session its parent waits on (FIX 7508)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/eval_authoring.rs",
      "purpose": "The Coach's eval authoring (ARCH-0053 \"Eval authoring\", OF-578): each night it keeps each seat's test set…",
      "surface": {
@@ -86047,7 +86277,7 @@
      "path": "src/api/context_board/egress.rs",
      "purpose": "Where a chat call's context board may go (FIX 7257), for a live turn and a queued Continue or Retry alike…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -88267,7 +88497,7 @@
      "path": "src/api/git_lfs/support.rs",
      "purpose": "LFS size, href, time, and JSON helpers",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 17
      }
     },
     {
@@ -94738,6 +94968,56 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/model_artifacts/catalog.rs",
+     "purpose": "The house models the deploy scripts serve today, pinned file by file (`deploy/house-model/`…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_artifacts/install.rs",
+     "purpose": "Placing a manifest's files on this machine, verifying an operator's directory, and reading what is on disk",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_artifacts/licence.rs",
+     "purpose": "Which licences let a model download start (the owner's standing grant: any licence that does not hurt us…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_artifacts/manifest.rs",
+     "purpose": "The pinned-artifact manifest: one model, one commit, every file by size and SHA-256, with its licence…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_artifacts/mod.rs",
+     "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/anthropic.rs",
      "purpose": "The Anthropic-compatible transport: any `/v1/messages` server",
      "surface": {
@@ -96826,6 +97106,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/reader_runner/scoped.rs",
+     "purpose": "A host-profiled scoped child at the runner (FIX 7508): a child its own host registered a profile for runs on…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -97858,7 +98148,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 75,
+     "files": 78,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98172,6 +98462,13 @@
      "layout": "dir",
      "purpose": "MCP connector actor registry"
     },
+    "model_artifacts": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
+    },
     "models": {
      "files": 52,
      "impl_vault": false,
@@ -98243,7 +98540,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 58,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -98315,7 +98612,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1070,
+   "source_files": 1079,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -102123,6 +102420,7 @@
       "TaskLifecycleRecord",
       "TaskOutcome",
       "TaskPhase",
+      "TaskRedo",
       "TaskRefuseDomain",
       "TaskRefuseInput",
       "TaskRefuseOutput",
@@ -102449,7 +102747,7 @@
      "purpose": "—",
      "surface": {
       "enum": 955,
-      "struct": 2977
+      "struct": 2978
      }
     },
     {

@@ -37,10 +37,22 @@ pub(super) async fn handle(
     // The manifest and every WANT are judged for the machine this socket
     // proved (mesh PR2b); an unproved one is an unknown destination.
     let peer = state.peer_machine(server.vault());
-    let (object, response) = tokio::task::spawn_blocking(move || {
+    let (object, read, response) = tokio::task::spawn_blocking(move || {
         let object = oneiron::sync::chunks::chunk_request_object(&payload)?;
-        oneiron::sync::chunks::serve_owner_chunk_request_for(&vault, &payload, peer)
-            .map(|response| (object, response))
+        // A lift-marked object's real bytes go to a machine the owner trusts
+        // as his own, which this socket proved (FIX 2897); the authority
+        // rides with the queued reply.
+        let mut read = None;
+        let response = oneiron::sync::chunks::serve_owner_chunk_request_reading(
+            &vault,
+            &payload,
+            peer,
+            &mut |_, _| {
+                read = vault.lfs_owner_machine_read(peer);
+                Ok(read)
+            },
+        )?;
+        Ok::<_, oneiron::Error>((object, read, response))
     })
     .await
     .map_err(|e| ProtocolError::Persistence(e.to_string()))?
@@ -54,7 +66,7 @@ pub(super) async fn handle(
     let frame = oneiron::sync::transport::encode_lfs_chunk_sync(&response)
         .into_result()
         .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
-    state.queued_chunk_objects.push_back(object);
+    state.queued_chunk_objects.push_back((object, read));
     direct_tx
         .send(frame)
         .map_err(|_| ProtocolError::InvalidPayload("chunk reply channel closed"))?;
@@ -64,9 +76,22 @@ pub(super) async fn handle(
 /// Whether a queued chunk reply leaves now: its object, recorded when the
 /// reply was queued, is checked against the device-only flag as it stands,
 /// for the machine this socket proved, its proof revalidated now (mesh PR2b).
+/// A lift-marked object's reply leaves only while the machine it was read
+/// for still stands as the owner's own (FIX 2897).
 pub(super) fn chunk_reply_withheld(server: &SyncServer, state: &mut ConnState) -> bool {
     let peer = state.peer_machine(server.vault());
-    state.queued_chunk_objects.pop_front().is_none_or(|object| {
-        oneiron::sync::chunks::lfs_object_withheld_for(server.vault(), object, peer).unwrap_or(true)
-    })
+    state
+        .queued_chunk_objects
+        .pop_front()
+        .is_none_or(|(object, read)| {
+            let reads_marked =
+                read.is_some_and(|read| server.vault().lfs_owner_machine_read(peer) == Some(read));
+            oneiron::sync::chunks::lfs_object_withheld_as(
+                server.vault(),
+                object,
+                peer,
+                reads_marked,
+            )
+            .unwrap_or(true)
+        })
 }

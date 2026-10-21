@@ -3110,6 +3110,8 @@ export class Oneiron {
     update: (input: Facade.TaskUpdateRequest): Facade.TaskUpdateReceipt => this.#call(() => this.#client.tasksUpdate(input) as Facade.TaskUpdateReceipt),
     /** Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports. */
     accept: (input: Facade.TaskAccept): Facade.TaskCallReceipt => this.#call(() => this.#client.tasksAccept(input) as Facade.TaskCallReceipt),
+    /** Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written. */
+    redo: (input: Facade.TaskRedo): Facade.TaskCallReceipt => this.#call(() => this.#client.tasksRedo(input) as Facade.TaskCallReceipt),
     /** Admits one person's word on an ask; the word is evidence, never approval. */
     answer: (handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
