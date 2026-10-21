@@ -2,6 +2,7 @@
 //! `c:ser`, point-wise cache rebuilds, and the re-import that compares a
 //! cache with the workbook cells its reference names. A multi-level
 //! category reference reads as its block, level by level ([`categories`]).
+mod cache;
 mod categories;
 
 pub(crate) use categories::{Count, declared, level_cache};
@@ -10,6 +11,7 @@ use super::table::graphic_frame;
 use super::workbook::{CellKey, DATE_FORMAT, Range, Workbook, header, number, serial};
 use super::{ChartFamily, Frame, NativeRefusal, REL, Target, WorkbookReport};
 use crate::design_plan::{Cell, ColumnKind, Dataset};
+use crate::edit::xml;
 use crate::ooxml::{XmlTree, escape_text};
 use crate::retained_opc::Package;
 use std::collections::BTreeMap;
@@ -383,54 +385,22 @@ pub(super) fn set_series(
                 "a write into a multi-level category block",
             ));
         }
-        let mut cache = model.cache(seq)?;
+        let held = model.cache(seq)?;
+        let mut cache = held.clone();
         for (slot, key) in cache.iter_mut().zip(&keys) {
             if let Some(value) = written.get(key) {
                 *slot = as_kind(seq.kind, value.clone());
             }
         }
-        let node = &model.tree.nodes[seq.cache];
-        edits.push((
-            node.span.clone(),
-            cache_xml(&model, seq.cache, &node.qualified, &cache),
-        ));
+        edits.extend(cache::patched(&model, seq.cache, &held, &cache));
     }
-    edits.sort_by_key(|(span, _)| span.start);
-    let mut out = Vec::with_capacity(model.bytes.len());
-    let mut at = 0;
-    for (span, xml) in edits {
-        out.extend_from_slice(&model.bytes[at..span.start]);
-        out.extend_from_slice(xml.as_bytes());
-        at = span.end;
-    }
-    out.extend_from_slice(&model.bytes[at..]);
+    let out = xml::splice(&model.bytes, edits)
+        .map_err(|_| NativeRefusal::Invalid("overlapping cache writes"))?;
     package.replace_xml_part(chart, out)?;
     package
         .replace_nested_package(&book, bytes)
         .map_err(NativeRefusal::Workbook)?;
     Ok((report, written.into_keys().collect()))
-}
-
-/// A cache element with new points; `formatCode` and `extLst` keep their bytes.
-fn cache_xml(model: &Model, cache: usize, qualified: &str, values: &[Cell]) -> String {
-    let p = qualified
-        .rsplit_once(':')
-        .map_or(String::new(), |(prefix, _)| format!("{prefix}:"));
-    let keep = |name: &str| {
-        model
-            .tree
-            .children(cache)
-            .find(|(_, node)| node.is(C, name))
-            .map_or(String::new(), |(_, node)| {
-                String::from_utf8_lossy(&model.bytes[node.span.clone()]).into_owned()
-            })
-    };
-    format!(
-        "<{qualified}>{}{}{}</{qualified}>",
-        keep("formatCode"),
-        points(&p, values),
-        keep("extLst")
-    )
 }
 
 fn points(p: &str, values: &[Cell]) -> String {
