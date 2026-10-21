@@ -19418,6 +19418,7 @@ class LibraryCard(TypedDict):
     workflow: str
     site: str
     subgoal: str
+    type_ref: str
     params: list[str]
     runs: int
     failures: int
@@ -19680,6 +19681,7 @@ BrowserBatchOutput = BrowserAnswer[BatchOutput]
 class LibraryFindInput(TypedDict):
     site: NotRequired[str | None]
     subgoal: NotRequired[str | None]
+    type_ref: NotRequired[str | None]
 class LibraryFindOutput(TypedDict):
     site: str
     workflows: list[LibraryCard]
