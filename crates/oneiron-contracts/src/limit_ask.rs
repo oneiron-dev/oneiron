@@ -446,6 +446,13 @@ pub enum EngineLimit {
     /// Bytes of those backups together. Past it the row asks as the pending
     /// count does, and every backup is kept.
     BackupHandoffPendingBytes,
+    /// Items one signed authority record carries for its owner: a custody
+    /// change's permitted recipients, a checkpoint choice's roots, a world's
+    /// model routes, a mesh binding's direct addresses or ALPN grants, a
+    /// machine revision's acknowledged acts (Phase2 A). Past it the row asks
+    /// whether everything is okay and the record is signed and kept whole;
+    /// only a codec's own frame bound splits it.
+    AuthorityRecordItems,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

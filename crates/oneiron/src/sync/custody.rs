@@ -3,7 +3,9 @@
 //! L04 row 04).
 //!
 //! A custody record never rides a window; its transition does, in the base
-//! window's `custody` map under the record's id, in the window of the month it
+//! window's `custody` map under the record's id, each further piece of it
+//! under the id and its place (CALLS `Phase2 custody pieces request bound`),
+//! in the window of the month it
 //! was signed in. The month a transition was signed in is the month its door
 //! ran, so a fresh transition lands in a window every peer holds open. The
 //! protected input an active change hands its holder rides beside the
@@ -40,6 +42,8 @@
 //!   own after the admission and on this upkeep (CALLS
 //!   CUSTODY_ROSTER_REWRAP); any other linked machine only from a rewrap the
 //!   owner records (CALLS CUSTODY_PERMITS).
+
+use std::collections::BTreeMap;
 
 use loro::event::MapDelta;
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
@@ -191,8 +195,8 @@ pub(crate) fn admit_custody_carrier(
         return Ok(());
     }
     let transition = CustodyTransition::decode(bytes)?;
-    if transition.id.to_hex() != map_key {
-        return Err(refused("filed under another id"));
+    if transition.row_key() != map_key {
+        return Err(refused("filed under another id or piece"));
     }
     if key.is_some_and(|key| *key != transition_window(&transition)) {
         return Err(refused("outside its signing month's base window"));
@@ -246,63 +250,55 @@ pub(crate) fn mirror_custody_transitions(
         vault.authority_view_readonly_in_txn(&rtxn)?
     };
     let mut wrote = mirror_custody_inputs(vault, doc, key, &fold)?;
+    // Every piece this vault holds rides its window under its own key
+    // (CALLS `Phase2 custody pieces request bound`).
     let mut due = Vec::new();
-    let mut elsewhere = Vec::new();
-    for (_, carrier) in custody_transitions(vault)? {
-        let Ok(latest) = CustodyTransition::decode(&carrier) else {
-            continue;
-        };
-        if sealed_after_revoke(&fold, &latest) {
+    let mut latest: BTreeMap<EntityId, CustodyTransition> = BTreeMap::new();
+    for piece in custody_transitions(vault)? {
+        if sealed_after_revoke(&fold, &piece) {
             continue;
         }
-        if transition_window(&latest) == *key {
-            due.push((latest, carrier));
-        } else {
-            elsewhere.push(latest);
+        if transition_window(&piece) == *key {
+            due.push(piece.clone());
         }
+        latest.entry(piece.id).or_insert(piece);
     }
     if !due.is_empty() {
         let map = doc.get_map(CUSTODY_MAP);
-        for (latest, carrier) in due {
-            let hex = latest.id.to_hex();
-            let held = map_get_bytes(&map, &hex);
+        for piece in due {
+            let row = piece.row_key();
+            let carrier = piece.encode();
+            let held = map_get_bytes(&map, &row);
             if held.as_deref() == Some(carrier.as_slice())
                 || held
                     .and_then(|held| CustodyTransition::decode(&held).ok())
-                    .is_some_and(|held| !latest.supersedes(&held))
+                    .is_some_and(|held| !piece.supersedes(&held))
             {
                 continue;
             }
-            map_insert_bytes(&map, &hex, &carrier)?;
+            map_insert_bytes(&map, &row, &carrier)?;
             wrote = true;
         }
     }
-    if !elsewhere.is_empty() && holds_custody_map(doc) {
-        let map = doc.get_map(CUSTODY_MAP);
-        for latest in elsewhere {
-            let hex = latest.id.to_hex();
-            if map_get_bytes(&map, &hex)
-                .and_then(|held| CustodyTransition::decode(&held).ok())
-                .is_some_and(|held| latest.supersedes(&held))
-            {
-                map_delete(&map, &hex)?;
-                wrote = true;
-            }
-        }
-    }
+    // A carrier this vault's latest supersedes leaves every window, each
+    // piece of it, as does one that still seals a value an admitted revoke
+    // ended.
     if holds_custody_map(doc) {
         let map = doc.get_map(CUSTODY_MAP);
-        let mut sealed = Vec::new();
+        let mut gone = Vec::new();
         map.for_each(|map_key, value| {
             if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
                 && !map_key.starts_with(INPUT_ROW_PREFIX)
-                && CustodyTransition::decode(&bytes)
-                    .is_ok_and(|held| sealed_after_revoke(&fold, &held))
+                && let Ok(held) = CustodyTransition::decode(&bytes)
+                && (sealed_after_revoke(&fold, &held)
+                    || latest
+                        .get(&held.id)
+                        .is_some_and(|latest| latest.supersedes(&held)))
             {
-                sealed.push(map_key.to_owned());
+                gone.push(map_key.to_owned());
             }
         });
-        for row in sealed {
+        for row in gone {
             map_delete(&map, &row)?;
             wrote = true;
         }
@@ -451,7 +447,7 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, ski
             let mut judged = Vec::new();
             for (map_key, bytes) in &rows {
                 let transition = match CustodyTransition::decode(bytes) {
-                    Ok(transition) if transition.id.to_hex() == *map_key => transition,
+                    Ok(transition) if transition.row_key() == *map_key => transition,
                     _ => {
                         tracing::warn!(window, key = %map_key, "custody transition malformed; left out");
                         continue;

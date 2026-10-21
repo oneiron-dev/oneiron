@@ -278,14 +278,22 @@ impl Vault {
             let this = crate::identity::read_machine_id_in_txn(self, &txn)?;
             let mut rebinds = Vec::new();
             let mut carriers = Vec::new();
-            for (_, carrier) in super::TRANSITIONS.scan(&self.store, &txn)? {
-                let Ok(transition) = CustodyTransition::decode(&carrier) else {
-                    continue;
-                };
-                if pending_rebind_in_txn(self, &txn, &fold, this, &transition)? {
-                    rebinds.push(transition);
-                } else if pending_carrier_in_txn(self, &txn, &fold, this, &transition)? {
-                    carriers.push(transition);
+            // A rebind is judged once, from its first piece kept; a carrier
+            // from the piece that holds this machine's value.
+            let kept = super::TRANSITIONS
+                .scan(&self.store, &txn)?
+                .into_iter()
+                .filter_map(|(_, carrier)| super::CustodyPieces::decode(&carrier));
+            for held in kept {
+                let lead = held.lead().piece;
+                for transition in held.into_pieces() {
+                    if transition.piece == lead
+                        && pending_rebind_in_txn(self, &txn, &fold, this, &transition)?
+                    {
+                        rebinds.push(transition);
+                    } else if pending_carrier_in_txn(self, &txn, &fold, this, &transition)? {
+                        carriers.push(transition);
+                    }
                 }
             }
             (rebinds, carriers, fold.vault_id)

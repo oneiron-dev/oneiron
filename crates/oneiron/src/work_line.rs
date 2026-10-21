@@ -220,12 +220,19 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
     /// [`Self::admit`] on this thread, for work that runs on its own thread
     /// rather than on a runtime.
     pub fn admit_blocking(&self, key: K) -> Result<LinePermit, WaitTimedOut> {
-        self.wait_blocking(Some(key))
+        self.wait_blocking(Some(key), None)
+    }
+
+    /// [`Self::admit_blocking`] whose wait ends at `wait` rather than at the
+    /// line's own: the same line, order and permit, for work that keeps a
+    /// wait of its own (a caller's shorter deadline among them).
+    pub fn admit_blocking_for(&self, key: K, wait: Duration) -> Result<LinePermit, WaitTimedOut> {
+        self.wait_blocking(Some(key), Some(wait))
     }
 
     /// A permit for the host's own work, given only when no caller waits.
     pub fn admit_background_blocking(&self) -> Result<LinePermit, WaitTimedOut> {
-        self.wait_blocking(None)
+        self.wait_blocking(None, None)
     }
 
     /// A free permit for the host's own work, or `None` with nothing put in
@@ -241,12 +248,16 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
         Some(self.permit())
     }
 
-    fn wait_blocking(&self, key: Option<K>) -> Result<LinePermit, WaitTimedOut> {
+    fn wait_blocking(
+        &self,
+        key: Option<K>,
+        wait: Option<Duration>,
+    ) -> Result<LinePermit, WaitTimedOut> {
         let mut place = match self.enter(key) {
             Entry::Admitted(permit) => return Ok(permit),
             Entry::Queued(place) => place,
         };
-        let deadline = Instant::now() + *lock(&self.pool.wait);
+        let deadline = Instant::now() + wait.unwrap_or_else(|| *lock(&self.pool.wait));
         let waiter = Arc::clone(&place.waiter);
         let mut granted = lock(&waiter.granted);
         while !*granted {

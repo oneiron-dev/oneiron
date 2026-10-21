@@ -158,7 +158,8 @@ pub(crate) use self::transition::holds_custody_carrier_in_txn;
 pub(crate) use self::transition::moves_custody_floor;
 pub(crate) use self::transition::{
     CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_portable,
-    custody_transitions, remember_custody_transition_in_txn,
+    custody_row_key, custody_transitions, parse_custody_row_key,
+    remember_custody_transition_in_txn,
 };
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,

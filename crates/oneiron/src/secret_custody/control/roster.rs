@@ -26,13 +26,12 @@
 use oneiron_crypto::HybridPublicKey;
 
 use super::super::read_secret_custody_meta_in_txn;
-use super::super::transition::{CustodyTransition, custody_portable, held_transitions_in_txn};
+use super::super::transition::{CustodyPieces, custody_portable, held_transitions_in_txn};
 use super::super::types::SecretCustodyStatus;
 use super::permits::{permit_for, permitted_keys};
 use super::{ActiveChange, CustodyPlan, Material};
 use crate::authority::{
-    ActSurface, AuthorityFold, CUSTODY_RECIPIENTS_MAX, CustodyChange, CustodyRecipientPermit,
-    OwnerWorkBody,
+    ActSurface, AuthorityFold, CustodyChange, CustodyRecipientPermit, OwnerWorkBody,
 };
 use crate::error::Result;
 use crate::world_keys::OwnerWorkStatus;
@@ -151,15 +150,23 @@ impl Vault {
     /// portable, its id is not terminal, and some machine of `own` is named
     /// neither by the permits still standing nor by a pending request at
     /// that generation. Its permits are the standing ones, with each added
-    /// machine's fresh permit in place of one whose key changed.
+    /// machine's fresh permit in place of one whose key changed, however
+    /// many (FIX 7951: never skipped; its writer measures them). A transition whose pieces
+    /// are not all here yet waits for them: its standing set is not whole,
+    /// and the next pass judges it again.
     fn rewrap_due_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,
         own: &[EntityId],
-        held: &CustodyTransition,
+        held: &CustodyPieces,
     ) -> Result<Option<Due>> {
-        if held.status == SecretCustodyStatus::Revoked || fold.custody_revoked(&held.id) {
+        let pieces = held;
+        let held = pieces.lead();
+        if held.status == SecretCustodyStatus::Revoked
+            || fold.custody_revoked(&held.id)
+            || !pieces.complete()
+        {
             return Ok(None);
         }
         let Some(record) = read_secret_custody_meta_in_txn(&self.store, txn, &held.id)? else {
@@ -171,7 +178,7 @@ impl Vault {
         {
             return Ok(None);
         }
-        let standing: Vec<CustodyRecipientPermit> = held
+        let standing: Vec<CustodyRecipientPermit> = pieces
             .permits()
             .copied()
             .filter(|permit| permitted_keys(fold, std::slice::from_ref(permit)).is_some())
@@ -208,9 +215,6 @@ impl Vault {
         permits.retain(|permit| !added.iter().any(|fresh| fresh.machine == permit.machine));
         permits.extend(added);
         permits.sort_unstable_by_key(|permit| permit.machine);
-        if permits.len() > CUSTODY_RECIPIENTS_MAX {
-            return Ok(None);
-        }
         Ok(Some(Due {
             id: held.id,
             generation: held.generation,

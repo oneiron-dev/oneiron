@@ -200,9 +200,9 @@ pub(crate) fn act_heads(fold: &AuthorityFold, machine: EntityId) -> BTreeSet<Aut
 
 /// What a new profile revision of `machine` lists as seen (FIX 2998, FIX
 /// 4649): the acts in the log it carried ([`super::world_privacy::live_edits_by`]),
-/// then the topology decisions it carried, by token, within the codec's one
-/// cap. A decision the cap leaves out counts as one its removal raced: the
-/// removal retires it (CALLS "FIX 4649 seal causal envelope").
+/// then every topology decision it carried, by token. None is left out (FIX
+/// 7911), so a removal retires none it saw; the set is measured against the
+/// `authority_record_items` row, which asks past it and keeps it whole.
 pub(super) fn acknowledged_by_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -210,12 +210,10 @@ pub(super) fn acknowledged_by_in_txn(
     machine: EntityId,
 ) -> Result<BTreeSet<AuthorityEntryHash>> {
     let mut seen = super::world_privacy::live_edits_by(fold, machine);
-    let room = MACHINE_SEEN_WORLD_EDITS_MAX.saturating_sub(seen.len());
-    seen.extend(
-        crate::identity_topology::carried_seal_tokens_in_txn(store, txn, machine)?
-            .into_iter()
-            .take(room),
-    );
+    seen.extend(crate::identity_topology::carried_seal_tokens_in_txn(
+        store, txn, machine,
+    )?);
+    super::measure_authority_work(&store.limit_watch, seen.len());
     Ok(seen)
 }
 
