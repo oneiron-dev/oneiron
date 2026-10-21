@@ -8,7 +8,8 @@
 //! candidate like any optimizer draft: the Dreamer's optimize pass scores it,
 //! and nothing here admits it. A draft that went stale before the heal's
 //! write leaves that heal route-only, saying why (FIX 2497). The other
-//! routes stay route-only.
+//! routes stay route-only. A model finding's issue drafts the same way, of
+//! the skill its recorded links prove (OF-418 L3).
 use crate::attempt_queue::{AttemptId, AttemptQueue, ManifestEntry, ManifestKind};
 use crate::claim::ClaimApprovalStatus;
 use crate::failure_ladder::{HealerCase, HealerRepairRoute};
@@ -21,7 +22,9 @@ use crate::skill_optimize::{
     propose_skill_repair_in_txn, proven_cycle, skill_repair_brief, validate_skill_draft,
 };
 
+use super::coach_diagnostic::ProducerTarget;
 use super::coach_heal::CoachHealAuthor;
+use crate::self_heal::issue_work::DiagnosticIssue;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Result, Vault};
@@ -89,8 +92,9 @@ fn repair_target(vault: &Vault, case: &HealerCase) -> Result<Option<EntityId>> {
 /// exactly one skill and exactly one active skill answers it, that one; else
 /// none. A closed run's pack receipt says what its pack loaded; a run still
 /// live has no receipt yet, and its attempt's manifest says what it has
-/// loaded so far.
-fn run_target(vault: &Vault, attempt: AttemptId) -> Result<Option<EntityId>> {
+/// loaded so far. A model finding's Skill producer binds by the same rule
+/// (OF-418 L3).
+pub(super) fn run_target(vault: &Vault, attempt: AttemptId) -> Result<Option<EntityId>> {
     let receipt_id = crate::receipt::attempt_pack_receipt_id(&attempt);
     let manifest = match crate::receipt::attempt_pack_receipt(vault, &receipt_id)? {
         Some(receipt) => receipt.pack_manifest_skills(),
@@ -222,6 +226,50 @@ impl Vault {
                     crate::failure_ladder::dispatched_target_ref(&record) == Some(issue.reporter)
                 })
         };
+        self.draft_skill_repair(aim, bound, author, attempt, now)
+    }
+
+    /// Drafts the revision a model issue's `skill_edit` heal carries (OF-418
+    /// L3), aimed at its finding and its recorded `cause`: of the one active
+    /// skill its recorded attempt link proves, bound to the agent that attempt
+    /// dispatched. An issue whose producer is no skill, or whose linked attempt
+    /// dispatched no agent, stays route-only; none is made up.
+    pub(super) fn draft_coach_diagnostic_repair(
+        &self,
+        issue: &DiagnosticIssue,
+        cause: HealEvidenceContext,
+        author: &dyn CoachHealAuthor,
+        attempt: AttemptId,
+        now: u64,
+    ) -> Result<SkillRepairDraft> {
+        let ProducerTarget::Skill {
+            skill,
+            attempt: linked,
+            ..
+        } = &issue.producer
+        else {
+            return Ok(SkillRepairDraft::Skipped {
+                skill: None,
+                why: "no_single_skill",
+            });
+        };
+        let linked = AttemptId::from_bytes(linked.as_bytes())?;
+        let agent = AttemptQueue::new(self)
+            .get(linked)?
+            .as_ref()
+            .and_then(crate::failure_ladder::dispatched_target_ref);
+        let aim = RepairAim {
+            skill: Some(*skill),
+            agent_ref: agent.map_or_else(String::new, |agent| agent.to_hex()),
+            diagnosis_ref: issue.diagnostic.to_hex(),
+            failure: SkillFailureContext {
+                failure_class: issue.class.clone(),
+                category: Some(issue.family.clone()),
+                reports: Vec::new(),
+            },
+            cause,
+        };
+        let bound = |_: &HealerRepairRoute| agent.is_some();
         self.draft_skill_repair(aim, bound, author, attempt, now)
     }
 
