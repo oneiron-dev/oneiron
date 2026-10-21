@@ -4,7 +4,7 @@
 //! punctuation and spacing cannot hide a copied run. A CJK, kana or hangul
 //! character is a word of its own and weighs half a word.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use unicode_normalization::UnicodeNormalization;
 
@@ -21,19 +21,24 @@ const CHAR: usize = 1;
 
 type Word = (String, usize);
 
-/// Whether `export` copies a span of any of `sources`, or one of their lines
-/// whole.
-pub(super) fn shares_verbatim_span(sources: &[String], export: &str) -> bool {
+/// Every span of `export` that copies one of `sources` (OF-380 L1): each
+/// shortest run of [`CODE_FIX_SPAN_WORDS`] words' weight it shares with one,
+/// and each line of one at least [`CODE_FIX_LINE_WORDS`] words long that it
+/// holds whole, spelled as its folded words. Empty when it copies none.
+pub(super) fn verbatim_spans(sources: &[&str], export: &str) -> BTreeSet<String> {
     let target = words(export);
     let span = CODE_FIX_SPAN_WORDS * WORD;
     // Every shared run at least `span` long starts with the same shortest
     // window of that weight on both sides, so comparing those windows finds
     // every such run.
     let seen: HashSet<&[Word]> = windows(&target, span).collect();
+    let mut copied = BTreeSet::new();
     for source in sources {
         let source_words = words(source);
-        if windows(&source_words, span).any(|window| seen.contains(window)) {
-            return true;
+        for window in windows(&source_words, span) {
+            if seen.contains(window) {
+                copied.insert(spell(window));
+            }
         }
         for line in source.lines() {
             let line = words(line);
@@ -41,11 +46,19 @@ pub(super) fn shares_verbatim_span(sources: &[String], export: &str) -> bool {
             if weight >= CODE_FIX_LINE_WORDS * WORD
                 && target.windows(line.len()).any(|run| run == line.as_slice())
             {
-                return true;
+                copied.insert(spell(&line));
             }
         }
     }
-    false
+    copied
+}
+
+/// A run of words as one text, a space between each two.
+fn spell(run: &[Word]) -> String {
+    run.iter()
+        .map(|(word, _)| word.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The shortest run from each start that weighs at least `span`.

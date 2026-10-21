@@ -3,7 +3,10 @@
 //! pass. Retrieval misses and windowed retrieval regressions read every
 //! stored ARCH-0037 run row; MCP boundary refusals read the lasting call
 //! receipts. Nothing here repairs: the pass emits diagnostics, and
-//! `Vault::propose_tier1_repairs` files every proposed-only repair.
+//! `Vault::propose_tier1_repairs` files every proposed-only repair. Each
+//! regression and refusal it stores becomes a failure-signal witness once
+//! its rows read again from base (FIX 2449); one that does not stays a
+//! diagnostic only.
 
 use super::tripwires::{McpActionRejectedDetector, RetrievalRegressionDetector};
 use super::{DiagnosticObservation, TIER1_SWEEP_SCOPE};
@@ -39,7 +42,7 @@ impl Vault {
                 .iter()
                 .filter_map(DiagnosticObservation::from_retrieval_degradation)
                 .collect();
-            ids.extend(super::tripwires::run(
+            let regressions = super::tripwires::run(
                 self,
                 SERVED_RETRIEVAL_SCOPE,
                 degraded,
@@ -47,7 +50,9 @@ impl Vault {
                     bounds,
                     window_end: now,
                 }],
-            )?);
+            )?;
+            self.capture_tier1_served_regression(&regressions, &runs, bounds, now)?;
+            ids.extend(regressions);
         }
         let since = now.saturating_sub(SERVED_SPAN_SECS);
         let mut rejected: Vec<DiagnosticObservation> = Vec::new();
@@ -71,12 +76,14 @@ impl Vault {
             count.finish(self);
         }
         let _ = self.measure_limit(EngineLimit::DetectorObservations, rejected.len() as u64);
-        ids.extend(super::tripwires::run(
+        let refused = super::tripwires::run(
             self,
             TIER1_SWEEP_SCOPE,
             rejected,
             &[&McpActionRejectedDetector],
-        )?);
+        )?;
+        self.capture_tier1_point_producer(&refused)?;
+        ids.extend(refused);
         ids.sort();
         ids.dedup();
         Ok(ids)

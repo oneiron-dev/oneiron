@@ -42,7 +42,8 @@ use serde_json::json;
 use self::engine::read_granted_in_txn;
 use self::instruction::{CoachReplay, CoachScrubber, Ran};
 use self::work::{
-    draft_rows, enqueue_run_in_txn, failure_context, keep_in_txn, keep_run_in_txn, not_run, untried,
+    enqueue_run_in_txn, keep_in_txn, keep_run_in_txn, not_run, redraft_invented_example,
+    snapshot_job, untried,
 };
 use super::coach::COACH_CODE_FIX_FACET;
 use super::coach_heal::HealRoute;
@@ -50,8 +51,7 @@ use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::failure_signals::{
     CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplay,
     ExactReplayRequest, FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft,
-    InventedMessage, ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_subject_in,
-    exact_replay,
+    InventedMessage, ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_source_snapshot,
 };
 use crate::limit_ask::EngineLimit;
 use crate::llm::decision::catalogue::CODE_FIX_JUDGMENT;
@@ -529,31 +529,20 @@ impl Vault {
                 CodeFixWithheld::NotEligible,
             ));
         }
-        let found = {
-            let txn = self.store.env.read_txn()?;
-            code_fix_subject_in(self, &txn, source)?
-        };
-        let Some(subject) = found else {
-            return Ok(withheld(
-                FailureClassV1::Other,
-                CodeFixWithheld::UnknownCase,
-            ));
-        };
-        let (failure, _) = match subject.failure.read() {
-            Ok(read) => read,
+        // OF-380 L1: the failure, its reports and its failing call, read once.
+        let snapshot = match code_fix_source_snapshot(self, source)? {
+            Ok(snapshot) => snapshot,
             Err(reason) => return Ok(withheld(FailureClassV1::Other, reason)),
         };
-        let exact = exact_replay(self, source)?;
         // An erased capsule's call is never replayed, rebuilt or not (FIX
         // 6251): nothing is classed or drafted for it.
-        if matches!(exact, ExactReplay::Erased) {
+        if matches!(snapshot.replay.exact, ExactReplay::Erased) {
             return Ok(withheld(
                 FailureClassV1::Other,
                 CodeFixWithheld::ReplayUnavailable,
             ));
         }
-        let case = subject.case.as_ref();
-        let (evidence, reports) = failure_context(self, case, &subject.reports)?;
+        let (case, failure) = (snapshot.case.as_ref(), &snapshot.failure);
         // A blocked report with no case has no ladder class and names no
         // skill the ladder saw.
         let about = if case.is_some() {
@@ -572,19 +561,12 @@ impl Vault {
             "about": about,
             "failure_ladder_class": case.map(|case| &case.failure_class),
             "names_skill": case.map(|case| case.scope.skill_ref.is_some()),
-            "reports": reports,
+            "reports": snapshot.reports,
             "briefing": failure.briefing,
             "task": failure.task,
         });
-        let failure_class = decisions.class(&evidence, &class_state)?;
-        let job = CodeFixJob {
-            origin: source.clone(),
-            route,
-            failure_class,
-            source_rows: draft_rows(case, &failure, &evidence, proposal),
-            source: failure,
-            reports,
-        };
+        let failure_class = decisions.class(&snapshot.evidence, &class_state)?;
+        let job = snapshot_job(&snapshot, source, route, failure_class, proposal);
         let draft = host.draft(&job)?;
         let own = match (route, &draft) {
             (HealRoute::SkillEdit | HealRoute::PromptInject, Some(draft)) => draft
@@ -619,27 +601,27 @@ impl Vault {
             job: &job,
             host,
             decisions,
-            evidence: &evidence,
+            evidence: &snapshot.evidence,
+            snapshot: &snapshot,
             drafted: drafted_id,
             candidates,
-            exact: RefCell::new(exact),
+            exact: RefCell::new(snapshot.replay.exact.clone()),
             baseline: RefCell::new(None),
         };
         let scrubber = CoachScrubber {
             vault: self,
             decisions,
-            evidence: &evidence,
+            evidence: &snapshot.evidence,
         };
         let example = match draft {
-            Some(draft) => self.seal_invented_example(
-                source,
+            Some(draft) => redraft_invented_example(
+                &replay,
+                &scrubber,
                 InventedExampleDraft {
                     failure_class,
                     note: draft.note,
                     conversation: draft.conversation,
                 },
-                &replay,
-                &scrubber,
             )?,
             None => (
                 CodeFixVerdict::Withheld {
@@ -673,40 +655,26 @@ impl Vault {
         decisions: &CodeFixDecisions<'_>,
         host: &dyn CodeFixHost,
     ) -> Result<Vec<SealedRun>> {
-        let found = {
-            let txn = self.store.env.read_txn()?;
-            code_fix_subject_in(self, &txn, source)?
-        };
-        let Some(subject) = found else {
-            return Ok(not_run(missing, CodeFixWithheld::UnknownCase));
-        };
-        let (failure, _) = match subject.failure.read() {
-            Ok(read) => read,
+        // OF-380 L1: read once for this top-up, as for a first run.
+        let snapshot = match code_fix_source_snapshot(self, source)? {
+            Ok(snapshot) => snapshot,
             Err(reason) => return Ok(not_run(missing, reason)),
         };
-        let exact = exact_replay(self, source)?;
-        if matches!(exact, ExactReplay::Erased) {
+        if matches!(snapshot.replay.exact, ExactReplay::Erased) {
             return Ok(not_run(missing, CodeFixWithheld::ReplayUnavailable));
         }
         measure_candidates(self, missing);
-        let (evidence, reports) = failure_context(self, subject.case.as_ref(), &subject.reports)?;
-        let job = CodeFixJob {
-            origin: source.clone(),
-            route,
-            failure_class: settled.failure_class,
-            source_rows: draft_rows(subject.case.as_ref(), &failure, &evidence, proposal),
-            source: failure,
-            reports,
-        };
+        let job = snapshot_job(&snapshot, source, route, settled.failure_class, proposal);
         let replay = CoachReplay {
             vault: self,
             job: &job,
             host,
             decisions,
-            evidence: &evidence,
+            evidence: &snapshot.evidence,
+            snapshot: &snapshot,
             drafted: None,
             candidates: missing.to_vec(),
-            exact: RefCell::new(exact),
+            exact: RefCell::new(snapshot.replay.exact.clone()),
             baseline: RefCell::new(None),
         };
         self.replay_candidates(source, &replay, &settled.example)

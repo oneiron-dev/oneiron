@@ -11,9 +11,9 @@ use serde_json::json;
 
 use super::{CodeFixDecisions, CodeFixHost, CodeFixJob, PublisherCandidateKind, class_name};
 use crate::failure_signals::{
-    CodeFixReplay, ExactReplay, ExactReplayRequest, ExportScrubber, FailureSource,
-    InventedExampleDraft, InventedMessage, InventedRole, ReplayFidelity, ReplayRun, ScrubRun,
-    ShadowRun, exact_replay,
+    CodeFixReplay, CodeFixSourceSnapshot, ExactReplay, ExactReplayRequest, ExportScrubber,
+    FailureSource, InventedExampleDraft, InventedMessage, InventedRole, ReplayFidelity, ReplayRun,
+    ScrubRun, ShadowRun, exact_replay,
 };
 use crate::limit_ask::EngineLimit;
 use crate::{ContentPart, EntityId, LlmMessage, LlmMessageRole, LlmRequest, Result, Vault};
@@ -34,6 +34,10 @@ pub(super) struct CoachReplay<'a> {
     pub(super) host: &'a dyn CodeFixHost,
     pub(super) decisions: &'a CodeFixDecisions<'a>,
     pub(super) evidence: &'a [EntityId],
+    /// The real failure as this run read it once (OF-380 L1): the failing
+    /// call its replay starts from and its engine pairs run from, and the
+    /// texts its invented example may copy nothing of.
+    pub(super) snapshot: &'a CodeFixSourceSnapshot,
     /// The id of the Coach's own candidate, drafted from the job: a reply
     /// under it reads the draft (FIX 6997).
     pub(super) drafted: Option<String>,
