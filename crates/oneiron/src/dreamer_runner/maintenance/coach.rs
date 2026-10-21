@@ -298,7 +298,7 @@ impl Vault {
         distiller: &dyn SessionActorDistiller,
     ) -> Result<SessionDistillDrain> {
         self.require_coach_attempt(attempt, COACH_SKILL_DISTILL_FACET)?;
-        drain_pending_session_actor_distills(self, limit, distiller)
+        drain_pending_session_actor_distills(self, limit, distiller, self.coach_authority()?)
     }
 
     /// Skill discovery as the Coach: one bounded page of the task-attribution
