@@ -88,6 +88,7 @@ mod secret_found_routes;
 mod secret_lift_routes;
 mod secret_reveal_routes;
 mod secret_use_routes;
+mod shared_training_setup_routes;
 mod skill_judge_routes;
 mod space_posting_routes;
 mod steer_routes;
@@ -194,6 +195,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(training_swap_routes::routes())
         .merge(usage_repair_routes::routes())
         .merge(conversation_learning_routes::routes())
+        .merge(shared_training_setup_routes::routes())
         .merge(world_privacy_routes::routes())
         .merge(world_privacy_work_routes::routes())
         .merge(owner_key_enrollment_routes::routes())
