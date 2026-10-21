@@ -626,7 +626,11 @@ A candidate the marker's round dropped is listed under `alternatives`, apart fro
 `keep` with its id lands it as the round proposed it. One drawn from imported words is staged in
 that import's review instead: nothing is settled, the marker stays open, and the reply carries
 `pending_review` (`kept`, the alternative; `staged`, the claim waiting in the review; `review`,
-the import's review) in place of `resolved`.
+the import's review) in place of `resolved`. The staged claim is listed among the members while
+it waits. Approving it in the review leaves the marker open for a `keep` of it; to do both at
+once, send `"settlement": "approve_and_keep"` with the staged claim as `keep`. It approves that
+claim as a review approval would and keeps it, superseding every other live member, in one
+step. Only you, the vault's owner, take it.
 
 Each answer writes a `conflict.resolved` claim naming the marker, plus one receipt. The marker
 itself stays as the record. A person or agent you delegate `memory.conflict_review` on a subject
@@ -647,7 +651,8 @@ You undo any settlement, the Dreamer's above all:
   wrote comes back as the Dreamer's fresh copy, born of the old one, since a signed claim's
   history never reopens. A member some later write closed is left as it is. An alternative the
   settlement landed is retracted; keep it again and it lands at a fresh id (one from imported
-  words still refuses a second Keep). The reply lists each, and one receipt records the revert.
+  words is staged in its import's review again, at a fresh id that stays a member of the
+  conflict). The reply lists each, and one receipt records the revert.
   The Dreamer leaves a reverted conflict to you.
 
 To keep the Dreamer off some conflicts:
