@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1127 facade rows, 3879 generated types.
+// UniFFI census: 1127 facade rows, 3886 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1079.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -59740,6 +59740,8 @@ pub struct EffectReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub engine_switch: Option<EngineSwitchRecord>,
+    #[serde(rename = "duration_ms")]
+    pub duration_ms: u64,
 }
 
 /// `oneiron_browser::library::admission::RecentCounts`.
@@ -59806,6 +59808,8 @@ pub struct LibraryCard {
         skip_serializing_if = "Option::is_none"
     )]
     pub last_run_at: Option<u64>,
+    #[serde(rename = "strict_misses")]
+    pub strict_misses: u32,
 }
 
 /// `oneiron_browser::PartialTree`.
@@ -60501,6 +60505,113 @@ pub enum SubgoalStatus {
     NeedsYou,
 }
 
+/// `oneiron_browser::stop::StrictDenial`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum StrictDenial {
+    #[serde(rename = "rule_abstained")]
+    RuleAbstained,
+    #[serde(rename = "no_rule")]
+    NoRule,
+    #[serde(rename = "image")]
+    Image,
+}
+
+/// `oneiron_browser::stop::AskUpReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "why")]
+pub enum AskUpReason {
+    #[serde(rename = "asked")]
+    Asked {
+        #[serde(rename = "ladder", default, skip_serializing_if = "Option::is_none")]
+        ladder: Option<String>,
+    },
+    #[serde(rename = "looks")]
+    Looks,
+    #[serde(rename = "no_answer")]
+    NoAnswer,
+    #[serde(rename = "wrong_answer")]
+    WrongAnswer,
+    #[serde(rename = "strict")]
+    Strict {
+        #[serde(rename = "denied")]
+        denied: StrictDenial,
+    },
+}
+
+/// `oneiron_browser::stop::ClockScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ClockScope {
+    #[serde(rename = "wait")]
+    Wait,
+    #[serde(rename = "navigation")]
+    Navigation,
+    #[serde(rename = "decision")]
+    Decision,
+}
+
+/// `oneiron_browser::stop::BatchStopCause`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "cause")]
+pub enum BatchStopCause {
+    #[serde(rename = "postcondition_unmet")]
+    PostconditionUnmet,
+    #[serde(rename = "locator_missing")]
+    LocatorMissing,
+    #[serde(rename = "incomplete_observation")]
+    IncompleteObservation,
+    #[serde(rename = "decider_asked_up")]
+    DeciderAskedUp {
+        #[serde(rename = "reason")]
+        reason: AskUpReason,
+    },
+    #[serde(rename = "clock")]
+    Clock {
+        #[serde(rename = "scope")]
+        scope: ClockScope,
+    },
+    #[serde(rename = "press_needed")]
+    PressNeeded,
+    #[serde(rename = "taken_over")]
+    TakenOver,
+    #[serde(rename = "field_text")]
+    FieldText,
+    #[serde(rename = "no_progress")]
+    NoProgress,
+    #[serde(rename = "browser")]
+    Browser {
+        #[serde(rename = "code")]
+        code: String,
+    },
+}
+
+/// `oneiron_browser::stop::CheckReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CheckReceipt {
+    #[serde(rename = "expect")]
+    pub expect: ExpectInput,
+    #[serde(rename = "observed")]
+    pub observed: ExpectOutput,
+}
+
+/// `oneiron_browser::stop::FailedStepReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FailedStepReceipt {
+    #[serde(rename = "step", default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<u64>,
+    #[serde(rename = "stop_cause")]
+    pub stop_cause: BatchStopCause,
+    #[serde(rename = "missed", default, skip_serializing_if = "Option::is_none")]
+    pub missed: Option<Vec<CheckReceipt>>,
+    #[serde(
+        rename = "observation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observation: Option<Observation2>,
+    #[serde(rename = "error", default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// `oneiron_browser::observation::StepRebound`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct StepRebound {
@@ -60525,6 +60636,20 @@ pub struct BatchOutput {
     pub failed_step: Option<u64>,
     #[serde(rename = "error", default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(
+        rename = "stop_cause",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stop_cause: Option<BatchStopCause>,
+    #[serde(
+        rename = "failed_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub failed_receipt: Option<FailedStepReceipt>,
+    #[serde(rename = "elapsed_ms")]
+    pub elapsed_ms: u64,
     #[serde(
         rename = "observation",
         default,
@@ -60862,6 +60987,15 @@ pub struct BrowserAnswerLibraryRetiredOutput {
     pub flattened: LibraryRetiredOutput,
 }
 
+/// `oneiron_browser::library::live_run::LibraryRunMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LibraryRunMode {
+    #[serde(rename = "strict")]
+    Strict,
+    #[serde(rename = "assisted")]
+    Assisted,
+}
+
 /// `oneiron_browser::library::LibraryRunInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -60872,6 +61006,8 @@ pub struct LibraryRunInput {
     pub args: Option<std::collections::HashMap<String, String>>,
     #[serde(rename = "base", default, skip_serializing_if = "Option::is_none")]
     pub base: Option<ObservationBase>,
+    #[serde(rename = "mode", default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<LibraryRunMode>,
 }
 
 /// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LibraryRunInput`.
@@ -60891,6 +61027,16 @@ pub struct LibraryRunOutput {
     pub workflow: String,
     #[serde(rename = "status")]
     pub status: SubgoalStatus,
+    #[serde(rename = "mode")]
+    pub mode: LibraryRunMode,
+    #[serde(rename = "model_free")]
+    pub model_free: bool,
+    #[serde(
+        rename = "model_free_unproven",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model_free_unproven: Option<u64>,
     #[serde(rename = "unmet", default, skip_serializing_if = "Option::is_none")]
     pub unmet: Option<Vec<u64>>,
     #[serde(rename = "batch")]
