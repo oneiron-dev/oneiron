@@ -308,7 +308,7 @@ pub(super) fn retire_carried(
         // An attempt's archive mark bound its carried bytes: it follows the
         // row to its text-free form (FIX 7115).
         if family == ResponseFamily::AttemptPayload {
-            let after = value.clone();
+            let after = *blake3::hash(value).as_bytes();
             if let (Ok(id), Some(rows)) = (
                 AttemptId::from_bytes(&key),
                 image.databases.get_mut("vault_meta"),
@@ -359,8 +359,8 @@ pub(super) fn unlease_carried_attempts(
             .get_mut(ResponseDb::Attempts.name())
             .ok_or_else(codec_error)?;
         let value = row_mut(rows, &key)?;
-        let after = rebuild::unlease_attempt(&key, value)?;
-        value.clone_from(&after);
+        *value = rebuild::unlease_attempt(&key, value)?;
+        let after = *blake3::hash(value).as_bytes();
         if let (Ok(id), Some(rows)) = (
             AttemptId::from_bytes(&key),
             image.databases.get_mut("vault_meta"),
