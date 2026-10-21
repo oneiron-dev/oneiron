@@ -25414,7 +25414,7 @@
      "purpose": "Tournament wire types, their validating constructors, and the pinned bounds",
      "surface": {
       "const": 4,
-      "crate-vis": 10,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 12,
       "struct": 14
@@ -56139,6 +56139,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/deferred_approval.rs",
+     "purpose": "An approved tradeoff that cannot admit yet (FIX 8848)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -56154,6 +56164,16 @@
       "enum": 1,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/judge_binding.rs",
+     "purpose": "The judge a kept score was measured by (FIX 8846)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -56174,7 +56194,7 @@
      "path": "src/skill_optimize/gate/live.rs",
      "purpose": "Live goal-axis measurement of a proposal (ARCH-0053: \"Primary axes are measured online.\" \"Offline axes run…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -56245,6 +56265,16 @@
       "crate-vis": 10,
       "fn": 11,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/tradeoff_capacity.rs",
+     "purpose": "Tradeoff rule counts against the resolved policy limits (FIX 8771, 8847)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -72037,7 +72067,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 47,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72305,7 +72335,7 @@
    },
    "over_bar": 171,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4630,
+   "source_files": 4633,
    "test_files": 902
   },
   "oneiron-android": {
