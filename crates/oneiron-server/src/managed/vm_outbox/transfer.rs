@@ -168,7 +168,9 @@ impl Carrier {
     /// One set: each put's file held first, identities recorded before a
     /// byte goes, then the transfers, then one ack each. When an identity
     /// does not record, none of the set goes: what was recorded is kept, the
-    /// set is paced and its kind waits on its records.
+    /// set is paced and its kind waits on its records. When a put's file
+    /// does not open, none of the set goes either and nothing is recorded:
+    /// the set is paced, and the session and the other sets go on.
     fn send_set<S: Read + Write>(
         &mut self,
         link: &mut Link<S>,
@@ -184,11 +186,31 @@ impl Carrier {
                 continue;
             }
             // A put whose file changed or went since its scan waits for the
-            // next scan.
-            if let Some((file, stamp)) = local::open_member(&root, &op.member, Some(self.owner))?
-                && Some(stamp) == op.stamp
-            {
-                ready.push((op, Some(file)));
+            // next scan; one whose file does not open holds back its set.
+            match local::open_member(&root, &op.member, Some(self.owner)) {
+                Ok(Some((file, stamp))) if Some(stamp) == op.stamp => {
+                    ready.push((op, Some(file)));
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    drop(ready);
+                    if let VmOutboxOutcome::Deferred {
+                        code,
+                        bound,
+                        detail,
+                    } = self.io_outcome(set.kind, &error)
+                    {
+                        self.say(
+                            set.kind,
+                            &op.member,
+                            &format!(
+                                "its set waits: it does not open ({code:?}) on {bound}: {detail}"
+                            ),
+                        );
+                    }
+                    self.pace(set.kind, &set.set);
+                    return Ok(false);
+                }
             }
         }
         if ready.is_empty() {
@@ -621,7 +643,9 @@ impl Carrier {
             .collect()
     }
 
-    /// Makes one checked change and records it before it is acked.
+    /// Makes one checked change and records it before it is acked. When its
+    /// record does not write, the change stays made, the transfer is
+    /// deferred on this end's carrier records and its kind waits on them.
     fn apply(
         &mut self,
         root: &File,
@@ -664,7 +688,10 @@ impl Carrier {
         record.refused = None;
         match self.store.put(transfer.kind, &transfer.member, record) {
             Ok(()) => VmOutboxOutcome::Durable,
-            Err(error) => self.io_outcome(transfer.kind, &error),
+            Err(error) => {
+                self.records_failed(transfer.kind, None, &error);
+                self.records_outcome(&error)
+            }
         }
     }
 }
