@@ -22,7 +22,8 @@ use crate::engine_executor::{
     JsCodeModeStepOutcome, JsCodeModeStream, StepCancellation,
 };
 use crate::{Error, Result};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
@@ -35,10 +36,13 @@ pub const GUEST_WIT: &str = include_str!("../../../wit/code-run.wit");
 pub struct ComponentBudget {
     pub fuel: u64,
     pub memory_bytes: usize,
-    /// Cutoff for guest execution and new host calls, not cancellation of host code.
-    /// An admitted synchronous host callback runs to completion. Its elapsed time
-    /// counts, so an overrun refuses further guest work once it returns. Hosts must
-    /// bound their own callbacks; this is not a hard end-to-end RPC timeout.
+    /// The step's time allowance for guest execution and new host calls, not
+    /// cancellation of host code. An admitted synchronous host callback runs to
+    /// completion, and its elapsed time counts. Once the allowance is spent the
+    /// step stops at its next safe point (before another host call or output, or
+    /// at the guest's epoch check) and answers the typed `step_deadline` stop: not
+    /// done, not failed, its finished host calls kept (FIX 7665). This is not a
+    /// hard end-to-end RPC timeout.
     pub wall_time: Duration,
     pub host_calls: u32,
     pub message_bytes: usize,
@@ -223,8 +227,52 @@ impl WasmtimeComponentRuntime {
         // A cancel seen by the end wins over whatever else the step ended
         // with: a cancelled step never counts as run.
         cancel.check()?;
-        bridge.held.into_outcome(outcome?)
+        match outcome? {
+            Stepped::Ended(outcome) => bridge.held.into_outcome(outcome),
+            Stepped::Deadline(calls) => bridge.held.into_deadline_outcome(&calls),
+        }
     }
+}
+
+/// How a step's run ended: the guest's own end, or its time allowance reached
+/// at a safe point, with the host calls that finished before it (FIX 7665).
+enum Stepped {
+    Ended(JsCodeModeStepOutcome),
+    Deadline(Vec<&'static str>),
+}
+
+/// The typed stop a step answers when its time allowance is spent.
+const STEP_DEADLINE: &str = "step_deadline";
+
+/// The model's observation of a `step_deadline` stop: the step is not done
+/// and did not fail, and every host call that finished in it took effect.
+fn step_deadline_observation(calls: &[&'static str]) -> String {
+    let mut counted: Vec<(&str, usize)> = Vec::new();
+    for &name in calls {
+        let seen = counted.iter().position(|(seen, _)| *seen == name);
+        match seen {
+            Some(at) => counted[at].1 += 1,
+            None => counted.push((name, 1)),
+        }
+    }
+    let finished = if counted.is_empty() {
+        "none".to_owned()
+    } else {
+        counted
+            .iter()
+            .map(|(name, count)| match count {
+                1 => (*name).to_owned(),
+                n => format!("{name} x{n}"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "{STEP_DEADLINE}: this step used its time allowance and stopped at a safe point; it did \
+         not fail. Host calls that finished in it took effect and keep their answers in this \
+         run: {finished}. Continue from them in the next step without repeating a write that \
+         finished, and keep each step's host work short."
+    )
 }
 
 #[expect(
@@ -240,7 +288,7 @@ fn execute_component(
     events: mpsc::SyncSender<HostEvent>,
     deadline: Instant,
     cancel: StepCancellation,
-) -> Result<JsCodeModeStepOutcome> {
+) -> Result<Stepped> {
     let limits = StoreLimitsBuilder::new()
         .memory_size(budget.memory_bytes)
         .memories(1)
@@ -267,10 +315,15 @@ fn execute_component(
     // this store, but must not cancel it before its own host-owned deadline.
     // Its own step's cancel, read from its own token first, traps it.
     let stop = cancel.clone();
+    // Set only by the deadline's own trap, so a spent allowance reads as the
+    // typed stop and every other trap stays a failure.
+    let spent = Arc::new(AtomicBool::new(false));
+    let latch = Arc::clone(&spent);
     store.epoch_deadline_callback(move |_| {
         if stop.is_cancelled() {
             Err(wasmtime::Error::msg("component step cancelled"))
         } else if Instant::now() >= deadline {
+            latch.store(true, Ordering::Relaxed);
             Err(wasmtime::Error::msg("component deadline exceeded"))
         } else {
             Ok(wasmtime::UpdateDeadline::Continue(1))
@@ -280,29 +333,35 @@ fn execute_component(
     // followed by an epoch bump this store sees.
     cancel.check()?;
     if Instant::now() >= deadline {
-        return Err(failure("component deadline exceeded before execution"));
+        // No guest code has run: the whole step is still to do.
+        return Ok(Stepped::Deadline(Vec::new()));
     }
     let mut linker = Linker::new(engine);
     typed::link_imports(&mut linker, boundary)?;
-    let instance = linker
-        .instantiate(&mut store, component)
-        .map_err(|_| failure("component imports or instantiation refused"))?;
+    let instance = match linker.instantiate(&mut store, component) {
+        Ok(instance) => instance,
+        Err(_) if spent.load(Ordering::Relaxed) => return Ok(Stepped::Deadline(Vec::new())),
+        Err(_) => return Err(failure("component imports or instantiation refused")),
+    };
     let run = instance
         .get_typed_func::<(String,), (std::result::Result<bindings::StepResult, String>,)>(
             &mut store, "run-step",
         )
         .map_err(|_| failure("component run-step ABI mismatch"))?;
-    // Wasmtime performs canonical post-return inside call; either trap refuses the step.
-    let (output,) = run
-        .call(&mut store, (script.to_owned(),))
-        .map_err(|_| failure("component execution trapped"))?;
+    // Wasmtime performs canonical post-return inside call; a trap refuses the
+    // step, except the deadline's own, which stops it.
+    let (output,) = match run.call(&mut store, (script.to_owned(),)) {
+        Ok(output) => output,
+        Err(_) if spent.load(Ordering::Relaxed) => return Ok(Stepped::Deadline(Vec::new())),
+        Err(_) => return Err(failure("component execution trapped")),
+    };
     let output = output.map_err(|message| guest_failure(&message))?;
     // This runtime is the first-party lane. Proposal-only execution belongs to
     // the microVM guest; never silently turn a returned proposal into a write.
     if !output.proposals.is_empty() {
         return Err(failure("in-process tier does not admit proposal deltas"));
     }
-    wire::decode_output(&output.result_json, budget.message_bytes)
+    wire::decode_output(&output.result_json, budget.message_bytes).map(Stepped::Ended)
 }
 
 /// Answers the worker's host events until its step ends. It waits in
@@ -310,23 +369,31 @@ fn execute_component(
 /// after each host operation it admits and before it accepts the step's
 /// end: a cancel it sees wins over the deadline, an output failure or a
 /// worker failure that lands with it. An operation already admitted
-/// settles first.
+/// settles first; once the deadline has passed it admits no new one, and the
+/// step ends with the typed `step_deadline` stop (FIX 7665).
 fn drive_host(
     requests: mpsc::Receiver<HostEvent>,
     bridge: &mut Bridge<'_>,
     deadline: Instant,
-) -> Result<JsCodeModeStepOutcome> {
+) -> Result<Stepped> {
+    let mut finished = Vec::new();
     loop {
         bridge.cancel.check()?;
-        let remaining = deadline
+        let Some(remaining) = deadline
             .checked_duration_since(Instant::now())
             .filter(|d| !d.is_zero())
-            .ok_or(failure("component deadline exceeded"))?;
+        else {
+            return Ok(Stepped::Deadline(finished));
+        };
         match requests.recv_timeout(remaining.min(CANCEL_POLL_SLICE)) {
             Ok(HostEvent::Call { name, input, reply }) => {
                 bridge.cancel.check()?;
+                if Instant::now() >= deadline {
+                    return Ok(Stepped::Deadline(finished));
+                }
                 let response = wire::dispatch(bridge, name, &input);
                 bridge.cancel.check()?;
+                finished.push(name);
                 let _ = reply.send(response);
             }
             Ok(HostEvent::Output {
@@ -335,6 +402,9 @@ fn drive_host(
                 reply,
             }) => {
                 bridge.cancel.check()?;
+                if Instant::now() >= deadline {
+                    return Ok(Stepped::Deadline(finished));
+                }
                 // A refused frame traps the guest, so no step goes on with
                 // part of its result missing; the host's reason is the step's.
                 let response = wire::output(bridge, target, frame).map_err(|error| {
@@ -348,7 +418,10 @@ fn drive_host(
                 bridge.cancel.check()?;
                 return match bridge.output_failure.take() {
                     Some(error) => Err(error),
-                    None => result,
+                    None => match result {
+                        Ok(Stepped::Deadline(_)) => Ok(Stepped::Deadline(finished)),
+                        other => other,
+                    },
                 };
             }
             // A slice ended with no event: read the token and the deadline
@@ -464,6 +537,27 @@ impl HeldOutput {
         Ok(())
     }
 
+    /// A step stopped by its deadline: its console lines so far, then the
+    /// typed `step_deadline` stop naming its finished host calls, and its
+    /// files. Not done, and not a failure (FIX 7665).
+    fn into_deadline_outcome(self, calls: &[&'static str]) -> Result<JsCodeModeStepOutcome> {
+        let mut observation = String::from_utf8(self.console)
+            .map_err(|_| failure("streamed observation is not UTF-8"))?;
+        if !observation.is_empty() && !observation.ends_with('\n') {
+            observation.push('\n');
+        }
+        observation.push_str(&step_deadline_observation(calls));
+        Ok(JsCodeModeStepOutcome {
+            done: false,
+            observation,
+            outputs: self
+                .files
+                .into_iter()
+                .map(|(path, bytes)| JsCodeModeOutput::new(path, bytes))
+                .collect(),
+        })
+    }
+
     /// The step's outcome with what was held: the answer of a finished
     /// step, else its console lines, and its files.
     fn into_outcome(self, mut outcome: JsCodeModeStepOutcome) -> Result<JsCodeModeStepOutcome> {
@@ -503,7 +597,7 @@ enum HostEvent {
         frame: Vec<u8>,
         reply: mpsc::SyncSender<Result<u64>>,
     },
-    Finished(Result<JsCodeModeStepOutcome>),
+    Finished(Result<Stepped>),
 }
 
 /// Characters of a guest's error text a failed step keeps. A program can
