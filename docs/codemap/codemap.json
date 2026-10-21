@@ -22092,8 +22092,18 @@
      "purpose": "The Dreamer writes a declared scope summary's body (ARCH-0006a)",
      "surface": {
       "crate-vis": 3,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/chunks.rs",
+     "purpose": "A sitting too big for one call on its model (FIX 7509 P7b, Rule 5)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -22103,7 +22113,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt/output.rs",
      "purpose": "A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came from by the labels the engine…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 10
      }
     },
     {
@@ -49889,6 +49899,7 @@
       "ScopeSummaryMetadata",
       "SummaryDerivation",
       "SummaryLineSources",
+      "SummaryLineSpan",
       "SummarySourceVersion"
      ],
      "path": "src/scope_summary/derivation.rs",
@@ -49896,7 +49907,7 @@
      "surface": {
       "crate-vis": 8,
       "fn": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -68847,7 +68858,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 86,
+     "files": 87,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69892,7 +69903,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4430,
+   "source_files": 4431,
    "test_files": 902
   },
   "oneiron-android": {
@@ -77016,7 +77027,7 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 13,
+      "fn": 14,
       "struct": 2,
       "trait": 1,
       "type": 1
@@ -99531,6 +99542,7 @@
       "SummaryKeepRequest",
       "SummaryKeepResult",
       "SummaryLineSources",
+      "SummaryLineSpan",
       "SummaryMutationResult",
       "SummaryPatchRequest",
       "SummaryPath",
@@ -99950,7 +99962,7 @@
      "purpose": "—",
      "surface": {
       "enum": 930,
-      "struct": 2936
+      "struct": 2937
      }
     },
     {
