@@ -7613,7 +7613,7 @@
      "path": "src/blob_artifact/version_rows.rs",
      "purpose": "The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -12199,7 +12199,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 8
      }
     },
@@ -12359,7 +12359,7 @@
      "path": "src/claim/scoped_read/owner_authority.rs",
      "purpose": "FIX 7461: a question's own locally built reader also reads what its own live owner authority admits (owner…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -12413,6 +12413,17 @@
       "fn": 3,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/records_cover.rs",
+     "purpose": "FIX 8245 (Engine 10-22, CALLS `FIX 8245 records cover`): a credential's records caveat that names an…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -19591,7 +19602,7 @@
      "purpose": "The `ContextSpec` descriptor, its bounds, normalization, and structural validation",
      "surface": {
       "const": 8,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 5,
       "struct": 1
@@ -70141,7 +70152,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 87,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71466,7 +71477,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4557,
+   "source_files": 4558,
    "test_files": 902
   },
   "oneiron-android": {
@@ -85561,6 +85572,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/blob_artifacts/read_admission.rs",
+     "purpose": "The lanes the artifact family's raw reads admit rows through (FIX 7645): a credential's record caveats…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/body_codec.rs",
      "purpose": "Compressed bodies on the HTTP API (ARCH-0081 §8, OF-604)",
      "surface": {
@@ -97814,7 +97835,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 501,
+     "files": 502,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -98264,7 +98285,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1069,
+   "source_files": 1070,
    "test_files": 182
   },
   "oneiron-spawn": {
