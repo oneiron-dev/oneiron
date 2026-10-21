@@ -1,7 +1,7 @@
 //! The narrowing law: declared bounds against declared bounds, and a request against the resolved parent.
 
 use super::resolution::ResolvedContextProjection;
-use super::spec::{ChatProjection, ContextSpec, MemoryProjection};
+use super::spec::{ChatProjection, ContextSpec, MemoryProjection, domain_contains};
 use crate::error::{ArtifactError, Error, Result};
 
 /// DECLARED-bound narrowing: the child's requested scope against the parent's
@@ -26,8 +26,13 @@ pub fn validate_spec_narrows(parent: &ContextSpec, child: &ContextSpec) -> Resul
                 domains: parent_domains,
                 limit: parent_limit,
             } => {
+                // A child may name its parent's domain or one under it
+                // (FIX 7752).
                 for domain in domains {
-                    if !parent_domains.iter().any(|known| known == domain) {
+                    if !parent_domains
+                        .iter()
+                        .any(|known| domain_contains(known, domain))
+                    {
                         return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                             "child memory projection requests a domain outside its parent scope",
                         )));
@@ -85,8 +90,13 @@ pub fn validate_context_narrows(
             )));
         }
         let parent_domains = parent.bound_domains();
+        // A child may name a domain the parent projected or one under it
+        // (FIX 7752).
         for domain in domains {
-            if !parent_domains.contains(&domain.as_str()) {
+            if !parent_domains
+                .iter()
+                .any(|known| domain_contains(known, domain))
+            {
                 return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "child memory projection requests a domain the parent did not project",
                 )));

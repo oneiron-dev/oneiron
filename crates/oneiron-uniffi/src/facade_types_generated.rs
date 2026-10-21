@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1131 facade rows, 3924 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1083.
+// UniFFI census: 1132 facade rows, 3932 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1084.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -33579,6 +33579,30 @@ pub struct CodeImportAnchor {
     pub snapshot_fork_hash: String,
 }
 
+/// `oneiron::origin::secret_projection::types::RepoFileProjectionKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RepoFileProjectionKind {
+    #[serde(rename = "masked")]
+    Masked,
+    #[serde(rename = "opaque")]
+    Opaque,
+}
+
+/// `oneiron::origin::secret_projection::types::RepoFileProjectionView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoFileProjectionView {
+    #[serde(rename = "kind")]
+    pub kind: RepoFileProjectionKind,
+    #[serde(rename = "source_blob")]
+    pub source_blob: String,
+    #[serde(rename = "copy_blake3")]
+    pub copy_blake3: String,
+    #[serde(rename = "copy_size_bytes")]
+    pub copy_size_bytes: u64,
+    #[serde(rename = "way_out")]
+    pub way_out: String,
+}
+
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotFile`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CodeSnapshotFile {
@@ -33590,6 +33614,12 @@ pub struct CodeSnapshotFile {
     pub size_bytes: u64,
     #[serde(rename = "mode")]
     pub mode: u32,
+    #[serde(
+        rename = "projection",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub projection: Option<RepoFileProjectionView>,
 }
 
 /// `oneiron::memory::origin_doors::import_types::CodeImportManifestFile`.
@@ -35271,6 +35301,12 @@ pub struct CodeViewFileBytes {
     pub bytes: Vec<u8>,
     #[serde(rename = "sha256")]
     pub sha256: String,
+    #[serde(
+        rename = "projection",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub projection: Option<RepoFileProjectionView>,
 }
 
 /// `oneiron::memory::code_view_doors::types::CodeSecretTaintRef`.
@@ -47128,6 +47164,15 @@ pub struct VoiceBankPackReceipt {
     pub pack_id: String,
 }
 
+/// `oneiron::voice_identity::ref_bank::VoiceRefSubjectKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum VoiceRefSubjectKind {
+    #[serde(rename = "person")]
+    Person,
+    #[serde(rename = "designed")]
+    Designed,
+}
+
 /// `oneiron::voice_identity::types::VoiceConsentBasis`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum VoiceConsentBasis {
@@ -47175,8 +47220,14 @@ pub struct VoiceRenderConsentRequest {
     pub occurred_at: u64,
     #[serde(rename = "reach")]
     pub reach: ModelLocality,
-    #[serde(rename = "basis")]
-    pub basis: VoiceConsentBasis,
+    #[serde(
+        rename = "subject_kind",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub subject_kind: Option<VoiceRefSubjectKind>,
+    #[serde(rename = "basis", default, skip_serializing_if = "Option::is_none")]
+    pub basis: Option<VoiceConsentBasis>,
     #[serde(rename = "state")]
     pub state: VoiceConsentState,
 }
@@ -47218,6 +47269,12 @@ pub struct VoiceRenderConsentReceipt {
     pub reach: ModelLocality,
     #[serde(rename = "revision")]
     pub revision: String,
+    #[serde(rename = "event_id")]
+    pub event_id: String,
+    #[serde(rename = "sequence")]
+    pub sequence: u64,
+    #[serde(rename = "replayed")]
+    pub replayed: bool,
     #[serde(rename = "evicted")]
     pub evicted: Vec<VoiceVendorEviction>,
 }
@@ -47306,6 +47363,8 @@ pub struct VoiceIdentityView {
     pub id: String,
     #[serde(rename = "owner")]
     pub owner: String,
+    #[serde(rename = "subject_kind")]
+    pub subject_kind: VoiceRefSubjectKind,
     #[serde(rename = "pack_ids")]
     pub pack_ids: Vec<String>,
 }
@@ -47344,18 +47403,22 @@ pub struct VoiceRenderConsentView {
     pub event_id: String,
     #[serde(rename = "subject")]
     pub subject: String,
+    #[serde(rename = "subject_kind")]
+    pub subject_kind: VoiceRefSubjectKind,
     #[serde(rename = "recorded_by")]
     pub recorded_by: String,
     #[serde(rename = "occurred_at")]
     pub occurred_at: u64,
     #[serde(rename = "reach")]
     pub reach: ModelLocality,
-    #[serde(rename = "basis")]
-    pub basis: VoiceConsentBasis,
+    #[serde(rename = "basis", default, skip_serializing_if = "Option::is_none")]
+    pub basis: Option<VoiceConsentBasis>,
     #[serde(rename = "state")]
     pub state: VoiceConsentState,
     #[serde(rename = "revision")]
     pub revision: String,
+    #[serde(rename = "sequence")]
+    pub sequence: u64,
 }
 
 /// `oneiron::voice_identity::ref_bank::owner_acts::VoiceTargetCloneView`.
@@ -47406,6 +47469,36 @@ pub struct VoiceBankInspection {
     pub render_consent: Option<VoiceRenderConsentView>,
     #[serde(rename = "target")]
     pub target: VoiceTargetInspection,
+}
+
+/// `oneiron::task_verb::sdk_voice_bank::VoiceRenderLineageRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceRenderLineageRequest {
+    #[serde(rename = "voice_id")]
+    pub voice_id: String,
+}
+
+/// `oneiron::voice_identity::ref_bank::render_history::VoiceDroppedTargetView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceDroppedTargetView {
+    #[serde(rename = "target")]
+    pub target: String,
+    #[serde(rename = "held")]
+    pub held: VoiceTargetCloneView,
+}
+
+/// `oneiron::voice_identity::ref_bank::render_history::VoiceRenderEventView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceRenderEventView {
+    #[serde(rename = "voice_id")]
+    pub voice_id: String,
+    #[serde(rename = "decision")]
+    pub decision: VoiceRenderConsentView,
+    #[serde(rename = "dropped")]
+    pub dropped: Vec<VoiceDroppedTargetView>,
 }
 
 /// `oneiron_model::llm::media::AiOperation`.
@@ -47739,6 +47832,20 @@ pub struct GraphAdmitRequest {
     pub decision: TypedDecision,
 }
 
+/// `oneiron::llm::decision::types::DecisionQuestionInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionQuestionInput {
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "class")]
+    pub class: DecisionClass,
+    #[serde(rename = "contract")]
+    pub contract: AnswerContract,
+    #[serde(rename = "accept_type")]
+    pub accept_type: bool,
+}
+
 /// `oneiron::llm::decision::types::DecisionDial`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -47801,12 +47908,12 @@ pub struct ArtifactUnits {
     pub selection: ArtifactAskUnits,
 }
 
-/// `oneiron::llm::decision::questions::records::QuestionDefinition`.
+/// `oneiron::llm::decision::questions::records::QuestionDefinition` with `Q` = `DecisionQuestionInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct QuestionDefinition {
+pub struct QuestionDefinitionDecisionQuestionInput {
     #[serde(rename = "question")]
-    pub question: DecisionQuestion,
+    pub question: DecisionQuestionInput,
     #[serde(rename = "adapter")]
     pub adapter: String,
     #[serde(rename = "units")]
@@ -47850,7 +47957,51 @@ pub struct QuestionDefinition {
 #[serde(deny_unknown_fields)]
 pub struct QuestionCreateRequest {
     #[serde(rename = "definition")]
-    pub definition: QuestionDefinition,
+    pub definition: QuestionDefinitionDecisionQuestionInput,
+}
+
+/// `oneiron::llm::decision::questions::records::QuestionDefinition` with `Q` = `DecisionQuestion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionDefinitionDecisionQuestion {
+    #[serde(rename = "question")]
+    pub question: DecisionQuestion,
+    #[serde(rename = "adapter")]
+    pub adapter: String,
+    #[serde(rename = "units")]
+    pub units: Vec<String>,
+    #[serde(rename = "recipe")]
+    pub recipe: String,
+    #[serde(rename = "profile")]
+    pub profile: String,
+    #[serde(rename = "dial")]
+    pub dial: DecisionDial,
+    #[serde(rename = "activation")]
+    pub activation: QuestionActivation,
+    #[serde(rename = "refresh")]
+    pub refresh: RefreshPolicy,
+    #[serde(rename = "delivery")]
+    pub delivery: String,
+    #[serde(rename = "learning")]
+    pub learning: bool,
+    #[serde(rename = "binding", default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<OutcomeBinding>,
+    #[serde(rename = "criteria", default, skip_serializing_if = "Option::is_none")]
+    pub criteria: Option<QuestionCriteria>,
+    #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<QuestionAudience>,
+    #[serde(rename = "posture", default, skip_serializing_if = "Option::is_none")]
+    pub posture: Option<HostingPrivacyPosture>,
+    #[serde(rename = "media", default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<QuestionMedia>,
+    #[serde(
+        rename = "deadline_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_ms: Option<u64>,
+    #[serde(rename = "artifacts", default, skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<Vec<ArtifactUnits>>,
 }
 
 /// `oneiron::llm::decision::questions::records::QuestionRecord`.
@@ -47862,7 +48013,7 @@ pub struct QuestionRecord {
     #[serde(rename = "principal")]
     pub principal: String,
     #[serde(rename = "definition")]
-    pub definition: QuestionDefinition,
+    pub definition: QuestionDefinitionDecisionQuestion,
     #[serde(rename = "created_at")]
     pub created_at: u64,
 }
@@ -47876,7 +48027,7 @@ pub struct QuestionEditRequest {
     #[serde(rename = "expected_version")]
     pub expected_version: u32,
     #[serde(rename = "definition")]
-    pub definition: QuestionDefinition,
+    pub definition: QuestionDefinitionDecisionQuestionInput,
 }
 
 /// `oneiron::receipt::questions::QuestionPauseRequest`.

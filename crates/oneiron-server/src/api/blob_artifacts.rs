@@ -28,9 +28,8 @@ use oneiron::EntityId;
 use oneiron::anchored_annotation::Locator;
 use oneiron::blob_artifact::{
     ArtifactCreateRequest, ArtifactVersionView, BlobArtifactVersion, BlobVersionProvenance,
-    BornFromArtifact, BornFromSource, DeckProposeRejection, DeckTransaction,
+    BornFromSource, DeckProposeRejection, DeckTransaction,
 };
-use oneiron::claim::ScopedRead;
 use oneiron::edge::EdgeActorClass;
 use oneiron::edit_roundtrip::{DeckEditContext, DeckEditOutcome};
 use oneiron::edit_settle::{NativeOutput, SettleConsent};
@@ -45,6 +44,9 @@ use super::{core_engine_error, json_payload, parse_entity_id_param};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::server::SyncServer;
+
+mod read_admission;
+use read_admission::{admitted_born_from, caveat_lane};
 
 /// The largest JSON body these routes take: a file travels base64 inside it.
 const ARTIFACT_BODY_LIMIT: usize = 96 * 1024 * 1024;
@@ -220,87 +222,6 @@ async fn blocking_read<T: Send + 'static>(
         .map_err(|_| ApiError::internal_server_error("artifact task failed"))?
 }
 
-/// The lane a credential's record caveats are honoured through on these raw
-/// reads (FIX 7645): its own scoped read, which admits only the rows its
-/// grant does, a withheld row reading as a missing one. `None` for a
-/// credential that carries no record caveat, the owner's own root among
-/// them: its reads answer as they always have.
-fn caveat_lane<'a>(
-    vault: &'a oneiron::Vault,
-    auth: &CoreAuth,
-) -> Result<Option<ScopedRead<'a>>, ApiError> {
-    if auth.require_unrestricted_record_scope().is_ok() {
-        return Ok(None);
-    }
-    crate::api::scoped_read_for_core_auth(vault, auth).map(Some)
-}
-
-/// Whether the credential's records caveat names `artifact` (FIX 8068,
-/// Engine 10-22): such a caveat covers that artifact's own version CLAIM and
-/// ASSET rows, so they count as admitted once its lane admits the artifact.
-/// Every other row, another artifact's versions and a trigger's born rows
-/// among them, is judged by the lane as before.
-fn records_name(auth: &CoreAuth, artifact: &EntityId) -> bool {
-    auth.verified_slip()
-        .is_some_and(|proof| proof.claims().records.contains(&artifact.to_hex()))
-}
-
-/// The rows a credential's lane judges for one version of `artifact`: the
-/// artifact alone where its records caveat names it ([`records_name`]),
-/// else the artifact and the version's own `rows`.
-fn version_sources(auth: &CoreAuth, artifact: EntityId, rows: Vec<EntityId>) -> Vec<EntityId> {
-    if records_name(auth, &artifact) {
-        return vec![artifact];
-    }
-    std::iter::once(artifact).chain(rows).collect()
-}
-
-/// What a born-from answer keeps for a credential with record caveats (FIX
-/// 7645): nothing when the trigger it names is withheld; else each born row
-/// its lane admits, and each version whose artifact, CLAIM and content ASSET
-/// it admits (the artifact alone where its records caveat names it, FIX
-/// 8068), all judged in one snapshot. A withheld row leaves no trace: no
-/// count, time or ref of it.
-fn admitted_born_from(
-    vault: &oneiron::Vault,
-    lane: &ScopedRead<'_>,
-    auth: &CoreAuth,
-    source: &BornFromSource,
-    born: Vec<EntityId>,
-    versions: Vec<BornFromArtifact>,
-) -> oneiron::Result<(Vec<EntityId>, Vec<BornFromArtifact>)> {
-    let mut sets = Vec::with_capacity(born.len().saturating_add(versions.len()).saturating_add(1));
-    if let BornFromSource::Trigger(trigger) = source {
-        sets.push(vec![trigger.row()]);
-    }
-    sets.extend(born.iter().map(|id| vec![*id]));
-    let mut listed = Vec::with_capacity(versions.len());
-    for found in versions {
-        // A version gone since the index was read is not listed.
-        if let Some((_, rows)) =
-            vault.blob_artifact_version_rows(&found.artifact_id, Some(found.version))?
-        {
-            sets.push(version_sources(auth, found.artifact_id, rows));
-            listed.push(found);
-        }
-    }
-    let mut admitted = lane.refs_readable_each(&sets)?.into_iter();
-    if matches!(source, BornFromSource::Trigger(_)) && admitted.next() != Some(true) {
-        return Ok((Vec::new(), Vec::new()));
-    }
-    let born = born
-        .into_iter()
-        .zip(admitted.by_ref())
-        .filter_map(|(id, kept)| kept.then_some(id))
-        .collect();
-    let versions = listed
-        .into_iter()
-        .zip(admitted)
-        .filter_map(|(found, kept)| kept.then_some(found))
-        .collect();
-    Ok((born, versions))
-}
-
 fn decode_content(content: &str) -> Result<Vec<u8>, ApiError> {
     base64::engine::general_purpose::STANDARD
         .decode(content)
@@ -437,16 +358,14 @@ pub(super) async fn view(
         let vault = server.vault();
         let view = match caveat_lane(vault, &auth)? {
             None => vault.blob_artifact_view(&id),
-            // A tree the lane does not admit whole reads as absent; a
+            // A tree the lane does not admit whole reads as absent. A
             // records caveat that names the artifact covers its own version
-            // rows (FIX 8068), so the artifact alone is judged.
-            Some(lane) => vault.blob_artifact_view_admitted(&id, |rows| {
-                if records_name(&auth, &id) {
-                    lane.all_refs_readable(std::slice::from_ref(&id))
-                } else {
-                    lane.all_refs_readable(rows)
-                }
-            }),
+            // rows for the records check alone (FIX 8245): every other check
+            // still judges each of them.
+            Some(lane) => {
+                let lane = lane.with_artifact_records_cover(&[id]);
+                vault.blob_artifact_view_admitted(&id, |rows| lane.all_refs_readable(rows))
+            }
         };
         view.map_err(|error| core_engine_error("artifact read failed", error))
     })
@@ -547,7 +466,8 @@ async fn export(
         // admits (FIX 7645): the artifact, that version's CLAIM and its
         // content's ASSET, judged from its metadata before a byte is read,
         // then that version read and no other. One it withholds reads as
-        // absent.
+        // absent. A records caveat that names the artifact covers that
+        // version's rows for the records check alone (FIX 8245).
         let version = match caveat_lane(vault, &auth)? {
             None => version,
             Some(lane) => {
@@ -557,7 +477,8 @@ async fn export(
                 else {
                     return Ok(None);
                 };
-                let sources = version_sources(&auth, id, rows);
+                let lane = lane.with_artifact_records_cover(&[id]);
+                let sources: Vec<EntityId> = std::iter::once(id).chain(rows).collect();
                 if !lane.all_refs_readable(&sources).map_err(failed)? {
                     return Ok(None);
                 }
@@ -733,9 +654,7 @@ pub(super) async fn born_from(
         let versions = vault.artifacts_born_from(&source).map_err(failed)?;
         match lane {
             None => Ok((born, versions)),
-            Some(lane) => {
-                admitted_born_from(vault, &lane, &auth, &source, born, versions).map_err(failed)
-            }
+            Some(lane) => admitted_born_from(vault, lane, &source, born, versions).map_err(failed),
         }
     })
     .await?;
