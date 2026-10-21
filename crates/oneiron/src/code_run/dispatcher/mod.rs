@@ -9,6 +9,7 @@ mod human_speech;
 mod leader;
 mod memory_verbs;
 mod program_step;
+mod read_worlds;
 mod reader_spawn;
 mod repo;
 mod session_verbs;
@@ -143,6 +144,11 @@ pub struct HostSelfDispatcher<'a> {
     /// only [`Self::for_turn_program`] sets it, from the program's own
     /// leased try. No guest call reaches it.
     program: Option<program_step::ProgramBinding>,
+    /// The run's read-world capture (FIX 6130): the capture epoch its entry
+    /// holds, whether every ledger write of it landed, and whether the last
+    /// call's own capture noted its answer. Host-internal: no guest call
+    /// reaches it.
+    read_worlds: Cell<read_worlds::ReadWorldLive>,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -269,6 +275,7 @@ impl<'a> HostSelfDispatcher<'a> {
             run_request: RefCell::new(None),
             fold_log: fold_verbs::FoldLog::Site,
             program: None,
+            read_worlds: Cell::default(),
         })
     }
 
@@ -488,8 +495,10 @@ impl<'a> HostSelfDispatcher<'a> {
         call: SelfCall,
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
-        // A hook's view of an earlier call is never this call's.
+        // A hook's view of an earlier call is never this call's, nor is its
+        // read-world capture (FIX 6130).
         *self.hook_view.borrow_mut() = None;
+        self.uncover_read_worlds();
         // A leased run's writes in this call are its own derivations (OF-540).
         let _run_writes = self
             .agent_lease
@@ -579,7 +588,7 @@ impl<'a> HostSelfDispatcher<'a> {
             // The landing reads its refs under the key its door admitted it with.
             SelfCall::ConsultResult(call) => self.dispatch_consult_result(call, read_as),
             SelfCall::SkillsCall(_) => Ok(Self::dispatch_skills_call_unhosted()),
-            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call, read_as),
+            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call, read_as, site),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
             SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
