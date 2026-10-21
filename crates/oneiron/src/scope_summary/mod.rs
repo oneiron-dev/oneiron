@@ -3,6 +3,10 @@
 //! A summary stores its complete covers list. DerivedFrom is a capped index,
 //! not the truth list. Merge headers use the normal claim write gate.
 
+mod arc;
+mod arc_gate;
+mod arc_sources;
+mod arc_validation;
 mod codec;
 mod derivation;
 mod doors;
@@ -14,6 +18,8 @@ pub use public_types::*;
 mod request;
 mod session;
 mod status;
+pub(crate) use arc_gate::{ArcPendingCause, next_arc_due_in_txn, sweep_due_arcs_in_txn};
+pub(crate) use arc_sources::ArcSources;
 pub use derivation::{
     ScopeSummaryMetadata, SummaryDerivation, SummaryLineSources, SummaryLineSpan,
     SummarySourceVersion,

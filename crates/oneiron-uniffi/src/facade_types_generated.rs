@@ -55550,6 +55550,8 @@ pub struct WakeRecipePolicy {
     pub typing_instruction: String,
     #[serde(rename = "narrative_instruction")]
     pub narrative_instruction: String,
+    #[serde(rename = "arc_min_new_statements")]
+    pub arc_min_new_statements: u32,
     #[serde(rename = "audit_window_instruction")]
     pub audit_window_instruction: String,
 }
