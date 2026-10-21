@@ -979,8 +979,8 @@ impl RunGuests {
                 by,
             };
             planner.observe(call.verb, &call.input, &output, |workflow| {
-                let program = library.program(workflow).ok().flatten()?;
-                Some(program.subgoal)
+                let filed = library.program(workflow).ok().flatten()?;
+                Some(filed.program.subgoal)
             });
         }
         Ok(Ok(AgentVerbAnswer {
