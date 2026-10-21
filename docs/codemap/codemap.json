@@ -35913,7 +35913,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/catalog_doors/bindings.rs",
-     "purpose": "—",
+     "purpose": "Owner model-binding doors",
      "surface": {
       "fn": 5
      }
@@ -35934,7 +35934,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/catalog_doors/trials.rs",
-     "purpose": "—",
+     "purpose": "Owner model-trial doors",
      "surface": {
       "crate-vis": 1,
       "fn": 5
@@ -36090,39 +36090,76 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DecisionLadder"
+     ],
+     "path": "src/llm/decision/ladder/mod.rs",
+     "purpose": "Host-injected, one-step decision ladder",
+     "surface": {
+      "crate-vis": 9,
+      "re-export": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DecisionCall",
+      "DecisionModel",
+      "DecisionPack",
+      "DecisionProvider",
+      "ModelDecisionProvider",
+      "PairedAnswer",
+      "ProviderCapability",
+      "ProviderDecision",
+      "RuleDecisionProvider"
+     ],
+     "path": "src/llm/decision/ladder/providers.rs",
+     "purpose": "Decision ladder providers and the calls they answer",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "fn": 5,
+      "struct": 7,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AskAct",
       "AskRole",
       "AskRoleResolver",
       "AskTo",
-      "DecisionCall",
-      "DecisionLadder",
-      "DecisionModel",
-      "DecisionPack",
-      "DecisionProvider",
       "HolderKind",
       "HumanDecisionQueue",
       "HumanDecisionRequest",
-      "ModelDecisionProvider",
-      "PairedAnswer",
-      "ProviderCapability",
-      "ProviderDecision",
       "ResolvedRole",
       "RoleHolder",
-      "RoleRank",
-      "RuleDecisionProvider"
+      "RoleRank"
      ],
-     "path": "src/llm/decision/ladder.rs",
-     "purpose": "Host-injected, one-step decision ladder",
+     "path": "src/llm/decision/ladder/roles.rs",
+     "purpose": "Decision ladder person asks and the roles they go to",
      "surface": {
-      "const": 1,
-      "crate-vis": 14,
       "enum": 4,
-      "fn": 20,
-      "struct": 12,
-      "trait": 4
+      "fn": 5,
+      "struct": 4,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/ladder/runner.rs",
+     "purpose": "Decision ladder runner",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 10
      }
     },
     {
@@ -37815,28 +37852,14 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AssetConsumer",
-      "HydratedAsset",
-      "ImageHandle",
-      "ImagePick",
-      "ImageViewRequest",
-      "LandedImage",
-      "PixelRegion",
-      "PulledImage",
-      "ResolvedAsset",
-      "ServedAssetForm"
-     ],
-     "path": "src/memory/asset_resolve.rs",
-     "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
+     "notable": [],
+     "path": "src/memory/asset_resolve/generation.rs",
+     "purpose": "Asset generation and landing",
      "surface": {
-      "const": 1,
-      "crate-vis": 10,
-      "enum": 2,
-      "fn": 14,
-      "struct": 8
+      "crate-vis": 3,
+      "fn": 3
      }
     },
     {
@@ -37847,6 +37870,66 @@
      "purpose": "Hydrate's half of OF-329, the forms it serves in place of image bodies, for every hydrate door: the…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ImageHandle",
+      "ImagePick"
+     ],
+     "path": "src/memory/asset_resolve/mod.rs",
+     "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 3,
+      "re-export": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/asset_resolve/reads.rs",
+     "purpose": "Asset reads through a caller's lane",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/asset_resolve/serving.rs",
+     "purpose": "Asset serving through the bound actor's lane",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AssetConsumer",
+      "HydratedAsset",
+      "ImageViewRequest",
+      "LandedImage",
+      "PixelRegion",
+      "PulledImage",
+      "ResolvedAsset",
+      "ServedAssetForm"
+     ],
+     "path": "src/memory/asset_resolve/types.rs",
+     "purpose": "Asset resolution types",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 6
      }
     },
     {
@@ -66649,7 +66732,17 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_cascade/media/asr.rs",
+     "purpose": "Voice media ASR adapter",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BankBound",
@@ -66666,15 +66759,55 @@
       "VoiceRender",
       "VoiceStreamDoor"
      ],
-     "path": "src/voice_cascade/media.rs",
+     "path": "src/voice_cascade/media/mod.rs",
      "purpose": "The cascade's speech and hearing on the host's media seats (OF-410)",
      "surface": {
       "const": 3,
-      "crate-vis": 1,
       "enum": 4,
-      "fn": 18,
+      "fn": 1,
       "struct": 7,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_cascade/media/routes.rs",
+     "purpose": "Voice media routes and banked voice bindings",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_cascade/media/stream.rs",
+     "purpose": "Voice media leased live ASR stream",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_cascade/media/tts.rs",
+     "purpose": "Voice media TTS adapter",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_cascade/media/worker.rs",
+     "purpose": "Voice media queue and its worker",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -66918,7 +67051,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/voice_cascade/uds/codec.rs",
-     "purpose": "—",
+     "purpose": "Voice UDS frame codec",
      "surface": {
       "crate-vis": 6
      }
@@ -66931,7 +67064,7 @@
       "Shutdown"
      ],
      "path": "src/voice_cascade/uds/connection.rs",
-     "purpose": "—",
+     "purpose": "Voice UDS connection lifecycle",
      "surface": {
       "fn": 4,
       "struct": 2
@@ -66944,7 +67077,7 @@
       "SocketGuard"
      ],
      "path": "src/voice_cascade/uds/socket.rs",
-     "purpose": "—",
+     "purpose": "Voice UDS socket lifecycle",
      "surface": {
       "fn": 6,
       "struct": 1
@@ -71112,9 +71245,9 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 120,
+     "files": 123,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Engine-facing LLM invocation seam"
     },
@@ -71133,7 +71266,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 250,
+     "files": 254,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71749,7 +71882,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "voice_cascade": {
-     "files": 33,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -71812,9 +71945,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 180,
+   "over_bar": 177,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4584,
+   "source_files": 4596,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81497,7 +81630,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/extraction_eval.rs",
-     "purpose": "—",
+     "purpose": "Extraction-quality evaluation facade",
      "surface": {
       "const": 6,
       "fn": 9,
@@ -81547,7 +81680,7 @@
       "Of360Speaker"
      ],
      "path": "src/extraction_eval/types.rs",
-     "purpose": "—",
+     "purpose": "Extraction-quality schemas and validation",
      "surface": {
       "enum": 6,
       "fn": 4,
@@ -82017,34 +82150,84 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AiMediaDoor",
-      "AiOperation",
       "ImageMedia",
-      "MediaBackend",
+      "MediaBackend"
+     ],
+     "path": "src/llm/media/backend.rs",
+     "purpose": "Media backends and the host's media door",
+     "surface": {
+      "struct": 1,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AiOperation",
       "MediaCaps",
-      "MediaJobState",
-      "MediaPart",
-      "MediaRequest",
-      "MediaResponse",
-      "MediaUsage",
-      "MediaVoice",
       "Modality",
-      "NativeRate",
       "NativeUnit"
      ],
-     "path": "src/llm/media.rs",
-     "purpose": "The `ai.*` call family past text (runtime \"The ai.* call family\"): image, video, speech, transcription and…",
+     "path": "src/llm/media/caps.rs",
+     "purpose": "Media call operations, modalities and row capabilities",
      "surface": {
       "const": 1,
-      "enum": 6,
-      "fn": 25,
+      "enum": 3,
+      "fn": 10,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NativeRate"
+     ],
+     "path": "src/llm/media/mod.rs",
+     "purpose": "The `ai.*` call family past text (runtime \"The ai.* call family\"): image, video, speech, transcription and…",
+     "surface": {
+      "fn": 1,
       "mod": 1,
-      "struct": 6,
-      "trait": 2,
+      "re-export": 4,
+      "struct": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MediaPart",
+      "MediaRequest",
+      "MediaVoice"
+     ],
+     "path": "src/llm/media/request.rs",
+     "purpose": "Media call requests and voices",
+     "surface": {
+      "enum": 2,
+      "fn": 10,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MediaJobState",
+      "MediaResponse",
+      "MediaUsage"
+     ],
+     "path": "src/llm/media/response.rs",
+     "purpose": "Media call answers, usage and job states",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -82190,10 +82373,10 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "—"
+     "purpose": "Extraction-quality evaluation facade"
     },
     "llm": {
-     "files": 39,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82202,7 +82385,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 38,
+   "source_files": 42,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -92756,28 +92939,78 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/decision_graph.rs",
-     "purpose": "Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question",
+     "path": "src/decision_graph/call.rs",
+     "purpose": "Decision graph ladder calls for graph and artifact units",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 3
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/decision_graph/mod.rs",
+     "purpose": "Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/decision_host/adapters.rs",
+     "purpose": "Decision host adapters: the engine traits its rungs and notes implement",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/decision_host/attach.rs",
+     "purpose": "Decision host attach: the server's decision ladder and its config",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/decision_host/doors.rs",
+     "purpose": "Decision host doors: the ladder, dials and the hooks built on them",
+     "surface": {
+      "crate-vis": 11,
+      "fn": 13
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DecisionHost"
      ],
-     "path": "src/decision_host.rs",
+     "path": "src/decision_host/mod.rs",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 1,
-      "crate-vis": 24,
-      "fn": 25,
+      "crate-vis": 8,
+      "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/decision_host/refresh.rs",
+     "purpose": "Decision host person-threshold refresh",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -97773,7 +98006,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/voice_host/extraction.rs",
-     "purpose": "—",
+     "purpose": "Voice partial-enrichment extraction",
      "surface": {
       "crate-vis": 3
      }
@@ -98522,17 +98755,17 @@
      "purpose": "Typed judgments over artifact units (ARCH-0076, OF-506): the host's decide() for a sheet row, a paragraph, a…"
     },
     "decision_graph": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "dir",
      "purpose": "Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question"
     },
     "decision_host": {
-     "files": 1,
+     "files": 5,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…"
     },
     "decision_verdict": {
@@ -98837,9 +99070,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 53,
+   "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1081,
+   "source_files": 1086,
    "test_files": 182
   },
   "oneiron-spawn": {
