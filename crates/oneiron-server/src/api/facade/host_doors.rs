@@ -1798,6 +1798,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.voices.targets.provision"
         | "vault.voices.targets.evict"
         | "vault.voices.inspect"
+        | "vault.runs.program_hold.release"
         | "ai.voice.asr.open"
         | "ai.voice.asr.hypothesis"
         | "ai.voice.asr.finalize"

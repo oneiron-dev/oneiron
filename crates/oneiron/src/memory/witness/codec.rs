@@ -131,8 +131,9 @@ pub(in crate::memory) fn decode_witness_turn_speaker(body: &[u8]) -> MemoryResul
     speaker.ok_or_else(unstamped)
 }
 
-/// A PERSON author is an immutable identity stamp, not a speaker label.
-/// Non-PERSON writer actors leave the author unknown. A quoted room turn's
+/// The author is an immutable identity stamp, not a speaker label: a PERSON
+/// writer, else an Agent writer's AGENT_DEF (FIX 7129). Any other writer
+/// leaves the author unknown. A quoted room turn's
 /// first body carries the reply mode and reply pointer, an ordinary room's
 /// its messages' engine-issued anchors by citing MESSAGE, and a project
 /// thread reply's the DAG thread record kind (OF-460, FIX 2028), which no
