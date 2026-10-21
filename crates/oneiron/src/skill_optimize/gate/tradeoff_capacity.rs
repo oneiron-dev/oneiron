@@ -6,7 +6,7 @@
 //! hidden for a count. Every pending decision keeps its durable ask, which
 //! climbs by role until someone answers it.
 use super::*;
-use crate::gate::skill_tradeoff_limits_in_txn;
+use crate::gate::{SkillTradeoffLimits, skill_tradeoff_limits_in_txn};
 
 /// One policy limit a goal's tradeoff rules have crossed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +41,8 @@ fn crossings_in_txn(
     txn: &heed::RoTxn<'_>,
     preferences: &SkillTradeoffPreferences,
 ) -> Result<Vec<TradeoffCapacityCrossing>> {
-    let limits = skill_tradeoff_limits_in_txn(&vault.store, txn, &preferences.responsible)?;
+    let limits: SkillTradeoffLimits =
+        skill_tradeoff_limits_in_txn(&vault.store, txn, &preferences.responsible)?;
     let count = |rules: &[TradeoffRule]| u64::try_from(rules.len()).unwrap_or(u64::MAX);
     let mut crossings = Vec::new();
     if count(&preferences.rules) > limits.max_authored_rules {
