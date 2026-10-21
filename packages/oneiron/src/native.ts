@@ -801,6 +801,8 @@ vaultMessagesReact(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
 vaultRoomsHostPin(input: unknown): unknown
 vaultRoomsHostHand(input: unknown): unknown
+vaultRoomsUpkeepPending(input: unknown): unknown
+vaultRoomsUpkeepVoice(input: unknown): unknown
 vaultRoomsSharing(input: unknown): unknown
 vaultCompanionsSharingGet(input: unknown): unknown
 vaultCompanionsSharingSet(input: unknown): unknown

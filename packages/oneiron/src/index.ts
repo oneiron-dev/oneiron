@@ -2351,6 +2351,12 @@ export class Oneiron {
         /** The room's current host hands the hosting duty to another agent that may host. */
         hand: (input: Facade.RoomHostHand): Facade.RoomStanding => this.#call(() => this.#client.vaultRoomsHostHand(input) as Facade.RoomStanding),
       }),
+      upkeep: {
+        /** The room upkeep nudges addressed to the caller for rooms it hosts now, that its lane reads and no voice has used yet. */
+        pending: (input: Facade.RoomUpkeepPendingRequest): Facade.RoomUpkeepNudge[] => this.#call(() => this.#client.vaultRoomsUpkeepPending(input) as Facade.RoomUpkeepNudge[]),
+        /** The room's current host voices one upkeep nudge addressed to it as its own reply to the newest turn of the nudge's thread. */
+        voice: (input: Facade.RoomUpkeepVoiceRequest): Facade.RoomUpkeepVoiceReceipt => this.#call(() => this.#client.vaultRoomsUpkeepVoice(input) as Facade.RoomUpkeepVoiceReceipt),
+      },
       /** A room's effective sharing scope and why it is clamped, for a member of the room. */
       sharing: (input: Facade.RoomRefRequest): Facade.RoomSharingView => this.#call(() => this.#client.vaultRoomsSharing(input) as Facade.RoomSharingView),
     },

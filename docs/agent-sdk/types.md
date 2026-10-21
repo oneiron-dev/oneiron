@@ -3169,6 +3169,8 @@ class Oneiron:
             """One page of the current offer cards in a room or one of its threads."""
         @property
         def host(self) -> "Oneiron._VaultRoomsHostVerbs": ...
+        @property
+        def upkeep(self) -> "Oneiron._VaultRoomsUpkeepVerbs": ...
         def sharing(self, spec: Facade.RoomRefRequest) -> Facade.RoomSharingView:
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
     class _VaultRoomsThreadAudienceVerbs:
@@ -3203,6 +3205,11 @@ class Oneiron:
             """Pins an agent as a room's host, or clears the stored host, pin or handoff."""
         def hand(self, spec: Facade.RoomHostHand) -> Facade.RoomStanding:
             """The room's current host hands the hosting duty to another agent that may host."""
+    class _VaultRoomsUpkeepVerbs:
+        def pending(self, spec: Facade.RoomUpkeepPendingRequest) -> list[Facade.RoomUpkeepNudge]:
+            """The room upkeep nudges addressed to the caller for rooms it hosts now, that its lane reads and no voice has used yet."""
+        def voice(self, spec: Facade.RoomUpkeepVoiceRequest) -> Facade.RoomUpkeepVoiceReceipt:
+            """The room's current host voices one upkeep nudge addressed to it as its own reply to the newest turn of the nudge's thread."""
     class _VaultConversationsVerbs:
         @property
         def turn(self) -> "Oneiron._VaultConversationsTurnVerbs": ...

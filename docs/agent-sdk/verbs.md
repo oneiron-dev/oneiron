@@ -775,6 +775,8 @@ both bindings and their export-census tests in one change.
 - `vault.rooms.host`
 - `vault.rooms.host.pin`
 - `vault.rooms.host.hand`
+- `vault.rooms.upkeep.pending`
+- `vault.rooms.upkeep.voice`
 - `vault.rooms.sharing`
 - `vault.companions.sharing.get`
 - `vault.companions.sharing.set`

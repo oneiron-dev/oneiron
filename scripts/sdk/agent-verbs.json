@@ -12138,6 +12138,39 @@
       "section": false
     },
     {
+      "name": "vault.rooms.upkeep.pending",
+      "description": "The room upkeep nudges addressed to the caller for rooms it hosts now, that its lane reads and no voice has used yet.",
+      "input": "crate::workspace_roster::RoomUpkeepPendingRequest",
+      "output": "Vec<crate::workspace_roster::RoomUpkeepNudge>",
+      "call": "memory.rooms_upkeep_pending(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.upkeep.voice",
+      "description": "The room's current host voices one upkeep nudge addressed to it as its own reply to the newest turn of the nudge's thread.",
+      "input": "crate::workspace_roster::RoomUpkeepVoiceRequest",
+      "output": "crate::workspace_roster::RoomUpkeepVoiceReceipt",
+      "call": "memory.rooms_upkeep_voice(&input)?",
+      "scope": "Write",
+      "lands_turn": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.rooms.sharing",
       "description": "A room's effective sharing scope and why it is clamped, for a member of the room.",
       "input": "RoomRefRequest",

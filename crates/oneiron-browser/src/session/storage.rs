@@ -11,14 +11,15 @@
 //! The snapshots live on the session, outside its engine group, so they
 //! survive a switch: the carried tab's become the target tab's at commit,
 //! as its origin history does, and only the pipe of the engine the session
-//! runs keeps reads. They are page-controlled input, bounded by
-//! [`switch_state_limits`] and charged, before they grow, to a charge of
-//! their own on the host's retained line, apart from every driver's
-//! live-handle charge and the switch's own. An origin past a bound is not
-//! kept: a value-free loss names it, the oldest read given up first, and
-//! past the bound on losses a count stands for the rest. A read that failed
-//! keeps what an earlier one found. Values stay here and in a switch's
-//! import: never logged, never in a record.
+//! runs keeps reads. A closed tab's go once another tab is in front, since
+//! a switch reads only the tab in front (FIX 6891). They are page-controlled
+//! input, bounded by [`switch_state_limits`] and charged, before they grow,
+//! to a charge of their own on the host's retained line, apart from every
+//! driver's live-handle charge and the switch's own. An origin past a bound
+//! is not kept: a value-free loss names it, the oldest read given up first,
+//! and past the bound on losses a count stands for the rest. A read that
+//! failed keeps what an earlier one found. Values stay here and in a
+//! switch's import: never logged, never in a record.
 
 use super::BrowserSession;
 use crate::cdp::Visits;
@@ -196,6 +197,12 @@ impl Sink {
     pub(crate) fn exclude(&self, tab: &str, origin: String, reason: SwitchLoss) {
         lock(&self.collector).exclude(self.pipe, tab, origin, reason);
     }
+
+    /// Drops what the snapshots hold of tab `tab`, closed and no longer in
+    /// front, and gives its bytes back to the charge (FIX 6891).
+    pub(crate) fn drop_tab(&self, tab: &str) {
+        lock(&self.collector).drop_tab(self.pipe, tab);
+    }
 }
 
 fn lock(collector: &Collector) -> MutexGuard<'_, OriginSnapshots> {
@@ -229,6 +236,17 @@ pub(crate) fn store_loss(
         after_receipt: Some(when.1),
         reason,
     }
+}
+
+/// What one tab's snapshots and the losses they name hold of the charge.
+fn tab_bytes(kept: &Tab) -> usize {
+    let origins: usize = kept.origins.values().map(|snapshot| snapshot.bytes).sum();
+    let losses: usize = kept
+        .losses
+        .iter()
+        .map(|loss| LOSS_BYTES + loss.origin.as_ref().map_or(0, String::len))
+        .sum();
+    origins + losses
 }
 
 fn kept_bytes(origin: &str, stores: &[Kept; 2]) -> usize {
@@ -479,6 +497,18 @@ impl OriginSnapshots {
         self.note(tab, loss);
     }
 
+    /// Drops tab `tab`'s snapshots and the losses they name, read by the
+    /// engine the session runs, and resizes the charge to what stays.
+    fn drop_tab(&mut self, pipe: u64, tab: &str) {
+        if pipe != self.live {
+            return;
+        }
+        if let Some(gone) = self.tabs.remove(tab) {
+            self.held = self.held.saturating_sub(tab_bytes(&gone));
+            self.charge.resize(self.held);
+        }
+    }
+
     /// The carried tab's snapshots once the target committed: they are
     /// the target tab `to`'s, read by `sink`'s pipe from now on, and each
     /// is the target's own until a document of it stands again. The other
@@ -489,12 +519,7 @@ impl OriginSnapshots {
         for snapshot in carried.origins.values_mut() {
             snapshot.imported = true;
         }
-        let held: usize = carried.origins.values().map(|s| s.bytes).sum::<usize>()
-            + carried
-                .losses
-                .iter()
-                .map(|loss| LOSS_BYTES + loss.origin.as_ref().map_or(0, String::len))
-                .sum::<usize>();
+        let held = tab_bytes(&carried);
         snapshots.tabs = HashMap::from([(to, carried)]);
         snapshots.held = held;
         snapshots.charge.resize(held);

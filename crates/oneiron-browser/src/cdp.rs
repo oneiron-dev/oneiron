@@ -11,15 +11,19 @@
 //! (`state`), as do the storage reads a Chromium document sends as it is
 //! left, kept in the session's snapshots (`storage`). A message past the
 //! pipe's bound, or a reply it cannot parse, fails only its own call, and
-//! the pipe reads on (`overrun`, FIX 6851).
+//! the pipe reads on (`overrun`, FIX 6851). Each paused request goes to the
+//! host's request handler where the session has one, in place of the relay
+//! (`requests`, FIX 7122).
 
 mod overrun;
+mod requests;
 mod state;
 mod storage;
 mod websocket;
 
 pub(crate) use state::{Visits, web_origin};
 
+use crate::request::Custody;
 use crate::session::storage::Sink;
 use crate::{BrowserEngine, BrowserError};
 use serde_json::{Value, json};
@@ -83,6 +87,11 @@ pub(crate) struct Pipe {
     seed: Arc<Mutex<Option<state::Seed>>>,
     /// Where the pages' storage reads are kept, once the session gave one.
     sink: Arc<OnceLock<Sink>>,
+    /// The session's custody of its requests: the host's handler, if any,
+    /// and the refusal not yet delivered (`requests`).
+    custody: Custody,
+    /// Each page session's main-document answers, by frame (`requests`).
+    documents: requests::Documents,
 }
 
 impl Pipe {
@@ -90,8 +99,9 @@ impl Pipe {
         reader: impl Read + Send + 'static,
         writer: impl Write + Send + 'static,
         relay: Option<Arc<dyn oneiron_container::EgressRelay>>,
+        custody: Custody,
     ) -> Self {
-        let pipe = Self::routed(Box::new(Nul(writer)), relay.is_some());
+        let pipe = Self::routed(Box::new(Nul(writer)), relay.is_some(), custody);
         let handle = pipe.clone();
         std::thread::spawn(move || {
             read_replies(BufReader::new(reader), &handle, relay.as_ref());
@@ -101,22 +111,24 @@ impl Pipe {
     }
 
     /// The pipe to a guest's browser on `engine`: Chromium's NUL-framed
-    /// pipe, or Lightpanda's WebSocket once its upgrade answered.
+    /// pipe, or Lightpanda's WebSocket once its upgrade answered. It holds
+    /// the session's `custody` before it reads a message.
     pub(crate) fn for_engine(
         engine: BrowserEngine,
         reader: impl Read + Send + 'static,
         writer: impl Write + Send + 'static,
         relay: Option<Arc<dyn oneiron_container::EgressRelay>>,
+        custody: Custody,
     ) -> Result<Self, BrowserError> {
         match engine {
-            BrowserEngine::Chromium => Ok(Self::with_egress(reader, writer, relay)),
-            BrowserEngine::Lightpanda => websocket::open(reader, writer, relay),
+            BrowserEngine::Chromium => Ok(Self::with_egress(reader, writer, relay, custody)),
+            BrowserEngine::Lightpanda => websocket::open(reader, writer, relay, custody),
         }
     }
 
     /// A pipe whose calls go out through `outbound`; its transport routes
     /// each message it reads.
-    fn routed(outbound: Box<dyn Outbound>, egress: bool) -> Self {
+    fn routed(outbound: Box<dyn Outbound>, egress: bool, custody: Custody) -> Self {
         Self {
             writer: Arc::new(Mutex::new(outbound)),
             pending: Arc::new(Mutex::new(Some(HashMap::new()))),
@@ -127,6 +139,8 @@ impl Pipe {
             pages: Arc::default(),
             seed: Arc::default(),
             sink: Arc::default(),
+            custody,
+            documents: Arc::default(),
         }
     }
 
@@ -452,16 +466,19 @@ fn network_event(pipe: Pipe, relay: Arc<dyn oneiron_container::EgressRelay>, eve
             } else {
                 Vec::new()
             };
-            let response = relay.fetch(oneiron_container::HttpRequest {
+            let asked = oneiron_container::HttpRequest {
                 url: request["url"].as_str().unwrap_or("").to_owned(),
                 method: request["method"].as_str().unwrap_or("GET").to_owned(),
                 headers,
                 body,
                 follow_redirects: false,
-            });
+            };
+            // The host's handler takes it where the session has one, else the
+            // relay; a refusal it gave is kept before the request fails.
+            let response = pipe.fetch_paused(&relay, &session, &event, asked);
             let deadline = Instant::now() + std::time::Duration::from_secs(30);
             match response {
-                Ok(response) => {
+                Some(response) => {
                     use base64::Engine as _;
                     let headers: Vec<_> = response
                         .headers
@@ -477,7 +494,7 @@ fn network_event(pipe: Pipe, relay: Arc<dyn oneiron_container::EgressRelay>, eve
                         deadline,
                     );
                 }
-                Err(_) => {
+                None => {
                     let _ = pipe.call(
                         Some(&session),
                         "Fetch.failRequest",

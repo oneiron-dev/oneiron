@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1119 facade rows, 3847 declarations.
-Inputs: 1054 of 1119 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1006 of 1119 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1121 facade rows, 3851 declarations.
+Inputs: 1056 of 1121 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1008 of 1121 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -13351,6 +13351,25 @@ class RoomHostHand(TypedDict):
     room: EntityId
     to: EntityId
     session: NotRequired[EntityId | None]
+class RoomUpkeepPendingRequest(TypedDict):
+    room: NotRequired[EntityId | None]
+class RoomUpkeepNudge(TypedDict):
+    finding: EntityId
+    room: EntityId
+    thread: EntityId
+    host: EntityId
+    last_activity: int
+    open_tasks: list[EntityId]
+    approval: ClaimApprovalStatus
+class RoomUpkeepVoiceRequest(TypedDict):
+    finding: EntityId
+    content: str
+class RoomUpkeepVoiceReceipt(TypedDict):
+    finding: EntityId
+    turn: NotRequired[RecordRef | None]
+    message: NotRequired[RecordRef | None]
+    receipt_ref: str
+    replayed: bool
 class RoomSharingClampWorlds(TypedDict):
     clamp: Literal["worlds"]
 class RoomSharingClampFacets(TypedDict):

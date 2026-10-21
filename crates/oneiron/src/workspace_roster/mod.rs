@@ -224,6 +224,9 @@ pub use rooms::{
 };
 pub(crate) use rooms::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
+pub use rooms::{
+    RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
+};
 pub(crate) use rooms::{room_upkeep_host, upkeep_rooms};
 
 pub(crate) use rooms::erase_room_side_rows;
