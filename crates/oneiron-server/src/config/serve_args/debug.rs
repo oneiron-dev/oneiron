@@ -72,6 +72,7 @@ impl fmt::Debug for ServeArgs {
             .field("shared_model_root", &self.shared_model_root)
             .field("container_home", &self.container_home)
             .field("container_runtime_dir", &self.container_runtime_dir)
+            .field("guest_runtime_fact", &self.guest_runtime_fact)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)
