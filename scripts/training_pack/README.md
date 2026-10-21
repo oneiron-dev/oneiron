@@ -1,8 +1,9 @@
 # training_pack: the question-head trainer (FIX 7263, OF-418 L1)
 
 `worker.py` trains one binary head for one exact detector question on a frozen, pinned
-Oneironer encoder: the producer a future engine connector will invoke. No Rust adapter,
-route, evaluator, runtime loader or detector consumer exists for it yet. It calls no model
+Oneironer encoder: the producer the engine's `QuestionHeadTrainer` connector invokes
+(`[models.training.connectors.<name>]`, docs/ops/run-with-models.md). No owner prepare door,
+evaluator, runtime loader or detector consumer exists for it yet. It calls no model
 service, teacher or network, uploads nothing, runs no remote code and downloads no model.
 Its receipt is producer evidence, not a `HeldOutResult`, `TrainingRun`, owner swap or serving
 readiness; the released stack is a pinned *candidate* base, not a promise of detector
@@ -124,7 +125,7 @@ epoch losses, head SHA-256 before and after), load sets, probes, the export chec
 marks and service units (GPU wall seconds). Cost, serving latency, calibration and held-out
 or incumbent comparison are absent, never zero.
 
-Mapping for the future adapter (`TrainOutput`): run and spec come back verbatim. The
+Mapping in the adapter (`ai_host/training_pack/wire.rs`, `TrainOutput`): run and spec come back verbatim. The
 checkpoints are `load_sets.*`: `model` plus each row's bytes read from `path`.
 `probe_*_blake3` is `load_sets.*.load_set_blake3`. `probes[]` maps to `ProbeMeasurement`,
 with hex becoming `[u8; 32]`. `settings`, `harness`, `receipt` (the whole file) and
@@ -134,7 +135,6 @@ with hex becoming `[u8; 32]`. `settings`, `harness`, `receipt` (the whole file) 
 
 - L08-B: consented per-target ingress, the source-family split and the
   held-out/calibration/comparison receipt (temperature and Brier fit on validation).
-- PR1b: the Rust `TrainingTarget::Role|Question` conversion, connector, config and wire, with
-  the owner-acked edits.
+- The owner prepare/authorize doors for a Question run, on L08-B's ingress (FIX 8237).
 - PR2: an exact Candle Local runtime reproducing this renderer, windowing, pooling, head and
   the receipt's probe logits, plus live approve/revoke. Swap owner-only, auto-deploy off.

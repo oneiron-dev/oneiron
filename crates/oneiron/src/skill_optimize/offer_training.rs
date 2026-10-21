@@ -55,8 +55,13 @@ fn invalid(reason: &str) -> Error {
 
 /// A plan is for the offer's seat, from its base: the starting checkpoint's
 /// model, and its first file's hash when the offer pins one, as the offer
-/// derives it.
+/// derives it. An offer trains its seat's role, never a question head.
 fn plan_matches(seat: &EvalSeat, base: &OfferModelPin, plan: &TrainingPlan) -> Result<()> {
+    if plan.target.question().is_some() {
+        return Err(invalid(
+            "a training offer's run trains its seat's role, not a question head",
+        ));
+    }
     let first = plan
         .starting_checkpoint
         .files
