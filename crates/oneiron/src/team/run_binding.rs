@@ -10,18 +10,38 @@
 //! team through [`team_spawn_context_for_attempt_in_txn`]: the one team the
 //! attempt started, else its own stamp. An attempt that started several
 //! teams must name one; the host never picks for it.
+//!
+//! Beside the start its row keeps the entity rows its facts were read from,
+//! as the writer that assembled them named them (FIX 7103). A writer that
+//! names none leaves them unknown.
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_dispatch::{TeamRunStamp, attempt_team_stamp};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
-use crate::entity_id::bytes_to_hex_lower;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
+use crate::skill_optimize::union_source_rows;
 
 /// Team starts. Key: the leader's attempt in hex, `:`, the team reference.
-const TEAM_RUN: SideTable<String, TeamRunBinding, Named> = SideTable::new(&side_table::TEAM_RUN);
+const TEAM_RUN: SideTable<String, StoredTeamRunBinding, Named> =
+    SideTable::new(&side_table::TEAM_RUN);
+
+/// The TASK a team start ran, with the entity rows the start was read from
+/// (FIX 7103); `None` is unknown.
+pub type SourcedTeamTask = (String, Option<Vec<EntityId>>);
+
+/// One stored team start: the start, and the entity rows its facts were
+/// read from. `None` is unknown, never an empty set.
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredTeamRunBinding {
+    run: TeamRunBinding,
+    source_rows: Option<Vec<EntityId>>,
+}
 
 /// One team start, as the host observed it. Host-only: never guest input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,39 +92,67 @@ pub fn record_team_start_in_txn(
     txn: &mut heed::RwTxn<'_>,
     run: &TeamRunBinding,
 ) -> Result<()> {
+    record_team_start_sourced_in_txn(vault, txn, run, None)
+}
+
+/// [`record_team_start_in_txn`], keeping the entity rows the start's facts
+/// were read from (FIX 7103). `None` is unknown: the caller names a set only
+/// when it covers every fact it passes. A replayed start keeps every
+/// witness the row rests on, and one unknown leaves it unknown; a replay
+/// that finds the leader on another TASK leaves it unknown. The sources ride
+/// in the start's own row and never fail its write.
+///
+/// # Errors
+///
+/// As [`record_team_start`].
+pub fn record_team_start_sourced_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    run: &TeamRunBinding,
+    source_rows: Option<Vec<EntityId>>,
+) -> Result<()> {
     run.stamp.validate()?;
     let leader = AttemptQueue::new(vault)
         .get_in_txn(txn, run.leader)?
         .ok_or(Error::EntityNotFound)?;
     let key = run_key(run.leader, &run.stamp.team_ref);
     let mut row = match TEAM_RUN.get(&vault.store, txn, &key)? {
-        Some(existing) if existing.stamp != run.stamp => {
+        Some(existing) if existing.run.stamp != run.stamp => {
             return Err(Error::InvalidClaimBody(
                 "a team start keeps the stamp it opened",
             ));
         }
         Some(mut existing) => {
-            existing.started_at = existing.started_at.min(run.started_at);
+            existing.run.started_at = existing.run.started_at.min(run.started_at);
+            existing.source_rows = if existing.run.root_task == leader.task_ref {
+                union_source_rows([existing.source_rows.take(), source_rows])
+            } else {
+                // The TASK the row names changes under its witnesses.
+                None
+            };
             existing
         }
-        None => TeamRunBinding {
-            stamp: run.stamp.clone(),
-            leader: run.leader,
-            root_task: None,
-            started_at: run.started_at,
-            members: Vec::new(),
-            proposals: Vec::new(),
+        None => StoredTeamRunBinding {
+            run: TeamRunBinding {
+                stamp: run.stamp.clone(),
+                leader: run.leader,
+                root_task: None,
+                started_at: run.started_at,
+                members: Vec::new(),
+                proposals: Vec::new(),
+            },
+            source_rows,
         },
     };
-    row.root_task.clone_from(&leader.task_ref);
+    row.run.root_task.clone_from(&leader.task_ref);
     for member in &run.members {
-        if !row.members.contains(member) {
-            row.members.push(*member);
+        if !row.run.members.contains(member) {
+            row.run.members.push(*member);
         }
     }
     for proposal in &run.proposals {
-        if !row.proposals.contains(proposal) {
-            row.proposals.push(proposal.clone());
+        if !row.run.proposals.contains(proposal) {
+            row.run.proposals.push(proposal.clone());
         }
     }
     TEAM_RUN.put(&vault.store, txn, &key, &row)
@@ -135,7 +183,9 @@ pub fn team_run_binding_in_txn(
     leader: AttemptId,
     team_ref: &str,
 ) -> Result<Option<TeamRunBinding>> {
-    TEAM_RUN.get(&vault.store, txn, &run_key(leader, team_ref))
+    Ok(TEAM_RUN
+        .get(&vault.store, txn, &run_key(leader, team_ref))?
+        .map(|row| row.run))
 }
 
 /// The team a spawn or TASK made by `attempt` works in: the one team the
@@ -167,7 +217,7 @@ pub fn team_spawn_context_for_attempt_in_txn(
     let started = TEAM_RUN.scan_from(&vault.store, txn, leader_prefix(attempt).as_bytes())?;
     match started.as_slice() {
         [] => {}
-        [(_, run)] => return Ok(Some(run.stamp.clone())),
+        [(_, row)] => return Ok(Some(row.run.stamp.clone())),
         _ => {
             return Err(Error::InvalidClaimBody(
                 "the attempt started several teams; name the one its work joins",
@@ -195,7 +245,7 @@ pub(crate) fn team_starts_in_txn(
     Ok(TEAM_RUN
         .scan_from(&vault.store, txn, leader_prefix(leader).as_bytes())?
         .into_iter()
-        .map(|(_, run)| run)
+        .map(|(_, row)| row.run)
         .collect())
 }
 
@@ -211,6 +261,25 @@ pub fn team_run_tasks(vault: &Vault) -> Result<std::collections::BTreeMap<String
     Ok(TEAM_RUN
         .scan(&vault.store, &rtxn)?
         .into_iter()
-        .filter_map(|(_, run)| Some((run.stamp.team_ref, run.root_task?)))
+        .filter_map(|(_, row)| Some((row.run.stamp.team_ref, row.run.root_task?)))
+        .collect())
+}
+
+/// [`team_run_tasks`], each TASK with the entity rows its start was read
+/// from (FIX 7103). `None` is unknown: a start whose writer named no
+/// sources.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn team_run_tasks_sourced(vault: &Vault) -> Result<BTreeMap<String, SourcedTeamTask>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(TEAM_RUN
+        .scan(&vault.store, &rtxn)?
+        .into_iter()
+        .filter_map(|(_, row)| {
+            let task = row.run.root_task?;
+            Some((row.run.stamp.team_ref, (task, row.source_rows)))
+        })
         .collect())
 }

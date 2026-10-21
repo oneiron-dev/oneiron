@@ -126,8 +126,8 @@ pub use self::planner::{
 };
 pub use self::planner_live::{LivePlanRequest, PlannerSeat, PlannerSkills};
 pub use self::task_type_tree::{
-    TASK_TYPE_TREE_FILE, load_team_type_tree, load_team_type_tree_at, store_team_type_tree,
-    team_shape_skill_in_force,
+    SourcedTypeTree, TASK_TYPE_TREE_FILE, load_team_type_tree, load_team_type_tree_at,
+    load_vault_type_tree_sourced, store_team_type_tree, team_shape_skill_in_force,
 };
 pub(crate) use self::task_type_tree::{
     load_team_type_tree_at_in_txn, load_team_type_tree_in_txn, team_shape_skill_in_force_in_txn,
