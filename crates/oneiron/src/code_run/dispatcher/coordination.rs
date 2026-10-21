@@ -95,6 +95,7 @@ impl<'a> HostSelfDispatcher<'a> {
             return Err(invalid());
         }
         dispatcher.agent_lease = Some(binding);
+        dispatcher.witness_attempt_activity();
         Ok(dispatcher)
     }
 
