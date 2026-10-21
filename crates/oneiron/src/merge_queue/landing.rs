@@ -165,6 +165,9 @@ impl MergeQueue<'_> {
             }
             queue.pointers.pending_slow.drain(..consumed);
             self.save(&queue, &batches.iter().collect::<Vec<_>>())?;
+            // Saved first: a full-auto mirror woken now reads the evidence
+            // of every batch consumed here (FIX 6866).
+            self.vault.wake_origin_mirrors();
         }
         Ok(queue.pointers)
     }

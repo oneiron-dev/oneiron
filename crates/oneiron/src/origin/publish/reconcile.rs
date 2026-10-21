@@ -69,7 +69,7 @@ impl Vault {
     }
 
     /// Runs `apply` with the mirror's basic-auth header, inside the door.
-    fn with_publish_credential(
+    pub(super) fn with_publish_credential(
         &self,
         destination: &OriginPublishDestination,
         apply: &mut dyn FnMut(&str),

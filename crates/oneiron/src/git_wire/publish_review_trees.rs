@@ -56,7 +56,7 @@ impl GitWire<'_> {
 
     /// Every path under `prefix` whose entry `new` holds otherwise than
     /// `old` (`None`: the empty tree), descending only into trees that differ.
-    fn diff_trees(
+    pub(super) fn diff_trees(
         &self,
         repo: &GitWireRepo,
         prefix: &[u8],
