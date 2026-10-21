@@ -20025,7 +20025,7 @@
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -42533,6 +42533,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/room/export_roots.rs",
+     "purpose": "The threads an off-record room's copy carries, for its export's audit and notices (FIX 6427, 6681), split…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -51524,17 +51534,31 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "EngineScan",
       "ScanCheck"
      ],
      "path": "src/scan_check.rs",
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
      "surface": {
-      "const": 4,
+      "const": 2,
       "crate-vis": 9,
-      "enum": 1,
-      "fn": 4,
+      "fn": 3,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EngineScan"
+     ],
+     "path": "src/scan_check/engine_scan.rs",
+     "purpose": "The engine scans whose tables grow with use (rule 5), each with its closed code, the threshold it asks past…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -68800,7 +68824,7 @@
      "path": "src/workspace_roster/rooms/audience_notices.rs",
      "purpose": "What a private thread's members are told, and the audience its own view shows them (owner ruling 2026-10-20…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1
      }
     },
@@ -71607,7 +71631,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71866,7 +71890,7 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
     "scan_check": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -72267,7 +72291,7 @@
    },
    "over_bar": 171,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4627,
+   "source_files": 4629,
    "test_files": 902
   },
   "oneiron-android": {
