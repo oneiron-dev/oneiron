@@ -275,7 +275,7 @@ impl Vault {
         let device_only = crate::settings::device_local_worlds_for(self, &rtxn, &destination)?;
         let mut included = BTreeSet::new();
         // The root of each thread a carried TURN is of (FIX 6427).
-        let mut thread_roots = BTreeSet::new();
+        let mut thread_roots = crate::workspace_roster::ExportThreadRoots::default();
         let mut agent_fork_hashes = BTreeMap::new();
         let mut diaries = ExportDiaryLedger::new(reader)?;
         let attaches_files = cut == ExportCut::Archive;
@@ -530,6 +530,9 @@ impl Vault {
             }
             writer.side_rows_withheld(withheld);
         }
+        // Each carried thread's binding, read in this snapshot, so its
+        // members are told should its root go before the audit (FIX 6681).
+        thread_roots.capture_in(&self.store.read(), &rtxn);
         drop(rtxn);
         // The gate logs the reads after the snapshot. An entry whose read
         // could not be logged leaves the archive, with its edges.

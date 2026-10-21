@@ -57,8 +57,8 @@ pub struct WireQuestion {
 mod connection_pressure;
 mod rows;
 pub(crate) use connection_pressure::{
-    ConnectionPoolPressure, ObservedBody, ObservedSocket, PoolPressure, PressureCredentialKey,
-    attach_body_credential, with_body_credential,
+    BodyCredential, ConnectionPoolPressure, ObservedBody, ObservedSocket, PoolPressure,
+    PressureCredentialKey, SocketHold, attach_body_credential, with_body_credential,
 };
 pub use rows::LimitRow;
 /// The question a crossed row asks: what it is set to, the most it saw, and
