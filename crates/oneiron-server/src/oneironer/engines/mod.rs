@@ -27,9 +27,10 @@
 //! is timed on every case it holds.
 //!
 //! A platform runtime is admitted beside the baseline after the slot is
-//! built, in the background ([`admission`], FIX 6755 slice 3): on a Mac, the
-//! bundle's managed MLX worker, once its installation verifies
-//! ([`candidate`]) and its answers clear the reference here.
+//! built, in the background ([`admission`], FIX 6755 slices 3 and 2c): on a
+//! Mac, the bundle's managed MLX worker and its native Core ML worker, each
+//! once its installation verifies ([`candidate`]) and its answers clear the
+//! reference here.
 
 use std::path::Path;
 

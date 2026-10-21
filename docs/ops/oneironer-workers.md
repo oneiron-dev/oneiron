@@ -1,13 +1,16 @@
-# Oneironer workers on a Mac: the managed MLX worker
+# Oneironer workers on a Mac: the MLX and Core ML workers
 
 The Oneironer tagger serves through one dispatcher per slot. Every slot has
 the Candle baseline: the engine its rows chose, or the device the section
-names. On an Apple silicon Mac, a server can also run the bundle's MLX worker
-beside Candle (FIX 6755 slice 3). This page covers where that worker comes
-from, when it starts, how it loads and falls back, how it restarts or stays
-down, how it stops, who owns it, and what each call's receipt says. The
-dispatcher itself is described in [run-with-models.md](run-with-models.md),
-"Workers, live and bulk calls, and receipts".
+names. On an Apple silicon Mac, a server can also run two platform workers
+beside Candle: the bundle's managed MLX worker (FIX 6755 slice 3) and its
+native Core ML worker (slice 2c). This page covers where each comes from,
+when it starts, how it loads and falls back, how it restarts or stays down,
+how it stops, who owns it, and what each call's receipt says. The MLX worker
+comes first; [The Core ML worker](#the-core-ml-worker) covers what differs
+for Core ML. The dispatcher itself is described in
+[run-with-models.md](run-with-models.md), "Workers, live and bulk calls, and
+receipts".
 
 ## Placement
 
@@ -53,6 +56,9 @@ background thread, so none of it holds back the listener. `oneiron init`
 builds the slot only to check the section and starts no worker.
 
 When a check fails, the log names the reason once, and Candle serves:
+
+Each line carries `row = "mlx-worker"` (or `"coreml-ane"` for the Core ML
+worker) and its `reason`:
 
 | Reason | Level | Meaning |
 |---|---|---|
@@ -159,11 +165,12 @@ exits by itself.
 ## Per-process ownership
 
 Each server process owns its workers. Within one process, a bundle's
-canonical directory and stack hold one worker session; a second slot of the
-same bundle in that process serves Candle alone. Several server processes
-on one Mac, a managed host with several vault processes say, each run their
-own worker, at about 1.3 GB of memory each. This rewrites contract A1's
-"one process per bundle per Mac" (Engine call 5).
+canonical directory and stack hold one session of each platform worker; a
+second slot of the same bundle in that process serves Candle alone. Several
+server processes on one Mac, a managed host with several vault processes
+say, each run their own workers: the MLX worker at about 1.3 GB of memory
+each, the Core ML worker as below. This rewrites contract A1's "one process
+per bundle per Mac" (Engine call 5).
 
 ## What a call's receipt says
 
@@ -172,9 +179,12 @@ host's own facts, never from anything the worker reported:
 
 - `runtime = "mlx"`, `compute = "metal"`, `engine = "mlx/metal"` for a
   call the MLX worker ran, failed calls included;
+- `runtime = "coreml"`, `compute = "cpu_and_ne"`,
+  `engine = "coreml/cpu_and_ne"` for a call the Core ML worker ran, failed
+  calls included;
 - `candle/cpu` or `candle/metal` for a call Candle ran: every window over
-  512 tokens, and every call while the worker loads, restarts or is down,
-  a marker's retry after a failed MLX call among them;
+  512 tokens, and every call while a platform worker loads, restarts or is
+  down, a marker's retry after a failed MLX or Core ML call among them;
 - `pick` is `calibrated`, `free` or `shorter_queue` by the usual rules, and
   `fallback` when Candle runs a call because the better-ranked worker is
   not ready;
@@ -184,3 +194,125 @@ host's own facts, never from anything the worker reported:
 
 The receipt never enters the answer: parity and digests compare the spans
 alone.
+
+## The Core ML worker
+
+The Core ML worker runs the bundle's compiled model inside the server
+process, on the CPU and the Neural Engine. It is admitted beside Candle and
+the MLX worker by the same rules, on its own worker of the dispatcher.
+
+### Placement and activation
+
+The model ships in the bundle as the `coreml-ane` platform row: the archive
+`coreml-ane-port-v1.mlmodelc.tar` (about 240 MB), one multifunction model
+with one function per window length (`s32` through `s512`) and the weights
+stored once. The fetch extracts it beside itself, as it does the MLX
+archive:
+
+```text
+<models root>/oneironer/b8cf6fb2f5d71020/
+  coreml-ane-port-v1.mlmodelc.tar
+  coreml-ane-port-v1.mlmodelc/                 # with .extracted
+```
+
+The worker loads that extraction in place. The OS keys its Neural Engine
+compile cache on the path, so the path stays the same for the bundle's
+life; the engine never copies or moves it.
+
+It joins under the same conditions as the MLX worker (`runtime = "auto"`,
+`device = "auto"`, a shipped `parity.json`, a macOS aarch64 build, both the
+archive and a matching extraction placed), with these differences:
+
+- the Mac's release must be at least the row's `min_os`, `15.0`:
+  multifunction models need macOS 15. An Intel Mac or Linux never selects
+  it;
+- there is no program and no protocol to check: the extraction is the
+  model.
+
+The not-started reasons and their levels are the table above, with
+`row = "coreml-ane"`.
+
+### Loading, the cold compile and fallback
+
+The worker loads on its own background thread, with no deadline, while
+Candle takes every call:
+
+1. the bundle's manifest, which must still hash to the slot's stack;
+2. the row, which must be the port this engine runs (`ane-port-v1`):
+   `x` float32 `[1, 768, 1, L]` and `attention_mask` int32 `[1, L]` in;
+   `logits` float16 `[1, 53, 1, L]` and `proj` float16 `[1, 128, 1, L]`
+   among the outputs. The bundle may have no mention, coreference or affect
+   head, and must have the character head;
+3. from the verified trunk, only `encoder.embeddings.word_embeddings.weight`,
+   kept as float16 (about 384 MB), and the character head's weights and
+   vocabulary, in F32 on the CPU. No encoder is built and nothing is run;
+4. each turn function, loaded with compute units CPU and Neural Engine and
+   its function name, its model description checked against the row: the
+   same feature names, types and shapes;
+5. one warm-up prediction per function.
+
+The first load on a path compiles every function for the Neural Engine. The
+publisher measured 230 to 265 s for all eight on its Mac, about 38 to 41 s
+each. A later start on the same path reuses the OS cache, while the disk
+has room for it. The cache costs about 240 MB per loaded function, about
+1.9 GB for all eight. If the OS evicts it, the next start compiles again,
+and Candle serves meanwhile.
+
+Then the worker is measured as the MLX worker is: the 36 reference cases
+whose window fits 512 tokens run on it directly, every one must clear the
+bar, and it is ranked against Candle timed on the same cases. Its row in
+`engines.json` is keyed by the model archive's hash. When both platform
+workers are ready, Candle ranks after them once either is preferred over
+it; the two platform workers are not contested against each other.
+
+Each call runs alone (a bulk unit holds one call). The worker picks the
+smallest function whose tokens hold the call's window, special tokens
+included, fills `x` with the window's word embeddings (float16 values in
+float32), pads with the row's pad id under a zero mask, and reads `logits`
+and `proj` back as float16 by their strides. `proj` is the character
+head's projection, already applied; the engine runs the rest of the head
+and its own decode on the CPU, the same code Candle runs. A call with no
+current message is answered with no prediction. A window longer than 512
+tokens always goes to Candle.
+
+### Down reasons and restart
+
+A load that fails is down, never a crash and never a failed server start:
+the worker moves to `unavailable` with one of these reasons, logged at
+WARN once, and Candle keeps serving:
+
+- `coreml_unsupported_port`: the row's port, embedding table or tensors
+  are not the ones this engine reads, or `proj` is not the character
+  head's width;
+- `coreml_unsupported_heads`: the bundle has a mention, coreference or
+  affect head, or no character head;
+- `coreml_load_failed:<what>`: `manifest`, `row`, `trunk`, `embedding`,
+  `char_head`, `model`, or a function name (`s32` ... `s512`) did not load
+  or warm;
+- `coreml_io_mismatch:<feature>`: a function's model description differs
+  from the row's tensor of that name, or names a feature the row does not;
+- `identity_mismatch:stack`: the manifest no longer hashes to the slot's
+  stack;
+- `parity_failed`: as for the MLX worker.
+
+There is no process to crash. A failed prediction fails that call alone,
+with the worker's own receipt, as a failed Candle call does; markers retry
+through their usual schedule. A reference case that fails during the
+measurement is `calibration_failed`: the worker is reloaded after the
+usual backoff. To bring a down worker back, fix the cause and restart the
+server.
+
+### Shutdown
+
+The load observes the dispatcher's close between functions. A function
+already compiling finishes first, so a shutdown during a cold compile can
+wait for that one function, tens of seconds. Nothing outlives the server:
+the models are the server process's own memory.
+
+### What `cpu_and_ne` means
+
+`compute = "cpu_and_ne"` names the compute units the engine allowed Core ML
+to use, the CPU and the Neural Engine. It is not proof that any operation
+ran on the Neural Engine: Core ML places each operation itself. The receipt
+also covers the CPU work the engine does around the model: the embedding
+lookup, the character head's tail and the decode.
