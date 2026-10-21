@@ -19,7 +19,7 @@ pub(crate) use self::obligation::{owner_answer_item_hash, owner_answer_obligatio
 pub(crate) use self::records::PENDING_GATE_CONSENT_VERSION;
 pub(in crate::store) use self::records::decode_pending_gate_consent;
 pub use self::records::{PendingGateConsentGroup, PendingGateConsentRecord};
-pub(crate) use self::tray::{TrayRemoval, pending_gate_consent_in};
+pub(crate) use self::tray::{PendingGateConsentSlot, TrayRemoval, pending_gate_consent_in};
 // Test-only seam (open_gates/mod.rs precedent): the store test suite names
 // these bare through `use super::*`, but no non-test code outside
 // pending_gate_consent/ reaches them through the seam, so the re-exports
