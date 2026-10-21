@@ -246,7 +246,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/codebase_doors.rs` | src | s | 4 crate-vis | — | Credential-bound host projections of the typed code snapshot doors (DOOR-118) |
 | `src/api/facade/commitment_doors.rs` | src | s | 7 crate-vis | — | Owner-bound projections of the typed commitment lifecycle |
 | `src/api/facade/compliance_doors.rs` | src | s | 4 crate-vis | — | Compliance owner decisions use the request's owner proof and its own Memory |
-| `src/api/facade/connector_call_doors.rs` | src | s | 5 crate-vis | — | The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's… |
+| `src/api/facade/connector_call_doors.rs` | src | s | 6 crate-vis | — | The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's… |
 | `src/api/facade/connector_pack_doors.rs` | src | m | 7 crate-vis | — | Source-bound connector packs over the existing owner, probe and slate doors |
 | `src/api/facade/consent_doors.rs` | src | s | 10 crate-vis | — | Consent lifecycle host doors, on the same owner proof as Gate policy |
 | `src/api/facade/consolidation_doors.rs` | src | s | 7 crate-vis | — | Owner-bound generated-claim promotion, vetting and evidence reads |
@@ -736,7 +736,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/trusted_proxy.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | TrustedProxy | `trusted_proxies`: the reverse proxies whose `X-Forwarded-For` entries the server believes when it keys a… |
 | `src/connector_admission_host.rs` | src | m | 12 crate-vis | — | The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint… |
 | `src/connector_call_host.rs` | src | m | 1 struct · 1 fn · 15 crate-vis | ServedConnectorCallHost | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
-| `src/connector_call_host/live_exchange.rs` | src | m | 24 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned, and the reply… |
+| `src/connector_call_host/live_exchange.rs` | src | m | 25 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned, and the reply… |
 | `src/connector_call_host/presenting.rs` | src | m | 11 crate-vis | — | What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646… |
 | `src/connector_call_settle.rs` | src | s | 4 crate-vis | — | The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery… |
 | `src/connector_elicitation.rs` | src | m | 11 crate-vis | — | The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510) |

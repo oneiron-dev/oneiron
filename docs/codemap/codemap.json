@@ -44920,14 +44920,31 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "ConnectorElicitationAnswer"
+      "ConnectorElicitationAnswer",
+      "ConnectorElicitationOwnerAsk"
      ],
      "path": "src/outbound_consent/connector_elicitation_asks.rs",
      "purpose": "The owner ask an answer to a connector's question takes (ONE-2510)",
      "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorElicitationReceipt",
+      "ElicitationDisposition",
+      "ElicitationEgress"
+     ],
+     "path": "src/outbound_consent/connector_elicitation_receipt.rs",
+     "purpose": "The receipt of each answer the host sends a connector's questions (ONE-2510, FIX 3840): receipt-only, on the…",
+     "surface": {
+      "enum": 2,
       "fn": 1,
       "struct": 1
      }
@@ -44958,7 +44975,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -63262,7 +63279,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1166
+      "fn": 1167
      }
     },
     {
@@ -71179,7 +71196,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71797,7 +71814,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4583,
+   "source_files": 4584,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82262,7 +82279,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1135
+      "fn": 1136
      }
     },
     {
@@ -83523,7 +83540,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1136
+      "fn": 1137
      }
     },
     {
@@ -87373,7 +87390,7 @@
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -92539,7 +92556,7 @@
      "path": "src/connector_call_host/live_exchange.rs",
      "purpose": "The live half of the call host: the worker that owns an exchange once its send returned, and the reply…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -99829,6 +99846,8 @@
       "ConnectRejoined",
       "ConnectRescoped",
       "ConnectWindow",
+      "ConnectorAnswerAction",
+      "ConnectorAnswerRequest",
       "ConnectorCallReply",
       "ConnectorCallRequest",
       "ConnectorCallStatus",
@@ -99858,6 +99877,7 @@
       "ConnectorQualificationKit",
       "ConnectorQualificationReceipt",
       "ConnectorQuestion",
+      "ConnectorQuestionAnswer",
       "ConnectorSchemaReply",
       "ConnectorSchemaRequest",
       "ConnectorSendTaskOutcome",
@@ -102969,8 +102989,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 957,
-      "struct": 2989
+      "enum": 958,
+      "struct": 2991
      }
     },
     {
