@@ -84,6 +84,9 @@ pub struct SyncServer {
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
     pub(crate) transfers: crate::api::Transfers,
+    /// The machine's memory, leased to work before it allocates (FIX 7649):
+    /// the e-sign doors' spooled bodies read whole take their lease here.
+    pub(crate) memory: crate::machine::MachineMemory,
     /// OF-520 questions retrieval queries past `config.limits` raised.
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
@@ -452,6 +455,7 @@ impl SyncServer {
                 Arc::clone(wire_telemetry.limit_questions()),
                 &vault,
             )?,
+            memory: crate::machine::MachineMemory::new(),
             wire_telemetry,
             vault,
             root_doc,
