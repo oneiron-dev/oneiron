@@ -607,6 +607,7 @@ pub enum AgentVerb {
     VaultResultsSlice,
     VaultCodeRepoDiff,
     VaultCodeExport,
+    VaultCodeImport,
     VaultCodeOriginRegister,
     VaultCodeOriginMirrorGet,
     VaultCodeOriginMirrorSet,
@@ -1748,6 +1749,7 @@ impl AgentVerb {
         Self::VaultResultsSlice,
         Self::VaultCodeRepoDiff,
         Self::VaultCodeExport,
+        Self::VaultCodeImport,
         Self::VaultCodeOriginRegister,
         Self::VaultCodeOriginMirrorGet,
         Self::VaultCodeOriginMirrorSet,
@@ -2910,6 +2912,7 @@ impl AgentVerb {
             Self::VaultResultsSlice => "vault.results.slice",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultCodeExport => "vault.code.export",
+            Self::VaultCodeImport => "vault.code.import",
             Self::VaultCodeOriginRegister => "vault.code.origin.register",
             Self::VaultCodeOriginMirrorGet => "vault.code.origin.mirror.get",
             Self::VaultCodeOriginMirrorSet => "vault.code.origin.mirror.set",
@@ -4063,6 +4066,7 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeImport
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
                 | Self::VaultCodeOriginMirrorSet
@@ -5232,6 +5236,7 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeImport
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
                 | Self::VaultCodeOriginMirrorSet
@@ -6511,6 +6516,7 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeImport
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
                 | Self::VaultCodeOriginMirrorSet
@@ -7361,6 +7367,7 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
+                | Self::VaultCodeImport
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorSet
                 | Self::VaultCodeOriginMirrorStrategy
@@ -8321,6 +8328,7 @@ impl AgentVerb {
             Self::VaultResultsSlice => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeImport => &["spec"],
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
             Self::VaultCodeOriginMirrorSet => &["spec"],
@@ -9463,6 +9471,7 @@ impl AgentVerb {
             Self::VaultResultsSlice => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeImport => &["spec"],
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
             Self::VaultCodeOriginMirrorSet => &["spec"],
@@ -11779,6 +11788,9 @@ impl AgentVerb {
             }
             Self::VaultCodeExport => {
                 "Export one already-finalized and reviewed document revision through the existing origin publication protocol."
+            }
+            Self::VaultCodeImport => {
+                "Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only."
             }
             Self::VaultCodeOriginRegister => {
                 "Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."
