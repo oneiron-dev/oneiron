@@ -105,6 +105,11 @@ impl Vault {
         };
         match self.git_push_checkout_admits_in_txn(txn, caller, served, ticket)? {
             Ok(stamp) => Ok(GitPushAdmission::sealed(stamp)),
+            // A Grant passed over on its lapsed pact names that lapse here
+            // too (FIX 7548); any other miss keeps the Checkout's reason.
+            Err(_) if no_grant == GIT_PUSH_PACT_STANDING_LAPSED => {
+                Err(refused(&served.name, GIT_PUSH_PACT_STANDING_LAPSED))
+            }
             Err(reason) => Err(refused(&served.name, reason)),
         }
     }
