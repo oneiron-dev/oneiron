@@ -12334,6 +12334,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/served_forms/session.rs",
+     "purpose": "The served-form receipts a read in an off-record room keeps (WILL L11-01 S01-2b, OF-329): what it served of…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -35928,10 +35938,20 @@
      "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 14,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/asset_resolve/hydrated.rs",
+     "purpose": "Hydrate's half of OF-329, the forms it serves in place of image bodies, for every hydrate door: the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -46214,7 +46234,7 @@
      "path": "src/receipt/record.rs",
      "purpose": "First-class, replicated immutable terminal outbound receipt record, the served-form receipt record a read…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -67261,7 +67281,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 78,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67905,7 +67925,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 236,
+     "files": 237,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68586,7 +68606,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4325,
+   "source_files": 4327,
    "test_files": 902
   },
   "oneiron-android": {
