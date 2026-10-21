@@ -83,8 +83,8 @@ impl RowBody<'_> {
         #[cfg(feature = "sync")]
         if crate::entity_doc::has_record_head(&vault.store, rtxn, id)? {
             let resolved = crate::entity_doc::resolve_record_body(&vault.store, rtxn, id, row)?;
-            let body = note_body(vault, rtxn, id, entity_type, &resolved)?;
-            return Ok(ExportSnapshotEntityBody::Bytes(Cow::Owned(body.into_owned())));
+            let body = note_body(vault, rtxn, id, entity_type, &resolved)?.into_owned();
+            return Ok(ExportSnapshotEntityBody::Bytes(Cow::Owned(body)));
         }
         note_body(vault, rtxn, id, entity_type, row).map(ExportSnapshotEntityBody::Bytes)
     }
@@ -138,7 +138,8 @@ pub(super) fn row_body<'t>(
         if attaches_files && !headed && plain_file(vault, rtxn, &manifest)? {
             return Ok(RowBody::File(manifest));
         }
-        return Ok(RowBody::Bytes(Cow::Owned(vault.asset_file_body(rtxn, &manifest)?)));
+        let body = vault.asset_file_body(rtxn, &manifest)?;
+        return Ok(RowBody::Bytes(Cow::Owned(body)));
     }
     Ok(RowBody::Bytes(match raw {
         Cow::Borrowed(raw) => Cow::Borrowed(&raw[ENTITY_METADATA_HEADER_LEN..]),
