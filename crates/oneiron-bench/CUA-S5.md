@@ -10,6 +10,20 @@ needs the original admitted workflows' vault and attached-run continuity;
 refiles an original under a replacement ID in a new scratch vault or substitutes
 a fresh solve for strict replay.
 
+Before the first attempted engine operation, one fresh-vault preflight uses the
+same `Served::fresh` browser setup as S2/readiness: owner bootstrap/pairing,
+`vault.packs.setup.prepare`, the returned grant card approved through
+`POST /v1/owner/packs/setup/answer`, then one `vault.packs.setup.verify` for
+`browser-guest`. Require active, pack/connection ready and verified; retain the
+active install receipt, connection id and full verdict in
+`browser-preflight/browser-setup.json`, beside `transport.json`. The result is
+cached for the campaign, including failures. No failed check is retried per row;
+an existing preflight directory also refuses rerun after interruption/resume.
+A timeout is a failed row. Pack/setup and guest-check failures respectively name
+`browser_pack_unavailable` and `browser_guest_unverified` with their real detail.
+The preflight server is stopped before returning; no original workflow is copied
+into it. This covers setup, not the still-unavailable original-workflow adapter.
+
 ## Commands (Linux build/run hosts only)
 
 ```sh

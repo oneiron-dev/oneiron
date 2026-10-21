@@ -37,6 +37,7 @@
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
 //! matrix is not shipped here; this binary only ships the bench skeleton,
 //! cheap in-workspace checks, and the ONE-1311 trace export seam.
+#![recursion_limit = "256"]
 #![allow(
     clippy::disallowed_methods,
     reason = "a benchmark driver, outside the server, starts its own processes"
