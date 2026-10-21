@@ -857,8 +857,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         token: host.secret("spawn_token")?.as_slice().try_into()?,
     };
     // So is the custody anchor door's credential, on its own pipe when the
-    // supervisor hands one: never the environment (FIX 5788).
-    let anchor = host.custody_anchor_credentials()?;
+    // supervisor hands one: never the environment (FIX 5788, FIX 6517).
+    let anchor = host.custody_anchor_credentials(config.backup.custody_anchor_url.as_deref())?;
     let mut vault_config = config.base_vault_config();
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
     // training choices stand as the supervisor passed them; an unset export

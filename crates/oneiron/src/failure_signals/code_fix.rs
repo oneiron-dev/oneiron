@@ -108,6 +108,10 @@ pub struct FailureSource {
     pub instructions: String,
     pub briefing: Option<String>,
     pub task: Option<String>,
+    /// The rows these texts were read from (FIX 6997): the failing attempt's
+    /// recorded input set with its TASK row. `None`, unknown, for a kept
+    /// request, or an attempt whose producers recorded no complete set.
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 /// What a code fix is for (OF-380): a failure-ladder case, or a blocked
@@ -617,6 +621,7 @@ fn failure_source_in(
     };
     let mut worlds = vec![input.scope.and_then(|scope| scope.world).unwrap_or(base)];
     let mut task = None;
+    let mut task_rows = Vec::new();
     if let Some(raw) = task_ref {
         let Ok(task_ref) = EntityId::from_hex(raw) else {
             return Ok(None);
@@ -633,7 +638,12 @@ fn failure_source_in(
                 return Ok(None);
             };
             worlds.push(world.unwrap_or(base));
-            task = crate::task_verb::task_text_in(vault, txn, task_ref)?;
+            if let Some((text, row)) =
+                crate::task_verb::task_text_with_source_in(vault, txn, task_ref)?
+            {
+                task = Some(text);
+                task_rows.push(row);
+            }
         }
     }
     worlds.sort_unstable();
@@ -642,6 +652,12 @@ fn failure_source_in(
         instructions: input.definition.instructions.unwrap_or_default(),
         briefing: input.context_spec.and_then(|spec| spec.briefing),
         task,
+        // The dispatch's texts are its attempt's inputs: known only where the
+        // attempt's producers recorded the rows they read them from.
+        source_rows: crate::skill_optimize::union_source_rows([
+            attempt.source_rows(),
+            Some(task_rows.as_slice()),
+        ]),
     };
     Ok(Some((source, worlds)))
 }
