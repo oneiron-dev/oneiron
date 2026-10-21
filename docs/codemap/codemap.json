@@ -25468,7 +25468,8 @@
      "surface": {
       "const": 5,
       "crate-vis": 1,
-      "fn": 10,
+      "fn": 9,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -25480,6 +25481,22 @@
      "purpose": "One structured line per admitted attempt the pass did not complete (FIX 7271): who it was, where it ended…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BoundClaimAuthoringSelector",
+      "ClaimAuthoringSelection"
+     ],
+     "path": "src/dreamer_wake/driver/claim_authoring.rs",
+     "purpose": "The claim-authoring campaign a wake's consolidation admissions read (OF-366 R2, FIX 897)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -26111,6 +26128,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ClaimAuthoringFallback",
       "DreamerAttemptExecution",
       "DreamerAttemptExecutor",
       "LandingRequestNotice",
@@ -26127,7 +26145,7 @@
      "purpose": "Wake request and outcome vocabulary plus the executor contract",
      "surface": {
       "crate-vis": 3,
-      "enum": 3,
+      "enum": 4,
       "fn": 5,
       "struct": 7,
       "trait": 1
@@ -70735,7 +70753,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71738,7 +71756,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4578,
+   "source_files": 4579,
    "test_files": 902
   },
   "oneiron-android": {
@@ -85155,6 +85173,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/dreamer/claim_authoring.rs",
+     "purpose": "The claim-authoring campaign a Dreamer pass binds (OF-366 R2, FIX 897): the root its consolidation…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/dreamer/compaction_check.rs",
      "purpose": "The host's loan to the Dreamer's check of a self-written compaction (FIX 4465 B): the weaver's narrative…",
      "surface": {
@@ -98237,7 +98265,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 78,
+     "files": 79,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98701,7 +98729,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1080,
+   "source_files": 1081,
    "test_files": 182
   },
   "oneiron-spawn": {
