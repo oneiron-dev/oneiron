@@ -27,6 +27,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::{Error, Result};
 
+use super::body_history::HistoryRows;
 use super::identity::{CustodyId, CustodyKind, CustodySecret, CustodySubject};
 use super::log::{
     AEAD, CRYPTO_EPOCH, Control, CustodyPosition, POSITION_LEN, open_sym, seal_refused, seal_sym,
@@ -187,6 +188,9 @@ pub(crate) struct OpenedHead {
     /// The released escrow recipients the lineage retired (LC FIX
     /// 5384/5385), from the control compartment.
     pub(super) recipients: Vec<RecipientRetirement>,
+    /// The lineage's body history at the head's position (FIX 6229), from
+    /// the host-readable compartments the opener opened.
+    pub(super) history: HistoryRows,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -229,6 +233,18 @@ struct BodyWire {
     /// lineage retired, public facts only (LC FIX 5384/5385).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     recipients: Vec<RecipientRetirement>,
+    /// A host-readable compartment's: body history rows, ids only (FIX
+    /// 6229), sealed under the compartment's key like its entries.
+    history: Vec<HistoryWire>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HistoryWire {
+    #[serde(with = "serde_bytes_vec")]
+    key: Vec<u8>,
+    #[serde(with = "serde_bytes_vec")]
+    value: Vec<u8>,
 }
 
 impl Drop for BodyWire {
@@ -408,15 +424,17 @@ fn seal_compartment(
 }
 
 /// Seals a head at `position` holding `entries`, the retirement facts
-/// `retired` and the released escrow recipients `released` retired, wrapped
-/// to `recipients`. The bytes are key-bearing: they go only to a custody
-/// target, never to a log, error or receipt.
+/// `retired`, the released escrow recipients `released` retired and the
+/// body history `history`, wrapped to `recipients`. The bytes are
+/// key-bearing: they go only to a custody target, never to a log, error or
+/// receipt.
 pub(super) fn seal_head(
     position: &CustodyPosition,
     control: &Control,
     entries: Vec<HeadEntry>,
     retired: Vec<CustodyId>,
     released: Vec<RecipientRetirement>,
+    history: &HistoryRows,
     recipients: &CustodyRecipients,
 ) -> Result<Zeroizing<Vec<u8>>> {
     // Each scope's entries go in as many compartments as they fill, each
@@ -425,10 +443,9 @@ pub(super) fn seal_head(
     let mut scopes: BTreeMap<CompartmentScope, Vec<BodyWire>> = BTreeMap::new();
     let chunk_of = |scopes: &mut BTreeMap<CompartmentScope, Vec<BodyWire>>, scope| {
         let chunks = scopes.entry(scope).or_default();
-        if chunks
-            .last()
-            .is_none_or(|body| body.live.len() + body.retired.len() >= COMPARTMENT_ENTRIES)
-        {
+        if chunks.last().is_none_or(|body| {
+            body.live.len() + body.retired.len() + body.history.len() >= COMPARTMENT_ENTRIES
+        }) {
             chunks.push(BodyWire::default());
         }
         chunks.len() - 1
@@ -456,6 +473,17 @@ pub(super) fn seal_head(
                 generation: id.generation(),
             });
     }
+    // The body history rides with the host-readable keys it retires.
+    for (key, value) in history {
+        let scope = CompartmentScope::HostReadable;
+        let at = chunk_of(&mut scopes, scope);
+        scopes.get_mut(&scope).ok_or_else(head_corrupt)?[at]
+            .history
+            .push(HistoryWire {
+                key: key.clone(),
+                value: value.clone(),
+            });
+    }
     let mut compartments = Vec::with_capacity(scopes.len() + 1);
     let mut digests = Vec::with_capacity(scopes.len());
     let chunks = scopes
@@ -473,6 +501,7 @@ pub(super) fn seal_head(
         live: Vec::new(),
         retired: Vec::new(),
         recipients: released,
+        history: Vec::new(),
     };
     compartments.insert(
         0,
@@ -624,7 +653,8 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
     })?;
     let mut control = open_body(&position, &control_id, &key, &first.sealed)?;
     let secret = Zeroizing::new(control.control.ok_or_else(head_corrupt)?);
-    if control.digests.len() != rest.len()
+    if !control.history.is_empty()
+        || control.digests.len() != rest.len()
         || rest
             .iter()
             .zip(&control.digests)
@@ -639,6 +669,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
         retired: BTreeSet::new(),
         unopened: BTreeSet::new(),
         recipients: std::mem::take(&mut control.recipients),
+        history: BTreeMap::new(),
     };
     // A scope's compartments follow one another, scopes in order: one
     // canonical layout, which the control compartment's digests fix.
@@ -656,8 +687,16 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
             continue;
         };
         let mut body = open_body(&position, &id, &key, &compartment.sealed)?;
-        if !body.recipients.is_empty() {
+        if !body.recipients.is_empty()
+            || (!body.history.is_empty() && scope != CompartmentScope::HostReadable)
+        {
             return Err(head_corrupt());
+        }
+        for row in std::mem::take(&mut body.history) {
+            if !super::body_history::admits(&row.key) {
+                return Err(head_corrupt());
+            }
+            opened.history.insert(row.key, row.value);
         }
         for mut entry in std::mem::take(&mut body.live) {
             let id = typed(&position, entry.kind, &entry.item, entry.generation, scope)?;

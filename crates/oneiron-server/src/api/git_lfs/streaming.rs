@@ -328,10 +328,15 @@ impl Write for ChannelWriter {
 
 /// Streams one stored object out. The worker holds `hold` until it has
 /// written the last byte or its client stopped reading. Each piece is judged
-/// for `peer`, the machine the request proved (FIX 4937).
+/// for `peer`, the machine the request proved (FIX 4937), and a lift-marked
+/// object's for its read (FIX 2897).
 pub(super) fn download(
     vault: Arc<Vault>,
-    (oid, peer): (LfsOid, oneiron::authority::PeerMachine),
+    (oid, peer, read): (
+        LfsOid,
+        oneiron::authority::PeerMachine,
+        Option<super::support::LfsMarkedRead>,
+    ),
     hold: ReadHold,
     idle: Duration,
 ) -> Body {
@@ -360,15 +365,18 @@ pub(super) fn download(
     // error that says why (FIX 4939).
     Body::from_stream(stream::unfold(receiver, move |mut receiver| {
         let vault = Arc::clone(&vault);
+        let read = read.clone();
         async move {
             let item = match receiver.recv().await? {
-                Ok(piece) => match super::support::lfs_piece_hold(&vault, oid, peer) {
-                    Some(kept) => {
-                        receiver.close();
-                        Err(kept)
+                Ok(piece) => {
+                    match super::support::lfs_piece_hold(&vault, oid, peer, read.as_ref()) {
+                        Some(kept) => {
+                            receiver.close();
+                            Err(kept)
+                        }
+                        None => Ok(piece),
                     }
-                    None => Ok(piece),
-                },
+                }
                 ended => ended,
             };
             Some((item, receiver))

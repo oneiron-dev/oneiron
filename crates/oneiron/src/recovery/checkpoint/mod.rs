@@ -539,6 +539,9 @@ impl Vault {
         replacement: &Self,
         swap: impl FnOnce() -> std::io::Result<()>,
     ) -> Result<()> {
+        // The archive the swap parks keeps every body instance its rows
+        // name, until its custodian releases it (FIX 6022).
+        self.store.hold_parked_archive_bodies()?;
         self.store.swap_out(
             &replacement.store,
             |txn| {
