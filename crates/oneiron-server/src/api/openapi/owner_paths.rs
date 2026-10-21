@@ -161,6 +161,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/cleanup/revert-run",
+        summary: "Revert one whole cleanup run (OF-449): `attempt` (32 hex) names a run from the review's `runs`. Only the archive marks that run wrote are lifted, and each restored entry is kept at its revision so cleanup leaves it until it changes. Every entry answers `restored`, `already_restored`, `changed` or `unavailable` (with `reason`: `archived_again`, `unreadable`, `deleted` or `gone`) and `edited`; a delete or an erase is never undone. A repeat answers the stored result with `repeated: true`. An unknown run is not found; a run whose proposal still waits, or that ran before runs kept snapshots, is refused.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/coach/code-fixes",
         summary: "The Coach's code-fix work, newest first (at most 256).",

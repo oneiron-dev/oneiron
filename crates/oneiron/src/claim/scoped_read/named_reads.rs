@@ -51,7 +51,7 @@ impl PointReadOutcome {
     }
 }
 
-impl ScopedRead<'_> {
+impl<'v> ScopedRead<'v> {
     /// [`Self::read`] for a door whose caller named each target (FIX 5226):
     /// each slot is its row, `None` where every collection read omits it (a
     /// missing or withheld row, as before), or the refusal of the legal
@@ -79,10 +79,13 @@ impl ScopedRead<'_> {
     ) -> std::result::Result<ScopedReadResult<T>, E> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        // One serving txn, one held authority for every slot (FIX 7462).
+        let authority = HeldAuthority::for_request(requested);
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for read in reads {
-            let (outcome, withheld) = self.point_outcome_in(&txn, &policy, &filter, read)?;
+            let (outcome, withheld) =
+                self.point_outcome_in(&txn, &policy, &filter, read, &authority)?;
             suppressed += withheld;
             value.push(outcome.into_slot());
         }
@@ -101,13 +104,22 @@ impl ScopedRead<'_> {
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         read: &PointRead<'_>,
+        authority: &HeldAuthority<'v>,
     ) -> Result<(PointReadOutcome, usize)> {
         let (row, withheld) = match read.target {
-            ReadTarget::Id(id) => self.id_row_in(txn, policy, filter, id, read.mode)?,
+            ReadTarget::Id(id) => self.id_row_in(txn, policy, filter, id, read.mode, authority)?,
             ReadTarget::ShortRef {
                 short_id,
                 content_hash,
-            } => self.short_ref_in(txn, policy, filter, short_id, content_hash, read.mode)?,
+            } => self.short_ref_in(
+                txn,
+                policy,
+                filter,
+                short_id,
+                content_hash,
+                read.mode,
+                authority,
+            )?,
         };
         if row.is_some() {
             return Ok((PointReadOutcome::ordinary(row, withheld), withheld));
@@ -120,7 +132,8 @@ impl ScopedRead<'_> {
             } => self.short_ref_row_in(txn, short_id, content_hash, read.mode)?,
         };
         if let Some(id) = named
-            && let Some(refusal) = self.use_restricted_in(txn, policy, filter, id, read.mode)?
+            && let Some(refusal) =
+                self.use_restricted_in(txn, policy, filter, id, read.mode, authority)?
         {
             return Ok((PointReadOutcome::UseRestricted(refusal), withheld));
         }
@@ -162,11 +175,12 @@ impl ScopedRead<'_> {
         filter: &ResolvedRetrievalFilter,
         id: EntityId,
         mode: ReadMode,
+        authority: &HeldAuthority<'v>,
     ) -> Result<Option<Error>> {
         if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, &id)?.is_none() {
             return Ok(None);
         }
-        let asked = HeldAuthority::asking_use_of(id);
+        let asked = authority.asking_use_of(id);
         if self
             .admitted_raw_in(txn, policy, filter, &id, mode, &asked)?
             .is_none()
