@@ -11,13 +11,24 @@
 //! it out, keeping the record it had with whose word, when and why;
 //! `self.browser.library.retired` lists what retires took out for a site.
 //!
+//! One program is one record (CUA E1): the same bytes refile the same
+//! record, and changed bytes that repair a program are a new record naming
+//! it in `supersedes`, filed in the same write that retires the old one
+//! `superseded:<new id>`. The retire chain is the lineage, which
+//! [`resolve_workflow_in_txn`] follows to the live program. Each record
+//! keeps its lineage's newest outcomes ([`RECENT_RUNS`]), which a successor
+//! takes over.
+//!
 //! Erasing an actor keeps every row and its times and states
 //! [`ERASED_CALL_IDENTITY`] for whose run filed a program and whose word
 //! retired it (FIX 812's rule, as call receipts keep it).
 
 use std::cmp::Reverse;
 
-use oneiron_browser::{LibraryCard, RetiredCard, WorkflowProgram, WorkflowProof};
+use oneiron_browser::{
+    LibraryCard, RecentCounts, RetiredCard, SupersedeOutcome, SupersedeRefusal, WorkflowProgram,
+    WorkflowProof,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -42,6 +53,35 @@ const RETIRED: SideTable<EntityId, RetiredWorkflow, Named> =
 /// program is the vault's: any caller the library serves may run or refile
 /// it (a refile moves `filed_by`), so any may retire it too.
 pub const RETIRE_FILER_ONLY: bool = false;
+
+/// How many of a lineage's newest outcomes its card counts as recent (CUA
+/// E1 "recent", CALLS row; Engine 10-21 23:4x): each record keeps the last
+/// [`RECENT_RUNS`] library runs, passed or missed, and repairs of its
+/// lineage, the oldest dropped past them, and a successor starts from its
+/// predecessor's. A count of outcomes, not a time window, so a program run
+/// rarely keeps its record.
+pub const RECENT_RUNS: usize = 20;
+
+/// The reason a retire records for a program a successor repaired is
+/// `superseded:<the successor's id>` ([`superseded_reason`]).
+const SUPERSEDED_PREFIX: &str = "superseded:";
+
+/// The reason a retire records for a program that stopped working on its
+/// site (its strict misses, counted by the run path).
+pub const DRIFT_REASON: &str = "drift";
+
+/// The reason a retire records for a program `successor` repaired.
+#[must_use]
+pub fn superseded_reason(successor: EntityId) -> String {
+    format!("{SUPERSEDED_PREFIX}{}", successor.to_hex())
+}
+
+/// The successor a retire's `reason` names, when it is a
+/// [`superseded_reason`].
+fn superseded_by(reason: &str) -> Option<EntityId> {
+    let successor = reason.strip_prefix(SUPERSEDED_PREFIX)?;
+    EntityId::from_hex(successor).ok()
+}
 
 /// Whose word a library row records: an actor, or no one once that actor
 /// was erased. It reads and writes as the actor's id, or as
@@ -86,6 +126,31 @@ impl<'de> Deserialize<'de> for LibraryActor {
     }
 }
 
+/// What one outcome of a program's lineage was: a library run that met its
+/// postcondition, one that did not, or a repair that filed a successor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecentOutcome {
+    Pass,
+    Miss,
+    Repair,
+}
+
+/// One outcome of a program's lineage, and when.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentRun {
+    pub outcome: RecentOutcome,
+    pub at: u64,
+}
+
+/// Adds `outcome` at `at` to a lineage's newest outcomes, keeping the last
+/// [`RECENT_RUNS`].
+fn push_recent(recent: &mut Vec<RecentRun>, outcome: RecentOutcome, at: u64) {
+    recent.push(RecentRun { outcome, at });
+    let over = recent.len().saturating_sub(RECENT_RUNS);
+    recent.drain(..over);
+}
+
 /// One filed program, with its proof and its runs since.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowRecord {
@@ -102,6 +167,11 @@ pub struct WorkflowRecord {
     /// Library runs that ended short of the postcondition.
     pub failures: u32,
     pub last_run_at: Option<u64>,
+    /// The program this one repaired, live or retired when it was filed.
+    pub supersedes: Option<EntityId>,
+    /// Its lineage's newest outcomes, the oldest first: its own, after
+    /// those of the programs it supersedes.
+    pub recent: Vec<RecentRun>,
 }
 
 impl WorkflowRecord {
@@ -115,7 +185,28 @@ impl WorkflowRecord {
             params: self.program.params.clone(),
             runs: self.runs,
             failures: self.failures,
+            recent: recent_counts(&self.recent),
+            held_out: self.proof.held_out,
+            supersedes: self.supersedes.map(|id| id.to_hex()),
+            seed: self.proof.seed.clone(),
+            filed_at: self.filed_at,
+            last_run_at: self.last_run_at,
         }
+    }
+}
+
+/// A lineage's newest [`RECENT_RUNS`] outcomes, counted.
+fn recent_counts(recent: &[RecentRun]) -> RecentCounts {
+    let recent = &recent[recent.len().saturating_sub(RECENT_RUNS)..];
+    let count = |outcome: RecentOutcome| {
+        let counted = recent.iter().filter(|run| run.outcome == outcome).count();
+        u32::try_from(counted).unwrap_or(u32::MAX)
+    };
+    RecentCounts {
+        pass: count(RecentOutcome::Pass),
+        miss: count(RecentOutcome::Miss),
+        repair: count(RecentOutcome::Repair),
+        of: u32::try_from(RECENT_RUNS).unwrap_or(u32::MAX),
     }
 }
 
@@ -193,14 +284,62 @@ pub fn workflow(vault: &Vault, id: EntityId) -> Result<Option<WorkflowRecord>> {
         .find(|record| record.id == id))
 }
 
+/// What filing a program did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Filing {
+    /// It is filed under `id`, and this is what became of the program its
+    /// `supersedes` named, when it named one.
+    Filed {
+        id: EntityId,
+        superseded: Option<SupersedeOutcome>,
+    },
+    /// Its `supersedes` link was refused; nothing was filed.
+    Refused(SupersedeRefusal),
+}
+
+/// The program a `supersedes` link names, as its site's library holds it.
+enum Predecessor {
+    Live(WorkflowRecord),
+    Retired(RetiredWorkflow),
+}
+
+/// The program `id` names among `site`'s, live or retired, in `txn`.
+fn predecessor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    site: &str,
+    id: EntityId,
+) -> Result<Option<Predecessor>> {
+    if let Some(record) = WORKFLOWS.get(&vault.store, txn, &(site_key(site), id))? {
+        return Ok(Some(Predecessor::Live(record)));
+    }
+    let retired = RETIRED.get(&vault.store, txn, &id)?;
+    Ok(retired
+        .filter(|trace| trace.record.site == site)
+        .map(Predecessor::Retired))
+}
+
 /// Files `program` for `site` once both checks passed (`proof`), from
 /// `by`'s run, stamped with the task type the host's placement ladder
 /// (`decisions`) reads; without one the rule rung reads alone. The same
-/// program filed again keeps its id and its runs and takes the new proof.
+/// program filed again keeps its id, its runs and its seed, and takes the
+/// new proof; a `supersedes` link on it is dropped, as no repair.
+///
+/// A new program that `supersedes` one of `site`'s, live or retired, is
+/// filed as its successor, with its lineage's recent outcomes and one
+/// repair more; in the same write a live one retires
+/// [`superseded_reason`] at `by`'s word, as `library.retire` would retire
+/// it ([`RETIRE_FILER_ONLY`]), and a retired one is only linked. A link to
+/// no program of the site, to the program refiled, or to a live program
+/// `by` may not retire, is refused before anything is filed.
 ///
 /// # Errors
 ///
 /// Storage errors.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one part of the filing the host checked"
+)]
 pub fn file_workflow(
     vault: &Vault,
     by: EntityId,
@@ -209,7 +348,8 @@ pub fn file_workflow(
     proof: &WorkflowProof,
     at: u64,
     decisions: Option<&PlacementDecisions<'_>>,
-) -> Result<EntityId> {
+    supersedes: Option<EntityId>,
+) -> Result<Filing> {
     let same = serde_json::to_value(program).ok();
     // A filed program holds handles where this one may hold the secrets the
     // side-row wall lifted (OF-067); it is still the same program.
@@ -228,16 +368,55 @@ pub fn file_workflow(
         &PlacementRequest::new(Some(program.subgoal.clone()), Some(site.to_owned())),
         decisions,
     )?;
-    let record = match filed {
-        Some(record) => WorkflowRecord {
-            type_ref,
-            proof: proof.clone(),
-            filed_by: LibraryActor::Actor(by),
-            filed_at: at,
-            ..record
-        },
-        None => WorkflowRecord {
-            id: EntityId::now(),
+    vault.with_write_txn_grouped(|wtxn| {
+        let predecessor = match supersedes {
+            Some(old) => match predecessor_in_txn(vault, wtxn, site, old)? {
+                Some(predecessor) => Some(predecessor),
+                None => return Ok(Filing::Refused(SupersedeRefusal::NotOnSite)),
+            },
+            None => None,
+        };
+        if let Some(mut record) = filed {
+            if supersedes == Some(record.id) {
+                return Ok(Filing::Refused(SupersedeRefusal::SameRecord));
+            }
+            let seed = record.proof.seed.take().or_else(|| proof.seed.clone());
+            let record = WorkflowRecord {
+                type_ref,
+                proof: WorkflowProof {
+                    seed,
+                    ..proof.clone()
+                },
+                filed_by: LibraryActor::Actor(by),
+                filed_at: at,
+                ..record
+            };
+            WORKFLOWS.put(vault, wtxn, &(site_key(site), record.id), &record)?;
+            let superseded = predecessor.map(|_| SupersedeOutcome::Dropped);
+            return Ok(Filing::Filed {
+                id: record.id,
+                superseded,
+            });
+        }
+        let id = EntityId::now();
+        let (mut recent, retire, superseded) = match predecessor {
+            Some(Predecessor::Live(old)) => {
+                if RETIRE_FILER_ONLY && !old.filed_by.is(by) {
+                    return Ok(Filing::Refused(SupersedeRefusal::NotFiler));
+                }
+                let recent = old.recent.clone();
+                (recent, Some(old), Some(SupersedeOutcome::Retired))
+            }
+            Some(Predecessor::Retired(old)) => {
+                (old.record.recent, None, Some(SupersedeOutcome::Linked))
+            }
+            None => (Vec::new(), None, None),
+        };
+        if superseded.is_some() {
+            push_recent(&mut recent, RecentOutcome::Repair, at);
+        }
+        let record = WorkflowRecord {
+            id,
             site: site.to_owned(),
             program: program.clone(),
             type_ref,
@@ -247,16 +426,21 @@ pub fn file_workflow(
             runs: 0,
             failures: 0,
             last_run_at: None,
-        },
-    };
-    vault.with_write_txn_grouped(|wtxn| {
-        WORKFLOWS.put(vault, wtxn, &(site_key(site), record.id), &record)
-    })?;
-    Ok(record.id)
+            supersedes,
+            recent,
+        };
+        WORKFLOWS.put(vault, wtxn, &(site_key(site), id), &record)?;
+        if let Some(old) = retire {
+            let reason = superseded_reason(id);
+            retire_in_txn(vault, wtxn, old, by, Some(reason.as_str()), at)?;
+        }
+        Ok(Filing::Filed { id, superseded })
+    })
 }
 
-/// Counts one library run of `id`, and whether it met its postcondition.
-/// A program no longer filed counts nothing.
+/// Counts one library run of `id`, and whether it met its postcondition,
+/// among its lineage's recent outcomes too. A program no longer filed
+/// counts nothing.
 ///
 /// # Errors
 ///
@@ -274,6 +458,12 @@ pub fn record_workflow_run(vault: &Vault, id: EntityId, met: bool, at: u64) -> R
         if !met {
             record.failures = record.failures.saturating_add(1);
         }
+        let outcome = if met {
+            RecentOutcome::Pass
+        } else {
+            RecentOutcome::Miss
+        };
+        push_recent(&mut record.recent, outcome, at);
         record.last_run_at = Some(at);
         WORKFLOWS.put(vault, wtxn, &key, &record)
     })
@@ -315,18 +505,90 @@ pub fn retire_workflow(
         if RETIRE_FILER_ONLY && !record.filed_by.is(by) {
             return Ok(Retired::NotFiler);
         }
-        WORKFLOWS.delete(&vault.store, wtxn, &key)?;
-        let trace = RetiredWorkflow {
-            record,
-            retired_by: LibraryActor::Actor(by),
-            retired_at: at,
-            reason: reason
-                .map(str::trim)
-                .filter(|reason| !reason.is_empty())
-                .map(str::to_owned),
-        };
-        RETIRED.put(vault, wtxn, &id, &trace)?;
+        let trace = retire_in_txn(vault, wtxn, record, by, reason, at)?;
         Ok(Retired::Taken(Box::new(trace.record)))
+    })
+}
+
+/// Takes `record` out of the library in `wtxn`, at `by`'s word at `at`, for
+/// `reason`, and keeps it with them: the one retire, for `library.retire`
+/// and for a successor's filing alike.
+fn retire_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: WorkflowRecord,
+    by: EntityId,
+    reason: Option<&str>,
+    at: u64,
+) -> Result<RetiredWorkflow> {
+    let id = record.id;
+    WORKFLOWS.delete(&vault.store, wtxn, &(site_key(&record.site), id))?;
+    let trace = RetiredWorkflow {
+        record,
+        retired_by: LibraryActor::Actor(by),
+        retired_at: at,
+        reason: reason
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(str::to_owned),
+    };
+    RETIRED.put(vault, wtxn, &id, &trace)?;
+    Ok(trace)
+}
+
+/// Where a program's ref leads now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkflowResolution {
+    /// The live program `id`: the one named, or its successor.
+    Active { id: EntityId },
+    /// The lineage ends at `id`, retired for `reason` with no successor.
+    Retired {
+        id: EntityId,
+        reason: Option<String>,
+    },
+    /// No program was ever filed under the ref.
+    Missing,
+}
+
+/// Where `id` leads in `txn`: the program filed under it while it is live;
+/// once it retired [`superseded_reason`], its successor, down the chain to
+/// the live one; [`WorkflowResolution::Retired`] where the chain ends at a
+/// retire with no successor (or comes back on itself); and
+/// [`WorkflowResolution::Missing`] where no program was filed under it.
+///
+/// # Errors
+///
+/// Storage errors, or a library row that cannot be read.
+pub fn resolve_workflow_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<WorkflowResolution> {
+    let Some(mut trace) = RETIRED.get(&vault.store, txn, id)? else {
+        let live = WORKFLOWS.scan(&vault.store, txn)?;
+        if live.iter().any(|(_, record)| record.id == *id) {
+            return Ok(WorkflowResolution::Active { id: *id });
+        }
+        return Ok(WorkflowResolution::Missing);
+    };
+    let mut seen = vec![*id];
+    while let Some(next) = trace.reason.as_deref().and_then(superseded_by) {
+        if seen.contains(&next) {
+            break;
+        }
+        let key = (site_key(&trace.record.site), next);
+        if WORKFLOWS.get(&vault.store, txn, &key)?.is_some() {
+            return Ok(WorkflowResolution::Active { id: next });
+        }
+        let Some(retired) = RETIRED.get(&vault.store, txn, &next)? else {
+            break;
+        };
+        seen.push(next);
+        trace = retired;
+    }
+    Ok(WorkflowResolution::Retired {
+        id: trace.record.id,
+        reason: trace.reason,
     })
 }
 
