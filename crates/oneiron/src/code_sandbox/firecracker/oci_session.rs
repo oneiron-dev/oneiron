@@ -11,7 +11,7 @@ use crate::{
 };
 use oneiron_container::{
     EgressRelay, FenceProof, GuestSeccomp, GuestSpec, SessionLease, SessionManifest,
-    SessionTransport,
+    SessionTransport, image_release,
 };
 use serde::Deserialize;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -96,6 +96,16 @@ pub(super) fn start(
     }
     let image = resolve(spec.image.as_str(), "")?;
     config.pins.verify(&image)?;
+    let image_release = image_release::observe_release(
+        None,
+        &image_release::ObservedArtifacts::from_firecracker_pins(
+            config.pins.kernel,
+            config.pins.rootfs,
+        )
+        .with_image_ref(&spec.image),
+        &image_release::HostCapabilities::default(),
+        &image_release::NoVerifierConfigured,
+    );
     let scratch = tempfile::tempdir()?;
     let vm = MicroVmHandle::new(
         format!("oci-{}", uuid::Uuid::now_v7().simple()),
@@ -196,6 +206,7 @@ pub(super) fn start(
         generation: vm.id().to_owned(),
         fence_proof: Some(proof),
         fence_unproven: false,
+        image_release,
     };
     // The lease owns listener-path custody until the VM stops. The browser's
     // network stays on the host CDP Fetch door, not a guest NIC.
