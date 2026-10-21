@@ -43,7 +43,6 @@ struct CoreMlIo {
     functions: Vec<Function>,
     per_turn_functions: Vec<String>,
     max_window_tokens: usize,
-    #[expect(dead_code, reason = "the Core ML adapter reads it (FIX 6755 slice 2c)")]
     pad_token_id: u32,
     embedding: EmbeddingSpec,
     inputs: Vec<TensorSpec>,
@@ -64,16 +63,17 @@ struct EmbeddingSpec {
     dtype: String,
 }
 
-#[derive(Deserialize)]
+/// One tensor of the compiled model: its name, element type and shape.
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TensorSpec {
+pub(crate) struct TensorSpec {
     name: String,
     dtype: String,
     shape: Vec<Dimension>,
 }
 
 /// A fixed dimension, or `L`: the function's tokens.
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(untagged)]
 enum Dimension {
     Fixed(usize),
@@ -103,6 +103,85 @@ pub(crate) struct MlxPlatform {
 struct Launch {
     program: String,
     args: Vec<String>,
+}
+
+impl CoreMlPlatform {
+    /// The compiled model's archive, extracted beside itself (FIX 6755
+    /// slice 2c).
+    pub(crate) const fn model(&self) -> &Artifact {
+        &self.model
+    }
+
+    /// The `major.minor` macOS release it runs from.
+    pub(crate) fn min_os(&self) -> &str {
+        &self.min_os
+    }
+
+    /// The IO port its tensors follow.
+    pub(crate) fn port(&self) -> &str {
+        &self.io.port
+    }
+
+    /// The token id a function's positions past the window take.
+    pub(crate) const fn pad_token_id(&self) -> u32 {
+        self.io.pad_token_id
+    }
+
+    /// The trunk tensor its input is looked up in.
+    pub(crate) fn embedding(&self) -> &str {
+        &self.io.embedding.tensor
+    }
+
+    /// The functions a turn runs on, by name and tokens, ascending.
+    pub(crate) fn turn_functions(&self) -> Vec<(&str, usize)> {
+        let mut turns = Vec::new();
+        for function in &self.io.functions {
+            if self.io.per_turn_functions.contains(&function.name) {
+                turns.push((function.name.as_str(), function.tokens));
+            }
+        }
+        turns
+    }
+
+    /// The longest window it is qualified for, tokens with specials: its
+    /// longest turn function's, within the row's `max_window_tokens`.
+    pub(crate) fn window_tokens(&self) -> usize {
+        let turns = self.turn_functions();
+        let longest = turns.last().map_or(0, |&(_, tokens)| tokens);
+        longest.min(self.io.max_window_tokens)
+    }
+
+    /// The tensors each function reads.
+    pub(crate) fn inputs(&self) -> &[TensorSpec] {
+        &self.io.inputs
+    }
+
+    /// The tensors each function writes.
+    pub(crate) fn outputs(&self) -> &[TensorSpec] {
+        &self.io.outputs
+    }
+}
+
+impl TensorSpec {
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// `float16`, `float32` or `int32`.
+    pub(crate) fn dtype(&self) -> &str {
+        &self.dtype
+    }
+
+    /// Its dimensions, `None` for `L`: the function's tokens.
+    pub(crate) fn dims(&self) -> Vec<Option<usize>> {
+        self.shape
+            .iter()
+            .map(|dimension| match dimension {
+                Dimension::Fixed(size) => Some(*size),
+                Dimension::Symbol(_) => None,
+            })
+            .collect()
+    }
 }
 
 impl MlxPlatform {

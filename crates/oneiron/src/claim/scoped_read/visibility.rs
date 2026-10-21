@@ -1,4 +1,5 @@
 use super::access_gate::HeldAuthority;
+use super::agent_grants::AskedFilter;
 use super::*;
 use crate::federation::record_scope::asset_text;
 
@@ -68,7 +69,8 @@ impl<'v> ScopedRead<'v> {
         // alone; the doors that find rows take the TURN rule as well
         // (`is_entity_retrievable_with_policy_in`).
         let filter = self.actor_retrieval_floor(policy)?;
-        self.is_entity_readable_with_filter_in(rtxn, policy, id, &filter)
+        let authority = HeldAuthority::for_request(None);
+        self.is_entity_readable_held_in(rtxn, policy, id, &filter, &authority)
     }
 
     /// The actor's own retrieval floor, with no request narrowing.
@@ -136,8 +138,9 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
+        let asked = authority.grants().asked();
         Ok(
-            self.is_entity_raw_readable_own_in(rtxn, policy, id, raw, filter, authority)?
+            self.is_entity_raw_readable_own_in(rtxn, policy, id, raw, filter, authority, asked)?
                 && self.derived_sources_readable_in(rtxn, policy, id, raw, authority)?,
         )
     }
@@ -187,7 +190,16 @@ impl<'v> ScopedRead<'v> {
             let Some(raw) = self.entity_record_in(rtxn, source)?.map(|row| row.encode()) else {
                 return Ok(false);
             };
-            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor, authority)? {
+            let floor_only = AskedFilter::Known(None);
+            if !self.is_entity_raw_readable_own_in(
+                rtxn,
+                policy,
+                source,
+                &raw,
+                &floor,
+                authority,
+                &floor_only,
+            )? {
                 return Ok(false);
             }
         }
@@ -209,7 +221,16 @@ impl<'v> ScopedRead<'v> {
         let floor = self.actor_retrieval_floor(policy)?;
         let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
             let raw = row.encode();
-            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor, authority)? {
+            let floor_only = AskedFilter::Known(None);
+            if !self.is_entity_raw_readable_own_in(
+                rtxn,
+                policy,
+                source,
+                &raw,
+                &floor,
+                authority,
+                &floor_only,
+            )? {
                 return Ok(false);
             }
             // The walk itself expands a nested epoch summary, in any form.
@@ -260,7 +281,16 @@ impl<'v> ScopedRead<'v> {
         let floor = self.actor_retrieval_floor(policy)?;
         let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
             let raw = row.encode();
-            self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor, authority)
+            let floor_only = AskedFilter::Known(None);
+            self.is_entity_raw_readable_own_in(
+                rtxn,
+                policy,
+                source,
+                &raw,
+                &floor,
+                authority,
+                &floor_only,
+            )
         };
         let admitted = match self.session_view {
             Some(view) => asset_text::sources_admitted_in(view, rtxn, id, admit),
@@ -269,7 +299,15 @@ impl<'v> ScopedRead<'v> {
         Ok(admitted.unwrap_or(true))
     }
 
-    /// The row's own admission, before what it was written from.
+    /// The row's own admission, before what it was written from: today's
+    /// (B), and only once B refuses, the same row under one of the reader's
+    /// own live Grants (A, FIX 7462; `agent_grants`). B's error is the
+    /// read's; A never fails or hides it. `asked` is what the read asked
+    /// beyond its key's floor.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "B else A over one row, its filter, held authority and request"
+    )]
     fn is_entity_raw_readable_own_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -278,6 +316,31 @@ impl<'v> ScopedRead<'v> {
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
         authority: &HeldAuthority<'v>,
+        asked: &AskedFilter,
+    ) -> Result<bool> {
+        if self.own_row_readable_in(rtxn, policy, id, raw, filter, authority, None)? {
+            return Ok(true);
+        }
+        Ok(self.own_row_readable_by_grant_in(rtxn, policy, id, raw, filter, authority, asked))
+    }
+
+    /// The row's own admission under `grant`, one live Grant of the
+    /// reader's own (FIX 7462): it stands in for the relationship checks
+    /// and the positive CLAIM or record check, and every other check binds
+    /// as before. `None` is today's admission, exactly.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one row's admission under its filter, held authority and an optional Grant"
+    )]
+    pub(super) fn own_row_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        raw: &[u8],
+        filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority<'v>,
+        grant: Option<&crate::federation::Scope>,
     ) -> Result<bool> {
         // A legal use limit keeps the bytes as storage only: no ordinary
         // reader sees the row, the owner included. A named read asks it on
@@ -339,10 +402,10 @@ impl<'v> ScopedRead<'v> {
         {
             return Ok(false);
         }
-        if !self.relationship_raw_allowed_in(rtxn, id, raw, authority)? {
+        if grant.is_none() && !self.relationship_raw_allowed_in(rtxn, id, raw, authority)? {
             return Ok(false);
         }
-        if !self.audience_readable_raw_in(rtxn, id, raw)? {
+        if !self.audience_readable_raw_in(rtxn, id, raw, authority)? {
             return Ok(false);
         }
         if !self.credential_allows_id(id)
@@ -352,10 +415,13 @@ impl<'v> ScopedRead<'v> {
             return Ok(false);
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-            return self.note_readable_in(rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..], policy);
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            return self.note_readable_under_in(rtxn, id, body, policy, grant);
         }
         if header.entity_type == ENTITY_TYPE_CLAIM {
-            self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw, filter)
+            self.is_claim_raw_readable_with_policy_in(
+                rtxn, policy, id, raw, filter, authority, grant,
+            )
         } else if self.actor_key.vault_owner_ref().is_some() {
             // The owner's ceiling is all of the owner's vault, stamped or not.
             Ok(true)
@@ -374,11 +440,15 @@ impl<'v> ScopedRead<'v> {
             let Some(scope) = scope else {
                 return Ok(false);
             };
-            Ok(crate::gate::scoped_read_record_allowed(
-                policy,
-                &self.actor_key,
-                &scope,
-            ))
+            Ok(match grant {
+                None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
+                Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
+                    policy,
+                    &self.actor_key,
+                    &scope,
+                    Some(grant),
+                ),
+            })
         }
     }
 
@@ -432,7 +502,8 @@ impl<'v> ScopedRead<'v> {
         raw: &[u8],
     ) -> Result<bool> {
         let (filter, policy) = self.resolve_retrieval_filter_in(rtxn, None)?;
-        self.is_entity_raw_readable_with_filter_in(rtxn, &policy, id, raw, &filter)
+        let authority = HeldAuthority::for_request(None);
+        self.is_entity_raw_readable_held_in(rtxn, &policy, id, raw, &filter, &authority)
     }
 
     pub(crate) fn policy_manifest_in(

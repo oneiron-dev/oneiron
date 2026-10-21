@@ -1002,7 +1002,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/bundle/archive/ustar.rs` | src | s | 6 crate-vis | — | The ustar stream itself: each header checked as it is read, every byte hashed on its way through, the entry… |
 | `src/oneironer/bundle/manifest.rs` | src | s | 9 crate-vis | — | The manifest's common rows: the trunk, its config and tokenizer, the label table and the optional heads |
 | `src/oneironer/bundle/mod.rs` | src | s | 11 crate-vis | — | The Oneironer bundle as every runtime reads it (FIX 6755): one manifest schema, one identity and one archive… |
-| `src/oneironer/bundle/platform.rs` | src | m | 16 crate-vis | — | The manifest's runtime rows (contract rev 3, B1-B2): the Core ML model and the MLX worker, one archive each |
+| `src/oneironer/bundle/platform.rs` | src | m | 29 crate-vis | — | The manifest's runtime rows (contract rev 3, B1-B2): the Core ML model and the MLX worker, one archive each |
+| `src/oneironer/coreml/arrays.rs` | src | s | 2 crate-vis | — | One Core ML prediction's arrays (FIX 6755 slice 2c, contract rev 3 B2), built on macOS aarch64 only |
+| `src/oneironer/coreml/decode.rs` | src | s | 4 crate-vis | — | The Core ML worker's answer from its outputs (FIX 6755 slice 2c, contract rev 3 B2), on every target |
+| `src/oneironer/coreml/inputs.rs` | src | s | 4 crate-vis | — | The Core ML worker's inputs (FIX 6755 slice 2c, contract rev 3 B2), on every target: the trunk's raw word… |
+| `src/oneironer/coreml/mod.rs` | src | m | 3 crate-vis | — | The native Core ML worker (FIX 6755 slice 2c, contract rev 3 B2): the bundle's `coreml-ane` row, its… |
+| `src/oneironer/coreml/model.rs` | src | s | 2 crate-vis | — | The compiled model's functions on Core ML (FIX 6755 slice 2c, contract rev 3 B2), built on macOS aarch64 only |
 | `src/oneironer/dispatcher/capacity.rs` | src | s | 10 crate-vis | — | Room in the dispatcher's pending caps, as owned claims (FIX 6755) |
 | `src/oneironer/dispatcher/eligibility.rs` | src | s | 8 crate-vis | — | Which worker may run which call (FIX 6755 slice 2b) |
 | `src/oneironer/dispatcher/lifecycle.rs` | src | s | 12 crate-vis | — | The life of a supervised worker (FIX 6755 slice 3, Engine call 3): a platform runtime's managed process… |
@@ -1010,17 +1015,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/dispatcher/policy.rs` | src | s | 8 crate-vis | — | The dispatcher's policy (Engine 10-21, FIX 6755 rulings 3 and 4): the one definition of each hold, batch cap… |
 | `src/oneironer/dispatcher/worker.rs` | src | m | 21 crate-vis | — | One worker: a model loaded on one engine, or the one opaque endpoint, on its own thread |
 | `src/oneironer/endpoint.rs` | src | m | 12 crate-vis | — | The `endpoint` provider: a tagger server on this machine that speaks the slot's contract |
-| `src/oneironer/engines/admission.rs` | src | m | 3 crate-vis | — | The background admission of a slot's platform runtimes (FIX 6755 slice 3, Engine calls 3-5): on a Mac, the… |
+| `src/oneironer/engines/admission.rs` | src | m | 3 crate-vis | — | The background admission of a slot's platform runtimes (FIX 6755 slices 3 and 2c, Engine calls 3-5): on a… |
 | `src/oneironer/engines/calibration.rs` | src | m | 13 crate-vis | — | The bundle's reference cases, the bar an engine's answers must clear, the measurement of one engine against… |
-| `src/oneironer/engines/candidate.rs` | src | s | 7 crate-vis | — | A platform runtime's candidate on this machine (FIX 6755 slice 3): the bundle's `mlx-worker` row, found… |
+| `src/oneironer/engines/candidate.rs` | src | s | 10 crate-vis | — | A platform runtime's candidate on this machine (FIX 6755 slices 3 and 2c): the bundle's `mlx-worker` or… |
 | `src/oneironer/engines/mod.rs` | src | m | 16 crate-vis | — | The slot's engines, and which one serves on this machine (ARCH-0036, "Several engines, one default per… |
 | `src/oneironer/engines/rows.rs` | src | m | 19 crate-vis | — | This machine's measured engine rows: where they live, how they are read and written, and what keys them |
-| `src/oneironer/local.rs` | src | m | 16 crate-vis | — | Native extraction on candle, with no HTTP server or second runtime |
+| `src/oneironer/local.rs` | src | m | 19 crate-vis | — | Native extraction on candle, with no HTTP server or second runtime |
 | `src/oneironer/local/backbone.rs` | src | s | 5 crate-vis | — | Bidirectional extraction backbones |
-| `src/oneironer/local/heads.rs` | src | m | 9 crate-vis | — | The trained coreference ranker, turn-affect MLP and character edge head |
+| `src/oneironer/local/heads.rs` | src | m | 10 crate-vis | — | The trained coreference ranker, turn-affect MLP and character edge head |
 | `src/oneironer/local/window/mod.rs` | src | m | 12 crate-vis | — | One causal window with byte-accurate message coordinates |
 | `src/oneironer/local/window/ner.rs` | src | m | 12 crate-vis | — | The full decode of a bundle with a character head (`oneironer-decode-v1`): BIO, the DATE snap, character… |
-| `src/oneironer/local/window/platform.rs` | src | s | 3 crate-vis | — | The window as a platform worker tags it (FIX 6755 slice 3): the text it is sent, the current turn's byte… |
+| `src/oneironer/local/window/platform.rs` | src | s | 4 crate-vis | — | The window as a platform worker tags it (FIX 6755 slice 3): the text it is sent, the current turn's byte… |
 | `src/oneironer/mlx/frame.rs` | src | s | 5 crate-vis | — | The MLX worker's frame codec (FIX 6755 slice 3, contract rev 3 A2): a 4-byte big-endian length, then that… |
 | `src/oneironer/mlx/mod.rs` | src | m | 4 crate-vis | — | The server-owned managed MLX worker (FIX 6755 slice 3, contract rev 3 A1-A4): a bundle's `mlx-worker`… |
 | `src/oneironer/mlx/process.rs` | src | s | 6 crate-vis | — | The MLX worker's process (FIX 6755 slice 3, contract rev 3 A1, A3b): one child and the threads that own its… |
