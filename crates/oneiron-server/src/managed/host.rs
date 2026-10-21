@@ -57,6 +57,16 @@ impl ManagedHost {
             Self::Vm(host) => host.adapter_mut().bridge_voice(socket),
         }
     }
+    /// A vault VM's vsock bridges once a cold restore kept its vault (FIX
+    /// 6584): nothing listens before then. A node's process vault, and a
+    /// vault VM that opened, have nothing left to bind.
+    pub(super) fn activate_service_bridges_after_keep(&mut self) -> anyhow::Result<()> {
+        match self {
+            Self::Process(_) => Ok(()),
+            #[cfg(target_os = "linux")]
+            Self::Vm(host) => host.adapter_mut().activate_service_bridges_after_keep(),
+        }
+    }
     pub(super) fn clear_secrets(&mut self) {
         match self {
             Self::Process(host) => host.adapter_mut().clear_secrets(),

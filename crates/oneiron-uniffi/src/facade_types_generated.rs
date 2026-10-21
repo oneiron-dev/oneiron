@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1087 facade rows, 3721 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1039.
+// UniFFI census: 1094 facade rows, 3741 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1046.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -32569,6 +32569,15 @@ pub struct OriginMirrorRun {
     pub readiness: Option<OriginMirrorReadiness>,
 }
 
+/// `oneiron::origin::mirror_strategy::OriginMirrorSyncStrategy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OriginMirrorSyncStrategy {
+    #[serde(rename = "ask_me")]
+    AskMe,
+    #[serde(rename = "schedule")]
+    Schedule,
+}
+
 /// `oneiron::origin::mirror::OriginMirrorTarget`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OriginMirrorTarget {
@@ -32586,6 +32595,24 @@ pub struct OriginMirrorTarget {
     pub last: Option<OriginMirrorRun>,
     #[serde(rename = "pushed")]
     pub pushed: Vec<String>,
+    #[serde(
+        rename = "sync_strategy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sync_strategy: Option<OriginMirrorSyncStrategy>,
+    #[serde(
+        rename = "strategy_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub strategy_revision: Option<u64>,
+    #[serde(
+        rename = "target_generation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub target_generation: Option<String>,
 }
 
 /// `oneiron::memory::origin_doors::types::OriginMirrorView`.
@@ -32611,6 +32638,22 @@ pub struct OriginMirrorSetRequest {
     pub user: Option<String>,
     #[serde(rename = "every_secs")]
     pub every_secs: u64,
+    #[serde(
+        rename = "sync_strategy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sync_strategy: Option<OriginMirrorSyncStrategy>,
+}
+
+/// `oneiron::memory::origin_doors::types::OriginMirrorStrategyRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OriginMirrorStrategyRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "sync_strategy")]
+    pub sync_strategy: OriginMirrorSyncStrategy,
 }
 
 /// `oneiron::memory::origin_doors::types::OriginMirrorCleared`.
@@ -32620,6 +32663,329 @@ pub struct OriginMirrorCleared {
     pub repo: String,
     #[serde(rename = "cleared")]
     pub cleared: bool,
+}
+
+/// `oneiron::origin::publish::types::OriginPublishForce`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OriginPublishForce {
+    #[serde(rename = "fast_forward")]
+    FastForward,
+    #[serde(rename = "rewrite")]
+    Rewrite,
+}
+
+/// `oneiron::origin::publish::inputs::OriginPublishRequestInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OriginPublishRequestInput {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(rename = "commit")]
+    pub commit: String,
+    #[serde(rename = "force", default, skip_serializing_if = "Option::is_none")]
+    pub force: Option<OriginPublishForce>,
+    #[serde(
+        rename = "idempotency_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub idempotency_key: Option<String>,
+    #[serde(
+        rename = "expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<u64>,
+    #[serde(rename = "code_repo", default, skip_serializing_if = "Option::is_none")]
+    pub code_repo: Option<String>,
+}
+
+/// `oneiron::origin::publish::types::OriginPublishDestination`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginPublishDestination {
+    #[serde(rename = "url")]
+    pub url: String,
+    #[serde(rename = "user")]
+    pub user: String,
+    #[serde(rename = "secret_ref")]
+    pub secret_ref: String,
+    #[serde(
+        rename = "target_generation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub target_generation: Option<String>,
+}
+
+/// `oneiron::origin::publish::types::OriginPublishRemote`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum OriginPublishRemote {
+    #[serde(rename = "absent")]
+    Absent,
+    #[serde(rename = "at")]
+    At {
+        #[serde(rename = "commit")]
+        commit: String,
+    },
+}
+
+/// `oneiron::origin::publish::types::OriginPublishLfsBytes`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OriginPublishLfsBytes {
+    #[serde(rename = "not_sent")]
+    NotSent,
+}
+
+/// `oneiron::origin::publish::types::OriginPublishReview`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginPublishReview {
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(
+        rename = "subtracted",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub subtracted: Option<String>,
+    #[serde(rename = "commits")]
+    pub commits: u64,
+    #[serde(rename = "entries")]
+    pub entries: u64,
+    #[serde(rename = "paths")]
+    pub paths: u64,
+    #[serde(rename = "pages")]
+    pub pages: u64,
+    #[serde(rename = "lfs_bytes")]
+    pub lfs_bytes: OriginPublishLfsBytes,
+}
+
+/// `oneiron::origin::publish::types::OriginPublishState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OriginPublishState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "approved")]
+    Approved,
+    #[serde(rename = "dispatching")]
+    Dispatching,
+    #[serde(rename = "published")]
+    Published,
+    #[serde(rename = "observed_published")]
+    ObservedPublished,
+    #[serde(rename = "refused")]
+    Refused,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "expired")]
+    Expired,
+}
+
+/// `oneiron::origin::publish::types::OriginPublishActorClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OriginPublishActorClass {
+    #[serde(rename = "human")]
+    Human,
+    #[serde(rename = "agent")]
+    Agent,
+    #[serde(rename = "system")]
+    System,
+}
+
+/// `oneiron::origin::publish::types::OriginPublishAuthority`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum OriginPublishAuthority {
+    #[serde(rename = "owner")]
+    Owner,
+    #[serde(rename = "grant")]
+    Grant {
+        #[serde(rename = "grant")]
+        grant: String,
+    },
+}
+
+/// `oneiron::origin::publish::types::OriginPublishAct`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginPublishAct {
+    #[serde(rename = "actor", default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+    #[serde(rename = "class")]
+    pub class: OriginPublishActorClass,
+    #[serde(rename = "authority")]
+    pub authority: OriginPublishAuthority,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::origin::publish::types::OriginPublishRefusalReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OriginPublishRefusalReason {
+    #[serde(rename = "destination_changed")]
+    DestinationChanged,
+    #[serde(rename = "remote_moved")]
+    RemoteMoved,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "outcome_unknown")]
+    OutcomeUnknown,
+    #[serde(rename = "authority_changed")]
+    AuthorityChanged,
+    #[serde(rename = "objects_missing")]
+    ObjectsMissing,
+}
+
+/// `oneiron::origin::publish::types::OriginPublishRefusal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginPublishRefusal {
+    #[serde(rename = "reason")]
+    pub reason: OriginPublishRefusalReason,
+    #[serde(rename = "observed", default, skip_serializing_if = "Option::is_none")]
+    pub observed: Option<OriginPublishRemote>,
+    #[serde(rename = "changed_fields")]
+    pub changed_fields: Vec<String>,
+    #[serde(rename = "detail", default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// `oneiron::origin::publish::types::OriginPublishRequestView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginPublishRequestView {
+    #[serde(rename = "request_id")]
+    pub request_id: String,
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "repo_id")]
+    pub repo_id: String,
+    #[serde(rename = "destination")]
+    pub destination: OriginPublishDestination,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(rename = "commit")]
+    pub commit: String,
+    #[serde(rename = "expected_remote")]
+    pub expected_remote: OriginPublishRemote,
+    #[serde(rename = "force")]
+    pub force: OriginPublishForce,
+    #[serde(rename = "code_repo", default, skip_serializing_if = "Option::is_none")]
+    pub code_repo: Option<String>,
+    #[serde(
+        rename = "idempotency_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub idempotency_key: Option<String>,
+    #[serde(
+        rename = "expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<u64>,
+    #[serde(rename = "review")]
+    pub review: OriginPublishReview,
+    #[serde(rename = "state")]
+    pub state: OriginPublishState,
+    #[serde(rename = "requested")]
+    pub requested: OriginPublishAct,
+    #[serde(rename = "approved", default, skip_serializing_if = "Option::is_none")]
+    pub approved: Option<OriginPublishAct>,
+    #[serde(
+        rename = "dispatched",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dispatched: Option<OriginPublishAct>,
+    #[serde(rename = "refusal", default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<OriginPublishRefusal>,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(
+        rename = "finished_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub finished_at: Option<u64>,
+}
+
+/// `oneiron::origin::publish::inputs::OriginPublishReviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OriginPublishReviewRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "request_id")]
+    pub request_id: String,
+    #[serde(rename = "page")]
+    pub page: u64,
+    #[serde(rename = "code_repo", default, skip_serializing_if = "Option::is_none")]
+    pub code_repo: Option<String>,
+}
+
+/// `oneiron::origin::publish::types::OriginPublishReviewItem`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum OriginPublishReviewItem {
+    #[serde(rename = "commit")]
+    Commit {
+        #[serde(rename = "commit")]
+        commit: String,
+        #[serde(rename = "parents")]
+        parents: Vec<String>,
+    },
+    #[serde(rename = "path")]
+    Path {
+        #[serde(rename = "status")]
+        status: String,
+        #[serde(rename = "mode")]
+        mode: String,
+        #[serde(rename = "object", default, skip_serializing_if = "Option::is_none")]
+        object: Option<String>,
+        #[serde(rename = "path")]
+        path: String,
+    },
+}
+
+/// `oneiron::origin::publish::inputs::OriginPublishReviewView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginPublishReviewView {
+    #[serde(rename = "request_id")]
+    pub request_id: String,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "page")]
+    pub page: u64,
+    #[serde(rename = "pages")]
+    pub pages: u64,
+    #[serde(rename = "items")]
+    pub items: Vec<OriginPublishReviewItem>,
+}
+
+/// `oneiron::origin::publish::inputs::OriginPublishIdRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OriginPublishIdRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "request_id")]
+    pub request_id: String,
+    #[serde(rename = "code_repo", default, skip_serializing_if = "Option::is_none")]
+    pub code_repo: Option<String>,
+}
+
+/// `oneiron::origin::publish::inputs::OriginPublishApproveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OriginPublishApproveRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "request_id")]
+    pub request_id: String,
+    #[serde(rename = "review_digest")]
+    pub review_digest: String,
+    #[serde(rename = "code_repo", default, skip_serializing_if = "Option::is_none")]
+    pub code_repo: Option<String>,
 }
 
 /// `oneiron::origin::residence::OriginResidence`.

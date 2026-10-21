@@ -115,6 +115,7 @@ mod note_doors;
 mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
+mod origin_publish_doors;
 pub(super) mod owner_binding;
 mod pack_preview_doors;
 mod persona_doors;

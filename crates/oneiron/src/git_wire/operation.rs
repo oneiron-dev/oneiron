@@ -69,9 +69,19 @@ pub enum GitWireOperation {
     /// `push` of explicit published `(ref, oid)` pairs to an https mirror. It
     /// reads the local store only; its one effect is on the mirror.
     MirrorPush,
+    /// `ls-remote` of one branch at an https mirror, with its credential
+    /// (FIX 6866). Reads the remote only.
+    RemoteRefs,
+    /// `push` of exactly one reviewed commit to exactly one branch of an
+    /// https mirror, leased on the tip read before (FIX 6866). It reads the
+    /// local store only; its one effect is on the mirror.
+    PublishPush,
+    /// `diff-tree` of reviewed commits against their parents: what each
+    /// commit an exact publish would expose introduces (FIX 6866).
+    ReviewDiffs,
 }
 
-pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 22] = [
+pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 25] = [
     GitWireOperation::ReadConfig,
     GitWireOperation::ConfigureCheckout,
     GitWireOperation::ReadRefs,
@@ -94,6 +104,9 @@ pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 22] = [
     GitWireOperation::WorktreeRemove,
     GitWireOperation::WorktreePrune,
     GitWireOperation::MirrorPush,
+    GitWireOperation::RemoteRefs,
+    GitWireOperation::PublishPush,
+    GitWireOperation::ReviewDiffs,
 ];
 
 impl GitWireOperation {
@@ -122,6 +135,9 @@ impl GitWireOperation {
             Self::WorktreeRemove => "worktree_remove",
             Self::WorktreePrune => "worktree_prune",
             Self::MirrorPush => "mirror_push",
+            Self::RemoteRefs => "remote_refs",
+            Self::PublishPush => "publish_push",
+            Self::ReviewDiffs => "review_diffs",
         }
     }
 
@@ -140,7 +156,10 @@ impl GitWireOperation {
             | Self::StatusPorcelain
             | Self::NotesShow
             | Self::GitPath
-            | Self::MirrorPush => GitWireEffectClass::Read,
+            | Self::MirrorPush
+            | Self::RemoteRefs
+            | Self::PublishPush
+            | Self::ReviewDiffs => GitWireEffectClass::Read,
             Self::WriteBlob | Self::WriteTree | Self::WriteCommit => {
                 GitWireEffectClass::ObjectWrite
             }

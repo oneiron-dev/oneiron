@@ -205,9 +205,9 @@ impl DreamerRunnerStore<'_> {
     /// The successor of a settled `coach.issues` attempt, queued ready in the
     /// commit that settles it, so no crash between the two strands a report
     /// (FIX 1554): when a report landed while the attempt held its lease and
-    /// reports still wait, one Issues run is queued. The mark goes either
-    /// way. An attempt with no mark, as every other attempt is, queues
-    /// nothing.
+    /// reports still wait, one Issues run is queued, the settled attempt its
+    /// parent (FIX 6937), lineage only. The mark goes either way. An attempt
+    /// with no mark, as every other attempt is, queues nothing.
     pub(crate) fn redrive_coach_issues_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -229,7 +229,10 @@ impl DreamerRunnerStore<'_> {
         if !blocked_reports::any_pending_in_txn(vault, &*txn)? {
             return Ok(());
         }
-        self.enqueue_coach_issues_in_txn(txn, None, None, now)
+        // No run: a run's skill-edit cycle cap would bind the successor's
+        // drafts together with the settled run's (`proven_cycle`), so it keeps
+        // its own cycle, as before.
+        self.enqueue_coach_issues_in_txn(txn, Some(settled.id), None, now)
     }
 }
 

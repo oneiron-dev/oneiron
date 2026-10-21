@@ -535,10 +535,19 @@ or when another host writes the repository. Reads still serve. Only a live owner
 
 ## Mirror a served repository outward
 
-The repository's origin pushes its published refs to one https mirror (GitHub, GitLab, a Gitea)
-on a cadence you set. **That cadence is the repository's real RPO**: a promoted replica or the
-mirror holds what the last push carried, and nothing newer. Put the mirror's push token into
-custody first, bound to `origin:mirror-push`, then name the mirror:
+Each repository names one https mirror (GitHub, GitLab, a Gitea), and the mirror carries a
+**sync strategy** that decides what goes out:
+
+- `ask_me` (the default, and what a mirror with no strategy set is): nothing goes out until you,
+  or an agent under a Grant that covers it, approve an exact branch and commit, which is then
+  pushed once. Configuring the mirror sends nothing, the cadence never fires, and a push-now
+  refuses with `publish_request_required`.
+- `schedule`: the origin pushes every published ref on the cadence you set, as below. **That
+  cadence is the repository's real RPO**: a promoted replica or the mirror holds what the last
+  push carried, and nothing newer.
+
+Put the mirror's push token into custody first, bound to `origin:mirror-push`, then name the
+mirror:
 
 ```sh
 oneiron api raw POST /v1/owner/secrets/register --data '{"name": "demo-mirror-token",
@@ -547,9 +556,11 @@ oneiron api raw POST /v1/owner/secrets/register --data '{"name": "demo-mirror-to
   "value_base64": "<base64 of the token>"}'
 oneiron api raw POST /v1/owner/origin-mirror --data '{"repo": "demo",
   "url": "https://github.com/you/demo.git", "secret_ref": "demo-mirror-token",
-  "every_secs": 900}'
-oneiron api raw GET '/v1/owner/origin-mirror?repo=demo'    # the target and its last push
-oneiron api raw POST /v1/owner/origin-mirror/push --data '{"repo": "demo"}'   # push now
+  "every_secs": 900, "sync_strategy": "schedule"}'
+oneiron api raw GET '/v1/owner/origin-mirror?repo=demo'    # the target, its strategy and last push
+oneiron api raw POST /v1/owner/origin-mirror/strategy \
+  --data '{"repo": "demo", "sync_strategy": "ask_me"}'      # change the strategy alone
+oneiron api raw POST /v1/owner/origin-mirror/push --data '{"repo": "demo"}'   # push now (schedule)
 oneiron api raw DELETE '/v1/owner/origin-mirror?repo=demo' # stop; the mirror keeps what it has
 ```
 
@@ -567,6 +578,58 @@ vault's door: push it here as `refs/imported/<source>/<branch>` (for example
 `git push origin HEAD:refs/imported/github/fix-typo`), where the change index stamps it as a
 mirror import. Merge it here; the next mirror push carries the merge out. Imported refs are never
 pushed back to the mirror.
+
+Leaving out `sync_strategy` keeps the strategy of a mirror whose URL is unchanged; a new mirror,
+or a new URL, starts at `ask_me`. The strategy route (and `vault.code.origin.mirror.strategy`)
+changes the strategy and its `strategy_revision` and nothing else: never the URL, the token, the
+cadence or what was pushed. A change of URL, user, custody record or served name gives the
+mirror a fresh `target_generation` id instead, one no earlier mirror of the repo held, cleared or
+not. Only the live owner sets either; `every_secs` is still
+stored and checked on an `ask_me` mirror, and only `schedule` reads it.
+
+### Publish one exact commit
+
+On any mirror, of either strategy, an exact publish pushes one commit to one branch, once. The
+verbs are `vault.code.origin.publish.request`, `.review`, `.get`, `.approve`, `.execute` and
+`.cancel` (SDK, MCP, code mode, or `POST /v1/core/facade/<verb>`):
+
+1. `request` names the repo, a full branch ref (`refs/heads/main`, never a short name), the exact
+   commit (40 hex, never resolved from a ref), optionally `force: "rewrite"`, an
+   `idempotency_key` and an `expires_at`. The engine reads the branch at the mirror with the
+   mirror's own token: what it holds (absent, or a commit) is the lease the push will carry. A
+   branch it cannot read refuses `remote_tip_unknown` and records nothing; it never guesses an
+   absent branch. A plain request must fast-forward: the mirror's tip must be held here and be an
+   ancestor of the commit, else it refuses `not_fast_forward`.
+2. The request records its **full-ancestry review** before anything goes out: every commit the
+   commit reaches that the mirror's tip does not, with every merge parent, and each path, mode and
+   object each of those commits introduces against each parent, so a file added and later
+   deleted or reverted is still named. When this vault does not hold the mirror's tip, the review
+   covers the commit's whole history. Read it page by page with `review`; one BLAKE3 `digest`
+   binds it to the tuple. The push sends no Git-LFS bytes (`lfs_bytes: not_sent`): an LFS pointer
+   in the review is not verified at the mirror.
+3. `approve` names that `review_digest`. You approve from any linked surface, and no second
+   approval is asked. An agent requests, reads, approves, executes or cancels only under one live
+   Grant whose repo bounds (FIX 6867) admit the branch and **every** reviewed path for read and
+   whose verbs also list `publish` (and `publish_rewrite` for a rewrite); it names its repo handle
+   as `code_repo`. Grants are never combined.
+4. `execute` pushes the commit to the branch once, leased on the recorded tip, with no `+` refspec
+   and no deletion, so the mirror's own branch protection stands. Before the push it checks the
+   commit is still held here, the mirror's URL, user, token record and generation are the ones the
+   request was made at, and the approval's owner or Grant still stands; a change ends the request
+   `refused` with `destination_changed` or `authority_changed`.
+5. The outcome is never guessed and never retried. `published` is the mirror's acknowledgement.
+   After a failed or uncertain push the engine reads the branch again: the commit there is
+   `observed_published`; anything else ends the request `refused` with `rejected` (the mirror
+   refused it), `outcome_unknown` (its tip is unchanged, and nothing proves the push had no
+   effect) or `remote_moved` (someone else moved it), naming what it saw. A request left
+   `dispatching` by a crash settles the same way on a later `execute`, once the push's own time
+   bound has passed. Another try is a new request.
+
+A request has no default expiry; `cancel` ends a pending or approved one. A strategy change leaves
+pending and approved requests as they are. Requests are kept as the live vault holds them through
+a restore (LIVE), so a restore never revives a spent push; one whose commit the restore took is
+refused at dispatch (`objects_missing`). Erasing an actor scrubs it from every request it acted
+on.
 
 ## Approve an import in one act
 
@@ -645,7 +708,11 @@ A candidate the marker's round dropped is listed under `alternatives`, apart fro
 `keep` with its id lands it as the round proposed it. One drawn from imported words is staged in
 that import's review instead: nothing is settled, the marker stays open, and the reply carries
 `pending_review` (`kept`, the alternative; `staged`, the claim waiting in the review; `review`,
-the import's review) in place of `resolved`.
+the import's review) in place of `resolved`. The staged claim is listed among the members while
+it waits. Approving it in the review leaves the marker open for a `keep` of it; to do both at
+once, send `"settlement": "approve_and_keep"` with the staged claim as `keep`. It approves that
+claim as a review approval would and keeps it, superseding every other live member, in one
+step. Only you, the vault's owner, take it.
 
 Each answer writes a `conflict.resolved` claim naming the marker, plus one receipt. The marker
 itself stays as the record. A person or agent you delegate `memory.conflict_review` on a subject
@@ -666,7 +733,8 @@ You undo any settlement, the Dreamer's above all:
   wrote comes back as the Dreamer's fresh copy, born of the old one, since a signed claim's
   history never reopens. A member some later write closed is left as it is. An alternative the
   settlement landed is retracted; keep it again and it lands at a fresh id (one from imported
-  words still refuses a second Keep). The reply lists each, and one receipt records the revert.
+  words is staged in its import's review again, at a fresh id that stays a member of the
+  conflict). The reply lists each, and one receipt records the revert.
   The Dreamer leaves a reverted conflict to you.
 
 To keep the Dreamer off some conflicts:
