@@ -60,6 +60,7 @@ mod claim_write;
 mod conversation_training;
 mod conversation_training_vault;
 mod critical_confirm_door;
+mod current_scope;
 mod engine_machine;
 mod entry_transition;
 mod first_seen_clock;

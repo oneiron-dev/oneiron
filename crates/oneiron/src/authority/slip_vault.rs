@@ -181,6 +181,7 @@ impl Vault {
             && fold.vault_id == Some(claims.vault_id)
             && fold.slip_is_live(&claims.slip_id)
             && verified.witness_pact(&fold).is_ok()
+            && verified.within_current_scope(&fold)
             && self.slip_refs_stand_in_txn(txn, claims, now)?)
     }
     /// Sample the authority plane's local monotonic clock before constructing

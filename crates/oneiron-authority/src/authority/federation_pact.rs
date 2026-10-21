@@ -87,6 +87,9 @@ pub struct FederationLifecycleAction {
     pub successor_vault_id: Option<AuthorityVaultId>,
     /// Pact nonce feeding the scope commitment and transcript. Never all-zero.
     pub pact_nonce: [u8; 16],
+    /// The party whose narrowing a Rescope-narrow records: the owner the door
+    /// authenticated (FIX 7933). Some ONLY for Rescope-narrow.
+    pub narrowed_by: Option<EntityId>,
 }
 
 /// Fold-derived status of one federation pact.
@@ -142,8 +145,13 @@ pub struct FederationPactState {
     pub scope_digest: [u8; 32],
     /// Dual-signed ceiling scope pair.
     pub pact_scope: FederationPactScope,
-    /// OUR outbound overlay, always ⊑ our half of the ceiling.
+    /// OUR outbound overlay, always ⊑ our half of the ceiling: the ceiling
+    /// met with every party's narrowing below.
     pub effective_scope: FederationDirectionScope,
+    /// Each party's own narrowing of our outbound half, by the owner who made
+    /// it (FIX 7933): that party widens it back within the ceiling; another
+    /// party's stays until a dual-signed re-pact clears them all.
+    pub narrowings: std::collections::BTreeMap<EntityId, FederationDirectionScope>,
     /// Successor co-owned vault id, set by Promote.
     pub successor_vault_id: Option<AuthorityVaultId>,
     /// Epoch at which the pact went terminal.
@@ -185,7 +193,8 @@ pub enum FederationLifecycleRejection {
     /// Scope digest does not commit to the carried scope, or Promote's digest
     /// differs from the stored one.
     ScopeDigestMismatch,
-    /// Unilateral narrow escapes the dual-signed ceiling.
+    /// Unilateral narrow escapes the dual-signed ceiling, or widens back a
+    /// narrowing another party made (FIX 7933).
     WidenWithoutGesture,
     /// Op names a different peer vault than the pact records.
     PeerVaultMismatch,

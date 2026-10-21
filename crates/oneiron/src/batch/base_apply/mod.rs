@@ -207,6 +207,8 @@ pub(super) fn apply_ops_with_origin(
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
     let mut materialized_entity_ids = BTreeSet::new();
+    // FIX 7925: this batch's own writes; replay keeps its bytes for read quarantine.
+    let mut local_materialized_ids = BTreeSet::new();
     // FIX 4652: rows this batch deleted, for the seal standing rerun.
     let mut deleted_entity_ids = BTreeSet::new();
     let mut project_edge_endpoints = BTreeSet::new();
@@ -539,6 +541,9 @@ pub(super) fn apply_ops_with_origin(
                 if entity_type != crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
                     materialized_entity_ids.insert(id);
                 }
+                if !replicated {
+                    local_materialized_ids.insert(id);
+                }
             }
             BatchOp::ClaimCandidate {
                 id,
@@ -599,6 +604,7 @@ pub(super) fn apply_ops_with_origin(
                     pending_embedding_enqueue_priorities.remove(&id);
                 }
                 materialized_entity_ids.insert(id);
+                local_materialized_ids.insert(id);
             }
             BatchOp::ReconcileLexicalQueryHints { source, keep } => {
                 let keep: HashSet<EntityId> = keep.into_iter().collect();
@@ -872,7 +878,7 @@ pub(super) fn apply_ops_with_origin(
         store,
         wtxn,
         config.privacy.posture,
-        &materialized_entity_ids,
+        &local_materialized_ids,
     )?;
 
     #[cfg(feature = "sync")]

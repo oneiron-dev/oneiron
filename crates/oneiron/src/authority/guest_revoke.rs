@@ -84,18 +84,21 @@ impl Vault {
         if !grant.confers_at(now) || expires_at <= now {
             return Err(invalid_authority());
         }
+        // FIX 7928/7929: an Ask guest's slip signs its disclosure as its record
+        // bound; a Connect guest's meets its pact's current effective scope.
+        let (scope, records) = super::current_scope::guest_slip_bounds(&fold, &grant_ref, &grant);
         let claims = SlipClaims {
             slip_id: random_slip_id(),
             vault_id: fold.vault_id.ok_or_else(invalid_authority)?,
             parent_id: None,
             holder_ref: grant.member_ref.to_hex(),
             binding_key: holder_key,
-            scope: grant.authority_scope,
+            scope,
             issued_at: now,
             expires_at,
             ttl_secs: expires_at - now,
             single_use: false,
-            records: BTreeSet::new(),
+            records,
             channels: BTreeSet::new(),
             actor_class: None,
             org_ref: None,
@@ -112,9 +115,10 @@ impl Vault {
     /// A grant-bound slip (OF-232) stands only while its grant does: the
     /// FEDERATION_GRANT its claims name is live, not withdrawn, still an Ask or active Connect
     /// guest's grant for the slip's holder, and confers at `now`; or it is
-    /// the holder's own-device grant (FIX 3134), live and conferring. A slip
-    /// that names no grant passes. Every slip door reads this beside the fold's
-    /// revocation check.
+    /// the holder's own-device grant (FIX 3134), live and conferring. An Ask
+    /// guest's slip also stays inside the grant's current disclosure (FIX
+    /// 7928). A slip that names no grant passes. Every slip door reads this
+    /// beside the fold's revocation check.
     pub(super) fn require_live_slip_grant_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -128,7 +132,11 @@ impl Vault {
         if self.own_device_grant_stands_in_txn(txn, grant_ref, &claims.holder_ref, now)? {
             return Ok(());
         }
-        self.require_live_guest_grant_in_txn(txn, grant_ref, &claims.holder_ref, now)
+        let grant = self.live_guest_grant_in_txn(txn, grant_ref, &claims.holder_ref, now)?;
+        if !super::current_scope::ask_bounds_hold(&grant, claims) {
+            return Err(invalid_authority());
+        }
+        Ok(())
     }
 
     /// An Ask or active Connect guest's FEDERATION_GRANT `grant_ref` still stands for `member`
@@ -142,6 +150,18 @@ impl Vault {
         member: &str,
         now: u64,
     ) -> Result<()> {
+        self.live_guest_grant_in_txn(txn, grant_ref, member, now)
+            .map(drop)
+    }
+
+    /// [`Self::require_live_guest_grant_in_txn`], answering the grant.
+    fn live_guest_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant_ref: EntityId,
+        member: &str,
+        now: u64,
+    ) -> Result<crate::federation::FederationGrant> {
         if WITHDRAWN.get(&self.store, txn, &grant_ref)?.is_some() {
             return Err(invalid_authority());
         }
@@ -157,7 +177,7 @@ impl Vault {
         if grant.member_ref.to_hex() != member || !grant.confers_at(now) {
             return Err(invalid_authority());
         }
-        Ok(())
+        Ok(grant)
     }
 
     /// Whether the owner withdrew guest grant `grant_ref` here (OF-232):
@@ -367,6 +387,7 @@ fn live_pact_disconnects(
             gesture: None,
             successor_vault_id: None,
             pact_nonce: pact_nonce(),
+            narrowed_by: None,
         });
     }
     Ok(disconnects)

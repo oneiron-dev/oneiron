@@ -386,6 +386,7 @@ pub(super) fn apply_federation_lifecycle(
                 scope_digest: claimed_digest,
                 pact_scope: scope.clone(),
                 effective_scope,
+                narrowings: std::collections::BTreeMap::new(),
                 successor_vault_id: None,
                 terminal_epoch: None,
             },
@@ -424,13 +425,22 @@ pub(super) fn apply_federation_lifecycle(
                 .effective_scope
                 .as_ref()
                 .ok_or(FederationLifecycleRejection::ScopeInvalid)?;
-            let ceiling =
-                local_outbound_scope(&local_vault_id, &pact.peer_vault_id, &pact.pact_scope);
+            let party = action
+                .narrowed_by
+                .ok_or(FederationLifecycleRejection::ScopeInvalid)?;
+            // FIX 7933: the party restores its own narrowing within the
+            // ceiling; another party's stays until a dual-signed re-pact.
+            if !super::current_scope::NARROWING_WIDENS_BACK_BY_OWN_PARTY_ONLY {
+                pact.narrowings.clear();
+            }
+            let bound =
+                super::current_scope::pact_scope_beside(&local_vault_id, &pact, Some(&party));
             if !crate::federation::Ceiling::new(effective.clone())
-                .is_within(&crate::federation::Ceiling::new(ceiling))
+                .is_within(&crate::federation::Ceiling::new(bound))
             {
                 return Err(FederationLifecycleRejection::WidenWithoutGesture);
             }
+            pact.narrowings.insert(party, effective.clone());
             pact.effective_scope = effective.clone();
         }
         FederationLifecycleKind::Rescope => {
@@ -459,6 +469,7 @@ pub(super) fn apply_federation_lifecycle(
             pact.pact_scope = scope.clone();
             pact.effective_scope =
                 local_outbound_scope(&local_vault_id, &pact.peer_vault_id, scope);
+            pact.narrowings.clear();
         }
         FederationLifecycleKind::Promote => {
             if pact.status == FederationPactStatus::Suspended {
@@ -576,8 +587,16 @@ pub(super) fn merge_pact_states(
     // Both non-terminal at the same consent epoch: fold the competitor set.
     if (left.scope_digest, left.grant_ref) == (right.scope_digest, right.grant_ref) {
         let mut merged = left.clone();
-        // Concurrent unilateral narrows are both honored.
+        // Concurrent unilateral narrows are both honored, each kept under the
+        // party that made it (FIX 7933).
         merged.effective_scope = left.effective_scope.intersect(&right.effective_scope);
+        for (party, narrowing) in &right.narrowings {
+            merged
+                .narrowings
+                .entry(*party)
+                .and_modify(|kept| *kept = kept.intersect(narrowing))
+                .or_insert_with(|| narrowing.clone());
+        }
         // Concurrent duplicate Connects can pin different verified peer
         // roster keys; the pick is determinism-only.
         merged.peer_owner_key = left

@@ -88,6 +88,7 @@ fn connect_action(
         gesture: None,
         successor_vault_id: None,
         pact_nonce,
+        narrowed_by: None,
     })
 }
 

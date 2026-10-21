@@ -495,7 +495,8 @@ fn validate_federation_lifecycle_action(action: &FederationLifecycleAction) -> R
         }
         FederationLifecycleKind::Promote => present == (false, false, true, true, true),
     };
-    if !matrix_ok {
+    // FIX 7933: a narrow names its party, and nothing else does.
+    if !matrix_ok || action.narrowed_by.is_some() != action.effective_scope.is_some() {
         return Err(invalid_authority());
     }
     if let Some(scope) = &action.pact_scope {

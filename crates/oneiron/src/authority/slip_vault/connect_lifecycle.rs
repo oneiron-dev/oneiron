@@ -47,6 +47,7 @@ fn action(
         gesture: None,
         successor_vault_id: None,
         pact_nonce: nonce(),
+        narrowed_by: None,
     }
 }
 
@@ -167,7 +168,10 @@ impl Vault {
         })
     }
 
-    /// Narrows the current outbound overlay without ending the relationship.
+    /// Narrows the current outbound overlay without ending the relationship,
+    /// under this owner's own narrowing (FIX 7933): he may widen his own back
+    /// within the dual-signed ceiling; another party's narrowing stays until
+    /// a new dual-signed re-scope ([`Self::propose_connect_rescope_as`]).
     pub fn narrow_connect_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -178,17 +182,18 @@ impl Vault {
     ) -> Result<FederationPactState> {
         outbound.validate()?;
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+            let party = owner.revalidate_in_txn(self, txn)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
-            require_host(&fold, issuer)?;
+            let local = local_vault_id(&fold, issuer)?;
             let state = pact(&fold, &pact_id)?;
-            if !Ceiling::new(outbound.clone())
-                .is_within(&Ceiling::new(state.effective_scope.clone()))
-            {
+            let bound =
+                crate::authority::current_scope::pact_scope_beside(&local, &state, Some(&party));
+            if !Ceiling::new(outbound.clone()).is_within(&Ceiling::new(bound)) {
                 return Err(invalid_authority());
             }
             let mut action = action(&state, pact_id, FederationLifecycleKind::Rescope, epoch);
             action.effective_scope = Some(outbound);
+            action.narrowed_by = Some(party);
             self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
             pact(&*self.authority_view_readonly_in_txn(txn)?, &pact_id)
         })

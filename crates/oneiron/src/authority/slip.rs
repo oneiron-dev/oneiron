@@ -79,6 +79,11 @@ impl VerifiedSlip {
     pub fn pact(&self) -> Option<&(crate::EntityId, crate::federation::FederationDirectionScope)> {
         self.pact.as_ref()
     }
+    /// Whether this view still stands inside its grant's current effective
+    /// scope (FIX 7929): false once a narrowing landed after it verified.
+    pub(crate) fn within_current_scope(&self, fold: &AuthorityFold) -> bool {
+        super::current_scope::within_current_grant_scope(fold, &self.claims)
+    }
     pub(crate) fn witness_pact(&self, fold: &AuthorityFold) -> EngineResult<()> {
         let Some((grant, requested)) = &self.pact else {
             return Ok(());
@@ -470,6 +475,11 @@ impl CapabilitySlip {
         effective.validate()?;
         effective.ttl_secs = effective.ttl_secs.min(effective.expires_at - now);
         effective.binding_key = binding_key;
+        // FIX 7929: a Connect guest's slip acts inside its grant's current
+        // effective scope, caveated or not; a history check judges the past.
+        if !history {
+            super::current_scope::meet_current_grant_scope(fold, &mut effective);
+        }
         let verified = VerifiedSlip {
             claims: effective,
             pact,
