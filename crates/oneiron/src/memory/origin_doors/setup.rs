@@ -54,6 +54,8 @@ impl Memory<'_> {
             },
         )?;
         txn.commit().map_err(crate::Error::from)?;
+        // Committed first: a full-auto mirror plans its published state now.
+        self.vault.wake_origin_mirrors();
         Ok(mirror)
     }
 
@@ -72,6 +74,7 @@ impl Memory<'_> {
             input.sync_strategy,
         )?;
         txn.commit().map_err(crate::Error::from)?;
+        self.vault.wake_origin_mirrors();
         Ok(mirror)
     }
 
