@@ -1,8 +1,14 @@
 //! Engine/fixture boundary for the S5 protocol. No simulated browser semantics.
 use super::{
-    Result, config::Config, drift_plan::Assignment, fixture, programs::Program, taskgen::Plan,
+    Result, config::Config, drift_plan::Assignment, fixture, programs::Program, served::Served,
+    taskgen::Plan, write_json,
 };
 use serde_json::{Value, json};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 /// All values here are original public engine/checker answers, not predicted outcomes.
 #[derive(Clone)]
@@ -50,8 +56,72 @@ pub(super) trait Engine {
 /// S5 cannot refile an original workflow into a new scratch vault under a
 /// replacement ID. Keep that continuity gap distinct from transport readiness.
 pub(super) struct FixtureTransport<'a> {
-    pub(crate) config: &'a Config,
-    pub(crate) plan: &'a Plan,
+    config: &'a Config,
+    plan: &'a Plan,
+    binary: &'a Path,
+    evidence: PathBuf,
+    setup: Option<Result<()>>,
+}
+impl<'a> FixtureTransport<'a> {
+    pub(crate) fn new(
+        config: &'a Config,
+        plan: &'a Plan,
+        binary: &'a Path,
+        evidence: PathBuf,
+    ) -> Self {
+        Self {
+            config,
+            plan,
+            binary,
+            evidence,
+            setup: None,
+        }
+    }
+    pub(crate) fn setup_failure(&self) -> Option<&str> {
+        self.setup
+            .as_ref()
+            .and_then(|result| result.as_ref().err().map(String::as_str))
+    }
+    async fn ready(&mut self) -> Result<()> {
+        fixture::forward_target(self.plan, &self.config.browser)?;
+        if self.setup.is_none() {
+            self.setup = Some(self.preflight().await);
+        }
+        self.setup
+            .as_ref()
+            .ok_or("s5_browser_setup_missing")?
+            .clone()
+    }
+    /// This vault proves setup only. It cannot hold the original workflow;
+    /// never put a replacement program here or claim a strict execution.
+    async fn preflight(&self) -> Result<()> {
+        fs::create_dir(&self.evidence).map_err(|e| {
+            format!("browser_pack_unavailable:s5_preflight_new_directory_required_no_retry:{e}")
+        })?;
+        let result: Result<()> = async {
+            let arm = self.config.arms.get("C").ok_or("arm_unavailable")?;
+            let mut served = Served::fresh(
+                self.binary,
+                &self.evidence,
+                arm,
+                &self.config.browser,
+                self.plan,
+                Duration::from_secs(self.config.startup_seconds),
+                Duration::from_millis(self.config.continuation_poll_ms),
+            )
+            .await?;
+            served.stop().await
+        }
+        .await;
+        write_json(
+            &self.evidence.join("s5-preflight.json"),
+            &json!({
+                "status":if result.is_ok() {"ready"} else {"failed"}, "stop_cause":result.as_ref().err(),
+                "browser_setup_evidence":"browser-setup.json", "original_workflow_vault":false
+            }),
+        )?;
+        result
+    }
 }
 impl Engine for FixtureTransport<'_> {
     async fn strict(
@@ -60,7 +130,7 @@ impl Engine for FixtureTransport<'_> {
         _program: &Program,
         _workflow: &str,
     ) -> Result<Execution> {
-        fixture::forward_target(self.plan, &self.config.browser)?;
+        self.ready().await?;
         Err("s5_original_workflow_vault_unavailable".into())
     }
     async fn recover(
@@ -69,7 +139,7 @@ impl Engine for FixtureTransport<'_> {
         _program: &Program,
         _failure: &Value,
     ) -> Result<Recovery> {
-        fixture::forward_target(self.plan, &self.config.browser)?;
+        self.ready().await?;
         Err("s5_original_workflow_vault_unavailable".into())
     }
     async fn propose(
@@ -79,7 +149,7 @@ impl Engine for FixtureTransport<'_> {
         _recovery: &Recovery,
         _spec: Value,
     ) -> Result<Value> {
-        fixture::forward_target(self.plan, &self.config.browser)?;
+        self.ready().await?;
         Err("s5_original_workflow_vault_unavailable".into())
     }
 }

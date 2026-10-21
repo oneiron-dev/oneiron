@@ -63,10 +63,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/util.rs` | src | s | 18 crate-vis | — | Hex, hash, base64, and id-set helpers |
 | `src/beam/validate.rs` | src | m | 9 crate-vis | — | Fixture and manifest validators |
 | `src/cua/args.rs` | src | s | 3 crate-vis | — | Explicit CLI flags and a Linux-only execution guard |
+| `src/cua/browser_setup.rs` | src | m | 2 crate-vis | — | Fresh-vault browser setup through the same owner doors as acceptance |
 | `src/cua/check.rs` | src | s | 1 crate-vis | — | One deterministic host-private checker |
 | `src/cua/config.rs` | src | s | 7 crate-vis | — | Deployment supplies exact pins; no marketing-name or backend substitution |
 | `src/cua/drift.rs` | src | m | 4 crate-vis | — | Serial frozen-library matrix |
-| `src/cua/drift_engine.rs` | src | s | 5 crate-vis | — | Engine/fixture boundary for the S5 protocol |
+| `src/cua/drift_engine.rs` | src | s | 7 crate-vis | — | Engine/fixture boundary for the S5 protocol |
 | `src/cua/drift_plan.rs` | src | m | 9 crate-vis | — | Frozen S5 selection, arguments, deadlines and published serial order |
 | `src/cua/fixture.rs` | src | s | 10 crate-vis | — | PRIVATE S1 lifecycle and the frozen PUBLIC-only served forward |
 | `src/cua/measures.rs` | src | s | 4 crate-vis | — | Receipt observations, not replacements for the engine's success ledger |
@@ -78,7 +79,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cua/report.rs` | src | s | 2 crate-vis | — | Assigned denominators, separate safety axes and descriptive medians only |
 | `src/cua/rows.rs` | src | s | 7 crate-vis | — | Durable terminal rows |
 | `src/cua/run.rs` | src | m | 2 crate-vis | — | One assigned trial, one original deadline and no failure retries |
-| `src/cua/served.rs` | src | m | 12 crate-vis | — | Shipped binary lifecycle and official MCP stdio |
+| `src/cua/served.rs` | src | m | 13 crate-vis | — | Shipped binary lifecycle and official MCP stdio |
 | `src/cua/taskgen.rs` | src | s | 6 crate-vis | — | Freeze paired seeds, disjoint holdouts and rotated arm assignments |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `src/eval/outcome_ingest.rs` | src | s | 1 crate-vis | — | JSONL terminal retrieval outcome ingest for the explicit eval command |

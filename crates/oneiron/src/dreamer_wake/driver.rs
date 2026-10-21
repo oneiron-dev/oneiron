@@ -1,12 +1,14 @@
 //! The wake loop: admit, warn, dispatch under panic containment, stop conditions.
 
 mod attribution;
+mod claim_authoring;
 mod concurrent;
 mod executor_error;
 mod hooks;
 mod observe;
 mod park_cause;
 
+pub use self::claim_authoring::{BoundClaimAuthoringSelector, ClaimAuthoringSelection};
 pub(crate) use self::park_cause::{llm_waits_on_owner_act, waits_on_owner_act};
 
 use std::future::poll_fn;
@@ -18,9 +20,9 @@ use crate::Vault;
 use crate::attempt_queue::{AttemptQueue, LandingWarningOutcome, WarnAttemptBudgetPressure};
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, DreamerAdmissionOutcome,
-    DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
-    DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerMilestoneKind,
-    DreamerParkCause, DreamerRunnerStore, ParkDreamerAttempt, SettleDreamerBudget,
+    DreamerClaimAuthoringBatchTier, DreamerConsolidationAdmissionOutcome,
+    DreamerConsolidationScope, DreamerMilestoneKind, DreamerParkCause, DreamerRunnerStore,
+    ParkDreamerAttempt, SettleDreamerBudget,
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
@@ -99,10 +101,7 @@ pub struct DreamerWakeDriver<'a> {
     skill_optimizer: Option<crate::dreamer_runner::maintenance::CoachSkillOptimizer<'a>>,
     contribution_host:
         Option<&'a (dyn crate::dreamer_runner::maintenance::ContributionReplayHost + Send + Sync)>,
-    tournament_candidate: Option<(
-        crate::autoreason_campaign::beam_promotion::AuthoringStrategyPin,
-        DreamerClaimAuthoringAdmission,
-    )>,
+    claim_authoring: ClaimAuthoringSelection,
     #[cfg(feature = "sync")]
     pub(super) progress: Option<WakeProgressLane<'a>>,
 }
@@ -124,7 +123,7 @@ impl<'a> DreamerWakeDriver<'a> {
             consolidation_only: false,
             skill_optimizer: None,
             contribution_host: None,
-            tournament_candidate: None,
+            claim_authoring: ClaimAuthoringSelection::None,
             #[cfg(feature = "sync")]
             progress: None,
         }
@@ -146,44 +145,6 @@ impl<'a> DreamerWakeDriver<'a> {
     ) -> Self {
         self.contribution_host = Some(host);
         self
-    }
-
-    /// Loads the evaluated configuration and fresh per-claim metadata. The
-    /// configuration derives both the pin and admission axes; a caller cannot
-    /// attach an unrelated admission policy to a promoted pin.
-    pub fn with_tournament_candidate(
-        mut self,
-        config: &crate::autoreason_campaign::CampaignConfig,
-        claim: crate::dreamer_runner::DreamerTournamentClaim,
-    ) -> Result<Self> {
-        let strategy =
-            crate::autoreason_campaign::beam_promotion::AuthoringStrategyPin::from_campaign(config)
-                .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
-        let admission = config
-            .tournament_admission(claim)
-            .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
-        self.tournament_candidate = Some((strategy, admission));
-        self.selected_claim_authoring()?;
-        Ok(self)
-    }
-
-    fn selected_claim_authoring(&self) -> Result<DreamerClaimAuthoringAdmission> {
-        let Some(default) =
-            crate::autoreason_campaign::beam_promotion::default_strategy(self.vault)?
-        else {
-            return Ok(DreamerClaimAuthoringAdmission::single_pass());
-        };
-        let Some((pin, candidate)) = &self.tournament_candidate else {
-            return Err(crate::Error::InvalidConfig(
-                "promoted authoring strategy is not loaded by this wake driver".into(),
-            ));
-        };
-        if *pin != default {
-            return Err(crate::Error::InvalidConfig(
-                "loaded authoring candidate does not match the promoted default".into(),
-            ));
-        }
-        Ok(candidate.clone())
     }
 
     /// Configures the wake-budget counter for legibility and the 80% wrap
@@ -329,6 +290,7 @@ impl<'a> DreamerWakeDriver<'a> {
             landed: 0,
             sources_truncated: 0,
             stop: WakePassStop::QueueEmpty,
+            claim_authoring_fallback: None,
         };
         // Set once a TASK's admission is refused: the rest of the pass admits
         // the vault's own work and no more TASKs.
@@ -623,7 +585,7 @@ impl<'a> DreamerWakeDriver<'a> {
                             scope: input.scope,
                             local_node_id: input.local_node_id,
                             claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
-                            claim_authoring: self.selected_claim_authoring()?,
+                            claim_authoring: self.selected_claim_authoring(&mut report)?,
                             admission: AdmitDreamerAttempt {
                                 lease_owner: input.lease_owner.clone(),
                                 now: input.now,

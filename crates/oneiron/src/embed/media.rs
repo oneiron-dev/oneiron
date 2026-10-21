@@ -56,6 +56,10 @@ pub struct MediaEmbeddingInput<'a> {
     pub kind: InputKind,
     pub media_type: &'a str,
     pub bytes: &'a [u8],
+    /// The rows `bytes` are read from (FIX 7001): an ASSET's own row, or a
+    /// text document's record and the messages a TURN's text joins. `None`
+    /// when they are not known whole.
+    pub source_rows: Option<&'a [EntityId]>,
 }
 
 /// One document's answer from a media model: its vector with the device and runtime that
@@ -137,6 +141,8 @@ pub(super) struct PendingMedia {
     pub(super) text_hash: Option<[u8; 32]>,
     /// When the vault learned the record, in vault seconds: a probe cohort's date cut.
     pub(super) learned_at: u64,
+    /// The rows `bytes` are read from ([`MediaEmbeddingInput::source_rows`]).
+    pub(super) source_rows: Option<Vec<EntityId>>,
 }
 
 impl PendingMedia {
@@ -147,6 +153,7 @@ impl PendingMedia {
             kind: self.kind,
             media_type: &self.media_type,
             bytes: &self.bytes,
+            source_rows: self.source_rows.as_deref(),
         }
     }
 }
@@ -600,6 +607,7 @@ pub(super) fn asset_document_in(
         bytes,
         text_hash: None,
         learned_at,
+        source_rows: Some(vec![id]),
     }))
 }
 
@@ -612,7 +620,7 @@ pub(super) fn text_document_of(
     id: EntityId,
     report: &mut MediaEmbedReport,
 ) -> Result<Option<PendingMedia>> {
-    let Some((text, learned_at)) = text_row_in(vault, store, txn, &id)? else {
+    let Some((text, learned_at, rows)) = text_row_in(vault, store, txn, &id)? else {
         report.no_media += 1;
         return Ok(None);
     };
@@ -623,6 +631,7 @@ pub(super) fn text_document_of(
         text_hash: Some(text_hash(&text)),
         bytes: text.into_bytes(),
         learned_at,
+        source_rows: Some(rows),
     }))
 }
 
@@ -666,23 +675,24 @@ pub(super) fn text_document_in(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<String>> {
-    Ok(text_row_in(vault, store, txn, id)?.map(|(text, _)| text))
+    Ok(text_row_in(vault, store, txn, id)?.map(|(text, ..)| text))
 }
 
-/// [`text_document_in`], beside when the vault learned the record.
+/// [`text_document_in`], beside when the vault learned the record and the rows the text is
+/// read from (FIX 7001).
 fn text_row_in(
     vault: &Vault,
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
-) -> Result<Option<(String, u64)>> {
+) -> Result<Option<(String, u64, Vec<EntityId>)>> {
     if crate::ports::stale_in_txn(store, txn, id)? {
         return Ok(None);
     }
     let Some(row) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
-    let Some(payload) = super::eligibility::embeddable_payload_in(
+    let Some((payload, rows)) = super::eligibility::embeddable_payload_in(
         vault,
         store,
         txn,
@@ -696,6 +706,7 @@ fn text_row_in(
     Ok(Some((
         super::payload_text(&payload)?.into_owned(),
         row.learned_at,
+        rows,
     )))
 }
 

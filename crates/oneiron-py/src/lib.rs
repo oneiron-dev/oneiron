@@ -918,6 +918,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn tasks_redo(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.redo")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.redo", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_commit_message(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.commit_message")?;
         let output = py
@@ -4203,6 +4210,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.cleanup.run")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.cleanup.run", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_archive_delete_preview(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.archive.delete.preview")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.archive.delete.preview", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_archive_delete_confirm(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.archive.delete.confirm")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.archive.delete.confirm", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -7744,6 +7765,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.voices.inspect")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.voices.inspect", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_voices_lineage(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.voices.lineage")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.voices.lineage", input))
             .map_err(raise)?;
         encode(&output)
     }

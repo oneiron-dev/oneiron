@@ -84,6 +84,7 @@ both bindings and their export-census tests in one change.
 - `vault.fanout.ack`
 - `tasks.update`
 - `tasks.accept`
+- `tasks.redo`
 - `vault.commit_message`
 - `vault.begin_message_stream`
 - `vault.append_to_stream`
@@ -443,6 +444,8 @@ both bindings and their export-census tests in one change.
 - `vault.authority.handoff_alarms.acknowledge`
 - `vault.roots.requests.cancel`
 - `vault.cleanup.run`
+- `vault.archive.delete.preview`
+- `vault.archive.delete.confirm`
 - `vault.usage.events.undecodable`
 - `vault.usage.events.remove_undecodable`
 - `vault.entities.mention`
@@ -856,6 +859,7 @@ both bindings and their export-census tests in one change.
 - `vault.voices.targets.provision`
 - `vault.voices.targets.evict`
 - `vault.voices.inspect`
+- `vault.voices.lineage`
 - `ai.transcribe`
 - `ai.embed`
 - `ai.video`
