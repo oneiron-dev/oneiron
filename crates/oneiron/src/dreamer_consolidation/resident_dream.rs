@@ -30,13 +30,15 @@ use crate::llm::manifest::ModelRole;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
+    ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step_checked,
 };
 use crate::receipt::ReceiptQuery;
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+
+mod reply;
 
 /// The window a resident dreams in when the host names none, in tokens.
 pub const RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS: u64 = 32_000;
@@ -903,7 +905,15 @@ pub async fn run_resident_dream(
         now_ms: ctx.now_ms,
     };
     let mut charges = StepChargeTally::default();
-    let response = match call_as_step(&step_ctx, model.backend, model.guard, request).await {
+    let response = match call_as_step_checked(
+        &step_ctx,
+        model.backend,
+        model.guard,
+        request,
+        &reply::check_diary_reply,
+    )
+    .await
+    {
         Ok(StepOutcome::Finished { response, .. }) => {
             charges.record_terminal_metered(ctx, attempt_id, step_hash, &response.usage)?;
             response
@@ -930,6 +940,12 @@ pub async fn run_resident_dream(
                 cause: DreamerParkCause::Checkpoint,
             });
         }
+        // An empty entry the check refused was paid and never memoized: it
+        // is asked again after its retry delay (FIX 7431).
+        Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
+            charges.record_usage(&usage);
+            return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
+        }
         Err(DurableStepError::Engine(error)) => return Err(error),
         Err(other) => {
             return Ok(DreamerAttemptExecution::Park {
@@ -941,24 +957,12 @@ pub async fn run_resident_dream(
     if ctx.deadline.expired() {
         return Ok(charges.checkpoint());
     }
-    let entry: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    let (entry, craft) = split_craft_notes(entry.trim());
-    if entry.is_empty() {
-        // An empty entry waits on no owner act: it resumes after its retry
-        // delay (OF-193a).
-        return Ok(charges.park_for(
-            "the model wrote an empty diary entry",
-            DreamerParkCause::Retry,
-        ));
-    }
+    let (entry, craft) = match reply::diary_entry(&response) {
+        Ok(read) => read,
+        // Only a memo stored before the check can hold no entry: it goes,
+        // and the Retry asks again (FIX 7431, OF-193a).
+        Err(reason) => return charges.park_refused_reply(ctx.vault, attempt_id, step_hash, reason),
+    };
     let now = ctx.now_ms / 1_000;
     // The entry, every part of it, its craft notes, its landing marker and
     // the progress it read commit in one write: a crash between them neither
@@ -968,7 +972,7 @@ pub async fn run_resident_dream(
             return Ok(());
         }
         let at = crate::ports::recorded_at_in_txn(&ctx.vault.store, txn)?;
-        let entry_id = append_diary_entry_in_txn(ctx.vault, txn, resident, entry, at)
+        let entry_id = append_diary_entry_in_txn(ctx.vault, txn, resident, &entry, at)
             .map_err(|error| invalid(&format!("diary entry: {error}")))?;
         propose_craft_notes_in_txn(ctx.vault, txn, resident_id, attempt_id, &craft, at)?;
         LANDED.put(&ctx.vault.store, txn, &attempt_id, &entry_id)?;
