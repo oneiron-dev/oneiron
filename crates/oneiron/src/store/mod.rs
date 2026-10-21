@@ -201,8 +201,8 @@ pub(crate) use body_envelope::{
 // KS-2B1: row-held responses under body custody.
 #[cfg(unix)]
 pub(crate) use body_envelope::{
-    RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
-    ResponseRead, ResponseScan, bind_response_in_txn, carrier_row, erase_response_owner_in_txn,
+    RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily, ResponseRead,
+    ResponseScan, bind_response_in_txn, carrier_row, erase_response_owner_in_txn,
     release_response_in_txn, response_binding_in_txn, response_carrier,
     response_owed_to_all_in_txn, settle_shared_response_in_txn,
 };

@@ -369,8 +369,8 @@ pub(super) fn step_state_read(
     let Some(raw) = STEP_STATE.get_borrowed(&vault.store, &rtxn, &key)? else {
         return Ok(None);
     };
-    let raw = ResponseRead::of(ResponseFamily::StepState, &STEP_STATE.key_bytes(&key), &raw)
-        .present()?;
+    let raw =
+        ResponseRead::of(ResponseFamily::StepState, &STEP_STATE.key_bytes(&key), &raw).present()?;
     STEP_STATE.decode_value(raw).map(Some)
 }
 

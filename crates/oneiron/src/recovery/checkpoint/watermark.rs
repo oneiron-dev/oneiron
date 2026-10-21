@@ -343,19 +343,20 @@ impl Vault {
         let mut fresh = [0u8; 16];
         crate::world_keys::os_fill(&mut fresh)?;
         let class = BackupWriteClass::BackupMetadata;
-        self.store.group_write_classed(Callback::Opaque, class, |txn| {
-            let held = match INCARNATION.get(&self.store, txn, &()) {
-                Ok(held) => held,
-                Err(error) => return Rows::Discard(Err(error)),
-            };
-            if held.is_some() {
-                return Rows::Discard(Ok(()));
-            }
-            match INCARNATION.put(&self.store, txn, &(), &fresh) {
-                Ok(()) => Rows::Commit(()),
-                Err(error) => Rows::Discard(Err(error)),
-            }
-        })
+        self.store
+            .group_write_classed(Callback::Opaque, class, |txn| {
+                let held = match INCARNATION.get(&self.store, txn, &()) {
+                    Ok(held) => held,
+                    Err(error) => return Rows::Discard(Err(error)),
+                };
+                if held.is_some() {
+                    return Rows::Discard(Ok(()));
+                }
+                match INCARNATION.put(&self.store, txn, &(), &fresh) {
+                    Ok(()) => Rows::Commit(()),
+                    Err(error) => Rows::Discard(Err(error)),
+                }
+            })
     }
 }
 

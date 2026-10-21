@@ -535,7 +535,11 @@ pub(super) fn opaque_landing(
     }) {
         landed += 1;
         if carried.database == "entities" {
-            let key = carried.key.as_slice().try_into().map_err(|_| codec_error())?;
+            let key = carried
+                .key
+                .as_slice()
+                .try_into()
+                .map_err(|_| codec_error())?;
             claims.insert(EntityId::from_bytes(key)?);
         }
     }

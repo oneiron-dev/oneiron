@@ -175,12 +175,13 @@ impl Vault {
         to: ChainHead,
     ) -> Result<()> {
         let class = BackupWriteClass::BackupMetadata;
-        self.store.group_write_classed(Callback::Opaque, class, |txn| {
-            match advance_in_txn(&self.store, txn, from, to) {
-                Ok(()) => Rows::Commit(()),
-                Err(error) => Rows::Discard(Err(error)),
-            }
-        })
+        self.store
+            .group_write_classed(Callback::Opaque, class, |txn| {
+                match advance_in_txn(&self.store, txn, from, to) {
+                    Ok(()) => Rows::Commit(()),
+                    Err(error) => Rows::Discard(Err(error)),
+                }
+            })
     }
 }
 

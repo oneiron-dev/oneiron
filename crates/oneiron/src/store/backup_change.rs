@@ -124,7 +124,9 @@ pub(crate) fn backup_content_txn_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>
 /// ledger's revision); content otherwise. An unsupported key makes the
 /// write content, never a refusal.
 #[cfg(feature = "sync")]
-pub(crate) fn telemetry_batch_class<'k>(keys: impl IntoIterator<Item = &'k str>) -> BackupWriteClass {
+pub(crate) fn telemetry_batch_class<'k>(
+    keys: impl IntoIterator<Item = &'k str>,
+) -> BackupWriteClass {
     let families = [
         side_table::RC42_WIRE_RECEIPT.prefix,
         side_table::RC42_WIRE_QUESTION.prefix,
