@@ -84,6 +84,7 @@ both bindings and their export-census tests in one change.
 - `vault.fanout.ack`
 - `tasks.update`
 - `tasks.accept`
+- `tasks.redo`
 - `vault.commit_message`
 - `vault.begin_message_stream`
 - `vault.append_to_stream`
@@ -856,6 +857,7 @@ both bindings and their export-census tests in one change.
 - `vault.voices.targets.provision`
 - `vault.voices.targets.evict`
 - `vault.voices.inspect`
+- `vault.voices.lineage`
 - `ai.transcribe`
 - `ai.embed`
 - `ai.video`

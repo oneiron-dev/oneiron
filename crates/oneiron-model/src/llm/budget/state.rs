@@ -267,24 +267,6 @@ impl BudgetState {
             .saturating_add(allocation.shared_units);
     }
 
-    /// Global exhaustion, or a policy capacity block (shared slice or floor
-    /// headroom) the metered branch would deny. A matched cap denial is
-    /// deliberate policy, so it never reaches here.
-    pub(super) fn local_continuation_available(
-        &self,
-        reserve_units: u64,
-        purpose: Option<&CallPurpose>,
-    ) -> bool {
-        if self.policy.is_empty() {
-            return self.is_exhausted();
-        }
-        match self.plan_reserve(reserve_units, purpose) {
-            ReservePlan::DeniedByCap => false,
-            ReservePlan::DeniedByCapacity => true,
-            ReservePlan::Admit(_) => self.is_exhausted(),
-        }
-    }
-
     /// `T - sum(all floors)`, saturating: oversubscribed floors leave no
     /// shared slice at all rather than wrapping.
     pub(super) fn shared_slice_units(&self) -> u64 {
@@ -316,10 +298,6 @@ impl BudgetState {
 
     pub(super) fn cap_units(&self) -> u64 {
         self.on_budget_exhausted.admission_cap(self.limit_units)
-    }
-
-    pub(super) fn is_exhausted(&self) -> bool {
-        self.used_units.saturating_add(self.reserved_units) >= self.cap_units()
     }
 
     pub(super) fn issue_lease(
