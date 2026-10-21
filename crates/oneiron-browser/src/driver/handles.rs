@@ -25,7 +25,7 @@
 use super::CdpDriver;
 use super::row_metadata;
 use crate::observation::HandleInfo;
-use crate::outline::{self, Line};
+use crate::outline::{self, Line, Masks};
 use crate::retention::HandleRetention;
 use crate::{BrowserError, Row};
 use serde_json::{Value, json};
@@ -70,12 +70,14 @@ enum Key {
 
 /// One read of the front tab, minted: its rows with their live handles, the
 /// DOM node of each, the accessibility nodes they were read from, and the
-/// scope they belong to.
+/// scope they belong to; and, for each row that shows a secret in place,
+/// what its page holds there, for the read's own checks only.
 pub(super) struct Capture {
     pub(super) rows: Vec<Row>,
     pub(super) nodes: Vec<Option<u64>>,
     pub(super) ax: Vec<Value>,
     pub(super) scope: String,
+    pub(super) originals: Vec<Option<String>>,
 }
 
 /// The front tab's documents as CDP reports them: each frame's loader by
@@ -532,25 +534,41 @@ impl CdpDriver {
     /// live handle. The documents are sampled before and after the outline
     /// and the rows' DOM read (`row_metadata`, FIX 6851); a page that moved
     /// between them is read again, both reads together, and one that never
-    /// held still mints handles bound to this read alone.
+    /// held still mints handles bound to this read alone. The read's
+    /// secrets are found on the tree's own candidates and held before any
+    /// row is built (`secrets`, FIX 8028); its rows are built through them.
     pub(super) fn capture(&mut self) -> Result<Capture, BrowserError> {
         let mut tries = 0;
-        let (documents, ax, mut lines, dom) = loop {
+        let (documents, ax, candidates, dom) = loop {
             let before = self.documents()?;
             let ax = self.ax_nodes()?;
-            let lines = outline::lines(&ax);
-            let dom = self.read_dom(&lines);
+            let candidates = outline::lines(&ax, &Masks::default());
+            let dom = self.read_dom(&candidates);
             let after = self.documents()?;
             tries += 1;
             if before == after {
-                break (Some(after), ax, lines, dom);
+                break (Some(after), ax, candidates, dom);
             }
             if tries >= SAMPLE_TRIES {
-                break (None, ax, lines, dom);
+                break (None, ax, candidates, dom);
             }
         };
+        let masks = self.secret_masks(&ax, &candidates, &dom);
+        let mut lines = if masks.is_empty() {
+            candidates
+        } else {
+            drop(candidates);
+            outline::lines(&ax, &masks)
+        };
+        drop(masks);
         row_metadata::fill(&mut lines, &dom);
         drop(dom);
+        self.secret_nodes = lines
+            .iter()
+            .filter(|line| line.masked)
+            .filter_map(|line| line.backend_node)
+            .collect();
+        let originals = lines.iter_mut().map(|line| line.original.take()).collect();
         let target = self.target.clone();
         let missing = self.handles.missing(&target, documents.as_ref(), &lines);
         let gone = self.gone_nodes(&missing);
@@ -562,6 +580,7 @@ impl CdpDriver {
             nodes,
             ax,
             scope,
+            originals,
         })
     }
 }

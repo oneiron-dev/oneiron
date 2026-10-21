@@ -41,6 +41,8 @@ mod receipt_evidence;
 mod request;
 mod retention;
 mod row;
+mod secret;
+mod secret_fields;
 #[cfg(feature = "driver")]
 mod session;
 mod stop;
@@ -70,6 +72,8 @@ pub use request::DestinationRefusal;
 pub use request::{BrowserRequestHandler, RenderedDocument};
 pub use retention::HandleRetention;
 pub use row::{Row, RowFieldGap, RowGapField, RowGapReason};
+pub use secret::SecretCustody;
+pub use secret_fields::{RowSecret, SecretKind, SecretNote};
 #[cfg(feature = "driver")]
 pub use session::{BrowserGuest, BrowserGuestStarter, BrowserSession, FreshGuest, StartedGuest};
 pub use stop::{
@@ -357,12 +361,21 @@ pub struct PointInput {
     pub base: Option<ObservationBase>,
 }
 
+/// Types into the row `ref` names: literal `text`, or the secret a
+/// run-bound handle names (`secret`, FIX 8028), whose bytes the host lends
+/// at the send and no answer, receipt or record holds. Exactly one of the
+/// two is named. A text that reads like a handle is typed as text.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TypeInput {
     #[serde(rename = "ref")]
     pub target: String,
-    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// The handle (`scN`, or `[secret scN]` as a row shows it) of a secret
+    /// this run's browser found, typed in place of `text`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
     /// Replace the field's text instead of inserting at the caret.
     #[serde(default)]
     pub clear: bool,
@@ -433,8 +446,12 @@ pub struct WaitForOutput {
 /// A check on the page as it is now: the row named by `ref` (a live handle,
 /// or the row its locator names once its node is gone, or a locator), or
 /// else the first row `role` and `name` match, is present (or absent) and,
-/// when `value` is given, holds exactly that value. Its answer holds at
-/// most that one row, which is always one page.
+/// when `value` is given, holds exactly that value, or, when `secret` is,
+/// the secret that handle names (FIX 8028): compared where the row is
+/// read, against what the page holds, never answered. A secret row's
+/// `value` is checked against what its page holds too, not its handle. Its
+/// answer holds at most that one row, as it shows, which is always one
+/// page.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExpectInput {
@@ -446,6 +463,10 @@ pub struct ExpectInput {
     pub name: Option<String>,
     #[serde(default)]
     pub value: Option<String>,
+    /// The handle of a secret this run's browser found, in place of
+    /// `value`: never both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
     #[serde(default)]
     pub absent: bool,
 }
@@ -831,10 +852,15 @@ pub enum BatchStep {
         #[serde(rename = "ref")]
         target: String,
     },
+    /// Types literal `text`, or the secret a run-bound handle names
+    /// (`secret`), as the `type` verb does: exactly one of the two.
     Type {
         #[serde(rename = "ref")]
         target: String,
-        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret: Option<String>,
         #[serde(default)]
         clear: bool,
     },
@@ -864,6 +890,10 @@ pub enum BatchStep {
         name: Option<String>,
         #[serde(default)]
         value: Option<String>,
+        /// A run-bound secret handle the row must hold, as the `expect`
+        /// verb's `secret`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret: Option<String>,
         #[serde(default)]
         absent: bool,
     },
@@ -898,9 +928,11 @@ pub enum BatchStep {
 /// A routine step (the CUA-S1 pattern): a small decider takes the step's
 /// choice under the subgoal's one clock. It picks one of the rows `targets`
 /// names (or, with none named, the rows `role` and `name` match, as `find`
-/// matches them) and the step clicks it, types `text` into it or selects
-/// `option` in it. With `locate`, the decider finds the target in a
-/// screenshot instead and the step clicks at its centre.
+/// matches them) and the step clicks it, types `text` into it, types the
+/// secret a run-bound handle names (`secret`, FIX 8028) into it, or selects
+/// `option` in it: at most one of the three. With `locate`, the decider
+/// finds the target in a screenshot instead and the step clicks at its
+/// centre.
 ///
 /// Past [`ROUTINE_MAX_CANDIDATES`] candidates, the decider reads them in
 /// pages of that many, and NONE on one page moves to the next: a step is
@@ -924,6 +956,10 @@ pub struct DecideStep {
     pub locate: bool,
     #[serde(default)]
     pub text: Option<String>,
+    /// The handle of a secret this run's browser found, typed in place of
+    /// `text`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
     #[serde(default)]
     pub clear: bool,
     #[serde(default)]
@@ -1159,6 +1195,11 @@ pub enum BrowserError {
     /// carries the host's refusal; it is no refusal class of the browser's.
     #[error("the host refused a page request's destination: {0}")]
     DestinationRefused(DestinationRefusal),
+    /// FIX 8028: the secret a type or expect named is not one this run's
+    /// host holds for it (another run's, erased, or no custody at all); no
+    /// byte of it was sent or compared.
+    #[error("the browser's host refused the secret: {0}")]
+    SecretRefused(String),
 }
 
 /// One verb's observation as its answer pages it: `act`'s observation, as
@@ -1366,11 +1407,13 @@ pub trait BrowserDriver: Send {
                 BatchStep::Type {
                     target,
                     text,
+                    secret,
                     clear,
                 } => self
                     .type_text(TypeInput {
                         target,
                         text,
+                        secret,
                         clear,
                         base: base.clone(),
                     })
@@ -1413,6 +1456,7 @@ pub trait BrowserDriver: Send {
                     role,
                     name,
                     value,
+                    secret,
                     absent,
                 } => {
                     let check = ExpectInput {
@@ -1420,6 +1464,7 @@ pub trait BrowserDriver: Send {
                         role,
                         name,
                         value,
+                        secret,
                         absent,
                     };
                     self.expect(check.clone())
@@ -1576,12 +1621,15 @@ impl Routine<'_> {
         driver: &mut D,
         step: DecideStep,
     ) -> Result<Observation, Stop> {
-        if (step.text.is_some() && step.option.is_some())
-            || (step.locate
-                && (step.text.is_some() || step.option.is_some() || !step.targets.is_empty()))
-        {
+        let entries = [
+            step.text.is_some(),
+            step.secret.is_some(),
+            step.option.is_some(),
+        ];
+        let entered = entries.iter().filter(|named| **named).count();
+        if entered > 1 || (step.locate && (entered > 0 || !step.targets.is_empty())) {
             return Err(BrowserError::Input(
-                "a decide step types text or selects an option, and a locate step only clicks"
+                "a decide step types text, types a secret or selects an option, and a locate step only clicks"
                     .to_owned(),
             )
             .into());
@@ -1623,6 +1671,7 @@ impl Routine<'_> {
             // that only clicks locates its target in a screenshot there.
             let blind = page.no_tree
                 && step.text.is_none()
+                && step.secret.is_none()
                 && step.option.is_none()
                 && step.targets.is_empty();
             let locate = step.locate || blind;
@@ -1704,19 +1753,21 @@ impl Routine<'_> {
                         })?;
                     self.rebindings.extend(rebindings);
                     let base = self.base.clone();
-                    let acted = match (step.text, step.option) {
-                        (Some(text), _) => driver.type_text(TypeInput {
-                            target,
-                            text,
-                            clear: step.clear,
-                            base,
-                        }),
-                        (None, Some(option)) => driver.select(SelectInput {
+                    let acted = match (step.text, step.secret, step.option) {
+                        (text, secret, _) if text.is_some() || secret.is_some() => driver
+                            .type_text(TypeInput {
+                                target,
+                                text,
+                                secret,
+                                clear: step.clear,
+                                base,
+                            }),
+                        (_, _, Some(option)) => driver.select(SelectInput {
                             target,
                             option,
                             base,
                         }),
-                        (None, None) => driver.click(ClickInput { target, base }),
+                        (_, _, None) => driver.click(ClickInput { target, base }),
                     };
                     return acted.map_err(Stop::from);
                 }
@@ -1886,6 +1937,7 @@ impl BrowserError {
             Self::TreeCut(_) => "desktop_tree_cut",
             Self::MemoryFloor => "browser_memory_floor",
             Self::DestinationRefused(_) => "browser_destination_refused",
+            Self::SecretRefused(_) => "browser_secret_refused",
         }
     }
 }

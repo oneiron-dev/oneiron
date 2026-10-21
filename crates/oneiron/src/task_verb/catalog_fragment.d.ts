@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3957 declarations.
+// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3960 declarations.
 // Replies: 1057 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -331,7 +331,7 @@ declare namespace Sdk {
   type WorkflowBinding = { handle: string; args?: Record<string, string> };
   type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[]; workflow?: WorkflowBinding | null };
   type Criterion = { text: string; evidence_ref?: EntityId | null };
-  type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
+  type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean };
   type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[] };
   type EscalationTrigger = "blocked" | "criteria_unmet" | "scope_widen" | "spend_over" | "deadline" | "brief_revised" | "retry_requested";
   type Reversibility = "reversible_read" | "outbound_effect";
@@ -3068,7 +3068,10 @@ declare namespace Sdk {
   type RowGapField = "href" | "level" | "datetime";
   type RowGapReason = "no_dom_node" | "stale_node" | "outside_dom_read" | "read_failed" | "unresolvable";
   type RowFieldGap = { field: RowGapField; reason: RowGapReason };
-  type Row = { ref: string; locator: string; role: string; name: string; value?: string | null; states?: string[]; depth: number; href?: string | null; level?: number | null; datetimes?: string[]; unavailable?: RowFieldGap[] };
+  type SecretKind = "card" | "cvv" | "otp" | "password";
+  type SecretNote = "concealed" | "no_custody" | "refused";
+  type RowSecret = { kind: SecretKind; handle?: string | null; note?: SecretNote | null };
+  type Row = { ref: string; locator: string; role: string; name: string; value?: string | null; states?: string[]; depth: number; href?: string | null; level?: number | null; datetimes?: string[]; unavailable?: RowFieldGap[]; secret?: RowSecret | null };
   type Rebound = { old: string; new: string; old_scope?: string | null; new_scope: string; locator: string; ambiguous?: boolean; candidates?: string[] };
   type ReceiptEvidence = { state: "kept"; artifact_ref: string; version: number; content_hash: string } | { state: "not_kept"; code: string };
   type BrowserEngine = "lightpanda" | "chromium";
@@ -3097,7 +3100,7 @@ declare namespace Sdk {
   type FindOutput = { rows: Row[]; next?: string | null; partial?: PartialTree | null; walk_next?: string | null };
   type ClickInput = { ref: string; base?: ObservationBase | null };
   type PointInput = { image: string; x: number; y: number; base?: ObservationBase | null };
-  type TypeInput = { ref: string; text: string; clear?: boolean; base?: ObservationBase | null };
+  type TypeInput = { ref: string; text?: string | null; secret?: string | null; clear?: boolean; base?: ObservationBase | null };
   type SelectInput = { ref: string; option: string; base?: ObservationBase | null };
   type KeyInput = { key: string; modifiers?: string[]; ref?: string | null; base?: ObservationBase | null };
   type HotkeyInput = { keys: string[]; base?: ObservationBase | null };
@@ -3113,8 +3116,8 @@ declare namespace Sdk {
   type ImageOutput = { image: string; media_type: string; width: number; height: number; bytes: number; source: string };
   type CropInput = { image: string; x: number; y: number; width: number; height: number };
   type ZoomInput = { image: string; x: number; y: number; width: number; height: number; scale?: number | null };
-  type DecideStep = { question: string; targets?: string[]; role?: string | null; name?: string | null; locate?: boolean; text?: string | null; clear?: boolean; option?: string | null };
-  type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text: string; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
+  type DecideStep = { question: string; targets?: string[]; role?: string | null; name?: string | null; locate?: boolean; text?: string | null; secret?: string | null; clear?: boolean; option?: string | null };
+  type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text?: string | null; secret?: string | null; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
   type StrictDenial = "rule_abstained" | "no_rule" | "image";

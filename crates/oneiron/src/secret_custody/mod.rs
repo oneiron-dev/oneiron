@@ -76,6 +76,7 @@ mod known_values;
 mod masked_files;
 mod owner_door;
 mod reveal;
+mod run_bound;
 mod sighted_file;
 mod storage_seal;
 mod transition;
@@ -147,6 +148,7 @@ pub(crate) use self::reveal::{
     RevealAsker, RevealAuthority, erase_reveal_actor_in_txn, parse_secret_handle,
     reveal_value_in_txn,
 };
+pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
 pub(crate) use self::storage_seal::{
     StoredValue, archive_custody_body, credentials_eligible_for_heads, image_credential_carrier,
     plan_archived_credentials, put_stored_custody_in_txn, read_secret_custody_meta_in_txn,

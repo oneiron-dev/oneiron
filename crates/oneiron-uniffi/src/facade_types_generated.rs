@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1127 facade rows, 3886 generated types.
+// UniFFI census: 1127 facade rows, 3889 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1079.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -4618,6 +4618,8 @@ pub struct ExpectInput {
     pub name: Option<String>,
     #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
     #[serde(rename = "absent", default, skip_serializing_if = "Option::is_none")]
     pub absent: Option<bool>,
 }
@@ -59359,6 +59361,41 @@ pub struct RowFieldGap {
     pub reason: RowGapReason,
 }
 
+/// `oneiron_browser::secret_fields::SecretKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SecretKind {
+    #[serde(rename = "card")]
+    Card,
+    #[serde(rename = "cvv")]
+    Cvv,
+    #[serde(rename = "otp")]
+    Otp,
+    #[serde(rename = "password")]
+    Password,
+}
+
+/// `oneiron_browser::secret_fields::SecretNote`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SecretNote {
+    #[serde(rename = "concealed")]
+    Concealed,
+    #[serde(rename = "no_custody")]
+    NoCustody,
+    #[serde(rename = "refused")]
+    Refused,
+}
+
+/// `oneiron_browser::secret_fields::RowSecret`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RowSecret {
+    #[serde(rename = "kind")]
+    pub kind: SecretKind,
+    #[serde(rename = "handle", default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<SecretNote>,
+}
+
 /// `oneiron_browser::row::Row`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct Row {
@@ -59388,6 +59425,8 @@ pub struct Row {
         skip_serializing_if = "Option::is_none"
     )]
     pub unavailable: Option<Vec<RowFieldGap>>,
+    #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<RowSecret>,
 }
 
 /// `oneiron_browser::observation::Rebound`.
@@ -60014,8 +60053,10 @@ pub struct LiveRunRequestPointInput {
 pub struct TypeInput {
     #[serde(rename = "ref")]
     pub r#ref: String,
-    #[serde(rename = "text")]
-    pub text: String,
+    #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
     #[serde(rename = "clear", default, skip_serializing_if = "Option::is_none")]
     pub clear: Option<bool>,
     #[serde(rename = "base", default, skip_serializing_if = "Option::is_none")]
@@ -60372,6 +60413,8 @@ pub struct DecideStep {
     pub locate: Option<bool>,
     #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
     #[serde(rename = "clear", default, skip_serializing_if = "Option::is_none")]
     pub clear: Option<bool>,
     #[serde(rename = "option", default, skip_serializing_if = "Option::is_none")]
@@ -60396,8 +60439,10 @@ pub enum BatchStep {
     Type {
         #[serde(rename = "ref")]
         r#ref: String,
-        #[serde(rename = "text")]
-        text: String,
+        #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+        secret: Option<String>,
         #[serde(rename = "clear", default, skip_serializing_if = "Option::is_none")]
         clear: Option<bool>,
     },
@@ -60433,6 +60478,8 @@ pub enum BatchStep {
         name: Option<String>,
         #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
         value: Option<String>,
+        #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+        secret: Option<String>,
         #[serde(rename = "absent", default, skip_serializing_if = "Option::is_none")]
         absent: Option<bool>,
     },

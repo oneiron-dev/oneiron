@@ -37,12 +37,20 @@
 //! An effect's receipt screenshot is kept for the call's own caller as a
 //! blob artifact version when the receipt is made ([`ReceiptWriter`]), so it
 //! outlives the guest's image queue and the guest.
+//!
+//! The secrets a run's guest finds (card numbers, security codes, one-time
+//! codes, passwords) become custody records bound to the run where they are
+//! found, through the call's [`RunSecretCustody`] on the run's browser, its
+//! fresh admission guest and its desktop (FIX 8028); the guest types and
+//! checks them by handle, and the seat's end erases them.
 
 mod browser_guest;
 mod receipt_evidence;
+mod secret_custody;
 mod session_write;
 
 use self::receipt_evidence::ReceiptWriter;
+use self::secret_custody::RunSecretCustody;
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
 use super::admission::{
     mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
@@ -67,6 +75,7 @@ use oneiron::llm::decision::{AnswerContract, DecisionRung, HumanAskReason, Routi
 use oneiron::memory::{HostWriteOrigin, Memory};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::runtime_hooks::InvocationId;
+use oneiron::secret_custody::RunSecretSeat;
 use oneiron::task_verb::sdk::{
     AgentVerb, AiVerdict, AiVerdictRequest, AiVerdictReversibility, RunVerb,
 };
@@ -74,8 +83,8 @@ use oneiron_browser::{
     Admitted, BrowserDriver, BrowserEngine, BrowserError, BrowserGuest, BrowserRequestHandler,
     BrowserSession, DesktopGuest, DesktopSession, EFFECT_CLASSES, FiledWorkflow, FreshGuest,
     GuestLimits, HandleRetention, LibraryCard, PressMode, RetiredCard, RoutineAnswer, RoutineAsk,
-    RoutineDecider, RoutineReply, RunOutcome, SendPolicy, StrictDenial, StrictDenied,
-    SupersedeRefusal, WorkflowLibrary, WorkflowProgram, WorkflowProof,
+    RoutineDecider, RoutineReply, RunOutcome, SecretCustody, SendPolicy, StrictDenial,
+    StrictDenied, SupersedeRefusal, WorkflowLibrary, WorkflowProgram, WorkflowProof,
 };
 use oneiron_container::{EgressRelay, SessionManifest, SessionTransport};
 use serde_json::Value;
@@ -602,7 +611,8 @@ impl WorkflowLibrary for VaultLibrary {
 /// ([`browser_guest::start_run_browser`]), so it has its own proved fence,
 /// the run's egress door and grants, and its own live-handle charge; on the
 /// engine the proposing browser runs, in its request custody, with its own
-/// decider and keeper of receipt screenshots for the same call. It takes
+/// decider and keeper of receipt screenshots for the same call, and the
+/// run's secret custody (FIX 8028): the replay is the same run. It takes
 /// nothing of the proposing page here: the session carries its sign-ins
 /// into it, and runs the replay.
 struct RunFreshGuest {
@@ -612,6 +622,7 @@ struct RunFreshGuest {
     handles: crate::server::HandleLine,
     decider: LadderDecider,
     invocation: Option<InvocationId>,
+    secrets: Arc<dyn SecretCustody>,
 }
 
 impl FreshGuest for RunFreshGuest {
@@ -640,6 +651,7 @@ impl FreshGuest for RunFreshGuest {
         );
         session.set_decider(Box::new(self.decider.clone()));
         session.set_receipt_sink(Box::new(writer));
+        session.set_secret_custody(Arc::clone(&self.secrets));
         Ok(session)
     }
 
@@ -667,11 +679,12 @@ impl RunBrowser {
     }
 
     /// The fresh guest this run's proposals replay on, for one call of
-    /// `decider`'s caller (`invocation`).
+    /// `decider`'s caller (`invocation`), holding the run's `secrets`.
     fn fresh_guest(
         &self,
         decider: LadderDecider,
         invocation: Option<InvocationId>,
+        secrets: Arc<dyn SecretCustody>,
     ) -> RunFreshGuest {
         RunFreshGuest {
             vault: Arc::clone(&self.vault),
@@ -680,6 +693,7 @@ impl RunBrowser {
             handles: self.handles.clone(),
             decider,
             invocation,
+            secrets,
         }
     }
 
@@ -712,6 +726,9 @@ impl RunBrowser {
         driver.set_decider(Box::new(decider));
         driver.set_library(Box::new(library));
         driver.set_receipt_sink(Box::new(writer));
+        // The run's secret custody, for this call's caller: the fresh guest
+        // holds the same one.
+        driver.set_secret_custody(Arc::clone(&fresh.secrets));
         driver.set_fresh_guest(Box::new(fresh));
         // While a person is asked or holds the browser, the session refuses
         // the verb `browser_taken_over`; the first answer after they hand it
@@ -764,13 +781,15 @@ impl RunDesktop {
     /// hand it back carries the takeover's record as `takeover`. An answer
     /// after the window the agent's verbs read was gone, and the session
     /// gave way to the window in front, names the move as `switched`. A
-    /// handover raises the owners' inbox Ask.
+    /// handover raises the owners' inbox Ask. The secrets the desktop finds
+    /// are held through `secrets`, the run's custody for this call.
     fn call(
         &self,
         verb: AgentVerb,
         input: Value,
         decider: LadderDecider,
         writer: ReceiptWriter,
+        secrets: Arc<dyn SecretCustody>,
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
@@ -793,6 +812,7 @@ impl RunDesktop {
         }
         driver.set_decider(Box::new(decider));
         driver.set_receipt_sink(Box::new(writer));
+        driver.set_secret_custody(secrets);
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
         self.seats.asked(self.run_id, driver.takeover());
         if let Some(object) = output.as_object_mut() {
@@ -921,6 +941,15 @@ impl RunGuests {
             "admitted guest has no run",
         ))?;
         let writer = ReceiptWriter::new(server, asker.clone(), origin, memory.invocation(), run_id);
+        // The run's secrets, held for this call's caller on the seat it
+        // calls (FIX 8028).
+        let seat = if desktop {
+            RunSecretSeat::Desktop
+        } else {
+            RunSecretSeat::Browser
+        };
+        let secrets: Arc<dyn SecretCustody> =
+            Arc::new(RunSecretCustody::new(&server.vault, &asker, run_id, seat));
         let decider = LadderDecider {
             server: Arc::clone(server),
             asker,
@@ -929,13 +958,16 @@ impl RunGuests {
             run_id,
         };
         let called = match (&self.desktop, &self.browser) {
-            (Some(run), _) if desktop => run.call(call.verb, call.input.clone(), decider, writer),
+            (Some(run), _) if desktop => {
+                let input = call.input.clone();
+                run.call(call.verb, input, decider, writer, secrets)
+            }
             (_, Some(run)) if !desktop => {
                 let library = VaultLibrary {
                     server: Arc::clone(server),
                     by,
                 };
-                let fresh = run.fresh_guest(decider.clone(), memory.invocation());
+                let fresh = run.fresh_guest(decider.clone(), memory.invocation(), secrets);
                 let input = call.input.clone();
                 run.call(call.verb, input, decider, library, writer, fresh)
             }
