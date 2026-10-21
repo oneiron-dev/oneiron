@@ -2103,9 +2103,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/driver.rs` | src | m | 1 struct · 10 fn · 5 crate-vis | EngineNativeExecutor | Executor driver: struct, constructors, and the witness-turn doors |
 | `src/engine_executor/history.rs` | src | s | 3 struct · 2 fn | FoldHistory, FoldHistoryEpoch, FoldHistoryStep | Durable steps and landed compaction boundaries of an attached run |
 | `src/engine_executor/host.rs` | src | XL | 12 crate-vis | — | JS host bridge: recording dispatcher, sandbox contract, and prompt sites |
-| `src/engine_executor/mod.rs` | src | s | 3 mod · 6 re-export · 4 crate-vis | — | Engine-native JS code-mode executor |
+| `src/engine_executor/mod.rs` | src | s | 3 mod · 7 re-export · 4 crate-vis | — | Engine-native JS code-mode executor |
 | `src/engine_executor/program_entry.rs` | src | m | 7 crate-vis | — | A turn program's pinned entry (DOOR-141 PR3b, FIX 4382) |
-| `src/engine_executor/record.rs` | src | m | 25 crate-vis | — | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
+| `src/engine_executor/record.rs` | src | m | 1 struct · 2 fn · 25 crate-vis | EnteredRun | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
 | `src/engine_executor/repl.rs` | src | L | 2 fn · 4 crate-vis | — | Durable REPL loop: run(), persistence helpers, and LLM request building |
 | `src/engine_executor/shadow_step.rs` | src | m | 1 fn · 1 crate-vis | — | One captured step of a shadow arm (PR-S1, FIX 1661/2144): the pinned model's answer to the step's captured… |
 | `src/engine_executor/skill_call.rs` | src | s | 2 fn | — | One callable bridge entry between turns of an attached, leased run |
@@ -2776,7 +2776,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/routing.rs` | src | L | 10 struct · 2 enum · 13 fn · 1 re-export · 1 crate-vis | DescriptionPolicy, DescriptionReask, MeasuredDescription, ModelDescription, OwnerModelLine, ReaskTrigger, RoutedSeat, RoutedVerdict +4 | Vault-owned description routing above the raw LLM call seam |
 | `src/llm/routing/decisions.rs` | src | s | 1 struct · 1 trait · 2 crate-vis | DescriptionDecisions, DescriptionNotes | The route's fitness grades as typed decisions through the host's ladder, and the note seam beside a routed… |
 | `src/llm/routing/tests.rs` | test | s | — | — | — |
-| `src/llm/run_admission/admission.rs` | src | m | 3 struct · 1 enum · 24 fn · 1 const · 1 re-export · 9 crate-vis | RunAdmission, RunAttribution, RunCall, RunCallError | One run admission: each paid call of a run, to a model or to a paid connector, is admitted against the run's… |
+| `src/llm/run_admission/admission.rs` | src | m | 3 struct · 1 enum · 25 fn · 1 const · 1 re-export · 9 crate-vis | RunAdmission, RunAttribution, RunCall, RunCallError | One run admission: each paid call of a run, to a model or to a paid connector, is admitted against the run's… |
 | `src/llm/run_admission/admission/denied.rs` | src | s | 1 enum | RunDenied | Why the run admission refuses a call or an edit, and the model error each refusal reads as |
 | `src/llm/run_admission/declaration.rs` | src | s | 4 struct · 2 enum · 15 fn · 5 crate-vis | BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration | The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid… |
 | `src/llm/run_admission/gate.rs` | src | s | 1 struct · 3 crate-vis | GatedBackend | The run's model backend: every call starts its permit here, before any byte leaves, and leaves a dispatch… |
