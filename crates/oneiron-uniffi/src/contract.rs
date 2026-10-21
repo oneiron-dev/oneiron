@@ -3,7 +3,7 @@
 //! The macro is deliberately crate-private (no `macro_export`): the closed
 //! exported surface is a property of this crate, not something a consumer
 //! extends. `scripts/sdk/generate.py` writes its one invocation into
-//! `facade_generated.rs` from the verb table.
+//! `generated/facade_generated.rs` from the verb table.
 
 /// Emits the exported verb block plus the SDK-name and Rust-name ledgers.
 ///

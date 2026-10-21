@@ -3,7 +3,7 @@
 //! authenticated proof, never a field deserialized from the request.
 use serde::{Deserialize, Serialize};
 
-use super::sdk::AgentDefinitionSpec;
+use super::AgentDefinitionSpec;
 use crate::consent::AuthenticatedOwner;
 use crate::federation::{FederationGrantPreset, FederationGrantRole};
 use crate::memory::MemoryResult;

@@ -44,7 +44,7 @@ impl HookContractStamp {
     #[must_use]
     pub fn current() -> Self {
         Self {
-            verb_table: blake3::hash(include_bytes!("../task_verb/code-mode.d.ts"))
+            verb_table: blake3::hash(include_bytes!("../verbs/generated/code-mode.d.ts"))
                 .to_hex()
                 .to_string(),
             sandbox: blake3::hash(include_bytes!("../../wit/hook/hook.wit"))

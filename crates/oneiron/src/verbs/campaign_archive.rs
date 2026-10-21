@@ -1,5 +1,5 @@
 //! Typed output-archive doors under the existing research-controller gate.
-use super::sdk_research::controller_in_txn;
+use super::research::controller_in_txn;
 use crate::autoreason_campaign::archive::records::{self, attempt};
 use crate::autoreason_campaign::archive::{
     CampaignArchiveAdmission, CampaignArchiveCoverage, CampaignArchiveInstall,

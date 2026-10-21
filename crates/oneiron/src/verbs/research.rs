@@ -9,7 +9,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::highway::forbidden;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::autoreason_campaign::CampaignDatasetRef;
 use crate::autoreason_campaign::archive::CampaignArchivePin;
@@ -30,6 +29,7 @@ use crate::llm::{
 };
 use crate::memory::{Memory, MemoryResult};
 use crate::skill_optimize::{EvalRelease, SufficiencyInput};
+use crate::task_verb::forbidden;
 
 /// `vault.research.bind`: binds a campaign to its existing root attempt.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

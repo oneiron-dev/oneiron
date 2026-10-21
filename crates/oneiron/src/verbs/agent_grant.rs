@@ -21,12 +21,13 @@
 //! it edits nothing, and reading a path never lets the agent edit it.
 use serde::{Deserialize, Serialize};
 
+use super::revision_shape;
 use crate::Vault;
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::federation::{AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, RepoAccessBounds, Scope};
-use crate::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
+use crate::memory::MemoryResult;
 
 /// `vault.agents.grants.mint`'s input: the agent, the owner's exact scope
 /// and an optional expiry. The host chooses the grant's vault scope, its
@@ -204,22 +205,5 @@ fn agent_grant_view(standing: &AgentGrantStanding, now: u64) -> AgentGrantView {
         repo_bounds: standing.grant.repo_bounds.clone(),
         confers: standing.grant.confers_at(now),
         revoke_command: AGENT_GRANT_REVOKE_COMMAND.to_owned(),
-    }
-}
-
-/// A revision as a surface shows it: 64 lower-case hex.
-fn revision_shape(seen: &str) -> MemoryResult<()> {
-    if seen.len() == 64
-        && seen
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        Ok(())
-    } else {
-        Err(MemoryError::new(
-            MEMORY_CODE_BAD_REQUEST,
-            "seen must be 64 lower-case hex",
-            &["Pass the revision the surface showed, or omit seen."],
-        ))
     }
 }

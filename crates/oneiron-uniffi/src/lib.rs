@@ -18,11 +18,11 @@
 //! `open_connection` holds a connection of the app's own (`/ws`).
 //!
 //! The verb methods are generated from `scripts/sdk/agent-verbs.json` into
-//! `facade_generated.rs`: one exported method per facade row, which calls that
+//! `generated/facade_generated.rs`: one exported method per facade row, which calls that
 //! row's typed client method through the lift/lower codecs in `codec`. A row
 //! with hand-written records (`dto`) crosses through them. Every other row
 //! crosses through the records and enums generated from the facade type
-//! inventory into `facade_types_generated.rs`: one per engine struct or enum
+//! inventory into `generated/facade_types_generated.rs`: one per engine struct or enum
 //! the rows reach, each with the engine type's own serde wire shape, so a row
 //! converts at its boundary through that shape. Only a shape UniFFI cannot
 //! express (a `serde_json::Value`, a tuple, a type that holds itself by value)
@@ -45,6 +45,7 @@ mod dto;
 #[cfg(feature = "engine")]
 mod embedded_engine;
 mod error;
+#[path = "generated/facade_types_generated.rs"]
 mod facade_types_generated;
 // FIX 4730: the rooted-only host-root open.
 mod host_root;
@@ -303,4 +304,4 @@ pub fn pair(link: String) -> Result<Paired, OneironError> {
     })
 }
 
-include!("facade_generated.rs");
+include!("generated/facade_generated.rs");

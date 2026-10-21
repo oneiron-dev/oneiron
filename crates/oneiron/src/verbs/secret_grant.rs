@@ -21,7 +21,7 @@
 //! lease's materialization receipt, and every use keeps its own record.
 use serde::{Deserialize, Serialize};
 
-use super::sdk_secret_use::grant_refusal;
+use super::secret_use::grant_refusal;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::{Error, SecretError};

@@ -9,7 +9,7 @@ use crate::skill_convert::{ConvertOutcome, ConvertRequest, SkillRefiner};
 use crate::skill_hub::{HubAdmissionDisposition, HubAdmissionReceipt, HubRef};
 use crate::{EntityId, Error, TimeRange, Vault};
 
-use super::sdk::{HubConsentReceipt, HubSkillReceipts, HubSkillRequest};
+use super::{HubConsentReceipt, HubSkillReceipts, HubSkillRequest};
 
 /// Conversion accepts references, never caller-authored trusted skill bytes.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -436,7 +436,7 @@ pub struct SkillLibraryForkRequest {
     pub skill_id: String,
 }
 
-pub use super::sdk_skill_fork::{skill_library_fork_as_owner, skill_library_fork_by_caller};
+pub use super::skill_fork::{skill_library_fork_as_owner, skill_library_fork_by_caller};
 
 /// A hub restore repeats its existing exact-consent and held-out admission, not a bare flip.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

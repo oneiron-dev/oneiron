@@ -24,7 +24,7 @@
   The embedded engine's `oneiron-server` edge serves the API over
   in-process streams and binds no API socket.
 - **Generated, not hand-bound.** `scripts/sdk/generate.py` writes
-  `src/facade_generated.rs` from the verb table: one `export_facade!` arm per
+  `src/generated/facade_generated.rs` from the verb table: one `export_facade!` arm per
   facade row (host-door rows included). Each arm lowers its foreign
   arguments into the row's engine input, calls the row's typed
   `OneironClient` method, and lifts the engine output back through the
@@ -65,7 +65,7 @@ one, and on a `PENDING_ASK` the whole refusal as `pending`, for `retry`.
 Every facade row crosses typed. A row whose engine type has a hand-written
 record in `src/dto.rs` crosses through it; every other row crosses through the
 records and enums `scripts/sdk/generate.py` writes into
-`src/facade_types_generated.rs` from the facade type inventory
+`src/generated/facade_types_generated.rs` from the facade type inventory
 (`scripts/sdk/facade_types.py`, the one walker the TypeScript and Python
 declarations also read; `scripts/sdk/uniffi_types.py` projects it). That is
 one `uniffi::Record` or `uniffi::Enum` per engine struct or enum the rows

@@ -5,7 +5,7 @@ facade row's input and output across the engine crates' Rust sources and holds
 each reached type's serde wire shape. This module projects that one inventory
 into the UniFFI binding: one `#[derive(uniffi::Record)]` or `uniffi::Enum` per
 Rust struct or enum the rows reach, written to
-`crates/oneiron-uniffi/src/facade_types_generated.rs`. It reads no Rust source
+`crates/oneiron-uniffi/src/generated/facade_types_generated.rs`. It reads no Rust source
 itself.
 
 Each generated type derives serde with exactly the engine type's wire shape:

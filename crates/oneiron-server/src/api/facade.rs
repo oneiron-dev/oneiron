@@ -11,7 +11,7 @@
 //! The route projection is generated from `scripts/sdk/agent-verbs.json`.
 //! Claim lifecycle, scoped reads, export, notes, artifacts, tasks and rooms
 //! all use the same inventory and engine DTOs as the native clients. Every
-//! route runs its row through the generated dispatch (`dispatch.rs`), the one
+//! route runs its row through the generated dispatch (`facade/generated/dispatch.rs`), the one
 //! the held socket's `rpc.req` runs too (OF-489), so a verb meets the same
 //! admission on both. Live subscriptions remain owned by the held socket
 //! rather than this router.
@@ -29,6 +29,7 @@ mod admission_doors;
 mod affect_doors;
 mod agent_definition_doors;
 mod agent_grant_doors;
+#[path = "facade/generated/agent_verbs.rs"]
 mod agent_verbs;
 mod aging_doors;
 mod artifact_hosting_doors;
@@ -74,6 +75,7 @@ mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
 mod disclosure_doors;
+#[path = "facade/generated/dispatch.rs"]
 mod dispatch;
 mod embedding_space_doors;
 mod eval_doors;

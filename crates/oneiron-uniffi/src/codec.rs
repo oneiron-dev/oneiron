@@ -5,7 +5,7 @@
 //! input, calls the client's typed method for that row, and lifts the engine
 //! output back. A conversion is selected by its source and target types, never
 //! by verb name. A row whose types have generated records
-//! (`facade_types_generated.rs`) converts through the wire shape the record
+//! (`generated/facade_types_generated.rs`) converts through the wire shape the record
 //! and the engine type share: [`lower_record`] and [`lift_record`]. A row whose
 //! type the facade inventory cannot read crosses as [`WireJson`] whole:
 //! [`decode`] parses it into the row's engine input type, so that type's own
@@ -145,7 +145,7 @@ impl<'de> serde::Deserialize<'de> for WireJson {
 
 // ── generated records ───────────────────────────────────────────────────
 //
-// `facade_types_generated.rs` mirrors each engine type a facade row reaches
+// `generated/facade_types_generated.rs` mirrors each engine type a facade row reaches
 // with the engine type's own serde wire shape. A row converts at its boundary
 // through that shape: the record is written as JSON and read as the engine
 // type, so the engine type's own serde validates it, and the engine output is

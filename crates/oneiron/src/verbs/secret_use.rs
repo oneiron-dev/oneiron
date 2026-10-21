@@ -19,7 +19,7 @@
 //! caller holds in place of a handle, and answer the same way.
 use serde::{Deserialize, Serialize};
 
-use super::sdk_connector_call::ConnectorCallReply;
+use super::connector_call::ConnectorCallReply;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, SecretError};

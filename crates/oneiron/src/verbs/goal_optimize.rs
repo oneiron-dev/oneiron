@@ -7,9 +7,7 @@ use crate::workspace_roster::{GoalInterviewTurns, GoalRecord};
 use crate::{EntityId, Error, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 
-use super::sdk::{
-    SkillOptimizeResultRequest, SkillOptimizeResultView, skill_optimize_result_as_owner,
-};
+use super::{SkillOptimizeResultRequest, SkillOptimizeResultView, skill_optimize_result_as_owner};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

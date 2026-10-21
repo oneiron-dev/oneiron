@@ -6,7 +6,7 @@ use crate::memory::MemoryResult;
 use crate::skill_hub::{DefaultSkillHub, HubImportReceipt, HubRef};
 use crate::{EntityId, Error, TimeRange, Vault};
 
-use super::sdk::{EmptyRequest, HubSkillRequest, SkillLibraryView};
+use super::{EmptyRequest, HubSkillRequest, SkillLibraryView};
 
 /// The expected build source beside the actual resident. Absence is reported,
 /// never repaired by a read, and resident files are not replaced by build bytes.

@@ -15,13 +15,14 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::revision_shape;
 use crate::Vault;
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::federation::git_push::{GIT_PUSH_REVOKE_COMMAND, GitPushGrantStanding};
 use crate::federation::{GitPushBounds, GitPushRepo};
-use crate::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
+use crate::memory::MemoryResult;
 
 /// `vault.repo.git_push.mint`'s input: the holder, the repos and an
 /// optional expiry. The host chooses the grant's vault scope, its mint time
@@ -194,22 +195,5 @@ fn git_push_grant_view(standing: &GitPushGrantStanding, now: u64) -> GitPushGran
         expires_at: standing.grant.expires_at,
         stands: standing.stands_at(now),
         revoke_command: GIT_PUSH_REVOKE_COMMAND.to_owned(),
-    }
-}
-
-/// A revision as a surface shows it: 64 lower-case hex.
-fn revision_shape(seen: &str) -> MemoryResult<()> {
-    if seen.len() == 64
-        && seen
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        Ok(())
-    } else {
-        Err(MemoryError::new(
-            MEMORY_CODE_BAD_REQUEST,
-            "seen must be 64 lower-case hex",
-            &["Pass the revision the surface showed, or omit seen."],
-        ))
     }
 }

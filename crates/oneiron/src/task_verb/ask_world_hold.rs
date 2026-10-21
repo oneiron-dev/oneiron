@@ -97,7 +97,7 @@ fn addressed(group: &AskGroup, actor: EntityId) -> bool {
 /// receipted as the generic check receipts its refusal. Every other outcome,
 /// a refused ref the world does not keep among them, is the unchanged
 /// generic check's ([`admit_row_references`]).
-pub(super) fn admit_ask_references<T: serde::Serialize>(
+pub(crate) fn admit_ask_references<T: serde::Serialize>(
     memory: &Memory<'_>,
     row: &'static str,
     input: &T,

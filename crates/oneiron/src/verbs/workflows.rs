@@ -1,9 +1,7 @@
 //! Typed saved workflows: ordered AGENT_DEF compositions the owner keeps.
 use serde::{Deserialize, Serialize};
 
-use super::HostBinding;
-use super::highway_runner::workflow_try::{WorkflowBinder, WorkflowFunding, dispatch_bound};
-use super::sdk_agents::AgentDefinitionSpec;
+use super::agents::AgentDefinitionSpec;
 use crate::agent_def::workflow::WorkflowDefinition;
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
@@ -22,6 +20,10 @@ use crate::memory::{
     MemoryResult,
 };
 use crate::store::GateDecisionId;
+use crate::task_verb::HostBinding;
+use crate::task_verb::highway_runner::workflow_try::{
+    WorkflowBinder, WorkflowFunding, dispatch_bound,
+};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 

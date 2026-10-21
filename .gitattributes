@@ -1,0 +1,4 @@
+# Generator output (scripts/sdk/generate.py, scripts/code-sandbox/generate.py): collapsed in PR views.
+crates/**/generated/** linguist-generated=true
+# The decision ladder's generated-read module is hand-written.
+crates/oneiron/src/llm/decision/generated/** -linguist-generated

@@ -32,9 +32,9 @@ import json
 import re
 from facade_types import Inventory, compound, ts_key
 
-FRAGMENT = 'crates/oneiron/src/task_verb/catalog_fragment.d.ts'
-CODE_MODE = 'crates/oneiron/src/task_verb/code-mode.d.ts'
-REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
+FRAGMENT = 'crates/oneiron/src/verbs/generated/catalog_fragment.d.ts'
+CODE_MODE = 'crates/oneiron/src/verbs/generated/code-mode.d.ts'
+REVISION = 'crates/oneiron/src/verbs/generated/catalog_fragment_revision.rs'
 
 # The calls (canon silent), each in one place:
 # - NAMESPACE: the one namespace every reached type sits in. Inside it no type
