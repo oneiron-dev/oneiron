@@ -136,6 +136,28 @@ impl Vault {
         })
     }
 
+    /// Reads the actual persisted switch through the shipped stopped-vault door.
+    pub(super) fn secret_scan(&self, bin: &Path) -> Result<String, String> {
+        let printed = run(
+            bin,
+            &[
+                "secret-scan",
+                "--config",
+                &self.config.to_string_lossy(),
+                "--vault-path",
+                &self.path.to_string_lossy(),
+            ],
+            &[],
+        )?;
+        let value: Value =
+            serde_json::from_str(&printed).map_err(|e| format!("secret-scan: {e}"))?;
+        match value["mode"].as_str() {
+            Some("on") => Ok("scan-on".into()),
+            Some("off") => Ok("scan-off".into()),
+            _ => Err("secret-scan returned no resolved mode".into()),
+        }
+    }
+
     /// Mints a full-access agent named `name` on the stopped vault.
     pub(super) fn mint_agent(&self, bin: &Path, name: &str) -> Result<Credential, String> {
         let vault_arg = self.path.to_string_lossy().into_owned();

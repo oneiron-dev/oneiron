@@ -171,7 +171,22 @@ pub(crate) fn http_carriage(value: &[u8]) -> Option<Vec<u8>> {
     if entry.erased {
         return None;
     }
-    entry.erased_form().encode().ok()
+    // The stub keeps whose erase drops it, for a restore to drop it too
+    // (FIX 7470).
+    let mut stub = entry.erased_form();
+    stub.erase_drops = entry.erase_drops;
+    stub.encode().ok()
+}
+
+/// The caller whose own erase drops the cache entry `stub` holds rather
+/// than leaving its erased form (FIX 7357, 7470); `None` for an entry no
+/// erase drops, and one that does not decode.
+pub(crate) fn http_erase_drop_caller(stub: &[u8]) -> Option<EntityId> {
+    let entry = IdempotencyEntry::decode(stub).ok()?;
+    if !entry.erase_drops {
+        return None;
+    }
+    entry.stamps.actor
 }
 
 /// Who owns the cache entry `value`'s response; none for one that does not

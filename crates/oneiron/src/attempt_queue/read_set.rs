@@ -28,6 +28,17 @@ impl ReadSetProducer {
     /// and the pilots its draft grounds on.
     pub const COACH_OFFER_DRAFT: Self = Self("coach.offer_draft");
 
+    /// The skill pack load door: the SKILL whose instructions loaded and the
+    /// replicated carrier its package was recovered from (FIX 7017).
+    pub const SKILL_PACK: Self = Self("skill.pack_load");
+
+    /// The actor claim load door: each actor CLAIM a run loaded (FIX 7017).
+    pub const ACTOR_CLAIM: Self = Self("actor.claim_load");
+
+    /// A resident run's tool answers: the rows each verb answer listed as
+    /// served (FIX 7017).
+    pub const TOOL_ANSWERS: Self = Self("resident.tool_answers");
+
     /// The key the record keeps.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

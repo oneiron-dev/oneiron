@@ -37,6 +37,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/connector_event.rs` | src | s | 2 crate-vis | — | The served connector-event responder (OF-519): what a Dreamer pass runs when a subscribed Slack or LINE… |
 | `src/ai_host/contribution.rs` | src | m | 2 crate-vis | — | The host's replay capsule for the Coach's contribution checks (FIX 3028): the concrete… |
 | `src/ai_host/dreamer.rs` | src | L | 19 crate-vis | — | The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the… |
+| `src/ai_host/dreamer/claim_authoring.rs` | src | s | 1 crate-vis | — | The claim-authoring campaign a Dreamer pass binds (OF-366 R2, FIX 897): the root its consolidation… |
 | `src/ai_host/dreamer/compaction_check.rs` | src | s | 2 crate-vis | — | The host's loan to the Dreamer's check of a self-written compaction (FIX 4465 B): the weaver's narrative… |
 | `src/ai_host/dreamer/free_time.rs` | src | s | 1 crate-vis | — | A resident's free-time items on this server (FIX 4453) |
 | `src/ai_host/dreamer/run_log.rs` | src | s | 1 crate-vis | — | The outcome line of an attempt the server's Dreamer executor ended without completing it (FIX 7271): who it… |
@@ -218,7 +219,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/affect_doors.rs` | src | s | 10 crate-vis | — | Retrieval-prior setup and VAD consolidation on the caller's own owner proof |
 | `src/api/facade/agent_definition_doors.rs` | src | m | 13 crate-vis | — | Custom definitions, saved workflows and workspace onboarding, with the caller's own proof |
 | `src/api/facade/agent_grant_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's agent grant rows (FIX 5628): `vault.agents.grants.mint` and `.revoke`, and… |
-| `src/api/facade/agent_verbs.rs` | src | L | 2 crate-vis | — | — |
 | `src/api/facade/aging_doors.rs` | src | s | 2 crate-vis | — | Class-aging profile reads and edits under the caller's own owner credential |
 | `src/api/facade/artifact_hosting_doors.rs` | src | s | 14 crate-vis | — | Typed publication and private preview doors under each caller's own proof |
 | `src/api/facade/asr_doors.rs` | src | m | 5 crate-vis | — | The owner's host-enriched ASR door |
@@ -245,7 +245,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/codebase_doors.rs` | src | s | 4 crate-vis | — | Credential-bound host projections of the typed code snapshot doors (DOOR-118) |
 | `src/api/facade/commitment_doors.rs` | src | s | 7 crate-vis | — | Owner-bound projections of the typed commitment lifecycle |
 | `src/api/facade/compliance_doors.rs` | src | s | 4 crate-vis | — | Compliance owner decisions use the request's owner proof and its own Memory |
-| `src/api/facade/connector_call_doors.rs` | src | s | 5 crate-vis | — | The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's… |
+| `src/api/facade/connector_call_doors.rs` | src | s | 6 crate-vis | — | The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's… |
 | `src/api/facade/connector_pack_doors.rs` | src | m | 7 crate-vis | — | Source-bound connector packs over the existing owner, probe and slate doors |
 | `src/api/facade/consent_doors.rs` | src | s | 10 crate-vis | — | Consent lifecycle host doors, on the same owner proof as Gate policy |
 | `src/api/facade/consolidation_doors.rs` | src | s | 7 crate-vis | — | Owner-bound generated-claim promotion, vetting and evidence reads |
@@ -263,7 +263,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/decision_role_asks.rs` | src | s | 1 crate-vis | — | OF-516: a role holder's door to the ladder's person asks (Q3 by role) |
 | `src/api/facade/deck_creation_doors.rs` | src | s | 2 crate-vis | — | The person's outline Keep and Decline use the same proof as other owner doors |
 | `src/api/facade/disclosure_doors.rs` | src | s | 5 crate-vis | — | Owner registry and reveal-settlement doors, shared by HTTP and MCP |
-| `src/api/facade/dispatch.rs` | src | XL | 1 crate-vis | — | The facade's one admission and typed call per verb-table row (OF-489) |
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
 | `src/api/facade/eval_doors.rs` | src | s | 12 crate-vis | — | Typed eval doors under the caller's own verified owner credential |
 | `src/api/facade/extraction_doors.rs` | src | s | 2 crate-vis | — | Owner-only extraction doors over the caller's own credential read lane |
@@ -275,6 +274,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/foreign_code_doors.rs` | src | s | 2 crate-vis | — | The foreign `execute_code` projection |
 | `src/api/facade/free_time_doors.rs` | src | s | 5 crate-vis | — | The owner's free-time host doors (FIX 4453): `vault.free_time.policy.get`, `.policy.set`, `.cycles` and… |
 | `src/api/facade/gate_policy_doors.rs` | src | s | 5 crate-vis | — | Owner policy and checker host doors |
+| `src/api/facade/generated/agent_verbs.rs` | src | generated | 2 crate-vis | — | — |
+| `src/api/facade/generated/dispatch.rs` | src | generated | 1 crate-vis | — | The facade's one admission and typed call per verb-table row (OF-489) |
 | `src/api/facade/git_push_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint` and… |
 | `src/api/facade/goal_optimize_doors.rs` | src | m | 14 crate-vis | — | Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof |
 | `src/api/facade/graduation_doors.rs` | src | s | 10 crate-vis | — | Consent-graduation host doors, under the consent lifecycle's owner proof |
@@ -404,13 +405,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/device_release.rs` | src | m | 10 crate-vis | — | What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a… |
 | `src/api/mcp_gateway/envelope.rs` | src | m | 16 crate-vis | — | JSON-RPC envelope types and request dispatch |
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | L | 10 crate-vis | — | Execute-code and board-verb executors |
+| `src/api/mcp_gateway/generated/agent_verb_dispatch.rs` | src | generated | 3 crate-vis | — | — |
 | `src/api/mcp_gateway/memory_response.rs` | src | m | 1 crate-vis | — | Tool-first projections of the engine-owned typed read table |
 | `src/api/mcp_gateway/mod.rs` | src | s | 13 crate-vis | — | — |
 | `src/api/mcp_gateway/owner_call.rs` | src | s | 4 crate-vis | — | A managed vault's console owner on `/mcp` (WILL-PLAN L14 row 01) |
 | `src/api/mcp_gateway/served_rows.rs` | src | s | 8 crate-vis | — | The rows an MCP call's result was derived from, as its producers listed them (DEC-0005; SCAN C018, FIX… |
 | `src/api/mcp_gateway/skill_execution.rs` | src | s | 3 crate-vis | — | The original MCP credential context lent to a callable skill's host door |
 | `src/api/mcp_gateway/stream_reads.rs` | src | s | 4 crate-vis | — | Own-task STREAM lines as one connection's credential may read them now: the board publisher admits each… |
-| `src/api/mcp_gateway/tasks_response.rs` | src | XL | 14 crate-vis | — | Tasks verb and response shaping |
+| `src/api/mcp_gateway/tasks_response.rs` | src | m | 13 crate-vis | — | Tasks verb and response shaping |
 | `src/api/mcp_gateway/tool_receipt.rs` | src | s | 1 crate-vis | — | A `tools/call`'s lasting receipt on MCP (OF-538), as the gateway's one door writes it |
 | `src/api/mcp_gateway/verb_hooks.rs` | src | s | 2 crate-vis | — | The verb-hook boundary of an MCP row (ARCH-0080 §3), as the generated dispatch crosses it: the row door's… |
 | `src/api/mcp_gateway/wakes.rs` | src | s | 1 crate-vis | — | The authenticated host handoff |
@@ -735,7 +737,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/trusted_proxy.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | TrustedProxy | `trusted_proxies`: the reverse proxies whose `X-Forwarded-For` entries the server believes when it keys a… |
 | `src/connector_admission_host.rs` | src | m | 12 crate-vis | — | The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint… |
 | `src/connector_call_host.rs` | src | m | 1 struct · 1 fn · 15 crate-vis | ServedConnectorCallHost | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
-| `src/connector_call_host/live_exchange.rs` | src | m | 24 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned, and the reply… |
+| `src/connector_call_host/live_exchange.rs` | src | m | 25 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned, and the reply… |
 | `src/connector_call_host/presenting.rs` | src | m | 11 crate-vis | — | What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646… |
 | `src/connector_call_settle.rs` | src | s | 4 crate-vis | — | The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery… |
 | `src/connector_elicitation.rs` | src | m | 11 crate-vis | — | The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510) |
@@ -755,8 +757,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_training/worker.rs` | src | s | 1 crate-vis | — | The outbox's periodic tick |
 | `src/credential_resume.rs` | src | s | 4 crate-vis | — | The server's check for a credential caller's call a verb hook's ask stopped (ARCH-0080 §3 Ask, OF-580) |
 | `src/decision_artifact.rs` | src | s | 4 crate-vis | — | Typed judgments over artifact units (ARCH-0076, OF-506): the host's decide() for a sheet row, a paragraph, a… |
-| `src/decision_graph.rs` | src | m | 13 crate-vis | — | Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question |
-| `src/decision_host.rs` | src | L | 1 struct · 25 fn · 1 const · 24 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
+| `src/decision_graph/call.rs` | src | s | 3 crate-vis | — | Decision graph ladder calls for graph and artifact units |
+| `src/decision_graph/mod.rs` | src | m | 11 crate-vis | — | Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question |
+| `src/decision_host/adapters.rs` | src | s | — | — | Decision host adapters: the engine traits its rungs and notes implement |
+| `src/decision_host/attach.rs` | src | s | 6 fn · 4 crate-vis | — | Decision host attach: the server's decision ladder and its config |
+| `src/decision_host/doors.rs` | src | m | 13 fn · 11 crate-vis | — | Decision host doors: the ladder, dials and the hooks built on them |
+| `src/decision_host/mod.rs` | src | m | 1 struct · 6 fn · 1 const · 8 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
+| `src/decision_host/refresh.rs` | src | s | 2 crate-vis | — | Decision host person-threshold refresh |
 | `src/decision_verdict.rs` | src | L | 14 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
 | `src/device_local.rs` | src | s | 10 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
 | `src/device_sync.rs` | src | m | 7 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
@@ -1213,7 +1220,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/brain.rs` | src | m | 2 struct · 1 fn · 4 crate-vis | ChatBrain, ChatBrainBindings | The voice call's brain (OF-410): the chat role, as `/ai/chat` runs it |
 | `src/voice_host/connection.rs` | src | m | 4 crate-vis | — | One private, pre-admitted UDS connection on the existing Tokio runtime |
 | `src/voice_host/entry_barrier.rs` | src | s | 6 crate-vis | — | The newcomer barrier on a live reply (OF-365 P5, FIX 1389) |
-| `src/voice_host/extraction.rs` | src | s | 3 crate-vis | — | — |
+| `src/voice_host/extraction.rs` | src | s | 3 crate-vis | — | Voice partial-enrichment extraction |
 | `src/voice_host/hello_refusal.rs` | src | s | 3 crate-vis | — | A voice hello refused before its call is admitted (`boot`) is answered with one line… |
 | `src/voice_host/media_bridge.rs` | src | L | 1 struct · 1 enum · 21 crate-vis | VoiceMediaBindings, VoiceMediaIn | The host's own speech and hearing on the media seats (OF-410) |
 | `src/voice_host/mod.rs` | src | m | 5 struct · 1 enum · 7 fn · 5 re-export · 3 crate-vis | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
