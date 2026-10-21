@@ -266,11 +266,35 @@ pub(super) fn os_build() -> String {
 /// `ProductBuildVersion` in the system version file: the build an update
 /// moves, which the release number alone does not name.
 fn mac_build() -> Option<String> {
+    mac_version("ProductBuildVersion")
+}
+
+/// This Mac's `ProductVersion`, as `(major, minor)`: what a platform row's
+/// `min_os` is held to (FIX 6755 slice 3). `None` when the system version
+/// file names none, as off macOS.
+pub(super) fn mac_release() -> Option<(u32, u32)> {
+    release(&mac_version("ProductVersion")?)
+}
+
+/// `major.minor` of a release such as `26.0` or `26.0.1`; a bare major is
+/// its `.0`.
+pub(super) fn release(version: &str) -> Option<(u32, u32)> {
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = match parts.next() {
+        Some(minor) => minor.parse().ok()?,
+        None => 0,
+    };
+    Some((major, minor))
+}
+
+/// The string the system version file holds under `key`.
+fn mac_version(key: &str) -> Option<String> {
     let plist = std::fs::read_to_string(MAC_VERSION_FILE).ok()?;
-    let (_, after) = plist.split_once("<key>ProductBuildVersion</key>")?;
+    let (_, after) = plist.split_once(&format!("<key>{key}</key>"))?;
     let (_, value) = after.split_once("<string>")?;
-    let (build, _) = value.split_once("</string>")?;
-    Some(build.trim().to_owned())
+    let (named, _) = value.split_once("</string>")?;
+    Some(named.trim().to_owned())
 }
 
 /// The rows file: `rows_location` when the caller names one, and then no

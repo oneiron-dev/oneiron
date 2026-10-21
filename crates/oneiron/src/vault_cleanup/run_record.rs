@@ -1,8 +1,8 @@
 //! Durable cleanup results close the job-commit → queue-settlement crash gap.
 //!
 //! A retried attempt returns its original result, even if its proposal has
-//! since been accepted or rejected. Cursor progress, the decision and this
-//! record co-commit; retries never open another proposal or advance the scan.
+//! since been accepted or rejected. The scan, the decision and this record
+//! co-commit; retries never open another proposal or scan again.
 
 use super::*;
 use crate::side_table::{self, Raw, SideTable};
