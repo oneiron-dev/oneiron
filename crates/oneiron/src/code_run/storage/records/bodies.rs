@@ -498,7 +498,7 @@ pub(in crate::code_run::storage) fn finish_output(
 }
 
 /// `output` as an occurrence `owner` holds: one per owner and path.
-pub(super) fn owned_body(
+pub(in crate::code_run::storage) fn owned_body(
     owner: EntityId,
     output: &CodeRunRawOutput,
     body: &StoredBody,
@@ -533,8 +533,9 @@ pub(super) fn owned_body(
 /// put; an incomplete one holding bytes would release them; a prior that
 /// does not read would fail it. There the put stays as it was, its row
 /// holding its body on its own with no descriptor (FIX 5399b), so no raw
-/// put that lands today is refused or costs another body its hold.
-fn raw_put_publishes_descriptor(
+/// put that lands today is refused or costs another body its hold. A
+/// session row an on-record route writes in base asks it too (FIX 7363).
+pub(in crate::code_run::storage) fn raw_put_publishes_descriptor(
     prior: &Result<Option<crate::provenance::body::OwnedBody>>,
     body: &crate::provenance::body::OwnedBody,
 ) -> bool {
