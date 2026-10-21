@@ -156,12 +156,26 @@ pub struct EngineCandidateRun {
 }
 
 impl EngineCandidateRun {
+    /// Whether the pair was kept not run for want of the Coach's read Grant
+    /// (FIX 6357): no live Grant of the Coach's read every world of the run.
+    pub(super) fn waits_on_grant(&self) -> bool {
+        matches!(
+            self.state,
+            EnginePairState::NotRun {
+                reason: EngineNotRun::Admission(EngineAdmission::NoGrant)
+            }
+        )
+    }
+
     /// Whether the pair is tried again: kept not run at a shadow protocol
-    /// other than this engine's (FIX 1661/2144). At one protocol it is tried
-    /// once, whatever stopped it.
-    pub(super) fn retries(&self) -> bool {
-        matches!(self.state, EnginePairState::NotRun { .. })
-            && self.protocol_version != SHADOW_PROTOCOL_VERSION
+    /// other than this engine's (FIX 1661/2144), or kept for want of the
+    /// Coach's Grant once `read_granted` says that Grant now reads the run's
+    /// scope (FIX 7031). Else at one protocol it is tried once, whatever
+    /// stopped it.
+    pub(super) fn retries(&self, read_granted: bool) -> bool {
+        (matches!(self.state, EnginePairState::NotRun { .. })
+            && self.protocol_version != SHADOW_PROTOCOL_VERSION)
+            || (read_granted && self.waits_on_grant())
     }
 }
 

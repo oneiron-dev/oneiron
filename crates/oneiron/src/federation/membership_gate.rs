@@ -357,6 +357,7 @@ impl Vault {
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             if grant.member_ref == *person
                 && grant.role == FederationGrantRole::Delegate
+                && !grant.is_git_push()
                 && grant.scope == FederationGrantScope::vault(vault_id)
                 && grant
                     .expires_at
@@ -418,6 +419,7 @@ impl Vault {
         }
         let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         if grant.member_ref != principal
+            || grant.is_git_push()
             || grant.scope != scope
             || grant
                 .expires_at

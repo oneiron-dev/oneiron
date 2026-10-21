@@ -18,7 +18,7 @@
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::{RepoAccessBounds, Scope};
+use crate::federation::{FederationGrantKind, GitPushBounds, RepoAccessBounds, Scope};
 use crate::{TimeRange, Vault};
 
 use super::machine_standing::{InstallCounted, Standing};
@@ -44,13 +44,17 @@ pub(crate) enum AgentGrantAct {
     /// The owner grants `member`, a live agent principal, the explicit
     /// `scope` he gave, until `expires_at`, or until revoked when `None`.
     /// `grant` is the new FEDERATION_GRANT row's id; `repo_bounds` the repo
-    /// bounds he gave besides, signed with the rest (FIX 6867).
+    /// bounds he gave besides, signed with the rest (FIX 6867). A `GitPush`
+    /// `grant_kind` grants raw git push to the `git_push_bounds` repos alone
+    /// (G1-PUSH); the same act, signer and fold carry it.
     Mint {
         grant: EntityId,
         member: EntityId,
         scope: Scope,
         expires_at: Option<u64>,
         repo_bounds: Option<RepoAccessBounds>,
+        grant_kind: FederationGrantKind,
+        git_push_bounds: Option<GitPushBounds>,
     },
     /// The owner revokes the Grant `grant`.
     Revoke { grant: EntityId },
@@ -66,6 +70,8 @@ impl AgentGrantAct {
                 scope,
                 expires_at,
                 repo_bounds,
+                grant_kind,
+                git_push_bounds,
             } => (
                 grant,
                 AgentGrantChange::Mint {
@@ -73,6 +79,8 @@ impl AgentGrantAct {
                     scope,
                     expires_at,
                     repo_bounds,
+                    grant_kind,
+                    git_push_bounds,
                 },
             ),
             Self::Revoke { grant } => (grant, AgentGrantChange::Revoke),

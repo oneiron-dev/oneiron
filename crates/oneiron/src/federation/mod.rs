@@ -26,6 +26,9 @@ pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use coreference::share_consent_valid_at;
 mod grant;
+// The owner's git_push Grant and the receive-pack decision (FIX 6867, G1-PUSH).
+pub(crate) mod git_push;
+pub use git_push::{GitPushAdmission, GitPushCaller, GitPushCredential, GitPushSeal};
 pub(crate) mod grant_policy;
 #[cfg(feature = "sync")]
 mod grant_travel;
@@ -193,8 +196,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 pub use oneiron_authority::federation::{
-    REPO_EDIT_VERB, REPO_READ_VERB, RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal,
-    RepoTarget, Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling,
+    FederationGrantKind, GIT_PUSH_VERB, GitPushBounds, GitPushRepo, REPO_EDIT_VERB, REPO_READ_VERB,
+    RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget, Scope, ScopeAtom, ScopeAxis,
+    ScopeId, Sensitivity, SensitivityCeiling,
 };
 
 mod org_admin;

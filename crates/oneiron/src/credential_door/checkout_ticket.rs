@@ -64,7 +64,19 @@ pub(crate) fn require_checkout_lease(
     repo: &RepoRef,
 ) -> DoorResult<CheckoutLeaseAct> {
     let txn = vault.store.env.read_txn().map_err(log_unreachable)?;
-    let lease = checkout_act(vault, &txn, ticket)?;
+    require_checkout_lease_in_txn(vault, &txn, ticket, principal, repo)
+}
+
+/// [`require_checkout_lease`] in the caller's snapshot `txn`, so a writer
+/// judges the lease it commits under (the git_push checkout fence, FIX 6867).
+pub(crate) fn require_checkout_lease_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    ticket: &str,
+    principal: &str,
+    repo: &RepoRef,
+) -> DoorResult<CheckoutLeaseAct> {
+    let lease = checkout_act(vault, txn, ticket)?;
     if lease.holder_ref != principal || repo_record(&lease.repo_ref) != repo_record(repo) {
         return Err(CredentialDoorError::AuthorityRejected);
     }

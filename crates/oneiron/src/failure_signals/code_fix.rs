@@ -43,7 +43,7 @@ use crate::{EntityId, Result, Vault};
 mod exact;
 mod queue;
 mod subject;
-pub(crate) use self::exact::exact_replay_request;
+pub(crate) use self::exact::{ExactReplay, exact_replay};
 pub use self::exact::{ExactReplayRequest, ReplayFidelity};
 pub(super) use self::queue::{
     CodeFixShare, ack_code_fix_records_in_txn, code_fix_still_eligible_in,

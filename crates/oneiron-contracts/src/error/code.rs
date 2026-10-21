@@ -205,6 +205,19 @@ pub enum CodeError {
         /// The door's printable refusal.
         reason: String,
     },
+    /// A push into a served repository that holds no `git_push` capability
+    /// (FIX 6867, G1-PUSH): the pusher is no live owner, no live git_push
+    /// Grant names it and this repo, and no live checkout's run Grant covers
+    /// it. Public code `git_push_capability_required`; nothing was received.
+    #[error(
+        "git_push_capability_required: pushing to `{repo}` needs the git_push capability: {reason}"
+    )]
+    GitPushCapabilityRequired {
+        /// The served repository the push named.
+        repo: String,
+        /// Which check refused it; names no secret.
+        reason: String,
+    },
     /// The journaled ref publication behind a receive-pack landing was refused:
     /// the refs moved under the decision, or the published object set is not
     /// wholly present. Either way no ref was moved by the landing.
@@ -286,6 +299,7 @@ impl CodeError {
             Self::GitHttpRepositoryBusy => ErrorKind::GitHttpRepositoryBusy,
             Self::LfsReadRoomWaitedOut => ErrorKind::LfsReadRoomWaitedOut,
             Self::ReceivePackDoorRejected { .. } => ErrorKind::ReceivePackDoorRejected,
+            Self::GitPushCapabilityRequired { .. } => ErrorKind::GitPushCapabilityRequired,
             Self::ReceivePackLandingRefused { .. } => ErrorKind::ReceivePackLandingRefused,
             Self::OriginPublicationBeyondOwner { .. } => ErrorKind::OriginPublicationBeyondOwner,
             Self::VaultRead(_) => ErrorKind::VaultRead,
