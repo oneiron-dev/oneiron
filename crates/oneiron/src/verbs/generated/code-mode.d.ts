@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1187 code-mode rows (1147 host rows, 40 run rows), 4022 declarations.
+// Census: 1187 code-mode rows (1147 host rows, 40 run rows), 4024 declarations.
 // Replies: 1067 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -3786,7 +3786,9 @@ declare namespace Sdk {
   type SummaryReadView = { summary_ref: string; document: string; frontier: number[]; text: string; metadata: ScopeSummaryMetadata; covers: string[]; read_refs: string[]; anchors: TextAnchor[]; birth: Birth };
   type SummaryStatusRequest = { attempt?: string | null; session_ref?: string | null };
   type ScopeSummaryResult = { summary: string; claim?: string | null; record?: string | null };
-  type ScopeSummaryStatus = { attempt: string; requester: string; current_attempt: string; state: string; result?: ScopeSummaryResult | null; failure?: string | null; retry_at?: number | null; updated_at: number };
+  type ArcPendingStatus = { cause: "arc_lower_pending"; session: string } | { cause: "arc_source_unavailable"; handle: string } | { cause: "arc_composition_pending"; work_id: string; parts_done: number; parts_owed: number } | { cause: "arc_window_too_small"; window: number; frame_tokens: number };
+  type SummaryStale = { reason: "note_source_edited"; notes: string[] };
+  type ScopeSummaryStatus = { attempt: string; requester: string; current_attempt: string; state: string; result?: ScopeSummaryResult | null; failure?: string | null; retry_at?: number | null; updated_at: number; arc_pending?: ArcPendingStatus | null; stale?: SummaryStale | null };
   type SummaryKeepRequest = { summary_ref: string; frontier: number[]; keep: string };
   type SummaryKeepResult = { summary_ref: string; frontier: number[]; keep: string };
   type SummaryEdit = { kind: "append_to_section"; section: TextAnchor; text: string } | { kind: "replace_quoted_span"; span: TextAnchor; text: string } | { kind: "insert_after_anchor"; anchor: TextAnchor; text: string };
