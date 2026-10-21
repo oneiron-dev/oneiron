@@ -11634,6 +11634,29 @@ pub enum WeaveItemView {
         #[serde(rename = "audited_at")]
         audited_at: u64,
     },
+    #[serde(rename = "loop_decision")]
+    LoopDecision {
+        #[serde(rename = "decision_ref")]
+        decision_ref: String,
+        #[serde(rename = "created_at")]
+        created_at: u64,
+        #[serde(rename = "family")]
+        family: String,
+        #[serde(rename = "kind")]
+        kind: String,
+        #[serde(rename = "outcome")]
+        outcome: String,
+        #[serde(rename = "reason_codes")]
+        reason_codes: Vec<String>,
+        #[serde(rename = "redacted")]
+        redacted: bool,
+        #[serde(rename = "claim_ref", default, skip_serializing_if = "Option::is_none")]
+        claim_ref: Option<String>,
+        #[serde(rename = "actor_ref", default, skip_serializing_if = "Option::is_none")]
+        actor_ref: Option<String>,
+        #[serde(rename = "evidence_refs")]
+        evidence_refs: Vec<String>,
+    },
 }
 
 /// `oneiron::claim::scoped_read::weave_serve::WeaveSieveScoreView`.

@@ -273,11 +273,20 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Option<SharedVaultCreation>> {
-        SHARED_VAULT_CREATION.get(&self.store, txn, &())
+        shared_vault_creation_for_store_in_txn(&self.store, txn)
     }
 
     pub fn shared_vault_creation(&self) -> Result<Option<SharedVaultCreation>> {
         let txn = self.store.env.read_txn()?;
         self.shared_vault_creation_in_txn(&txn)
     }
+}
+
+/// [`Vault::shared_vault_creation_in_txn`] for a reader that holds a `Store`
+/// and no `Vault` (FIX 7461): the same row.
+pub(crate) fn shared_vault_creation_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<SharedVaultCreation>> {
+    SHARED_VAULT_CREATION.get(store, txn, &())
 }
