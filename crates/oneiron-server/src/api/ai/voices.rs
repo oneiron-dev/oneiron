@@ -9,9 +9,9 @@
 //! "A companion reference clip leaves only through consented provisioning").
 //! Audio travels as base64 on this wire.
 //!
-//! The owner's typed `vault.voices.*` doors (api/facade/voice_bank_doors.rs)
-//! run the same provisioning and vendor deletions through the helpers here,
-//! under the owner's proof, so one paid clone flow serves both.
+//! The typed `vault.voices.*` doors (api/facade/voice_bank_doors.rs) run the
+//! same provisioning and vendor deletions through the helpers here, under
+//! their actor's proof, so one paid clone flow serves both.
 use std::sync::Arc;
 
 use axum::Json;
@@ -20,14 +20,13 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use oneiron::consent::AuthenticatedOwner;
 use oneiron::task_verb::sdk::{
     VoiceBankClipInput, VoiceBankPackReceipt, VoiceRenderConsentReceipt, VoiceTargetEvictReceipt,
     VoiceTargetReceipt, VoiceVendorDeleteStatus, VoiceVendorEviction,
 };
 use oneiron::voice_identity::ref_bank::{
-    VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip, VoiceRenderConsent, VoiceRenderDecision,
-    VoiceTargetRecord,
+    VoiceBankActor, VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRegisterClip,
+    VoiceRenderConsentWrite, VoiceRenderDecision, VoiceTargetRecord,
 };
 use oneiron::voice_identity::{VoiceConsentBasis, VoiceConsentState};
 use oneiron::{EntityId, ModelLocality};
@@ -52,14 +51,21 @@ pub(crate) struct PackBody {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConsentBody {
     event_id: String,
-    /// Whose voice it is (entity hex).
+    /// Whose voice it is (entity hex): a real person, or a designed voice's
+    /// creator.
     subject: String,
+    /// `person` (when absent) or `designed`; the bank binds it when it first
+    /// holds the voice.
+    #[serde(default = "VoiceRefSubjectKind::input_default")]
+    subject_kind: VoiceRefSubjectKind,
     /// Who recorded the decision (entity hex).
     recorded_by: String,
     occurred_at: u64,
     /// The farthest target a grant lets the refs reach.
     reach: ModelLocality,
-    basis: VoiceConsentBasis,
+    /// How a person's decision was captured; a designed voice's needs none.
+    #[serde(default)]
+    basis: Option<VoiceConsentBasis>,
     state: VoiceConsentState,
 }
 
@@ -123,7 +129,8 @@ pub(super) async fn bank_pack(
 }
 
 /// Records the subject's render decision. A withdrawal drops the voice's
-/// target pointers and deletes their clones at the vendors.
+/// target pointers and deletes their clones at the vendors; a replay deletes
+/// none again.
 pub(super) async fn render_consent(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -144,42 +151,47 @@ pub(super) async fn render_consent(
         event_id: body.event_id,
         voice_id,
         subject,
+        subject_kind: body.subject_kind,
         recorded_by,
         occurred_at: body.occurred_at,
         reach: body.reach,
         basis: body.basis,
         state: body.state,
     };
-    let (consent, evicted) = match server.vault.record_voice_render_consent(&decision) {
+    let recorded = match server.vault.record_voice_render_consent(&decision) {
         Ok(recorded) => recorded,
         Err(error) => return bank_refusal(error),
     };
     let media = server.ai.model_runtime().media();
-    Json(render_consent_answer(media, &consent, &evicted).await).into_response()
+    Json(render_consent_answer(media, &recorded).await).into_response()
 }
 
-/// A recorded render decision's receipt. Each target clone a withdrawal
-/// dropped is deleted at its vendor first, best effort, and the receipt says
-/// what each vendor did. The route and the owner's
-/// `vault.voices.render_consent` door both answer it.
+/// A recorded render decision's receipt. Each target clone this call
+/// dropped is deleted at its vendor after the decision committed, best
+/// effort, and the receipt says what each vendor did; a replay dropped none
+/// and deletes none. The route and the `vault.voices.render_consent` door
+/// both answer it.
 pub(crate) async fn render_consent_answer(
     media: &MediaRuntime,
-    consent: &VoiceRenderConsent,
-    evicted: &[VoiceTargetRecord],
+    recorded: &VoiceRenderConsentWrite,
 ) -> VoiceRenderConsentReceipt {
-    let mut dropped = Vec::with_capacity(evicted.len());
-    for record in evicted {
+    let mut dropped = Vec::with_capacity(recorded.newly_evicted.len());
+    for record in &recorded.newly_evicted {
         dropped.push(VoiceVendorEviction {
             target: record.target.clone(),
             vendor_voice_id: record.vendor_voice_id.clone(),
             vendor: delete_at_vendor(media, record).await,
         });
     }
+    let consent = &recorded.receipt.consent;
     VoiceRenderConsentReceipt {
         voice_id: consent.decision.voice_id.clone(),
         state: consent.decision.state,
         reach: consent.decision.reach,
         revision: hex(&consent.revision),
+        event_id: consent.decision.event_id.clone(),
+        sequence: consent.sequence,
+        replayed: recorded.replayed,
         evicted: dropped,
     }
 }
@@ -250,21 +262,22 @@ impl VoiceBankRefusal {
 /// still current, else a new vendor voice made from the selected refs on a
 /// paid run of its own and recorded only while those refs and the render
 /// consent they left under are still current. A clone the bank does not
-/// record is deleted at the vendor. `owner` is the owner's door's proof: the
-/// voice must be that person's own, and the record is written under it,
-/// revalidated; the route passes none, past its owner-grade check.
+/// record is deleted at the vendor. `actor` is the typed door's: the voice
+/// must be its own, a real person's on their proof or a designed voice's
+/// creator's, and the record is written under it, revalidated; the route
+/// passes none, past its owner-grade check.
 pub(crate) async fn provision_clone(
     server: &SyncServer,
-    owner: Option<&AuthenticatedOwner>,
+    actor: Option<&VoiceBankActor>,
     voice_id: &str,
     target: &str,
     include_generated: bool,
     language: Option<&str>,
 ) -> Result<VoiceTargetReceipt, VoiceBankRefusal> {
-    if let Some(owner) = owner {
+    if let Some(actor) = actor {
         server
             .vault
-            .owned_voice_identity(owner, voice_id)
+            .owned_voice_identity(actor, voice_id)
             .map_err(VoiceBankRefusal::Bank)?;
     }
     let media = server.ai.model_runtime().media();
@@ -302,11 +315,11 @@ pub(crate) async fn provision_clone(
         VoiceBankRefusal::VendorCloneFailed(error.to_string())
     })?;
     let cloned_at = now_secs();
-    let recorded = match owner {
-        Some(owner) => {
+    let recorded = match actor {
+        Some(actor) => {
             server
                 .vault
-                .record_voice_target_clone_as(owner, &clone, &vendor_voice_id, cloned_at)
+                .record_voice_target_clone_as(actor, &clone, &vendor_voice_id, cloned_at)
         }
         None => server
             .vault
@@ -351,8 +364,8 @@ pub(super) async fn evict(
 }
 
 /// An eviction's receipt: the dropped pointer's clone is deleted at its
-/// vendor first, best effort. The route and the owner's
-/// `vault.voices.targets.evict` door both answer it.
+/// vendor first, best effort. The route and the `vault.voices.targets.evict`
+/// door both answer it.
 pub(crate) async fn evict_answer(
     media: &MediaRuntime,
     voice_id: String,

@@ -122,17 +122,18 @@ pub(super) const QUESTION_ANSWER: SideTable<AnswerKey, AnswerRecord, Named> =
 pub(super) const QUESTION_LABEL: SideTable<LabelKey, OutcomeLabel, Named> =
     SideTable::new(&side_table::TYPED_QUESTION);
 
+/// Stores the principal's new standing question from its author's
+/// `definition`: the engine mints its id and sets its version to 1.
 pub fn create_question(
     vault: &Vault,
     principal: EntityId,
-    mut definition: QuestionDefinition,
+    definition: QuestionDefinitionInput,
     now: u64,
 ) -> Result<QuestionRecord> {
     if definition.activation != QuestionActivation::Standing {
         return Err(invalid("one-off questions only save receipts"));
     }
-    definition.question.id = EntityId::now();
-    definition.question.version = 1;
+    let definition = definition.with_identity(EntityId::now(), 1);
     definition.validate()?;
     let record = QuestionRecord {
         schema_version: 1,
@@ -227,12 +228,16 @@ pub fn read_question_schedule(
         }))
 }
 
+/// The principal's standing question's next version, from its author's
+/// whole replacement `definition` over `expected_version`: the engine pins
+/// its id to `id` and its version to the next one, in the writing
+/// transaction.
 pub fn edit_question(
     vault: &Vault,
     principal: EntityId,
     id: EntityId,
     expected_version: u32,
-    mut definition: QuestionDefinition,
+    definition: QuestionDefinitionInput,
     now: u64,
 ) -> Result<QuestionRecord> {
     vault.with_write_txn_grouped(|txn| {
@@ -247,8 +252,7 @@ pub fn edit_question(
         if definition.activation != QuestionActivation::Standing {
             return Err(invalid("one-off questions only save receipts"));
         }
-        definition.question.id = id;
-        definition.question.version = version;
+        let definition = definition.with_identity(id, version);
         definition.validate()?;
         let old = QUESTION_VERSION
             .get(

@@ -2,8 +2,8 @@
 //! the standing-question verbs.
 //!
 //! The engine's own types ride inside these requests unchanged: a
-//! `DecisionQuestion` or a `QuestionDefinition` decodes through its own serde
-//! (with its `deny_unknown_fields`) and is shown to a schema as any JSON
+//! `DecisionQuestion` or a `QuestionDefinitionInput` decodes through its own
+//! serde (with its `deny_unknown_fields`) and is shown to a schema as any JSON
 //! value. No principal, actor or clock is a field here: the server's door
 //! takes the asker from the credential and the time from its own clock.
 //!
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::EntityId;
 use crate::llm::decision::questions::{
     AnswerRecord, ArtifactAskRecord, CalibrationPair, GraphAskFailure, GraphAskReceipts,
-    OutcomeLabel, QuestionCriteria, QuestionDefinition,
+    OutcomeLabel, QuestionCriteria, QuestionDefinitionInput,
 };
 use crate::llm::decision::{DecisionQuestion, DecisionRung, TypedDecision};
 use crate::memory::{MemoryError, MemoryResult};
@@ -296,21 +296,23 @@ impl GraphAskOutcome {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionCreateRequest {
-    /// The engine's `QuestionDefinition`: `{question, adapter, units, recipe,
-    /// profile, dial, activation, refresh, delivery, learning, binding?,
-    /// criteria?, audience?, posture?, media?, deadline_ms?}`. `criteria` is
+    /// The engine's `QuestionDefinitionInput`: `{question, adapter, units,
+    /// recipe, profile, dial, activation, refresh, delivery, learning,
+    /// binding?, criteria?, audience?, posture?, media?, deadline_ms?}`.
+    /// `question` is `{text, class, contract, accept_type}`, with no `id` or
+    /// `version`: the engine owns both and refuses either. `criteria` is
     /// `{yes_if_all, no_if_any, not_a_reason_to_say_no}`, each at most 16
     /// lines of 512 bytes; `audience` is `asker`; `posture` is `managed`,
     /// `relay` or `self-host` (absent: the vault's); `media` is `{images,
     /// audio}` (each absent: on); `deadline_ms` is each call's clock, 1 to
     /// 60000.
-    /// `activation` must be `standing`. The engine mints `question.id` and
-    /// sets `question.version` to 1 over what the request names. `dial`
-    /// (`{first, ceiling, band}`) must sit inside the host's dial: first at
-    /// or above the host's first rung, ceiling at most `big`, and the host's
-    /// band.
+    /// `activation` must be `standing`. The engine mints the question's id
+    /// and sets its version to 1. `dial` (`{first, ceiling, band}`) must sit
+    /// inside the host's dial: first at or above the host's first rung,
+    /// ceiling at most `big`, and a valid band inside the host's band
+    /// (`host.low <= low < high <= host.high`).
     #[schemars(with = "serde_json::Value")]
-    pub definition: QuestionDefinition,
+    pub definition: QuestionDefinitionInput,
 }
 
 /// `vault.questions.edit`'s input: a whole replacement definition, minting
@@ -322,11 +324,11 @@ pub struct QuestionEditRequest {
     pub id: EntityId,
     /// The version this edit replaces; a stale one is refused.
     pub expected_version: u32,
-    /// The whole new definition, as `vault.questions.create` takes it. The
-    /// engine pins `question.id` to `id` and `question.version` to the next
-    /// version.
+    /// The whole new definition, as `vault.questions.create` takes it, its
+    /// question without an id or version. The engine pins the question's id
+    /// to `id` and its version to the next version.
     #[schemars(with = "serde_json::Value")]
-    pub definition: QuestionDefinition,
+    pub definition: QuestionDefinitionInput,
 }
 
 /// `vault.questions.pause`'s input: pause the caller's standing question,

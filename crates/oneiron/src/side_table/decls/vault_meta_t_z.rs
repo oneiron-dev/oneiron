@@ -264,6 +264,10 @@ side_tables! {
     /// A banked voice's current render/provisioning consent decision, apart from recognition
     /// consent. Key: string (voice id).
     VOICE_REF_RENDER_CONSENT: VaultMeta b"voice:ref_render_consent:v1:" Named;
+    /// One render decision a voice's subject or designed voice's creator made, kept once and never
+    /// rewritten (FIX 4396): the decision, its revision and sequence, and the target pointers it
+    /// dropped. Erased with the bank. Key: string (voice id) "\0" string (event id).
+    VOICE_REF_RENDER_EVENT: VaultMeta b"voice:ref_render_event:v1:" Named;
     /// Cached voice render-target pointer. Key: string (voice id) "\0" string (target).
     VOICE_REF_TARGET: VaultMeta b"voice:ref_target:v1:" Named;
     /// Voice consent decision event. Key: id16 + digest16.

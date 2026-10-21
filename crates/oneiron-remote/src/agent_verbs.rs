@@ -2643,6 +2643,9 @@ impl OneironClient {
                 "vault.voices.inspect" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::VoiceBankInspection,
                 >(client, verb, &input),
+                "vault.voices.lineage" => remote_agent_verb_output::<
+                    Vec<oneiron::task_verb::sdk::VoiceRenderEventView>,
+                >(client, verb, &input),
                 "ai.transcribe" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiAnswer>(
                     client, verb, &input,
                 ),
@@ -13953,6 +13956,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.voices.inspect", value)
+    }
+    pub fn vault_voices_lineage(
+        &self,
+        input: &oneiron::task_verb::sdk::VoiceRenderLineageRequest,
+    ) -> Result<Vec<oneiron::task_verb::sdk::VoiceRenderEventView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.voices.lineage", value)
     }
     pub fn ai_transcribe(
         &self,

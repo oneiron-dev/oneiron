@@ -200,6 +200,35 @@ impl DecisionQuestion {
     }
 }
 
+/// A typed question as its author writes it (FIX 1586): everything but the
+/// id and version, which the engine owns and mints when it stores the
+/// question. It names neither, and its serde refuses either.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionQuestionInput {
+    pub text: String,
+    pub class: DecisionClass,
+    pub contract: AnswerContract,
+    /// Confident negative accept-type judgments require a second measurement.
+    pub accept_type: bool,
+}
+
+impl DecisionQuestionInput {
+    /// The stored question: this one under the `id` and `version` the engine
+    /// minted for it.
+    #[must_use]
+    pub fn with_identity(self, id: EntityId, version: u32) -> DecisionQuestion {
+        DecisionQuestion {
+            id,
+            version,
+            text: self.text,
+            class: self.class,
+            contract: self.contract,
+            accept_type: self.accept_type,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderPin {
@@ -251,13 +280,19 @@ pub struct DecisionDial {
 }
 
 impl DecisionDial {
+    /// `resident` inside this dial: its rungs between this one's, and its
+    /// band a valid band inside this one's (FIX 1587), so
+    /// `host.low <= resident.low < resident.high <= host.high`. An equal band
+    /// stays inside.
     pub fn narrow(self, resident: Self) -> Result<Self> {
         self.band.validate()?;
+        resident.band.validate()?;
         if self.first > self.ceiling
             || resident.first < self.first
             || resident.ceiling > self.ceiling
             || resident.first > resident.ceiling
-            || resident.band != self.band
+            || resident.band.low < self.band.low
+            || resident.band.high > self.band.high
         {
             return Err(invalid("resident decision dial widens owner authority"));
         }

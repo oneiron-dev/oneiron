@@ -761,7 +761,7 @@ fn inside_host_dial(
         .map_err(|_| {
             MemoryError::bad_request(format!(
                 "{}'s dial widens the host's: start at or above its first rung, end at big or \
-                 below, and keep its band",
+                 below, and keep a valid band inside its band",
                 verb.as_str()
             ))
         })

@@ -311,6 +311,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VOICE_REF_INCARNATION, LIVE),
     // A restore never revives a withdrawn render consent.
     (&t::VOICE_REF_RENDER_CONSENT, LIVE),
+    // Nor its render history, which an erase deleted with the bank.
+    (&t::VOICE_REF_RENDER_EVENT, LIVE),
     (&t::VOICE_REF_TARGET, LIVE),
     (&t::VOICE_IDENTITY_CONSENT, LIVE),
     (&t::VOICE_IDENTITY_PRINT, LIVE),

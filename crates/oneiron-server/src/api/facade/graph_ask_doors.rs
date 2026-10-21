@@ -733,7 +733,8 @@ fn asker_lane<'a>(
 /// A standing question's dial, checked inside the host's own: the dial the
 /// host's other decisions take, from its first filled rung up to `big`
 /// (`DecisionHost::dial`). A dial that starts below that rung, climbs past
-/// `big` or changes the band is refused, never stored.
+/// `big` or sets a band that is not a valid band inside the host's is
+/// refused, never stored.
 fn inside_host_dial(
     server: &SyncServer,
     dial: DecisionDial,
@@ -748,10 +749,10 @@ fn inside_host_dial(
         MemoryError::bad_request_with(
             format!(
                 "{verb}'s dial widens the host's: start at or above {first}, end at big or below, \
-                 and keep the band {}..{}",
+                 and set a band with low below high inside {}..{}",
                 host.band.low, host.band.high
             ),
-            &["Start the dial at or above the host's first rung, end it at big or below, and keep the host's band."],
+            &["Start the dial at or above the host's first rung, end it at big or below, and keep its band inside the host's."],
         )
     })
 }
