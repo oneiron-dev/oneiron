@@ -10,30 +10,46 @@
 //! slip, reads none.
 use std::sync::Arc;
 
+use oneiron::EntityId;
+use oneiron::authority::PeerMachine;
 use oneiron::claim::CallerLocality;
 use oneiron::conversation::TurnActionAttempt;
-use oneiron::{EntityId, ModelLocality};
+use oneiron::settings::ReadDestination;
 
+use super::PromptBoard;
+use crate::ai_host::AiHandle;
 use crate::auth::{CoreAuth, CoreScope};
+use crate::models::Seat;
 use crate::server::{SyncServer, blocking};
-
-/// The call's route is fixed only at admission, after the hold: judge the widest, as chat does.
-const BOARD_MODEL_LOCALITY: ModelLocality = ModelLocality::ThirdParty;
 
 /// The board `action`'s reply reads for `query`, the user turn it answers,
 /// with `agent`, the answering agent's definition, shaping its recall, and
 /// what its context records keep of it (FIX 7145). It is read as an
-/// off-device read is, and its rows meet the hold of a prompt that leaves
-/// the device. `None` when the action reads none.
+/// off-device read is. Its rows meet the hold of a prompt that goes back to
+/// the requester and as far as the chat role's live route from `seat`, on
+/// `ai`, may take the call (FIX 7257); the call that carries it is judged
+/// again once admitted ([`PromptBoard::rides`]). `None` when the action
+/// reads none.
 pub(crate) async fn action_board(
     server: &Arc<SyncServer>,
+    ai: &AiHandle,
+    seat: &Seat,
     action: &TurnActionAttempt,
     agent: EntityId,
     query: &str,
-) -> Option<(String, Option<super::ChatContextCapture>)> {
+) -> Option<PromptBoard> {
     let auth = blocking(|| requester_auth(server, action))?.at(CallerLocality::OffDevice);
-    let prompt_for =
-        crate::device_local::prompt_destination(auth.destination(), BOARD_MODEL_LOCALITY);
+    // The answer goes back to where its attempt recorded the requester
+    // asking from, toward no machine anyone proved now; never where the
+    // actor might be.
+    let caller = ReadDestination::at(
+        if action.off_device {
+            CallerLocality::OffDevice
+        } else {
+            CallerLocality::OnDevice
+        },
+        PeerMachine::Unknown,
+    );
     let board = match super::chat_board(server, auth, Some(action.conversation), agent, query).await
     {
         Ok(board) if !board.block.trim().is_empty() => board,
@@ -46,28 +62,8 @@ pub(crate) async fn action_board(
             return None;
         }
     };
-    match crate::device_local::retained_hold(
-        server.vault(),
-        &prompt_for,
-        &board.rows,
-        board.block.as_bytes(),
-    ) {
-        Ok(None) => Some((board.block, board.context)),
-        Ok(Some(hold)) => {
-            tracing::info!(
-                reason = hold.reason(),
-                "a turn action's context board is kept on this device; the action runs without it"
-            );
-            None
-        }
-        Err(error) => {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "a turn action's context board hold was not read; the action runs without it"
-            );
-            None
-        }
-    }
+    let board = PromptBoard::new(board, caller);
+    board.rides_route(ai, server.vault(), seat).then_some(board)
 }
 
 /// The credential `action`'s request was admitted on, as it stands now: the

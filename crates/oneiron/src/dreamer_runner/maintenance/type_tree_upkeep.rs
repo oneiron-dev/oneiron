@@ -29,7 +29,8 @@ use super::coach::COACH_TYPE_TREE_UPKEEP_FACET;
 use super::type_tree_gate::{drive, record_team_shape_outcomes, team_leader};
 use super::type_tree_prior::donor_prior_winner;
 use crate::agent_dispatch::{
-    TASK_TYPE_TREE_FILE, load_team_type_tree, team_shape_skill, team_shape_skill_in_force,
+    SourcedTypeTree, TASK_TYPE_TREE_FILE, load_vault_type_tree_sourced, team_shape_skill,
+    team_shape_skill_in_force,
 };
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::entity_id::EntityId;
@@ -37,13 +38,14 @@ use crate::limit_ask::EngineLimit;
 use crate::skill_hub::HubFile;
 use crate::skill_optimize::{
     HeldOutReplayNotes, SkillEditDisposition, SkillRepairStamp, held_out_receipts,
-    propose_skill_package_revision, proven_cycle, receipt_is_held_out,
+    propose_skill_package_revision, proven_cycle, receipt_is_held_out, union_source_rows,
 };
 use crate::task_type::{
     DecisionAxis, DecisionObservation, TaskTypeNode, TaskTypeRef, TaskTypeTree,
 };
-use crate::team::run_binding::team_run_tasks;
-use crate::team::{TeamReceipt, team_receipts};
+use crate::team::TeamReceipt;
+use crate::team::receipt::team_receipts_sourced;
+use crate::team::run_binding::{team_run_tasks, team_run_tasks_sourced};
 use crate::temporal::TimeRange;
 use crate::{Error, Result, Vault};
 
@@ -82,6 +84,23 @@ pub trait TypeNamer {
     ///
     /// Host-defined.
     fn name(&self, parent: &TaskTypeNode, node: &TaskTypeNode) -> Result<Option<String>>;
+
+    /// [`Self::name`] for a prompt read from `source_rows` (FIX 6997): the
+    /// rows the parent's name, the decision and its winning value were read
+    /// from, for the host's call to carry. `None` is unknown. By default it
+    /// names as [`Self::name`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::name`].
+    fn name_sourced(
+        &self,
+        parent: &TaskTypeNode,
+        node: &TaskTypeNode,
+        _source_rows: Option<Vec<EntityId>>,
+    ) -> Result<Option<String>> {
+        self.name(parent, node)
+    }
 }
 
 /// Settled teams one pass offered to the in-force team-shape revision's
@@ -398,10 +417,34 @@ fn generated_name(node: &TaskTypeNode) -> Option<String> {
     ))
 }
 
+/// The namer, and what each of its prompts was read from (FIX 6997).
+struct TreeNaming<'a> {
+    namer: &'a dyn TypeNamer,
+    /// The stored tree the pass reshapes, its head and the rows one read
+    /// took them from.
+    stored: &'a SourcedTypeTree,
+    /// The rows this pass's reshape was decided from, which a type split in
+    /// this pass is named from.
+    decided: Option<Vec<EntityId>>,
+}
+
+/// Whether `node`'s prompt fields (its parent, decision and winning value)
+/// are as `stored` keeps them: a type split on an earlier night.
+fn split_stored(stored: &TaskTypeTree, node: &TaskTypeNode) -> bool {
+    stored.node(&node.node_id).is_some_and(|kept| {
+        kept.parent == node.parent
+            && kept.split_axis == node.split_axis
+            && kept.split_winner == node.split_winner
+    })
+}
+
 /// Puts up to [`TYPE_NAMES_PER_PASS`] live split types that still carry a
-/// generated name to `namer`. A name that is empty, multi-line or already
-/// another type's is dropped.
-fn name_types(tree: &mut TaskTypeTree, namer: &dyn TypeNamer) -> Result<u32> {
+/// generated name to the namer. A name that is empty, multi-line or already
+/// another type's is dropped. Each call carries the rows its prompt was read
+/// from (FIX 6997): the stored tree's for a type split on an earlier night,
+/// the pass's decision's for one split now, and a parent's own call's once
+/// this pass renamed it.
+fn name_types(tree: &mut TaskTypeTree, naming: &TreeNaming<'_>) -> Result<u32> {
     let unnamed: Vec<String> = tree
         .nodes
         .values()
@@ -409,6 +452,9 @@ fn name_types(tree: &mut TaskTypeTree, namer: &dyn TypeNamer) -> Result<u32> {
         .map(|node| node.node_id.clone())
         .take(TYPE_NAMES_PER_PASS)
         .collect();
+    let tree_rows = &naming.stored.source_rows;
+    // Each type this pass renamed, with the rows its name was written from.
+    let mut renamed: BTreeMap<String, Option<Vec<EntityId>>> = BTreeMap::new();
     let mut named = 0_u32;
     for node_id in unnamed {
         let Some(node) = tree.node(&node_id) else {
@@ -417,7 +463,15 @@ fn name_types(tree: &mut TaskTypeTree, namer: &dyn TypeNamer) -> Result<u32> {
         let Some(parent) = node.parent.as_deref().and_then(|parent| tree.node(parent)) else {
             continue;
         };
-        let Some(answer) = namer.name(parent, node)? else {
+        let own = if split_stored(&naming.stored.tree, node) {
+            tree_rows
+        } else {
+            &naming.decided
+        };
+        let parent_rows = renamed.get(&parent.node_id).unwrap_or(tree_rows);
+        let rows = union_source_rows([own.as_deref(), parent_rows.as_deref()])
+            .filter(|rows| !rows.is_empty());
+        let Some(answer) = naming.namer.name_sourced(parent, node, rows.clone())? else {
             continue;
         };
         let name: String = answer.trim().chars().take(MAX_TYPE_NAME_CHARS).collect();
@@ -430,6 +484,7 @@ fn name_types(tree: &mut TaskTypeTree, namer: &dyn TypeNamer) -> Result<u32> {
         if let Some(node) = tree.nodes.get_mut(&node_id) {
             node.name = name;
             named += 1;
+            renamed.insert(node_id, rows);
         }
     }
     Ok(named)
@@ -450,6 +505,55 @@ fn rationale(report: &TypeTreeUpkeepReport, version: u64) -> String {
     )
 }
 
+/// The receipts in `teams` placed in the vault tree: no project, or a
+/// project whose team-shape head in force, as `project_head` reads it, is
+/// `vault_head`. Each project's head is read once.
+fn vault_placed(
+    teams: &[TeamReceipt],
+    vault_head: Option<EntityId>,
+    mut project_head: impl FnMut(EntityId) -> Result<Option<EntityId>>,
+) -> Result<Vec<TeamReceipt>> {
+    let mut shares: BTreeMap<EntityId, bool> = BTreeMap::new();
+    let mut receipts = Vec::new();
+    for receipt in teams {
+        let shared = match receipt.project {
+            None => true,
+            Some(project) => match shares.get(&project) {
+                Some(shared) => *shared,
+                None => {
+                    let shared = project_head(project)? == vault_head;
+                    shares.insert(project, shared);
+                    shared
+                }
+            },
+        };
+        if shared {
+            receipts.push(receipt.clone());
+        }
+    }
+    Ok(receipts)
+}
+
+/// `placed`'s evidence, then the same less every team of a leader whose pack
+/// receipt `reserved` holds, with the decisions read without them; `tasks`
+/// names each team's TASK.
+fn reserved_apart(
+    placed: Vec<TeamReceipt>,
+    reserved: &BTreeSet<String>,
+    tasks: &BTreeMap<String, String>,
+) -> (Vec<TypeEvidence>, Vec<TypeEvidence>) {
+    let eligible: Vec<TeamReceipt> = placed
+        .iter()
+        .filter(|receipt| {
+            !team_leader(&receipt.team_ref).is_some_and(|leader| {
+                reserved.contains(&crate::receipt::attempt_pack_receipt_id(&leader))
+            })
+        })
+        .cloned()
+        .collect();
+    (type_evidence(placed, tasks), type_evidence(eligible, tasks))
+}
+
 impl Vault {
     /// Type-tree upkeep as the Coach, under a leased `coach.type_tree_upkeep`
     /// attempt: charge each settled team to the in-force team-shape revision
@@ -461,7 +565,9 @@ impl Vault {
     /// leader in the head's gate reserve leaves before any decision is read.
     /// With a `scorer`, the open revision then goes to the held-out gate, its
     /// picks counted without the reserved teams, and an admitting verdict
-    /// puts it in force.
+    /// puts it in force. The tree, its head and each receipt's project head
+    /// come from one read, and each name's call carries the rows its prompt
+    /// was read from (FIX 6997).
     ///
     /// # Errors
     ///
@@ -476,22 +582,67 @@ impl Vault {
         now: u64,
     ) -> Result<TypeTreeUpkeepReport> {
         self.require_coach_attempt(attempt, COACH_TYPE_TREE_UPKEEP_FACET)?;
-        let receipts = team_receipts(self, None)?;
-        let (reserve, reserved) = match team_shape_skill_in_force(self, None)? {
+        let (receipts, receipt_rows): (Vec<TeamReceipt>, Vec<Option<Vec<EntityId>>>) =
+            team_receipts_sourced(self, None)?.into_iter().unzip();
+        let projects: BTreeSet<EntityId> = receipts
+            .iter()
+            .filter_map(|receipt| receipt.project)
+            .collect();
+        let stored = load_vault_type_tree_sourced(self, &projects)?;
+        let (reserve, reserved, reserve_rows): (_, _, Option<Vec<EntityId>>) = match stored.head {
             Some(head) => {
                 let record = self.get_skill_record(&head)?.ok_or(Error::EntityNotFound)?;
                 let write = record_team_shape_outcomes(self, &head, &record, &receipts)?;
-                // The leader receipts the gate reads as the head's reserve.
+                // The leader receipts the gate reads as the head's reserve,
+                // from a reader that names no rows: unknown.
                 let reserved: BTreeSet<String> =
                     held_out_receipts(self, &head)?.into_iter().collect();
-                (write.report, reserved)
+                (write.report, reserved, None)
             }
-            None => (TeamShapeReserve::default(), BTreeSet::new()),
+            // No head reserves a team, and no reserve is read.
+            None => (
+                TeamShapeReserve::default(),
+                BTreeSet::new(),
+                Some(Vec::new()),
+            ),
         };
-        let (evidence, eligible) = self.vault_type_evidence(&receipts, &reserved)?;
+        let tasks = team_run_tasks_sourced(self)?;
+        // Every receipt's project was asked in the one read.
+        let placed = vault_placed(&receipts, stored.head, |project| {
+            Ok(stored
+                .project_heads
+                .get(&project)
+                .and_then(|(head, _)| *head))
+        })?;
+        // A split made now is decided from every receipt read (fit, held
+        // out, reserved or left to a project's own tree), the starts that
+        // grouped the placed ones by TASK, the heads that placed them, the
+        // gate reserve and the stored tree.
+        let decided = union_source_rows(
+            receipt_rows
+                .iter()
+                .chain(
+                    placed
+                        .iter()
+                        .filter_map(|receipt| tasks.get(&receipt.team_ref).map(|(_, rows)| rows)),
+                )
+                .chain(stored.project_heads.values().map(|(_, rows)| rows))
+                .chain([&reserve_rows, &stored.source_rows])
+                .map(Option::as_deref),
+        );
+        let tasks: BTreeMap<String, String> = tasks
+            .into_iter()
+            .map(|(team, (task, _))| (team, task))
+            .collect();
+        let (evidence, eligible) = reserved_apart(placed, &reserved, &tasks);
         let (held_out, fit) = fit_split(&eligible, &team_shape_skill()?);
+        let naming = TreeNaming {
+            namer,
+            stored: &stored,
+            decided,
+        };
         let mut report =
-            self.reshape_and_propose(attempt, namer, &evidence, &held_out, &fit, now)?;
+            self.reshape_and_propose(attempt, &naming, &evidence, &held_out, &fit, now)?;
         report.reserve = reserve;
         if let Some(scorer) = scorer {
             report.gate = drive(self, attempt, scorer, &receipts, &eligible, now)?;
@@ -503,17 +654,18 @@ impl Vault {
     /// over `evidence`, every receipt placed in the vault tree. The reshape
     /// fits on `fit` and is checked on `held_out`, neither of which holds a
     /// reserved team; the proposed tree counts every receipt, and the judge
-    /// reads only its shape, recounted without the reserved teams.
+    /// reads only its shape, recounted without the reserved teams. The tree
+    /// reshaped and the head it revises are `naming`'s one read.
     fn reshape_and_propose(
         &self,
         attempt: &DreamerAdmittedAttempt,
-        namer: &dyn TypeNamer,
+        naming: &TreeNaming<'_>,
         evidence: &[TypeEvidence],
         held_out: &[&TypeEvidence],
         fit: &[&TypeEvidence],
         now: u64,
     ) -> Result<TypeTreeUpkeepReport> {
-        let base = load_team_type_tree(self, None)?;
+        let base = &naming.stored.tree;
         let mut report = TypeTreeUpkeepReport {
             receipts: u32::try_from(evidence.len()).unwrap_or(u32::MAX),
             decisions: u32::try_from(
@@ -525,7 +677,7 @@ impl Vault {
             .unwrap_or(u32::MAX),
             ..TypeTreeUpkeepReport::default()
         };
-        let (in_force, _) = recount(&base, fit);
+        let (in_force, _) = recount(base, fit);
         let mut shaped = in_force.clone();
         let changes = reshape(&mut shaped);
         if changes != Reshape::default() {
@@ -548,11 +700,12 @@ impl Vault {
         let all: Vec<&TypeEvidence> = evidence.iter().collect();
         let (mut tree, skipped) = recount(&shaped, &all);
         report.skipped = skipped;
-        report.named = name_types(&mut tree, namer)?;
-        if tree == base {
+        report.named = name_types(&mut tree, naming)?;
+        if tree == *base {
             return Ok(report);
         }
-        let Some(head) = team_shape_skill_in_force(self, None)? else {
+        // The head the tree was read from, never one read apart from it.
+        let Some(head) = naming.stored.head else {
             return Ok(report);
         };
         let version = self
@@ -602,43 +755,18 @@ impl Vault {
     /// a project with no team-shape fork of its own in force), with its
     /// decisions; then the same, less every team of a leader whose pack
     /// receipt `reserved` holds, with the decisions read without them.
+    /// [`Self::run_coach_type_tree_upkeep`] reads the same with the heads of
+    /// its one tree read.
     pub(super) fn vault_type_evidence(
         &self,
         teams: &[TeamReceipt],
         reserved: &BTreeSet<String>,
     ) -> Result<(Vec<TypeEvidence>, Vec<TypeEvidence>)> {
         let vault_head = team_shape_skill_in_force(self, None)?;
-        let mut shares: BTreeMap<EntityId, bool> = BTreeMap::new();
-        let mut receipts = Vec::new();
-        for receipt in teams {
-            let shared = match receipt.project {
-                None => true,
-                Some(project) => match shares.get(&project) {
-                    Some(shared) => *shared,
-                    None => {
-                        let shared = team_shape_skill_in_force(self, Some(project))? == vault_head;
-                        shares.insert(project, shared);
-                        shared
-                    }
-                },
-            };
-            if shared {
-                receipts.push(receipt.clone());
-            }
-        }
+        let receipts = vault_placed(teams, vault_head, |project| {
+            team_shape_skill_in_force(self, Some(project))
+        })?;
         let tasks = team_run_tasks(self)?;
-        let eligible: Vec<TeamReceipt> = receipts
-            .iter()
-            .filter(|receipt| {
-                !team_leader(&receipt.team_ref).is_some_and(|leader| {
-                    reserved.contains(&crate::receipt::attempt_pack_receipt_id(&leader))
-                })
-            })
-            .cloned()
-            .collect();
-        Ok((
-            type_evidence(receipts, &tasks),
-            type_evidence(eligible, &tasks),
-        ))
+        Ok(reserved_apart(receipts, reserved, &tasks))
     }
 }
