@@ -23508,6 +23508,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/call_evidence.rs",
+     "purpose": "The call receipts the agent-health review reads, by the attempt each names (OF-568 L4)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/call_loop.rs",
+     "purpose": "`loop` over agents' call receipts, one call stream at a time (`call_evidence`, OF-568 L4)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -47454,6 +47474,8 @@
      "kind": "src",
      "notable": [
       "ActionInputs",
+      "CallAttemptRef",
+      "CallAttemptWitness",
       "CallOutcome",
       "CallReceipt",
       "CallReceiptInput",
@@ -47464,10 +47486,10 @@
      "purpose": "OF-538: one lasting receipt per wire call, reads included",
      "surface": {
       "const": 5,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 12,
-      "struct": 4
+      "struct": 6
      }
     },
     {
@@ -61146,7 +61168,7 @@
      "surface": {
       "crate-vis": 11,
       "enum": 8,
-      "fn": 2,
+      "fn": 3,
       "struct": 11
      }
     },
@@ -69523,7 +69545,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 118,
+     "files": 120,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70540,7 +70562,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4485,
+   "source_files": 4487,
    "test_files": 902
   },
   "oneiron-android": {
@@ -84426,7 +84448,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -97283,6 +97305,7 @@
       "CalendarSel",
       "CalendarSyncOutcome",
       "CalibrationPair",
+      "CallAttemptRef",
       "CallClass",
       "CallEnvelope",
       "CallOutcome",
@@ -100787,7 +100810,7 @@
      "purpose": "—",
      "surface": {
       "enum": 940,
-      "struct": 2948
+      "struct": 2949
      }
     },
     {
