@@ -142,8 +142,7 @@ pub(crate) struct ReadableLoopDecision {
     pub(crate) actor_ref: Option<EntityId>,
     /// The vault rows this item's admission stood on, each once: its shown
     /// claim and actor and, for a subject, the project that made the event
-    /// theirs. A saved item rechecks whole through
-    /// [`ScopedRead::authorised_loop_decision_in_txn`].
+    /// theirs. Evidence refs only: a recheck reads the whole item again.
     pub(crate) dependencies: Vec<EntityId>,
 }
 
@@ -261,30 +260,6 @@ impl ScopedRead<'_> {
         }
         count.finish(self.vault);
         items
-    }
-
-    /// The one decision `decision`, admitted again exactly as
-    /// [`Self::authorised_loop_decisions_in_txn`] admits each: `None` when
-    /// the reader may not see it now, it is gone, or it did not read. A
-    /// saved item rechecks against this alone, so its failure moves no other.
-    pub(crate) fn authorised_loop_decision_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        reader: WeaveReader<'_>,
-        decision: GateDecisionId,
-    ) -> Option<ReadableLoopDecision> {
-        let mut read = self.loop_read_in(txn, reader)?;
-        let record = match self.vault.store.gate_decision_in_txn(txn, decision) {
-            Ok(record) => record?,
-            Err(error) => {
-                tracing::warn!(
-                    error_kind = ?error.kind(),
-                    "a gate decision row did not read; its loop decision is withheld"
-                );
-                return None;
-            }
-        };
-        self.admit_loop_decision_in(txn, &mut read, record)
     }
 
     /// Binds `reader` in `txn` and resolves this lane's policy and floor:
