@@ -120,6 +120,9 @@ impl Vault {
             device_proof,
             transport_proof,
         } = input;
+        // Every direct address is kept (FIX 7922): measured, and paced only
+        // before the writer opens.
+        let _turn = self.admit_authority_work(address.direct_addrs.len(), None, || Ok(machine))?;
         let mut txn = self.store.env.write_txn()?;
         if let Some(owner) = owner {
             owner.revalidate_in_txn(self, &txn)?;
@@ -320,9 +323,8 @@ impl Vault {
             let slip = self.mint_slip_in_txn(&mut txn, issuer, grant)?;
             claims.alpns.insert(alpn.to_vec(), slip.claims.slip_id);
         }
-        if claims.alpns.len() > MAX_ALPNS {
-            return Err(invalid_authority());
-        }
+        // Every grant is kept (FIX 7921): the count is measured, never refused.
+        super::super::measure_authority_work(&self.store.limit_watch, claims.alpns.len());
         self.write_mesh_authority_in_txn(&mut txn, issuer, claims)?;
         txn.commit()?;
         Ok(())

@@ -204,6 +204,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::DeadlineJobsPerCaller),
         Self::Engine(EngineLimit::BackupHandoffPendingBackups),
         Self::Engine(EngineLimit::BackupHandoffPendingBytes),
+        Self::Engine(EngineLimit::AuthorityRecordItems),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
