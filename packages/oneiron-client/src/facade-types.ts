@@ -596,8 +596,16 @@ export type WorldPrivacyWaitStatus = { state: "pending" } | { state: "applied"; 
 export type WorldPrivacyWaitResult = { request_id: string; world: string; status: WorldPrivacyWaitStatus }
 /** `oneiron::task_verb::ask_types::TaskAskStatus` */
 export type TaskAskStatus = { Pending: { hold?: TaskAskHoldReason | null } } | { Changed: { voided: EntityId[]; generation: number } } | { Settled: TaskAskResult } | { WorldPrivacy: WorldPrivacyWaitResult }
+/** `oneiron_browser::stop::StrictDenial` */
+export type StrictDenial = "rule_abstained" | "no_rule" | "image"
+/** `oneiron_browser::stop::AskUpReason` */
+export type AskUpReason = { why: "asked"; ladder?: string | null } | { why: "looks" } | { why: "no_answer" } | { why: "wrong_answer" } | { why: "strict"; denied: StrictDenial }
+/** `oneiron_browser::stop::ClockScope` */
+export type ClockScope = "wait" | "navigation" | "decision"
+/** `oneiron_browser::stop::BatchStopCause` */
+export type BatchStopCause = { cause: "postcondition_unmet" } | { cause: "locator_missing" } | { cause: "incomplete_observation" } | { cause: "decider_asked_up"; reason: AskUpReason } | { cause: "clock"; scope: ClockScope } | { cause: "press_needed" } | { cause: "taken_over" } | { cause: "field_text" } | { cause: "no_progress" } | { cause: "browser"; code: string }
 /** `oneiron::task_verb::highway_types::TaskWorkflowHandoff` */
-export type TaskWorkflowHandoff = "program" | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } }
+export type TaskWorkflowHandoff = { program: { stop_cause: BatchStopCause } } | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } }
 /** `oneiron::task_verb::highway_types::TaskWorkflowOutcome` */
 export type TaskWorkflowOutcome = "pending" | { done: { receipt_ref: EntityId } } | { handoff: { cause: TaskWorkflowHandoff; receipt_ref: EntityId } }
 /** `oneiron::task_verb::highway_types::TaskWorkflowStatus` */
@@ -7660,14 +7668,6 @@ export type BatchStep = { step: "open"; url: string } | { step: "click"; ref: st
 export type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean }
 /** `oneiron_browser::SubgoalStatus` */
 export type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU"
-/** `oneiron_browser::stop::StrictDenial` */
-export type StrictDenial = "rule_abstained" | "no_rule" | "image"
-/** `oneiron_browser::stop::AskUpReason` */
-export type AskUpReason = { why: "asked"; ladder?: string | null } | { why: "looks" } | { why: "no_answer" } | { why: "wrong_answer" } | { why: "strict"; denied: StrictDenial }
-/** `oneiron_browser::stop::ClockScope` */
-export type ClockScope = "wait" | "navigation" | "decision"
-/** `oneiron_browser::stop::BatchStopCause` */
-export type BatchStopCause = { cause: "postcondition_unmet" } | { cause: "locator_missing" } | { cause: "incomplete_observation" } | { cause: "decider_asked_up"; reason: AskUpReason } | { cause: "clock"; scope: ClockScope } | { cause: "press_needed" } | { cause: "taken_over" } | { cause: "field_text" } | { cause: "no_progress" } | { cause: "browser"; code: string }
 /** `oneiron_browser::stop::CheckReceipt` */
 export type CheckReceipt = { expect: ExpectInput; observed: ExpectOutput }
 /** `oneiron_browser::stop::FailedStepReceipt` */

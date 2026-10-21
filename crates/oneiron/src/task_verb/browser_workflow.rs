@@ -20,7 +20,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use oneiron_browser::{ExpectInput, ExpectOutput, LibraryRunOutput, SubgoalStatus};
+use oneiron_browser::{BatchStopCause, ExpectInput, ExpectOutput, LibraryRunOutput, SubgoalStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -319,8 +319,12 @@ pub enum TaskWorkflowReport {
         output: LibraryRunOutput,
         checks: Vec<TaskWorkflowCheck>,
     },
-    /// The strict program handed off before its end.
-    Program { output: LibraryRunOutput },
+    /// The strict program handed off before its end, for `stop_cause`;
+    /// `output` is its run, `None` when the call never ran.
+    Program {
+        stop_cause: BatchStopCause,
+        output: Option<LibraryRunOutput>,
+    },
     /// The pin names no program, so nothing ran.
     Unavailable,
 }
@@ -439,18 +443,25 @@ fn settled_outcome(
         (TaskWorkflowPin::Active { .. }, TaskWorkflowReport::Unavailable) => {
             refused("ran nothing, and its pin names a program")
         }
-        (TaskWorkflowPin::Active { record, .. }, TaskWorkflowReport::Program { output }) => {
-            if !runs(output, *record) {
+        (
+            TaskWorkflowPin::Active { record, .. },
+            TaskWorkflowReport::Program { stop_cause, output },
+        ) => {
+            if output.as_ref().is_some_and(|output| !runs(output, *record)) {
                 return refused("ran another program than its pin's");
             }
-            Ok(handoff(TaskWorkflowHandoff::Program))
+            Ok(handoff(TaskWorkflowHandoff::Program {
+                stop_cause: stop_cause.clone(),
+            }))
         }
         (TaskWorkflowPin::Active { record, .. }, TaskWorkflowReport::Ran { output, checks }) => {
             if !runs(output, *record) {
                 return refused("ran another program than its pin's");
             }
             if output.status != SubgoalStatus::Done || !output.unmet.is_empty() {
-                return Ok(handoff(TaskWorkflowHandoff::Program));
+                return Ok(handoff(TaskWorkflowHandoff::Program {
+                    stop_cause: stop_cause_of(output),
+                }));
             }
             let pinned = &row.goal.browser_checks;
             if checks.len() != pinned.len()
@@ -473,6 +484,26 @@ fn settled_outcome(
 /// A report its pin does not admit, refused for `what` it did.
 fn refused(what: &str) -> Result<TaskWorkflowOutcome> {
     Err(Error::InvalidConfig(format!("a bound try's report {what}")))
+}
+
+/// Why `output`'s run stopped short, as its batch states it, else its
+/// failed step's receipt; a run that states neither is `library_run_unstated`,
+/// as the preflight reads one.
+fn stop_cause_of(output: &LibraryRunOutput) -> BatchStopCause {
+    output
+        .batch
+        .stop_cause
+        .clone()
+        .or_else(|| {
+            output
+                .batch
+                .failed_receipt
+                .as_ref()
+                .map(|receipt| receipt.stop_cause.clone())
+        })
+        .unwrap_or_else(|| BatchStopCause::Browser {
+            code: "library_run_unstated".to_owned(),
+        })
 }
 
 /// Whether `output` is a run of the program `record`.
