@@ -233,7 +233,10 @@ impl<'a> PreparedSource<'a> {
     /// error stays exactly as it was, and for a throw outside the authored
     /// source (the guest envelope, a helper or a prelude line).
     pub(crate) fn failure_position(&self, at: Option<GuestPosition>) -> Option<String> {
-        let (line, column) = self.transpiled.as_ref()?.source_position(self.original, at?)?;
+        let (line, column) = self
+            .transpiled
+            .as_ref()?
+            .source_position(self.original, at?)?;
         let line = line
             .checked_sub(self.prelude_lines)
             .filter(|line| *line > 0)?;
@@ -397,7 +400,10 @@ fn transpile(wrapped: &str) -> std::result::Result<TranspiledSource, Preparation
     if let Some(first) = transformed.diagnostics.first() {
         return Err(PreparationNote::UnsupportedTypeScript(first.to_string()));
     }
-    #[expect(deprecated, reason = "the transform names the helpers it called only here")]
+    #[expect(
+        deprecated,
+        reason = "the transform names the helpers it called only here"
+    )]
     let helpers = !transformed.helpers_used.is_empty();
     // A program the transform leaves as it was holds no TypeScript: it runs
     // as written, never reprinted.
@@ -470,7 +476,7 @@ fn print<'a>(
 ) -> TranspiledSource {
     let mut executed_js = String::new();
     if helpers {
-        for directive in program.directives.iter() {
+        for directive in &program.directives {
             let text = &wrapped[directive.span.start as usize..directive.span.end as usize];
             executed_js.push_str(text);
             if !text.ends_with(';') {

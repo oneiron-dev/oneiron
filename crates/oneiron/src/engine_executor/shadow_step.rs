@@ -16,8 +16,9 @@
 use super::cancel::StepCancellation;
 use super::host::executor_boundary_contract;
 use super::store::{
-    RECOVERABLE_OUTPUT_CHUNK_BYTES, is_result_output_path, observation_output_path,
-    recoverable_output_path, result_read_path, script_output_path, validate_runtime_outputs,
+    RECOVERABLE_OUTPUT_CHUNK_BYTES, executed_output_path, is_result_output_path,
+    observation_output_path, recoverable_output_path, result_read_path, script_output_path,
+    source_map_output_path, validate_runtime_outputs,
 };
 use super::types::{JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome};
 use super::wire::heal_executor_reply;
@@ -27,6 +28,7 @@ use crate::code_run::shadow_runner::{
     ShadowUnavailable, ShadowUnavailableReason,
 };
 use crate::code_run::{CodeRunRawOutput, CodeRunReplayRecord};
+use crate::code_sandbox::source::prepare_source;
 use crate::{Error, LlmResponse, Result};
 
 /// The outputs of `prefix`, a run's row as a step starts, that the step's
@@ -92,6 +94,16 @@ pub fn run_shadow_step(
         return finish_run(store, seq, status, outputs, &[], &[], bridge);
     };
     outputs.push(store.put(script_output_path(seq), healed.code.as_bytes())?);
+    // Prepared once, as a run's step is (FIX 8276): a TypeScript program's
+    // executed JavaScript and its preparation record stay in the arm's own
+    // store beside the program.
+    let prepared = prepare_source(&healed.code);
+    if let Some(transpiled) = prepared.transpiled() {
+        let executed = transpiled.executed_js().as_bytes();
+        outputs.push(store.put(executed_output_path(seq), executed)?);
+        let record = transpiled.record_json(&healed.code)?;
+        outputs.push(store.put(source_map_output_path(seq), &record)?);
+    }
     let boundary = executor_boundary_contract()
         .map_err(|_| Error::InvariantViolation("executor sandbox contract"))?;
     let mut host = ShadowBridgeHost::new(prepared, store, arm_reads(prepared))?;
@@ -102,7 +114,7 @@ pub fn run_shadow_step(
         boundary,
         determinism: prepared.determinism,
     };
-    let ran = runtime.run_step_cancellable(step, &mut host, cancel);
+    let ran = runtime.run_prepared_step_cancellable(step, &prepared, &mut host, cancel);
     // An erase that took the source's content while the step ran leaves the
     // arm nothing to publish of it (FIX 5718).
     if let Some(withheld) = store.source_withheld() {
