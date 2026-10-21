@@ -6,8 +6,8 @@ use std::path::Path;
 use super::cgi_finish::realized_updates;
 use super::door_window::{DoorWindowReport, DoorWindowVerdict, held_by_ref, printable_ref_name};
 use super::evidence::{
-    PackStats, RECEIVE_PACK_ADMISSION_PREDICATE, ReceivePackOutcome, RefUpdate, receive_pack_field,
-    receive_pack_provenance_refused,
+    PackStats, RECEIVE_PACK_ADMISSION_PREDICATE, ReceivePackOutcome, ReceivePackScanSummary,
+    RefUpdate, receive_pack_field, receive_pack_provenance_refused,
 };
 use super::landing::ReceivePackLanding;
 use super::paths::ORIGIN_REF_UPDATE_BATCH;
@@ -179,6 +179,9 @@ pub(super) struct ReceivePackIntent {
     pointers: Vec<(String, String, u64)>,
     #[serde(default)]
     push: Option<GitPushStamp>,
+    // What the scan came to, written with the push's marks (FIX 8032): the
+    // only source its outcomes' `scan` reads.
+    scan: ReceivePackScanSummary,
 }
 
 impl ReceivePackIntent {
@@ -635,6 +638,8 @@ impl Vault {
                         ref_update_count: 1,
                     },
                 };
+                // An admitted carrier, never the scan's evidence: the outcome
+                // reads the scan from the intent's own summary.
                 let door = DoorWindowReport {
                     verdict: DoorWindowVerdict::Clean,
                     ref_updates: vec![update],
@@ -650,6 +655,7 @@ impl Vault {
                         0,
                         EntityId::from_hex(&intent.refs[index].outcome_id)
                             .map_err(|_| Error::CorruptedIndex("receive-pack outcome id"))?,
+                        intent.scan,
                     )?;
                     if replay_outcome.is_none() {
                         replay_outcome = Some(outcome.clone());
