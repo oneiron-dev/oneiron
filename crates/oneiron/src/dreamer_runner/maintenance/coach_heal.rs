@@ -538,7 +538,7 @@ enum IssueOutcome {
 }
 
 /// The case's blocked reports that still decode, by receipt.
-pub(super) fn case_reports(
+pub(crate) fn case_reports(
     vault: &Vault,
     reports: &[crate::failure_ladder::BlockedReportRef],
 ) -> Result<Vec<(EntityId, BlockedReceipt)>> {
