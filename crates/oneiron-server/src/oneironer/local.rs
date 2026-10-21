@@ -187,7 +187,10 @@ fn returned_spans<'s>(
     named: &'s [Named],
     mentioned: &'s [Span],
     returned: impl Fn(usize) -> bool,
-) -> (BTreeMap<Coordinates, &'s Span>, Vec<(Coordinates, Coordinates)>) {
+) -> (
+    BTreeMap<Coordinates, &'s Span>,
+    Vec<(Coordinates, Coordinates)>,
+) {
     let mut spans = BTreeMap::new();
     for span in mentioned {
         if returned(span.segment) {

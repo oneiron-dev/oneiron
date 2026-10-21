@@ -181,7 +181,8 @@ impl Admission {
         let (manifest, stack) = (&read.manifest, read.stack_sha16.as_str());
         let windows = Arc::new(WindowCounter::load(&self.config, manifest)?);
         let descriptor = candidate.descriptor();
-        let mut calibration = self.calibration(dir, stack, &descriptor, contest, &windows, claim)?;
+        let mut calibration =
+            self.calibration(dir, stack, &descriptor, contest, &windows, claim)?;
         let max_input_tokens = self.config.max_input_tokens;
         let (row, checkpoint) = (candidate.row, &manifest.trunk.sha256);
         let expected = Expected {
@@ -229,7 +230,8 @@ impl Admission {
         let stack = read.stack_sha16.as_str();
         let windows = Arc::new(WindowCounter::load(&self.config, &read.manifest)?);
         let descriptor = candidate.descriptor();
-        let mut calibration = self.calibration(dir, stack, &descriptor, contest, &windows, claim)?;
+        let mut calibration =
+            self.calibration(dir, stack, &descriptor, contest, &windows, claim)?;
         let load = coreml::Load {
             bundle: dir.to_path_buf(),
             model: candidate.model.clone(),

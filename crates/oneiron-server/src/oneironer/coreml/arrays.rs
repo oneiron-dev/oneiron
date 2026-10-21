@@ -132,7 +132,8 @@ fn read(
         "core ml output {name} is not float16"
     );
     let shape = sizes(&shape);
-    let shape = shape.ok_or_else(|| anyhow::anyhow!("core ml output {name} has a negative size"))?;
+    let shape =
+        shape.ok_or_else(|| anyhow::anyhow!("core ml output {name} has a negative size"))?;
     let copy = allocated(&shape, MLMultiArrayDataType::Float16)?;
     // SAFETY: both arrays are this thread's, the copy of the source's shape
     // and type; Core ML's transfer, from macOS 15.0, the row's `min_os`,
