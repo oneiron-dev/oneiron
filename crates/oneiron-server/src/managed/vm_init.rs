@@ -154,7 +154,7 @@ fn run() -> anyhow::Result<ExitCode> {
         .and_then(|line| channel.write_all(line.as_bytes()).map_err(Into::into))
         .context("answering the host's provision connection");
     drop(channel);
-    let (frame, provisioned) = provisioned.map_err(|refusal| {
+    let (frame, mut provisioned) = provisioned.map_err(|refusal| {
         anyhow::anyhow!(
             "provisioning refused ({}): {}",
             refusal.code,
@@ -181,6 +181,8 @@ fn run() -> anyhow::Result<ExitCode> {
             return answered.map(|()| ExitCode::SUCCESS);
         }
     };
+    // Nothing the engine started is left to hold the source drive.
+    drop(provisioned.source.take());
     rustix::fs::sync();
     remove_key(&provisioned);
     let status = status?;

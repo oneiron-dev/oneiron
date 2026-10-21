@@ -266,37 +266,43 @@ pub(super) fn observe(
     identifier: &KeyIdentifier,
     uid: u32,
 ) -> VmRestoreMarkerObservation {
+    read_marker(root, identifier, uid)
+        .unwrap_or_else(|reason| VmRestoreMarkerObservation::Unreadable { reason })
+}
+
+fn read_marker(
+    root: &File,
+    identifier: &KeyIdentifier,
+    uid: u32,
+) -> Result<VmRestoreMarkerObservation, VmRestoreMarkerUnreadable> {
     use VmRestoreMarkerUnreadable as Unreadable;
-    let read = || -> Result<VmRestoreMarkerObservation, Unreadable> {
-        let absent = VmRestoreMarkerObservation::Observed {
-            data_present: false,
-            marker: None,
-        };
-        let Some(storage) = held_dir(root, STORAGE_LEAF)? else {
-            return Ok(absent);
-        };
-        match fscrypt::policy(&storage) {
-            Ok(Policy::Ours(found)) if found == *identifier => {}
-            Ok(_) => return Err(Unreadable::BindingMismatch),
-            Err(_) => return Err(Unreadable::DataUnreadable),
-        }
-        let metadata = storage.metadata().map_err(|_| Unreadable::DataUnreadable)?;
-        if metadata.uid() != uid || metadata.gid() != uid || metadata.mode() & 0o7777 != 0o700 {
-            return Err(Unreadable::BindingMismatch);
-        }
-        let Some(data) = held_dir(&storage, DATA_LEAF)? else {
-            return Ok(absent);
-        };
-        // Through the held directory itself, not its path.
-        let held = format!("/proc/self/fd/{}", data.as_raw_fd());
-        let marker = RestoreCommitMarker::read(std::path::Path::new(&held))
-            .map_err(|_| Unreadable::MarkerUnreadable)?;
-        Ok(VmRestoreMarkerObservation::Observed {
-            data_present: true,
-            marker,
-        })
+    let absent = VmRestoreMarkerObservation::Observed {
+        data_present: false,
+        marker: None,
     };
-    read().unwrap_or_else(|reason| VmRestoreMarkerObservation::Unreadable { reason })
+    let Some(storage) = held_dir(root, STORAGE_LEAF)? else {
+        return Ok(absent);
+    };
+    match fscrypt::policy(&storage) {
+        Ok(Policy::Ours(found)) if found == *identifier => {}
+        Ok(_) => return Err(Unreadable::BindingMismatch),
+        Err(_) => return Err(Unreadable::DataUnreadable),
+    }
+    let metadata = storage.metadata().map_err(|_| Unreadable::DataUnreadable)?;
+    if metadata.uid() != uid || metadata.gid() != uid || metadata.mode() & 0o7777 != 0o700 {
+        return Err(Unreadable::BindingMismatch);
+    }
+    let Some(data) = held_dir(&storage, DATA_LEAF)? else {
+        return Ok(absent);
+    };
+    // Through the held directory itself, not its path.
+    let held = format!("/proc/self/fd/{}", data.as_raw_fd());
+    let marker = RestoreCommitMarker::read(std::path::Path::new(&held))
+        .map_err(|_| Unreadable::MarkerUnreadable)?;
+    Ok(VmRestoreMarkerObservation::Observed {
+        data_present: true,
+        marker,
+    })
 }
 
 /// The directory `leaf` of `parent`, opened without following a link;
