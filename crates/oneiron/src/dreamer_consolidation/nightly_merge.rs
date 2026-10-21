@@ -2,6 +2,7 @@
 //! conflicts never ask a model to rethink a child's judgement. Narrative
 //! generation sees only the proposals, not source transcripts or prior prose.
 
+use super::call_labels::{CallLabel, CallLabelMap, LabelKind};
 use super::executor::ConsolidationExecutor;
 use super::roles::{DREAMER_NARRATIVE_ROLE, RoleCall};
 use super::step_charge::StepChargeTally;
@@ -286,6 +287,13 @@ impl ConsolidationExecutor<'_> {
             scope.world = first.world;
             scope.relationship = first.rel;
             scope.project = Some(first.scope_project);
+            // Each proposal and subject by this call's own labels (FIX
+            // 7506): the claims `C<n>` in the order they render, then each
+            // subject entity `P<n>`; an edge by its endpoints and kind.
+            let mut labels = CallLabelMap::default();
+            for member in members {
+                labels.assign(LabelKind::Claim, member.id);
+            }
             let mut text = String::new();
             for member in members {
                 scope.readable.insert(super::resources::document_version(
@@ -293,13 +301,12 @@ impl ConsolidationExecutor<'_> {
                     &member.raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 ));
                 let value = super::value_projection::rmpv_to_json(&member.body.value);
+                let claim = labels.assign(LabelKind::Claim, member.id);
+                let subject = subject_label(&mut labels, &member.body.subject);
                 text.push_str(&format!(
-                    "{} subject={} approval={} {} {}\n",
-                    member.id.to_hex(),
-                    crate::entity_id::bytes_to_hex_lower(&member.body.subject.encode()),
+                    "{claim} subject={subject} approval={} {} {value}\n",
                     member.body.approval.as_str(),
                     member.body.predicate,
-                    value
                 ));
             }
             let mut request = LlmRequest {
@@ -333,6 +340,7 @@ impl ConsolidationExecutor<'_> {
                 params: BTreeMap::new(),
                 provider_options: BTreeMap::new(),
             };
+            labels.bind_request(&mut request, None);
             request = match ctx.vault.authorize_model_role(
                 DREAMER_NARRATIVE_ROLE,
                 request,
@@ -675,4 +683,26 @@ fn check_narrative_reply(response: &LlmResponse) -> std::result::Result<(), Stri
         return Ok(());
     }
     narrative_text(response).map(|_| ()).map_err(str::to_owned)
+}
+
+/// A proposal's subject as its narrative call names it: an entity by its
+/// label (a proposal's own `C<n>` when it is one, else `P<n>`), an edge as
+/// `<kind>(<source>,<target>)` over its endpoints' labels.
+fn subject_label(labels: &mut CallLabelMap, subject: &ClaimSubject) -> String {
+    let mut label = |id: EntityId| -> CallLabel {
+        labels
+            .label(LabelKind::Claim, id)
+            .unwrap_or_else(|| labels.assign(LabelKind::Entity, id))
+    };
+    match *subject {
+        ClaimSubject::Entity(id) => label(id).to_string(),
+        ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } => {
+            let (source, target) = (label(source), label(target));
+            format!("{}({source},{target})", kind.name())
+        }
+    }
 }

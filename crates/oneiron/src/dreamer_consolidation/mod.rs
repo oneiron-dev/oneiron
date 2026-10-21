@@ -26,6 +26,7 @@
 
 mod assembly;
 pub(crate) mod branch_scope;
+mod call_labels;
 pub mod confession;
 mod conflict;
 pub(crate) mod evidence;

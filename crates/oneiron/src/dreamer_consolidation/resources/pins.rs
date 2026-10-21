@@ -8,6 +8,7 @@ use super::{BranchResources, SourcePin};
 use crate::dreamer_consolidation::PriorHead;
 use crate::dreamer_consolidation::neighbourhood::Neighbourhood;
 use crate::dreamer_consolidation::support::invalid_consolidation;
+use crate::dreamer_consolidation::turn_text::TurnText;
 use crate::llm::{Scope, ScopeResource};
 use crate::{EntityId, Result};
 
@@ -19,9 +20,30 @@ pub(in crate::dreamer_consolidation) struct BranchPins<'r> {
     known: &'r Neighbourhood,
     /// The branch's own PROJECT axis.
     project: Option<EntityId>,
+    /// Each TURN's text as the branch's transcript showed it and
+    /// verification cites it (FIX 7506: quotes bind against it).
+    texts: PinnedTexts<'r>,
+}
+
+/// The pinned TURN texts a [`BranchPins`] reads: the branch's frozen texts
+/// under its scope, or an owned copy already read so.
+#[derive(Clone, Copy)]
+enum PinnedTexts<'r> {
+    Frozen(&'r BTreeMap<EntityId, TurnText>, &'r Scope),
+    Owned(&'r BTreeMap<EntityId, String>),
 }
 
 impl<'r> BranchPins<'r> {
+    /// The pinned text of TURN `id`, as its transcript line showed it and
+    /// verification cites it; `None` where it has none, or the branch may
+    /// not read it. Never a live reread.
+    pub(in crate::dreamer_consolidation) fn cited_text(self, id: &EntityId) -> Option<&'r str> {
+        match self.texts {
+            PinnedTexts::Frozen(texts, scope) => texts.get(id)?.readable_text(scope).ok().flatten(),
+            PinnedTexts::Owned(texts) => texts.get(id).map(String::as_str),
+        }
+    }
+
     /// The exact version the branch pinned for `id`.
     pub(in crate::dreamer_consolidation) fn source_version(
         self,
@@ -95,6 +117,7 @@ impl OwnedPins {
             priors: &self.priors,
             known: &self.known,
             project: self.project,
+            texts: PinnedTexts::Owned(&self.texts),
         }
     }
 
@@ -112,6 +135,7 @@ impl BranchResources<'_> {
             priors: &self.priors,
             known: &self.known,
             project: self.scope.project,
+            texts: PinnedTexts::Frozen(&self.texts, &self.scope),
         }
     }
 
