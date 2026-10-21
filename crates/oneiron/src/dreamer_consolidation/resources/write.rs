@@ -12,7 +12,7 @@ use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::turn_text::TurnText;
 use crate::llm::Scope;
 use crate::{EntityId, Result, Vault, WriteActor};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 pub struct ScopedConsolidationWrite {
     pub(crate) candidates: Vec<PromotionCandidate>,
@@ -44,9 +44,10 @@ pub(crate) struct ConsolidationFence {
     attempt: crate::attempt_queue::AttemptId,
     fallback_binding: Option<FallbackOutputPin>,
     sources: BTreeMap<EntityId, SourcePin>,
-    turns: BTreeSet<EntityId>,
+    /// Each fenced TURN with the conversation of its declared part: every
+    /// binding is fenced exactly (FIX 7524).
+    turns: BTreeMap<EntityId, EntityId>,
     texts: BTreeMap<EntityId, TurnText>,
-    conversation: EntityId,
     rules: crate::dreamer_consolidation::routing::PredicateKeyRules,
     /// Priors a correction in this same handoff closed with its grant, at
     /// the revision that grant wrote: the handoff's later writes hold them to
@@ -219,7 +220,6 @@ impl BranchResources<'_> {
             sources: self.sources.clone(),
             turns: self.turns.clone(),
             texts: self.texts.clone(),
-            conversation: self.partition.conversation_ref,
             rules: self.rules.clone(),
             closed: std::sync::Mutex::default(),
             standing: std::sync::Mutex::default(),
@@ -334,7 +334,7 @@ impl ConsolidationFence {
                 return Err(invalid_consolidation("a replacement no longer stands"));
             }
         }
-        for turn in &self.turns {
+        for (turn, conversation) in &self.turns {
             let peers = crate::ports::EdgeStoreRead::port_edge_peers(
                 &vault.store,
                 txn,
@@ -343,7 +343,7 @@ impl ConsolidationFence {
                 crate::edge::EdgeKind::ChildOf,
             )?
             .collect::<Result<Vec<_>>>()?;
-            if peers != [self.conversation] {
+            if peers != [*conversation] {
                 return Err(invalid_consolidation("pinned source partition changed"));
             }
         }
@@ -384,7 +384,7 @@ impl ConsolidationFence {
                 .evidence_turn_refs
                 .iter()
                 .try_fold(ClaimSource::Generated, |meet, id| {
-                    if !self.turns.contains(id) {
+                    if !self.turns.contains_key(id) {
                         return Err(invalid_consolidation("unadmitted consolidation evidence"));
                     }
                     let trust = self
@@ -449,9 +449,8 @@ impl ConsolidationFence {
             attempt: crate::attempt_queue::AttemptId::now(),
             fallback_binding: None,
             sources,
-            turns: BTreeSet::new(),
+            turns: BTreeMap::new(),
             texts: BTreeMap::new(),
-            conversation: actor.entity_ref(),
             rules,
             closed: std::sync::Mutex::default(),
             standing: std::sync::Mutex::default(),

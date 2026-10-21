@@ -28,9 +28,11 @@ impl Vault {
     /// the revision the agent read. Under a live Grant line that names a
     /// tighten of this world it acts within it
     /// ([`crate::authority::ActAuthority::Agent`]); otherwise a tighten lands
-    /// as a proposal and a widen as an ask, and no settings change. Every
-    /// request it opens, a Grant's widen included, carries `opener_lineage`
-    /// (FIX 4705): no answer from that lineage or a fork of it settles it.
+    /// as a proposal and a widen as an ask, and no settings change. A Grant
+    /// passed over on its lapsed pact membership alone leaves its typed code
+    /// on that proposal or ask (FIX 7548). Every request it opens, a Grant's
+    /// widen included, carries `opener_lineage` (FIX 4705): no answer from
+    /// that lineage or a fork of it settles it.
     ///
     /// # Errors
     /// [`Error::InvalidConfig`] when `agent` is no agent, or the world is a
@@ -56,19 +58,20 @@ impl Vault {
             self.agent_world_grant_in_txn(&txn, agent.entity_ref(), world)?
         };
         match grant {
-            Some(grant) => {
+            Ok(grant) => {
                 let granted =
                     self.granted_act(agent.entity_ref(), grant, OwnerActKind::WorldPrivacy)?;
                 // The Grant's act, with the lineage that opened the run: its
                 // widen asks the holders, and that lineage never settles it.
                 self.granted_world_privacy(&granted, opener_lineage, world, settings, seen)
             }
-            None => self.propose_world_privacy(
+            Err(no_standing) => self.propose_world_privacy(
                 agent.entity_ref(),
                 opener_lineage,
                 world,
                 settings,
                 seen,
+                crate::authority::grant_omission(no_standing),
             ),
         }
     }
@@ -100,6 +103,7 @@ impl Vault {
                         world,
                         settings,
                         current,
+                        None,
                     )
                     .map(WorldPrivacyOutcome::Asked);
             }
@@ -137,7 +141,8 @@ impl Vault {
 
     /// An agent's request no Grant line covers: a tighten (or an equal
     /// change) lands as a proposal, a widen as an ask, and neither writes a
-    /// settings edit.
+    /// settings edit. `grant_omitted` is why a Grant that met the line was
+    /// passed over (FIX 7548), when one was.
     fn propose_world_privacy(
         &self,
         agent: EntityId,
@@ -145,6 +150,7 @@ impl Vault {
         world: EntityId,
         settings: WorldPrivacy,
         seen: Option<PolicyRevision>,
+        grant_omitted: Option<&'static str>,
     ) -> Result<WorldPrivacyOutcome> {
         let outcome = self.with_write_txn(|txn| {
             let (direction, current) = direction_in_txn(self, txn, world, &settings, seen)?;
@@ -155,6 +161,7 @@ impl Vault {
                 world,
                 settings,
                 current,
+                grant_omitted,
             )?;
             Ok(if direction == PrivacyDirection::Widen {
                 WorldPrivacyOutcome::Asked(request)
@@ -167,7 +174,9 @@ impl Vault {
 
     /// Opens an agent's request on `world` to its holders: an ask when the
     /// change widens (to every live Owner under "widen needs every owner"),
-    /// else a proposal any one holder accepts.
+    /// else a proposal any one holder accepts. It records `grant_omitted`,
+    /// why a Grant was passed over (FIX 7548).
+    #[expect(clippy::too_many_arguments, reason = "one request's frozen fields")]
     fn open_agent_request_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -176,6 +185,7 @@ impl Vault {
         world: EntityId,
         settings: WorldPrivacy,
         current: PolicyRevision,
+        grant_omitted: Option<&'static str>,
     ) -> Result<super::WorldPrivacyRequest> {
         let holders = world_holders_in_txn(self, txn, world)?;
         if holders.is_empty() {
@@ -205,6 +215,7 @@ impl Vault {
                 holders,
                 needs,
                 yes: Vec::new(),
+                grant_omitted,
             },
         )
     }
