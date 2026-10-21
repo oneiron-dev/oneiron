@@ -22,11 +22,12 @@
 //! data and names the exact version it retires. Each member has one origin
 //! side, the only side that puts it; the other side's removal of it reaches
 //! the origin as a retirement, the way a shipper or a consumer removes the one
-//! shared copy on a node, except for a backup artifact, which only the
-//! engine's prune retires. Revisions order a member's changes, and a
-//! transfer's id, a per-direction ordinal the sender keeps across restarts,
-//! is its identity: a replay of one already taken is answered durable without
-//! writing again, and the same id with other content is refused.
+//! shared copy on a node, except for a backup artifact and its `.cpfact`
+//! checkpoint fact, which only the engine's prune retires. Revisions order a
+//! member's changes, and a transfer's id, a per-direction ordinal the sender
+//! keeps across restarts, is its identity: a replay of one already taken is
+//! answered durable without writing again, and the same id with other
+//! content is refused.
 //!
 //! An ack is transport only: it retires the sender's retransmission state and
 //! nothing else. It is never a registry, intake, custody, e-sign or backup

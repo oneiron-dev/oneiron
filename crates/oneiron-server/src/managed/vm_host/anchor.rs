@@ -93,7 +93,7 @@ impl VmAnchorHostIo {
 /// A vault VM's two anchor sockets, bound before any VMM runs, and what the
 /// supervisor bound them to.
 pub(super) struct HostAnchor {
-    exchange: UnixListener,
+    pub(super) exchange: UnixListener,
     proxy: Arc<UnixListener>,
     bound: Option<Arc<BoundUrl>>,
     credential: Credential,
