@@ -32,6 +32,7 @@ use oneiron::memory::extraction::{EncoderInput, EncoderMessage, EncoderTurn, Spe
 use serde::Deserialize;
 
 use super::{ensure_existing_vault_for_revoke, init_tracing};
+use crate::config::oneironer::OneironerRuntime;
 use crate::config::{
     EmbedderDevice, OneironerConfig, OneironerProvider, ServeArgs, ServeConfig,
     resolve_serve_config,
@@ -304,9 +305,12 @@ fn qualify(args: QualifyArgs) -> anyhow::Result<()> {
         QualifyWindow::Conversation => "conversation",
     };
     let defaults = OneironerConfig::default();
+    // Qualification runs the Candle baseline on the named device, never a
+    // platform runtime (FIX 6755).
     let config = OneironerConfig {
         provider: OneironerProvider::Local,
         model_dir: Some(args.model_dir),
+        runtime: OneironerRuntime::Candle,
         device,
         checkpoint_sha16: Some(identity.checkpoint_sha16),
         label_count: Some(identity.label_count),

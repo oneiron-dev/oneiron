@@ -63,6 +63,39 @@ enum WindowMode {
     Conversation(Box<Tokenizer>),
 }
 
+/// A call's live window as every runtime of a slot builds it (FIX 6755):
+/// `Window::new` over the bundle's tokenizer, `max_input_tokens` and
+/// `live_window_tokens`, the window [`LocalTagger::infer`] tags in. The
+/// dispatcher counts each call by it once, outside every lock, to know
+/// which workers may run it; calibration holds a reference case to a row's
+/// max window by it. No runtime builds a shorter window to fit.
+#[derive(Clone)]
+pub(crate) struct WindowCounter {
+    tokenizer: Tokenizer,
+    cap: usize,
+    live: usize,
+}
+
+impl WindowCounter {
+    /// The tokens of `input`'s live window, special tokens included: its
+    /// context joined and cut to the live budget. A window that cannot be
+    /// built fails as the call's infer would.
+    pub(crate) fn count(&self, input: &EncoderInput) -> oneiron::Result<usize> {
+        let window = Window::new(input, &self.tokenizer, self.cap, self.live)
+            .map_err(|_| extraction_failed())?;
+        Ok(window.tokens())
+    }
+}
+
+/// The failure of a native call, by class alone: never a tensor dump or any
+/// part of a conversation.
+fn extraction_failed() -> oneiron::Error {
+    oneiron::Error::UpstreamToolFailure {
+        tool: "oneironer-local",
+        code: "native extraction failed".to_owned(),
+    }
+}
+
 pub(crate) struct LocalTagger {
     model: ModelId,
     card: ModelCard,
@@ -247,20 +280,27 @@ impl LocalTagger {
     pub(crate) fn infer(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
         // Inference errors can contain token ids. Traces retain the failure
         // class, never a tensor dump or any part of a conversation.
-        self.extract(input)
-            .map_err(|_| oneiron::Error::UpstreamToolFailure {
-                tool: "oneironer-local",
-                code: "native extraction failed".to_owned(),
-            })
+        self.extract(input).map_err(|_| extraction_failed())
     }
 
-    /// The tokens of `input`'s live window, special tokens included: the
-    /// window [`Self::infer`] tags it in (`Window::new`), its context joined
-    /// and cut to the live budget, whichever window this tagger tags in.
-    /// Calibration holds a reference case to a row's max window by it.
-    pub(crate) fn window_tokens(&self, input: &EncoderInput) -> anyhow::Result<usize> {
-        let window = Window::new(input, &self.tokenizer, self.cap, self.live)?;
-        Ok(window.encoding.len())
+    /// The counter of this tagger's live windows: its own tokenizer, cap
+    /// and live budget, so a count is the window [`Self::infer`] tags in.
+    pub(crate) fn window_counter(&self) -> WindowCounter {
+        WindowCounter {
+            tokenizer: self.tokenizer.clone(),
+            cap: self.cap,
+            live: self.live,
+        }
+    }
+
+    /// The stack this tagger serves: the SHA-256 prefix of its manifest.
+    pub(crate) fn stack_sha16(&self) -> &str {
+        self.card.stack_sha16.as_deref().unwrap_or_default()
+    }
+
+    /// The configured `max_input_tokens`: the longest window it builds.
+    pub(crate) const fn max_input_tokens(&self) -> usize {
+        self.cap
     }
 
     /// The revision of this build's decoder: what a bundle's character head

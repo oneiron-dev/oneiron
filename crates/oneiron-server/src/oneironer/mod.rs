@@ -27,6 +27,7 @@ use oneiron::{ModelId, embed::EmbedderLocality};
 
 use crate::config::{OneironerConfig, OneironerProvider};
 use dispatcher::{Completion, Dispatcher, WorkerSpec};
+use local::WindowCounter;
 
 pub(crate) use dispatcher::DispatchClaim;
 
@@ -84,25 +85,23 @@ enum Provider {
 }
 
 impl ProviderTagger {
-    /// The facade over `workers`. `pinned` says the slot serves one
-    /// configured worker, a named device or an endpoint.
+    /// The facade over a dispatcher with no worker yet. `pinned` says the
+    /// slot serves one configured worker, a named device or an endpoint;
+    /// `windows` counts each call's window, `None` for an endpoint, whose
+    /// window is its own.
     fn new(
         model: ModelId,
         locality: EmbedderLocality,
         provider: Provider,
         pinned: bool,
-        workers: Vec<WorkerSpec>,
-    ) -> anyhow::Result<Self> {
-        let dispatcher = Dispatcher::new(pinned);
-        for worker in workers {
-            dispatcher.add(worker)?;
-        }
-        Ok(Self {
+        windows: Option<WindowCounter>,
+    ) -> Self {
+        Self {
             model,
             locality,
             provider,
-            dispatcher,
-        })
+            dispatcher: Dispatcher::new(pinned, windows),
+        }
     }
 
     pub(crate) fn probe(&self) -> Result<endpoint::ProbeOutcome, endpoint::ProbeError> {
@@ -340,21 +339,29 @@ pub(crate) fn build_slot_with_rows(
             // default alone, so no second model is loaded beside it. A named
             // device is the one worker the owner pinned.
             let pinned = engine.pick == engines::Pick::Named;
-            let worker = WorkerSpec::local(engine.engine, 0, tagger);
-            ProviderTagger::new(
+            let windows = tagger.window_counter();
+            let worker = WorkerSpec::local(engine.engine, tagger);
+            let tagger = ProviderTagger::new(
                 model,
                 EmbedderLocality::OnDevice,
                 provider,
                 pinned,
-                vec![worker],
-            )?
+                Some(windows),
+            );
+            // The Candle baseline the rows chose, or the device the owner
+            // named, ranks first (FIX 6755).
+            let worker = tagger.dispatcher.add(worker)?;
+            tagger.dispatcher.publish_rank(worker, 0);
+            tagger
         }
         OneironerProvider::Endpoint => {
-            let tagger = Arc::new(endpoint::HttpTagger::from_config(config)?);
-            let (model, locality) = (tagger.model_id().clone(), tagger.locality());
-            let worker = WorkerSpec::endpoint(Arc::clone(&tagger));
-            let provider = Provider::Endpoint(tagger);
-            ProviderTagger::new(model, locality, provider, true, vec![worker])?
+            let http = Arc::new(endpoint::HttpTagger::from_config(config)?);
+            let (model, locality) = (http.model_id().clone(), http.locality());
+            let checkpoint = config.checkpoint_sha16.as_deref().unwrap_or_default();
+            let worker = WorkerSpec::endpoint(Arc::clone(&http), checkpoint);
+            let tagger = ProviderTagger::new(model, locality, Provider::Endpoint(http), true, None);
+            tagger.dispatcher.add(worker)?;
+            tagger
         }
         OneironerProvider::None => return Ok(None),
     };

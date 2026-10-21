@@ -518,8 +518,8 @@ declare namespace Sdk {
   type TaggingMarkerState = "unconfigured" | "absent" | "pending" | "retrying" | "settled" | "failed";
   type TaggingMarkerView = { attempt_ref: string; state: string; checkpoint?: string | null; stack?: string | null; attempt_count: number; retry_of?: string | null; scheduled_at?: number | null; last_error?: string | null; created_at: number; updated_at: number };
   type TaggingFailureView = { class: string; code?: string | null; refusal?: string | null };
-  type ExecutionRuntime = "candle" | "endpoint";
-  type ExecutionCompute = "cpu" | "metal" | "cuda" | "opaque";
+  type ExecutionRuntime = "candle" | "endpoint" | "mlx" | "coreml";
+  type ExecutionCompute = "cpu" | "metal" | "cuda" | "cpu_and_ne" | "opaque";
   type ExecutionPick = "calibrated" | "free" | "shorter_queue" | "fallback" | "pinned";
   type EncoderExecution = { runtime: ExecutionRuntime; compute: ExecutionCompute; engine: string; pick: ExecutionPick; queue_ms: number; infer_ms: number };
   type TaggingOutcomeView = { outcome: "saved"; spans: number; links: number; mood: boolean; linked: number; minted: number; context_links: number; speaker_links: number; unresolved_context_links: number; unresolved_speaker_links: number; surprise?: number | null } | { outcome: "shadowed"; spans: number; links: number; mood: boolean; mapped_spans: number; context_links: number; speaker_links: number } | { outcome: "imported"; spans: number; links: number; mood: boolean } | { outcome: "skipped"; reason: string } | { outcome: "superseded"; retry_at: number } | { outcome: "deferred"; retry_at: number } | { outcome: "failed"; failure: TaggingFailureView; retry_at: number } | { outcome: "rekeyed" } | { outcome: "handed_back"; reason: string; retry_at: number } | { outcome: "unreadable" };

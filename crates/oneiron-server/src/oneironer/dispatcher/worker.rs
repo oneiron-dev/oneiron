@@ -3,6 +3,14 @@
 //! then runs the units the dispatcher gives it, one at a time, until the
 //! dispatcher closes. Only a Ready worker takes work. A cold or failed load
 //! leaves the worker Failed for this process and writes no row.
+//!
+//! The worker seam is batch-capable (FIX 6755 slice 2b). A worker is built
+//! on its own thread by its spec's loader, which alone crosses threads, and
+//! never leaves that thread, so it need not be `Send`. Each unit is one
+//! [`Worker::run_batch`] call: one result per call, in order. Each call
+//! keeps its own receipt: its wait to the unit's start, and the unit's whole
+//! run. Every worker carries a fixed [`WorkerDescriptor`], whose qualified
+//! window decides which calls it may run (`super::eligibility`).
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
@@ -10,15 +18,14 @@ use std::time::Instant;
 
 use oneiron::memory::extraction::{
     EncoderAttempt, EncoderExecution, EncoderInput, EncoderMessage, EncoderOutput,
-    ExecutionCompute, ExecutionRuntime,
+    ExecutionCompute, ExecutionPick, ExecutionRuntime,
 };
 
 use super::super::endpoint::HttpTagger;
 use super::super::engines::Engine;
 use super::super::local::LocalTagger;
-use super::{Shared, failure};
+use super::{Job, Shared, failure};
 use crate::config::EmbedderDevice;
-use crate::config::oneironer::OneironerRuntime;
 
 /// Tool name on a failure a worker reports for its own thread.
 const WORKER_TOOL: &str = "oneironer-worker";
@@ -27,30 +34,40 @@ const WARM_ID: &str = "warm-up";
 /// The text it warms on: no vault text.
 const WARM_TEXT: &str = "Warming up.";
 
-/// One concrete execution stream. Only its own thread runs it, and it holds
-/// no queue of its own.
-pub(crate) trait Worker: Send {
+/// One concrete execution stream (FIX 6755). Only its own thread runs it,
+/// and it holds no queue of its own. It is built on that thread and stays
+/// there, so it need not be `Send`; only its spec's loader crosses threads.
+pub(crate) trait Worker {
     /// One input to its semantic answer.
-    fn run(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput>;
+    fn run(&mut self, input: &EncoderInput) -> oneiron::Result<EncoderOutput>;
+
+    /// One unit's inputs in one call: one result per input, in order. A
+    /// worker that sends them as one request fails every input when that
+    /// request fails. This one runs them one at a time.
+    fn run_batch(&mut self, inputs: &[&EncoderInput]) -> Vec<oneiron::Result<EncoderOutput>> {
+        inputs.iter().map(|input| self.run(input)).collect()
+    }
 }
 
 impl Worker for LocalTagger {
-    fn run(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
+    fn run(&mut self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
         self.infer(input)
     }
 }
 
 impl Worker for Arc<HttpTagger> {
-    fn run(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
+    fn run(&mut self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
         self.infer(input)
     }
 }
 
-/// Brings a worker's model up on its own thread.
+/// Brings a worker's model up on its own thread: the one part of a spec that
+/// crosses threads.
 type Load = Box<dyn FnOnce() -> anyhow::Result<Box<dyn Worker>> + Send>;
-/// Measures a worker on its own thread: whether its answers clear the
-/// bundle's reference.
-type Calibrate = Box<dyn FnOnce(&dyn Worker) -> bool + Send>;
+/// Measures a worker on its own thread against the bundle's reference: the
+/// rank its owner gives its measured speed when its answers clear, `None`
+/// when they do not.
+type Calibrate = Box<dyn FnOnce(&mut dyn Worker) -> Option<usize> + Send>;
 
 /// How far up a worker is.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -87,16 +104,86 @@ impl WorkerState {
     }
 }
 
-/// A worker the dispatcher starts: what it runs as, where it ranks, and how
-/// its thread brings it up.
+/// What a worker is, fixed when its spec is built (FIX 6755): the runtime
+/// and compute its receipts name, the bytes it runs, and the longest window
+/// it is qualified to run, in tokens with specials. A call whose window is
+/// longer never reaches it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct WorkerDescriptor {
+    runtime: ExecutionRuntime,
+    compute: ExecutionCompute,
+    /// The bytes it loaded, by hash.
+    artifact_sha16: String,
+    max_window_tokens: usize,
+}
+
+impl WorkerDescriptor {
+    pub(crate) fn new(
+        runtime: ExecutionRuntime,
+        compute: ExecutionCompute,
+        artifact_sha16: &str,
+        max_window_tokens: usize,
+    ) -> Self {
+        Self {
+            runtime,
+            compute,
+            artifact_sha16: artifact_sha16.to_owned(),
+            max_window_tokens,
+        }
+    }
+
+    /// A Candle engine's. Its artifact is the stack its bundle hashes to,
+    /// and its qualified window is the configured `max_input_tokens`: it
+    /// runs every window the slot builds. Candle runs it whichever runtime
+    /// setting chose it.
+    pub(crate) fn candle(engine: Engine, stack: &str, max_input_tokens: usize) -> Self {
+        let compute = match engine.device {
+            // A load on `auto` runs on the built-in CPU engine.
+            EmbedderDevice::Cpu | EmbedderDevice::Auto => ExecutionCompute::Cpu,
+            EmbedderDevice::Metal => ExecutionCompute::Metal,
+            EmbedderDevice::Cuda => ExecutionCompute::Cuda,
+        };
+        Self::new(ExecutionRuntime::Candle, compute, stack, max_input_tokens)
+    }
+
+    /// The endpoint's. The checkpoint it must report stands for its bytes,
+    /// and its window is its own, which the host does not claim: it runs
+    /// every call.
+    pub(crate) fn endpoint(checkpoint: &str) -> Self {
+        Self::new(
+            ExecutionRuntime::Endpoint,
+            ExecutionCompute::Opaque,
+            checkpoint,
+            usize::MAX,
+        )
+    }
+
+    pub(crate) const fn runtime(&self) -> ExecutionRuntime {
+        self.runtime
+    }
+
+    /// `runtime/compute`, as receipts, rows and logs name it.
+    pub(crate) fn engine(&self) -> String {
+        EncoderExecution::engine_id(self.runtime, self.compute)
+    }
+
+    pub(crate) fn artifact_sha16(&self) -> &str {
+        &self.artifact_sha16
+    }
+
+    pub(crate) const fn max_window_tokens(&self) -> usize {
+        self.max_window_tokens
+    }
+}
+
+/// A worker the dispatcher starts: what it is, how many calls one unit of
+/// its may carry, and how its thread brings it up. Its rank is published to
+/// the dispatcher by its owner (`Dispatcher::publish_rank`).
 pub(crate) struct WorkerSpec {
-    pub(super) runtime: ExecutionRuntime,
-    pub(super) compute: ExecutionCompute,
-    /// Its place in the slot's calibrated rank: 0 is preferred.
-    pub(super) rank: usize,
+    descriptor: WorkerDescriptor,
     /// Inputs one unit of its may hold: 1 for a worker that runs them one at
     /// a time.
-    pub(super) batch: usize,
+    batch: usize,
     load: Load,
     /// The untimed call it makes before it is Ready; `None` for a worker
     /// that warms itself.
@@ -109,18 +196,13 @@ pub(crate) struct WorkerSpec {
 impl WorkerSpec {
     /// A candle model loaded where it always loads (`engines::load`), before
     /// the listener binds. Its thread warms it once, and it is Ready.
-    pub(crate) fn local(engine: Engine, rank: usize, tagger: LocalTagger) -> Self {
+    pub(crate) fn local(engine: Engine, tagger: LocalTagger) -> Self {
         Self {
-            runtime: match engine.runtime {
-                OneironerRuntime::Candle => ExecutionRuntime::Candle,
-            },
-            compute: match engine.device {
-                // A load on `auto` runs on the built-in CPU engine.
-                EmbedderDevice::Cpu | EmbedderDevice::Auto => ExecutionCompute::Cpu,
-                EmbedderDevice::Metal => ExecutionCompute::Metal,
-                EmbedderDevice::Cuda => ExecutionCompute::Cuda,
-            },
-            rank,
+            descriptor: WorkerDescriptor::candle(
+                engine,
+                tagger.stack_sha16(),
+                tagger.max_input_tokens(),
+            ),
             // Candle runs one unpadded sequence at a time.
             batch: 1,
             load: Box::new(move || Ok(Box::new(tagger) as Box<dyn Worker>)),
@@ -129,20 +211,50 @@ impl WorkerSpec {
         }
     }
 
-    /// The configured endpoint: one opaque worker, Ready at once. Its server
-    /// warms itself, and one that is not up yet fails its calls, not the
-    /// worker.
-    pub(crate) fn endpoint(tagger: Arc<HttpTagger>) -> Self {
+    /// The configured endpoint, which must report `checkpoint`: one opaque
+    /// worker, Ready at once. Its server warms itself, and one that is not
+    /// up yet fails its calls, not the worker.
+    pub(crate) fn endpoint(tagger: Arc<HttpTagger>, checkpoint: &str) -> Self {
         Self {
-            runtime: ExecutionRuntime::Endpoint,
-            compute: ExecutionCompute::Opaque,
-            rank: 0,
+            descriptor: WorkerDescriptor::endpoint(checkpoint),
             // The dispatcher sends it one call at a time.
             batch: 1,
             load: Box::new(move || Ok(Box::new(tagger) as Box<dyn Worker>)),
             warm: None,
             calibrate: None,
         }
+    }
+
+    /// A platform runtime's worker, started after the listener binds: `load`
+    /// builds it on its own thread and warms it, then `calibrate` measures
+    /// it there before it is Ready, and the rank it returns is published. A
+    /// unit of its carries up to `batch` bulk calls in one
+    /// [`Worker::run_batch`].
+    #[expect(
+        dead_code,
+        reason = "the MLX and Core ML adapters build their workers by it (FIX 6755 slices 3, 2c)"
+    )]
+    pub(crate) fn background(
+        descriptor: WorkerDescriptor,
+        batch: usize,
+        load: impl FnOnce() -> anyhow::Result<Box<dyn Worker>> + Send + 'static,
+        calibrate: impl FnOnce(&mut dyn Worker) -> Option<usize> + Send + 'static,
+    ) -> Self {
+        Self {
+            descriptor,
+            batch,
+            load: Box::new(load),
+            warm: None,
+            calibrate: Some(Box::new(calibrate)),
+        }
+    }
+
+    pub(super) const fn descriptor(&self) -> &WorkerDescriptor {
+        &self.descriptor
+    }
+
+    pub(super) const fn batch(&self) -> usize {
+        self.batch
     }
 }
 
@@ -166,29 +278,31 @@ fn warm_input() -> EncoderInput {
 /// back with its execution.
 pub(super) fn serve(shared: &Shared, index: usize, spec: WorkerSpec) {
     let WorkerSpec {
-        runtime,
-        compute,
+        descriptor,
         load,
         warm,
         calibrate,
         ..
     } = spec;
-    let Some(worker) = bring_up(shared, index, load, warm, calibrate) else {
+    let Some(mut worker) = bring_up(shared, index, load, warm, calibrate) else {
         return;
     };
     while let Some(unit) = shared.next_unit(index) {
+        let started = Instant::now();
+        let results = run_unit(worker.as_mut(), &unit);
+        let ran = started.elapsed();
         let answered = unit
             .into_iter()
-            .map(|(job, pick)| {
-                let started = Instant::now();
-                let result = catch_unwind(AssertUnwindSafe(|| worker.run(&job.input)))
-                    .unwrap_or_else(|_| Err(failure(WORKER_TOOL, "the worker panicked")));
+            .zip(results)
+            .map(|((job, pick), result)| {
+                // Each call waited to the unit's start; the unit's whole run
+                // is each call's, never divided among them.
                 let execution = EncoderExecution::new(
-                    runtime,
-                    compute,
+                    descriptor.runtime,
+                    descriptor.compute,
                     pick,
                     started.saturating_duration_since(job.queued_at),
-                    started.elapsed(),
+                    ran,
                 );
                 let attempt = EncoderAttempt {
                     execution: Some(execution),
@@ -201,6 +315,25 @@ pub(super) fn serve(shared: &Shared, index: usize, spec: WorkerSpec) {
     }
 }
 
+/// One unit as one [`Worker::run_batch`] call: one result per call, in
+/// order. A worker that panics, or answers another number of calls, fails
+/// every call of the unit.
+fn run_unit(
+    worker: &mut dyn Worker,
+    unit: &[(Job, ExecutionPick)],
+) -> Vec<oneiron::Result<EncoderOutput>> {
+    let inputs: Vec<&EncoderInput> = unit.iter().map(|(job, _)| &job.input).collect();
+    let code = match catch_unwind(AssertUnwindSafe(|| worker.run_batch(&inputs))) {
+        Ok(results) if results.len() == inputs.len() => return results,
+        Ok(_) => "the worker answered another number of calls",
+        Err(_) => "the worker panicked",
+    };
+    inputs
+        .iter()
+        .map(|_| Err(failure(WORKER_TOOL, code)))
+        .collect()
+}
+
 /// Loading, then Warming and Calibrating when the spec asks, then Ready.
 /// `None` when the worker ends Failed or Unavailable.
 fn bring_up(
@@ -210,7 +343,7 @@ fn bring_up(
     warm: Option<EncoderInput>,
     calibrate: Option<Calibrate>,
 ) -> Option<Box<dyn Worker>> {
-    let worker = match catch_unwind(AssertUnwindSafe(load)) {
+    let mut worker = match catch_unwind(AssertUnwindSafe(load)) {
         Ok(Ok(worker)) => worker,
         Ok(Err(error)) => {
             let why = format!("its load failed: {error}");
@@ -233,12 +366,14 @@ fn bring_up(
     }
     if let Some(calibrate) = calibrate {
         shared.settle(index, WorkerState::Calibrating, None);
-        let cleared = catch_unwind(AssertUnwindSafe(|| calibrate(worker.as_ref())));
-        if !matches!(cleared, Ok(true)) {
+        let measured = catch_unwind(AssertUnwindSafe(|| calibrate(worker.as_mut())));
+        let Ok(Some(rank)) = measured else {
             let why = "its answers do not clear the bundle's reference";
             shared.settle(index, WorkerState::Unavailable, Some(why));
             return None;
-        }
+        };
+        // Its owner's rank for it, published before it takes work.
+        shared.publish_rank(index, rank);
     }
     shared.settle(index, WorkerState::Ready, None);
     Some(worker)

@@ -160,12 +160,19 @@ pub enum ExecutionRuntime {
     /// A configured tagger server: one opaque worker, whose own runtime the
     /// host does not claim.
     Endpoint,
+    /// A bundle's MLX platform row, run by the host's managed worker.
+    Mlx,
+    /// A bundle's Core ML platform row, run in the host's process.
+    #[serde(rename = "coreml")]
+    CoreMl,
 }
 impl ExecutionRuntime {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Candle => "candle",
             Self::Endpoint => "endpoint",
+            Self::Mlx => "mlx",
+            Self::CoreMl => "coreml",
         }
     }
 }
@@ -177,6 +184,8 @@ pub enum ExecutionCompute {
     Cpu,
     Metal,
     Cuda,
+    /// Core ML's CPU and Neural Engine units, as its model was loaded for.
+    CpuAndNe,
     /// An endpoint's own, which the host does not claim.
     Opaque,
 }
@@ -186,6 +195,7 @@ impl ExecutionCompute {
             Self::Cpu => "cpu",
             Self::Metal => "metal",
             Self::Cuda => "cuda",
+            Self::CpuAndNe => "cpu_and_ne",
             Self::Opaque => "opaque",
         }
     }
