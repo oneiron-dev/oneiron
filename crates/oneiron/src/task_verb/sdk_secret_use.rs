@@ -166,17 +166,19 @@ pub fn use_secret_for_connector_call<H: ConnectorCallHost>(
                 let Some(request) = request.take() else {
                     return SecretUseConsumed::failed("the call was already made".to_owned());
                 };
-                match vault.call_connector_with_secret(
+                let (outcome, sent) = vault.call_connector_with_secret(
                     memory,
                     request,
                     invocation,
                     &mut *host,
                     target.custody,
-                ) {
-                    // Its host cleared the reply inside the send's door
-                    // (FIX 7647).
-                    Ok((outcome, sent)) => {
-                        target.note_sent(sent);
+                );
+                // Its host cleared the reply inside the send's door (FIX
+                // 7647); what the send presented is noted on an engine error
+                // after it as on an outcome (FIX 8053).
+                target.note_sent(sent);
+                match outcome {
+                    Ok(outcome) => {
                         connector_consumed(&ConnectorCallReply::project(&name, &tool, outcome))
                     }
                     Err(error) => SecretUseConsumed::failed(error.to_string()),
@@ -251,16 +253,18 @@ pub fn use_secret_grant_for_connector_call<H: ConnectorCallHost>(
                 let Some(request) = request.take() else {
                     return SecretUseConsumed::failed("the call was already made".to_owned());
                 };
-                match vault.call_connector_with_secret_grant(
+                let (outcome, sent) = vault.call_connector_with_secret_grant(
                     memory,
                     request,
                     invocation,
                     &mut *host,
                     used.custody,
                     *presented,
-                ) {
-                    Ok((outcome, sent)) => {
-                        used.note_sent(sent);
+                );
+                // Noted on an engine error after the send too (FIX 8053).
+                used.note_sent(sent);
+                match outcome {
+                    Ok(outcome) => {
                         connector_consumed(&ConnectorCallReply::project(&name, &tool, outcome))
                     }
                     Err(error) => SecretUseConsumed::failed(error.to_string()),

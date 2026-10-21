@@ -125,8 +125,10 @@ zstd = "0.13"
 flate2 = "1"
 serde = { workspace = true }
 # `raw_value`: secret rotation borrows the value from its own wiped body
-# instead of letting the parser copy it.
-serde_json = { workspace = true, features = ["raw_value"] }
+# instead of letting the parser copy it. `float_roundtrip`: a connector's
+# kept request state is held serialized while it waits (FIX 8054), and its
+# numbers must parse back to the exact value the connector sent.
+serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 toml = "0.9"
 rmp-serde = { workspace = true }
 rmpv = { workspace = true }

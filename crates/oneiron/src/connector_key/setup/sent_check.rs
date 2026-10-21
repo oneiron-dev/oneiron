@@ -1,13 +1,16 @@
 //! `self.use`'s own provider checks (OF-560, FIX 4491, FIX 7647): the same
 //! read-only provider call a pack setup check makes, with what comes back
 //! cleared of the credential inside the credential door, with the very
-//! bytes that door released, before any of it leaves. A pack setup check
-//! keeps [`PackConnectionVerifier::verify`](super::PackConnectionVerifier::verify).
+//! bytes that door released, before any of it leaves. The credential is
+//! presented by the record the handle names, by its id, never by its live
+//! name (CONNECTOR_PRESENT_BY_RECORD_ID). A pack setup check keeps
+//! [`PackConnectionVerifier::verify`](super::PackConnectionVerifier::verify).
 
 use super::{
     PackConnectionCheck, PackConnectionEvidence, ProviderConnectionChecks, evidence_of,
     provider_call,
 };
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::secret_custody::SentPresentation;
 use crate::secret_lease::{SecretGrantRef, SecretGrantTarget};
@@ -19,15 +22,18 @@ type Checked = std::result::Result<PackConnectionEvidence, String>;
 impl ProviderConnectionChecks {
     /// [`PackConnectionVerifier::verify`](super::PackConnectionVerifier::verify)
     /// for a `self.use` of the connection's credential (FIX 7647): the same
-    /// door, call and reading, and every text in the answer or the failure
+    /// call and reading, and every text in the answer or the failure
     /// cleared by `scrub` with the SAME value inside the door, before it
-    /// leaves; beside the record the door resolved and the generation it
-    /// released, when it released one. A door that refuses sends nothing
-    /// and answers with its refusal, as `verify` does.
+    /// leaves; beside the record presented and the generation its door
+    /// released, when it released one. The door presents `custody`, the
+    /// record the use's handle resolved to, by its id, so a name
+    /// re-registered since the use was admitted cannot swap it. A door that
+    /// refuses sends nothing and answers with its refusal, as `verify` does.
     pub(crate) fn verify_cleared(
         &self,
         vault: &Vault,
         check: &PackConnectionCheck<'_>,
+        custody: &EntityId,
         scrub: &dyn Fn(&mut String, &[u8]),
     ) -> (Checked, Option<SentPresentation>) {
         let (method, url) = match provider_call(check.check) {
@@ -41,8 +47,8 @@ impl ProviderConnectionChecks {
             );
         };
         let mut answer = None;
-        let door = vault.inject_secret_at_door_resolved(
-            &secret.name,
+        let door = vault.present_resolved_secret_at_door(
+            custody,
             &secret.effector,
             &mut |value: &[u8]| {
                 answer = Some(self.cleared_check(check.check, &method, url, value, scrub));
@@ -50,9 +56,12 @@ impl ProviderConnectionChecks {
             },
         );
         match door {
-            Ok((custody, receipt)) => (
+            Ok(receipt) => (
                 answer.unwrap_or_else(|| Err("the check did not run".to_owned())),
-                Some(SentPresentation::cleared(custody, receipt.value_generation)),
+                Some(SentPresentation::cleared(
+                    *custody,
+                    receipt.value_generation,
+                )),
             ),
             Err(error) => (Err(error.to_string()), None),
         }

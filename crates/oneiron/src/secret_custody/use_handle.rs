@@ -22,7 +22,8 @@
 //! own door, with the bytes it released (`output`, FIX 7647). Every use the
 //! handle resolves for writes one Gate record: the handle, the generation its
 //! send released, the effector, the operation, the decision and the send
-//! status.
+//! status, and beside the handle's own identity the record and generation
+//! its send actually presented (FIX 8052).
 //!
 //! Beside the table, a server sends [`SECRET_USE_CONNECTOR_CALL`]: one
 //! connector call with the handle's secret as its credential, in place of
@@ -277,8 +278,13 @@ impl SecretUseSend {
 pub struct SecretUseReceipt {
     /// The record's handle, such as `sc12`.
     pub handle: String,
-    /// The record's rotation generation when it was used.
+    /// The record's rotation generation when it was used: the one its send
+    /// released when it presented this record, else the one admitted.
     pub generation: u32,
+    /// What the send actually presented, as its door released it: the
+    /// record and the generation sent, kept apart from the handle's own
+    /// (FIX 8052). `None` when nothing was sent, or nothing said what was.
+    pub presented: Option<SentPresentation>,
     pub effector: String,
     pub operation: String,
     pub decision: SecretUseDecision,
@@ -403,7 +409,12 @@ impl Vault {
         consume: &mut dyn FnMut(&SecretUseTarget<'_>) -> SecretUseConsumed,
     ) -> Result<SecretUseOutcome> {
         if let Err(refusal) = admitted {
-            used.record(self, SecretUseDecision::Refused, SecretUseSend::NotSent)?;
+            used.record(
+                self,
+                SecretUseDecision::Refused,
+                SecretUseSend::NotSent,
+                None,
+            )?;
             return Err(refusal);
         }
         let (id, effector) = (used.secret, used.effector);
@@ -428,7 +439,12 @@ impl Vault {
             .unwrap_or_else(PoisonError::into_inner)
             .take();
         if let Some(refusal) = refused {
-            used.record(self, SecretUseDecision::Refused, SecretUseSend::NotSent)?;
+            used.record(
+                self,
+                SecretUseDecision::Refused,
+                SecretUseSend::NotSent,
+                None,
+            )?;
             return Err(refusal);
         }
         let sent = target
@@ -446,14 +462,16 @@ impl Vault {
         {
             send = SecretUseSend::Withheld;
         }
-        // The receipt names the generation the send released.
+        // The receipt names the generation the send released for the
+        // handle's own record, and beside it what the send actually
+        // presented, never the admitted generation in its place (FIX 8052).
         let used = Used {
             generation: sent
                 .filter(|sent| sent.custody == id)
                 .map_or(used.generation, |sent| sent.generation),
             ..used.clone()
         };
-        let receipt = used.record(self, SecretUseDecision::Used, send)?;
+        let receipt = used.record(self, SecretUseDecision::Used, send, sent)?;
         Ok(SecretUseOutcome {
             receipt,
             result,
@@ -476,11 +494,14 @@ struct Used<'a> {
 }
 
 impl Used<'_> {
+    /// This use's Gate record and receipt; `presented` is what its send
+    /// actually presented, when it said.
     fn record(
         &self,
         vault: &Vault,
         decision: SecretUseDecision,
         send: SecretUseSend,
+        presented: Option<SentPresentation>,
     ) -> Result<SecretUseReceipt> {
         let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
         let generation = self.generation.to_be_bytes();
@@ -506,6 +527,10 @@ impl Used<'_> {
         ];
         if let Some(grant) = self.grant {
             details.push(format!("grant:{}", grant.to_hex()));
+        }
+        if let Some(presented) = presented {
+            details.push(format!("presented:{}", presented.custody.to_hex()));
+            details.push(format!("presented_generation:{}", presented.generation));
         }
         let used_at = vault.with_write_txn_grouped(|txn| {
             let created_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
@@ -540,6 +565,7 @@ impl Used<'_> {
         Ok(SecretUseReceipt {
             handle: self.handle.clone(),
             generation: self.generation,
+            presented,
             effector: self.effector.to_owned(),
             operation: self.operation.to_owned(),
             decision,
@@ -614,7 +640,7 @@ fn provider_check(
     let scrub = |string: &mut String, value: &[u8]| clear_text(string, value, &text);
     let evidence = match target.grant {
         None => {
-            let (answer, sent) = checks.verify_cleared(vault, &check, &scrub);
+            let (answer, sent) = checks.verify_cleared(vault, &check, &target.custody, &scrub);
             target.note_sent(sent);
             answer?
         }

@@ -70,9 +70,10 @@ use crate::server::SyncServer;
 mod live_exchange;
 mod presenting;
 use live_exchange::{
-    Continuation, LiveSession, Reply, StreamEvent, hand_over, open_reply, post_json, read_reply,
+    Continuation, KeptWire, LiveSession, Reply, StreamEvent, hand_over, open_reply, post_json,
+    read_reply,
 };
-use presenting::{clear_event, clear_questions};
+use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
 
 /// Connecting to a connector's endpoint.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -403,10 +404,10 @@ fn stream_question(request: &Value) -> Option<ConnectorQuestion> {
 }
 
 /// The questions of a `tools/call` result that asks for input, each a form
-/// `elicitation/create`, and its opaque request state. `None` when the
-/// result asks for none, or for anything else: then it is the tool's
-/// terminal result.
-fn retry_questions(message: &Value) -> Option<(Vec<ConnectorQuestion>, Option<Value>)> {
+/// `elicitation/create`, and its opaque request state, kept zeroized
+/// (FIX 8054). `None` when the result asks for none, or for anything else:
+/// then it is the tool's terminal result.
+fn retry_questions(message: &Value) -> Option<(Vec<ConnectorQuestion>, Option<KeptWire>)> {
     let result = message.get("result")?;
     if result.get(wire::RESULT_TYPE).and_then(Value::as_str) != Some(wire::INPUT_REQUIRED) {
         return None;
@@ -424,7 +425,10 @@ fn retry_questions(message: &Value) -> Option<(Vec<ConnectorQuestion>, Option<Va
             form_question(key, request.get("params")?)
         })
         .collect::<Option<Vec<_>>>()?;
-    Some((questions, result.get(wire::REQUEST_STATE).cloned()))
+    Some((
+        questions,
+        result.get(wire::REQUEST_STATE).map(KeptWire::keep),
+    ))
 }
 
 /// A `tools/call` answer as the tool's reply: its result, or the JSON-RPC
@@ -708,27 +712,20 @@ impl<'a> Exchange<'a> {
                         }
                         continue;
                     };
-                    let request_id = request.get("id").cloned().unwrap_or(Value::Null);
-                    let mut questions = vec![question];
-                    if let Some(registered) = declared.keep_questions(&mut questions, value) {
+                    let request_id = request.get("id").unwrap_or(&Value::Null);
+                    if let Some(round) = declared.keep_questions(vec![question], value) {
+                        // The request's id waits zeroized (FIX 8054).
+                        let request_id = KeptWire::keep(request_id);
                         let continuation = Continuation::Stream { stream, request_id };
                         let body = request.to_string().into_bytes();
                         let kept = value.map(SentValue::keep);
-                        return hand_over(
-                            declared,
-                            registered,
-                            questions,
-                            continuation,
-                            live,
-                            body,
-                            kept,
-                        );
+                        return hand_over(declared, round, continuation, live, body, kept);
                     }
                     // A full registry: the question is cancelled at once,
                     // and the call goes on without it.
                     if let Some(live) = live.as_ref() {
                         let cancel = elicitation_response(ConnectorAnswerAction::Cancel, None);
-                        let _ = live.respond(&request_id, "result", cancel);
+                        let _ = live.respond(request_id, "result", cancel);
                     }
                 }
                 Ok(StreamEvent::End) | Err(()) => {
@@ -753,8 +750,8 @@ impl<'a> Exchange<'a> {
             .elicitation
             .as_ref()
             .filter(|declared| declared.intake == Intake::Retry)
-            && let Some((mut questions, request_state)) = retry_questions(message)
-            && let Some(registered) = declared.keep_questions(&mut questions, value)
+            && let Some((questions, request_state)) = retry_questions(message)
+            && let Some(round) = declared.keep_questions(questions, value)
         {
             let continuation = Continuation::Retry {
                 tool: self.tool.to_owned(),
@@ -764,15 +761,7 @@ impl<'a> Exchange<'a> {
                 next_id: CALL_ID + 1,
             };
             let kept = value.map(SentValue::keep);
-            return hand_over(
-                declared,
-                registered,
-                questions,
-                continuation,
-                live,
-                body,
-                kept,
-            );
+            return hand_over(declared, round, continuation, live, body, kept);
         }
         match tool_result(message) {
             Some(reply) => Sent::acked(Some(reply), body),

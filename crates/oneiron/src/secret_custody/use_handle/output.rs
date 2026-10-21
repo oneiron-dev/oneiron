@@ -13,6 +13,11 @@
 //! or trimmed copy of the value, in a string or a key at any depth, becomes
 //! the record's handle text. Nothing is withheld for it. Ids, generation and
 //! policy only: a presentation holds no value.
+//!
+//! A credential a live name selected, a `self.use` table check's or a
+//! connector route's own, is presented by the record that name resolved to
+//! before the send, never by the name again at the door
+//! (`SECRET_PRESENT_BY`), so a name re-registered mid-use cannot swap it.
 
 use std::fmt;
 
@@ -21,6 +26,7 @@ use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
 use crate::error::{Result, SecretError};
+use crate::secret_lease::DoorInjectionReceipt;
 use crate::vault::Vault;
 
 /// Which value a reply is cleared of (FIX 7647). One constant, so a later
@@ -34,6 +40,21 @@ pub enum SecretClearValueSource {
     /// The bytes the send's own door released, inside that door's callback,
     /// before anything that came back leaves it.
     SentSnapshot,
+}
+
+/// How a send presents a credential a live name selected before it
+/// (CONNECTOR_PRESENT_BY_RECORD_ID, Engine 10-22): a `self.use` table
+/// check's handle, a connector route's own secret. One constant, so a later
+/// ruling changes one line.
+const SECRET_PRESENT_BY: SecretPresentBy = SecretPresentBy::RecordId;
+
+/// Which door a name-selected credential is presented through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SecretPresentBy {
+    /// The record the name resolved to, by its id: a name re-registered
+    /// since cannot swap the credential, and a record revoked or suspended
+    /// since refuses at its door, so nothing is sent.
+    RecordId,
 }
 
 /// How the reply to one custody presentation is released (FIX 7646).
@@ -184,13 +205,25 @@ impl Vault {
         short.map_or_else(|| "[secret]".to_owned(), |(short, _)| handle_text(&short))
     }
 
-    /// [`Self::secret_clear_text`] for the record the secret name
-    /// `secret_ref` resolves to now: a route's own secret, read before its
-    /// send so its reply is cleared inside the door. Value-free.
-    #[must_use]
-    pub fn secret_clear_text_for_ref(&self, secret_ref: &str) -> String {
-        let custody = self.resolve_secret_ref(secret_ref).ok().flatten();
-        self.secret_clear_text(custody.as_ref())
+    /// The door a send presents the custody record `custody` through, the
+    /// record a live name resolved to before the send: by its id, never the
+    /// name again (`SECRET_PRESENT_BY`). `apply` runs inside the door with
+    /// the value, as [`Vault::inject_secret_record_at_door`].
+    ///
+    /// # Errors
+    /// The door's refusal, a record revoked or suspended since included:
+    /// then nothing was sent.
+    pub fn present_resolved_secret_at_door(
+        &self,
+        custody: &EntityId,
+        effector: &str,
+        apply: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<DoorInjectionReceipt> {
+        match SECRET_PRESENT_BY {
+            SecretPresentBy::RecordId => {
+                self.inject_secret_record_at_door(custody, effector, apply)
+            }
+        }
     }
 
     /// `result` and `failure`, from a use whose operation said nothing of

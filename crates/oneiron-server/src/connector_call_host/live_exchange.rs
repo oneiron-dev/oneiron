@@ -1,22 +1,29 @@
 //! The live half of the call host: the worker that owns an exchange once its
 //! send returned, and the reply readers both halves share.
 
+use zeroize::Zeroizing;
+
 use super::*;
 
 /// Hands one live exchange to a worker thread, which owns it from here, and
 /// keeps its questions for the caller. The call reached the connector, so
 /// the send is acknowledged either way; a worker that could not start drops
 /// the questions. `kept` is the value the send presented, which the worker
-/// clears what the connector says next of (FIX 7646).
+/// clears what the connector says next of (FIX 7646); the round's aliases go
+/// with it (FIX 8051).
 pub(super) fn hand_over(
     declared: &Declared<'_>,
-    registered: Registered,
-    questions: Vec<ConnectorQuestion>,
+    round: KeptRound,
     continuation: Continuation,
     live: &mut Option<LiveSession>,
     body: Vec<u8>,
     kept: Option<KeptSentValue>,
 ) -> Sent {
+    let KeptRound {
+        registered,
+        questions,
+        aliases,
+    } = round;
     let Some(session) = live.take() else {
         declared.registry.finish(&registered.handle);
         return Sent::acked(None, body);
@@ -35,6 +42,7 @@ pub(super) fn hand_over(
         deadline: registered.deadline,
         generation: 0,
         kept,
+        aliases,
     };
     let started = std::thread::Builder::new()
         .name("connector-elicitation".to_owned())
@@ -161,13 +169,32 @@ impl LiveSession {
     }
 }
 
+/// A foreign value the exchange hands back exactly as the connector sent it:
+/// a stream request's id, a retried call's request state. A connector may
+/// put the presented value in it, so while it waits for the next answer it
+/// is kept serialized in zeroizing storage, scrubbed once replaced or
+/// dropped, and never cleared or rewritten (FIX 8054).
+pub(super) struct KeptWire(Zeroizing<String>);
+
+impl KeptWire {
+    pub(super) fn keep(value: &Value) -> Self {
+        Self(Zeroizing::new(value.to_string()))
+    }
+
+    /// The kept value, for one message: its own serialization parses back
+    /// to the same value, key order included.
+    pub(super) fn value(&self) -> Value {
+        serde_json::from_str(&self.0).unwrap_or(Value::Null)
+    }
+}
+
 /// What a live question set's worker continues the exchange with.
 pub(super) enum Continuation {
     /// A request on the reply stream: answered by a JSON-RPC response POSTed
     /// to the endpoint, then the same stream read on.
     Stream {
         stream: EventStream,
-        request_id: Value,
+        request_id: KeptWire,
     },
     /// A result that asked for input: answered by the same `tools/call`
     /// again, with the responses and the opaque request state.
@@ -175,7 +202,7 @@ pub(super) enum Continuation {
         tool: String,
         arguments: Value,
         tool_headers: HeaderMap,
-        request_state: Option<Value>,
+        request_state: Option<KeptWire>,
         next_id: u64,
     },
 }
@@ -204,6 +231,9 @@ pub(super) struct Worker {
     /// The value the send presented, kept as the session keeps its header:
     /// each later question and the terminal reply are cleared of it.
     kept: Option<KeptSentValue>,
+    /// The current round's aliases: its answer goes on the wire under the
+    /// connector's own keys (FIX 8051).
+    aliases: KeyAliases,
 }
 
 impl Worker {
@@ -218,10 +248,12 @@ impl Worker {
             };
             match self.answer(&command.responses) {
                 Next::Asked(mut questions) => {
-                    // Cleared before the registry or the caller sees them.
-                    if let Some(kept) = &self.kept {
-                        clear_questions(&mut questions, &kept.sent());
-                    }
+                    // Cleared before the registry or the caller sees them;
+                    // this round's aliases replace the last round's.
+                    self.aliases = match &self.kept {
+                        Some(kept) => clear_questions(&mut questions, &kept.sent()),
+                        None => KeyAliases::default(),
+                    };
                     self.generation += 1;
                     let advanced = self.registry.upgrade().and_then(|registry| {
                         registry.advance(&self.handle, self.generation, &questions)
@@ -259,13 +291,16 @@ impl Worker {
     fn answer(&mut self, responses: &BTreeMap<String, Value>) -> Next {
         match &mut self.continuation {
             Continuation::Stream { stream, request_id } => {
-                let Some(result) = responses.get(wire::STREAM_KEY) else {
+                let Some(result) = self.aliases.response(responses, wire::STREAM_KEY) else {
                     return Next::Over(WorkerEvent::Failed {
                         sent: false,
                         reason: "connector_answer_unmatched",
                     });
                 };
-                match self.session.respond(request_id, "result", result.clone()) {
+                match self
+                    .session
+                    .respond(&request_id.value(), "result", result.clone())
+                {
                     Posted::Accepted => {}
                     Posted::Refused | Posted::Unsent => {
                         return Next::Over(WorkerEvent::Failed {
@@ -295,12 +330,13 @@ impl Worker {
                 let mut params = Map::new();
                 params.insert("name".to_owned(), Value::from(tool.as_str()));
                 params.insert("arguments".to_owned(), arguments.clone());
+                // The connector's own keys go back only here, on the wire.
                 params.insert(
                     wire::INPUT_RESPONSES.to_owned(),
-                    Value::Object(responses.clone().into_iter().collect()),
+                    Value::Object(self.aliases.restore(responses)),
                 );
                 if let Some(state) = request_state.as_ref() {
-                    params.insert(wire::REQUEST_STATE.to_owned(), state.clone());
+                    params.insert(wire::REQUEST_STATE.to_owned(), state.value());
                 }
                 let call = json!({
                     "jsonrpc": "2.0",
@@ -344,7 +380,7 @@ impl Worker {
     fn cancel(&self) {
         if let Continuation::Stream { request_id, .. } = &self.continuation {
             let cancel = elicitation_response(ConnectorAnswerAction::Cancel, None);
-            let _ = self.session.respond(request_id, "result", cancel);
+            let _ = self.session.respond(&request_id.value(), "result", cancel);
         }
     }
 }
@@ -367,14 +403,14 @@ pub(super) fn terminal(message: &Value) -> WorkerEvent {
 pub(super) fn read_stream_round(
     session: &LiveSession,
     stream: &mut EventStream,
-    request_id: &mut Value,
+    request_id: &mut KeptWire,
 ) -> Next {
     loop {
         match stream.next(CALL_ID) {
             Ok(StreamEvent::Answer(message, _)) => return Next::Over(terminal(&message)),
             Ok(StreamEvent::Request(request)) => match stream_question(&request) {
                 Some(question) => {
-                    *request_id = request.get("id").cloned().unwrap_or(Value::Null);
+                    *request_id = KeptWire::keep(request.get("id").unwrap_or(&Value::Null));
                     return Next::Asked(vec![question]);
                 }
                 None => session.refuse(&request),
