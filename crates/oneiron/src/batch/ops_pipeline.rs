@@ -558,9 +558,17 @@ pub(crate) fn apply_ops_session(
                 kind,
                 text_hash,
                 vector,
+                provenance,
             } => {
                 crate::embed::stage_media_vector_in_txn(
-                    view, wtxn, space, id, *kind, *text_hash, vector,
+                    view,
+                    wtxn,
+                    space,
+                    id,
+                    *kind,
+                    *text_hash,
+                    vector,
+                    provenance.as_ref(),
                 )?;
             }
             _ => {

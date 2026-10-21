@@ -387,8 +387,12 @@ impl Vault {
             enqueue_partition_plans_in_txn, read_partition_turns_in_txn, read_watermark_in_txn,
         };
         let scope = DreamerConsolidationScope::Micro;
+        let mut followed = false;
         let queued = self.with_write_txn(|txn| {
-            super::sieve::sieve_pass_in_txn(self, txn, now)?;
+            // The follower wakes on a turn whose read queued spans, in the
+            // sieve's own commit (FIX 7510).
+            followed = super::sieve::sieve_pass_in_txn(self, txn, now)?.spans_queued > 0
+                && super::follower::wake_in_txn(self, txn, now)?;
             let watermark = read_watermark_in_txn(self, txn, scope)?;
             let ids = collect_dirty_turn_ids_in_txn(
                 self,
@@ -451,7 +455,7 @@ impl Vault {
             super::projector::hold_in_txn(self, txn, &plan, &enqueued)?;
             Ok(!enqueued.is_empty())
         })?;
-        if queued {
+        if queued || followed {
             self.store.notify_attempt_observers();
         }
         Ok(queued)

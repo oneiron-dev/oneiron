@@ -16,7 +16,10 @@
 //! call, and records once what came of it
 //! ([`record_task_workflow_outcome`]): a receipt NOTE holding the whole
 //! report, and the outcome on the pin. A recorded outcome is never written
-//! again. A hard erase of the TASK removes its tries' pins.
+//! again. Before the program can act, its start goes on the pin under the
+//! lease ([`mark_task_workflow_started`], FIX 8104), so an entry after a
+//! death mid-run hands off as interrupted instead of running it again. A
+//! hard erase of the TASK removes its tries' pins.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -327,6 +330,9 @@ pub enum TaskWorkflowReport {
     },
     /// The pin names no program, so nothing ran.
     Unavailable,
+    /// The program was started at an earlier entry and its end was never
+    /// recorded (FIX 8104): whether it acted on the page is unknown.
+    Interrupted,
 }
 
 /// One TASK browser check, and what the page showed for it.
@@ -343,15 +349,17 @@ pub struct TaskWorkflowCheck {
 /// every pinned check met is Done; a missed check hands off as
 /// [`TaskWorkflowHandoff::GoalUnmet`]; a program that stopped short hands
 /// off as [`TaskWorkflowHandoff::Program`]; a pin with no program hands off
-/// for its cause. An outcome already recorded is returned as it stands, and
-/// nothing is written.
+/// for its cause; a started program whose end was never recorded hands off
+/// as [`TaskWorkflowHandoff::Interrupted`]. An outcome already recorded is
+/// returned as it stands, and nothing is written.
 ///
 /// # Errors
 ///
 /// A lapsed lease, a try with no pin, a report its pin does not admit (a run
 /// on a pin with no program or of another program, checks that are not the
-/// pinned ones, no run on a pin with a program), a receipt the try's agent
-/// may not write, and storage errors.
+/// pinned ones, no run on a pin with a program, an interruption of a program
+/// never started), a receipt the try's agent may not write, and storage
+/// errors.
 pub fn record_task_workflow_outcome(
     vault: &Vault,
     binding: &HostBinding,
@@ -367,7 +375,10 @@ pub fn record_task_workflow_outcome(
                 "the try binds no library program".to_owned(),
             ));
         };
-        if row.outcome != TaskWorkflowOutcome::Pending {
+        if !matches!(
+            row.outcome,
+            TaskWorkflowOutcome::Pending | TaskWorkflowOutcome::Started { .. }
+        ) {
             return Ok(row.outcome);
         }
         let note = receipt_note_id(record.id)?;
@@ -408,6 +419,40 @@ pub fn record_task_workflow_outcome(
     })
 }
 
+/// Marks, once, that the try `binding` leases is about to run its pinned
+/// program (FIX 8104): one writer under its lease turns a Pending pin to
+/// [`TaskWorkflowOutcome::Started`] at `now`, before the program can act.
+/// `None` when it marked it; else the outcome the pin already holds, and
+/// nothing is written. An entry that later finds it Started records
+/// [`TaskWorkflowReport::Interrupted`]; the mark says nothing about what the
+/// program did.
+///
+/// # Errors
+///
+/// A lapsed lease, a try with no pin, and storage errors.
+pub fn mark_task_workflow_started(
+    vault: &Vault,
+    binding: &HostBinding,
+    now: u64,
+) -> Result<Option<TaskWorkflowOutcome>> {
+    vault.with_write_txn_grouped(|wtxn| {
+        let record = binding
+            .leased_record_in_txn(vault, wtxn)?
+            .ok_or(Error::InvalidClaimBody("the run's lease no longer holds"))?;
+        let Some(mut row) = pinned_row_in(vault, wtxn, &record)? else {
+            return Err(Error::InvalidConfig(
+                "the try binds no library program".to_owned(),
+            ));
+        };
+        if row.outcome != TaskWorkflowOutcome::Pending {
+            return Ok(Some(row.outcome));
+        }
+        row.outcome = TaskWorkflowOutcome::Started { at: now };
+        ATTEMPTS.put(vault, wtxn, record.id.as_bytes(), &row)?;
+        Ok(None)
+    })
+}
+
 /// A try's receipt NOTE id, derived from the try alone, so every pass
 /// names the same entity.
 fn receipt_note_id(attempt: AttemptId) -> Result<EntityId> {
@@ -425,6 +470,11 @@ fn settled_outcome(
         receipt_ref: note,
     };
     match (&row.pin, report) {
+        // Only a program whose start is on the pin was interrupted.
+        (_, TaskWorkflowReport::Interrupted) => match row.outcome {
+            TaskWorkflowOutcome::Started { .. } => Ok(handoff(TaskWorkflowHandoff::Interrupted)),
+            _ => refused("reported an interruption of a program it never started"),
+        },
         (TaskWorkflowPin::Unavailable { cause }, TaskWorkflowReport::Unavailable) => {
             Ok(handoff(match cause {
                 TaskWorkflowUnavailable::Retired { id, reason } => TaskWorkflowHandoff::Retired {
@@ -537,7 +587,9 @@ fn receipt_markdown(
         TaskWorkflowReport::Ran { checks, .. } => {
             checks.iter().filter(|check| !check.observed.met).collect()
         }
-        TaskWorkflowReport::Program { .. } | TaskWorkflowReport::Unavailable => Vec::new(),
+        TaskWorkflowReport::Program { .. }
+        | TaskWorkflowReport::Unavailable
+        | TaskWorkflowReport::Interrupted => Vec::new(),
     };
     let mut lines = vec![
         "# Library program receipt".to_owned(),
@@ -559,6 +611,7 @@ fn receipt_markdown(
     }
     lines.push(match outcome {
         TaskWorkflowOutcome::Pending => "- outcome: pending".to_owned(),
+        TaskWorkflowOutcome::Started { .. } => "- outcome: started".to_owned(),
         TaskWorkflowOutcome::Done { .. } => "- outcome: done".to_owned(),
         TaskWorkflowOutcome::Handoff { cause, .. } => {
             format!("- outcome: handoff, {}", cause.code())
@@ -566,6 +619,14 @@ fn receipt_markdown(
     });
     if !missed.is_empty() {
         lines.push(format!("- missed checks: {}", missed.len()));
+    }
+    // FIX 8104: an interrupted run's effects are unknown, never claimed.
+    if let (TaskWorkflowReport::Interrupted, TaskWorkflowOutcome::Started { at }) =
+        (report, &row.outcome)
+    {
+        lines.push(format!(
+            "- browser effects: unknown. The strict program was started at {at} and its end was never recorded, so this receipt cannot say what it did or did not do on the page."
+        ));
     }
     let evidence = Receipt {
         attempt: attempt_hex(record.id),

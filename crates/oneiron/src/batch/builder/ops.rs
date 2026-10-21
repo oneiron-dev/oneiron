@@ -114,6 +114,9 @@ pub(crate) enum BatchOp {
         kind: crate::embed::InputKind,
         text_hash: Option<[u8; crate::embed::TEXT_HASH_LEN]>,
         vector: Vec<f32>,
+        /// The device and runtime that computed it, stored beside it outside the space
+        /// identity (FIX 7796); `None` for a vector a caller supplied.
+        provenance: Option<crate::embed::EmbeddingProvenance>,
     },
     Phonetic {
         id: EntityId,
