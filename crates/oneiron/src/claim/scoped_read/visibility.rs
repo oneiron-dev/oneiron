@@ -1,5 +1,6 @@
 use super::access_gate::HeldAuthority;
 use super::agent_grants::AskedFilter;
+use super::owner_authority::OwnAdmission;
 use super::*;
 use crate::federation::record_scope::asset_text;
 
@@ -160,10 +161,30 @@ impl<'v> ScopedRead<'v> {
         authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         let asked = authority.grants().asked();
-        Ok(
-            self.is_entity_raw_readable_own_in(rtxn, policy, id, raw, filter, authority, asked)?
-                && self.derived_sources_readable_in(rtxn, policy, id, raw, authority)?,
-        )
+        let own = self.own_admission_in(rtxn, policy, id, raw, filter, authority, asked)?;
+        if !own.admitted() {
+            return Ok(false);
+        }
+        if self.derived_sources_readable_in(rtxn, policy, id, raw, authority)? {
+            return Ok(true);
+        }
+        // FIX 7661: a row only the reader's own owner authority admitted
+        // reads what it was written from as that same owner lane reads it,
+        // in this snapshot, once today's check refused it. A refusal or a
+        // failure there keeps today's answer.
+        let OwnAdmission::ByOwner(lane) = own else {
+            return Ok(false);
+        };
+        Ok(lane
+            .derived_sources_readable_in(rtxn, policy, id, raw, authority)
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    error_kind = ?error.kind(),
+                    "an owner lane read no sources it could not judge; the read keeps its own \
+                     answer (FIX 7661)"
+                );
+                false
+            }))
     }
 
     /// A summary, the reply copied from it and its merge header carry words
@@ -341,13 +362,38 @@ impl<'v> ScopedRead<'v> {
         authority: &HeldAuthority<'v>,
         asked: &AskedFilter,
     ) -> Result<bool> {
-        if self.own_row_readable_in(rtxn, policy, id, raw, filter, authority, None)? {
-            return Ok(true);
+        Ok(self
+            .own_admission_in(rtxn, policy, id, raw, filter, authority, asked)?
+            .admitted())
+    }
+
+    /// [`Self::is_entity_raw_readable_own_in`], keeping which alternative
+    /// admitted the row: one only the owner alternative admitted keeps the
+    /// owner lane that did (FIX 7661).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "B else A else the owner over one row, its filter, held authority and request"
+    )]
+    fn own_admission_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        raw: &[u8],
+        filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority<'v>,
+        asked: &AskedFilter,
+    ) -> Result<OwnAdmission<'v>> {
+        if self.own_row_readable_in(rtxn, policy, id, raw, filter, authority, None)?
+            || self.own_row_readable_by_grant_in(rtxn, policy, id, raw, filter, authority, asked)
+        {
+            return Ok(OwnAdmission::Admitted);
         }
-        if self.own_row_readable_by_grant_in(rtxn, policy, id, raw, filter, authority, asked) {
-            return Ok(true);
-        }
-        Ok(self.own_row_readable_by_owner_in(rtxn, policy, id, raw, filter, authority, asked))
+        Ok(self
+            .own_row_owner_lane_in(rtxn, policy, id, raw, filter, authority, asked)
+            .map_or(OwnAdmission::Refused, |lane| {
+                OwnAdmission::ByOwner(Box::new(lane))
+            }))
     }
 
     /// The row's own admission under `grant`, one live Grant of the
@@ -434,7 +480,7 @@ impl<'v> ScopedRead<'v> {
         if !self.audience_readable_raw_in(rtxn, id, raw, authority)? {
             return Ok(false);
         }
-        if !self.credential_allows_id(id)
+        if !self.credential_allows_row_in(rtxn, id)
             || !self.proof_live_in(rtxn)?
             || !self.facets_allow_in(rtxn, id, raw)?
         {

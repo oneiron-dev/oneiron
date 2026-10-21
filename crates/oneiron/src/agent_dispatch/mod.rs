@@ -68,6 +68,7 @@ mod project_proposal;
 mod resident;
 mod room_join;
 mod run_objectives;
+mod scope;
 mod spend_calibration;
 #[cfg(feature = "sync")]
 pub(crate) mod spend_handoff;

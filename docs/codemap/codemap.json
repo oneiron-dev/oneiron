@@ -207,7 +207,7 @@
      "purpose": "A resident's own craft as its runs read it (OF-490): the lessons and failure modes the system learned about…",
      "surface": {
       "const": 1,
-      "fn": 11,
+      "fn": 13,
       "struct": 1
      }
     },
@@ -223,7 +223,7 @@
      "path": "src/actor_claims/distill.rs",
      "purpose": "CHAT lane: session-end distill jobs, turn readers, and the distill run",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 3,
       "trait": 1
@@ -238,7 +238,7 @@
      "path": "src/actor_claims/evidence.rs",
      "purpose": "Typed evidence inlets for the `actor.*` write door",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 1
      }
@@ -265,7 +265,7 @@
      "path": "src/actor_claims/rows.rs",
      "purpose": "`actor.*` row vocabulary: predicates, bounds, row/note types, and normalization",
      "surface": {
-      "const": 12,
+      "const": 11,
       "crate-vis": 7,
       "enum": 2,
       "fn": 2,
@@ -316,7 +316,7 @@
      "path": "src/actor_claims/validate.rs",
      "purpose": "Stored-row structural validator and scope/lineage readers",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -327,7 +327,7 @@
      "path": "src/actor_claims/write.rs",
      "purpose": "The `actor.*` write chokepoint, cardinality core, and TASK-lane projector",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -1188,6 +1188,16 @@
      "purpose": "The objectives an agent run confesses against (OF-544), kept with its attempt from its first claim",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/scope.rs",
+     "purpose": "Project descent for a dispatched child's resource scope (FIX 8626): a child under a parent scope that names…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -7613,7 +7623,7 @@
      "path": "src/blob_artifact/version_rows.rs",
      "purpose": "The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -12199,7 +12209,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 8
      }
     },
@@ -12359,7 +12369,7 @@
      "path": "src/claim/scoped_read/owner_authority.rs",
      "purpose": "FIX 7461: a question's own locally built reader also reads what its own live owner authority admits (owner…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -12413,6 +12423,17 @@
       "fn": 3,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/records_cover.rs",
+     "purpose": "FIX 8245 (Engine 10-22, CALLS `FIX 8245 records cover`): a credential's records caveat that names an…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -19591,7 +19612,7 @@
      "purpose": "The `ContextSpec` descriptor, its bounds, normalization, and structural validation",
      "surface": {
       "const": 8,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 5,
       "struct": 1
@@ -26141,7 +26162,7 @@
      "path": "src/edit_distance/attribution/stored.rs",
      "purpose": "Stored rows: key shapes, row shapes, and the row codec",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 27
      }
     },
     {
@@ -32831,19 +32852,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HumanTaskFollowupDriver",
-      "OpenHumanAsk",
-      "OpenHumanAskKind",
-      "OpenHumanAsks"
+      "HumanTaskFollowupDriver"
      ],
      "path": "src/human_task/followup.rs",
      "purpose": "Native-human routing, follow-up cursor lifecycle and the wake driver",
      "surface": {
-      "const": 1,
       "crate-vis": 5,
-      "enum": 1,
-      "fn": 8,
-      "struct": 3
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -32865,7 +32881,7 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -32889,6 +32905,25 @@
       "fn": 1,
       "struct": 5,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OpenAskFollowup",
+      "OpenHumanAsk",
+      "OpenHumanAskKind",
+      "OpenHumanAsks",
+      "UncoveredHumanAskFamily"
+     ],
+     "path": "src/human_task/open_asks.rs",
+     "purpose": "The asks still open with one person (FIX 5908), read from the TASKs themselves",
+     "surface": {
+      "const": 2,
+      "enum": 3,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -36255,8 +36290,9 @@
       "const": 4,
       "crate-vis": 2,
       "enum": 6,
-      "fn": 11,
-      "struct": 15
+      "fn": 12,
+      "struct": 15,
+      "type": 1
      }
     },
     {
@@ -36450,6 +36486,7 @@
       "DecisionClass",
       "DecisionDial",
       "DecisionQuestion",
+      "DecisionQuestionInput",
       "DecisionReceipt",
       "DecisionRung",
       "DecisionTime",
@@ -36471,8 +36508,8 @@
      "surface": {
       "crate-vis": 4,
       "enum": 8,
-      "fn": 12,
-      "struct": 13
+      "fn": 13,
+      "struct": 14
      }
     },
     {
@@ -53866,7 +53903,7 @@
      "path": "src/skill/mod.rs",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 1,
       "re-export": 8
      }
@@ -53925,6 +53962,16 @@
       "enum": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill/saved_prose.rs",
+     "purpose": "OF-063 record assertions in saved skill text (FIX 1230): the prose an agent saves or forks into a skill is…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -54092,7 +54139,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 15
      }
     },
@@ -54144,6 +54191,16 @@
      "purpose": "OF-540/OF-397: the write envelope of a leased agent run",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/skill_erase.rs",
+     "purpose": "A skill's erase in the attribution ledgers (FIX 8265, OF-568 L10): the evidence rows and routed judgments…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -54336,7 +54393,7 @@
      "path": "src/skill_convert/types.rs",
      "purpose": "What a conversion is asked for and what it returns: the request, the refiner's brief and verdict, and the…",
      "surface": {
-      "const": 5,
+      "const": 4,
       "enum": 2,
       "fn": 3,
       "struct": 5,
@@ -61281,7 +61338,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -61499,6 +61556,16 @@
       "enum": 2,
       "fn": 5,
       "struct": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/brief_history.rs",
+     "purpose": "A TASK's earlier briefs (FIX 8077)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -61856,7 +61923,7 @@
      "purpose": "The one task-domain door (OF-220): post, accept, report and status for MCP tool-first, the HTTP facade and…",
      "surface": {
       "crate-vis": 16,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -61886,7 +61953,17 @@
      "path": "src/task_verb/highway_post.rs",
      "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_redo.rs",
+     "purpose": "A TASK's redo (FIX 3153): a new TASK posted from an earlier one's content, through the post the highway…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -61974,6 +62051,7 @@
       "TaskOutcome",
       "TaskPhase",
       "TaskPost",
+      "TaskRedo",
       "TaskReport",
       "TaskReportBody",
       "TaskStatusQuery",
@@ -61989,7 +62067,7 @@
       "crate-vis": 11,
       "enum": 8,
       "fn": 3,
-      "struct": 11
+      "struct": 12
      }
     },
     {
@@ -62044,7 +62122,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 44,
+      "crate-vis": 47,
       "fn": 1,
       "mod": 6,
       "re-export": 28
@@ -62929,7 +63007,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1160
+      "fn": 1162
      }
     },
     {
@@ -63960,7 +64038,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VoiceBankClipInput",
@@ -63969,6 +64047,7 @@
       "VoiceBankPackReceipt",
       "VoiceRenderConsentReceipt",
       "VoiceRenderConsentRequest",
+      "VoiceRenderLineageRequest",
       "VoiceTargetEvictReceipt",
       "VoiceTargetEvictRequest",
       "VoiceTargetProvisionRequest",
@@ -63977,12 +64056,12 @@
       "VoiceVendorEviction"
      ],
      "path": "src/task_verb/sdk_voice_bank.rs",
-     "purpose": "The owner's voice-bank rows (DOOR-143, e2e VOICE-02): `vault.voices.packs.put` banks a reference pack of the…",
+     "purpose": "The voice-bank rows (DOOR-143, e2e VOICE-02, FIX 4393, 4396): `vault.voices.packs.put` banks a reference…",
      "surface": {
       "enum": 1,
-      "fn": 5,
+      "fn": 7,
       "re-export": 1,
-      "struct": 11
+      "struct": 12
      }
     },
     {
@@ -66743,6 +66822,7 @@
       "VoiceRefFence",
       "VoiceRefOrigin",
       "VoiceRefPack",
+      "VoiceRefSubjectKind",
       "VoiceRegisterClip",
       "VoiceRenderConsent",
       "VoiceRenderDecision",
@@ -66754,10 +66834,26 @@
      "purpose": "Private per-vault voice reference bank",
      "surface": {
       "crate-vis": 5,
-      "enum": 1,
-      "fn": 10,
-      "re-export": 1,
+      "enum": 2,
+      "fn": 11,
+      "re-export": 3,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceBankActor",
+      "VoiceCreator"
+     ],
+     "path": "src/voice_identity/ref_bank/actor.rs",
+     "purpose": "Who acts on a voice through the bank's typed doors (FIX 4393)",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -66773,10 +66869,26 @@
       "VoiceTargetInspection"
      ],
      "path": "src/voice_identity/ref_bank/owner_acts.rs",
-     "purpose": "The owner's own doors onto the voice bank (DOOR-143, e2e VOICE-02)",
+     "purpose": "The typed doors onto the voice bank (DOOR-143, e2e VOICE-02, FIX 4393)",
      "surface": {
-      "fn": 6,
+      "fn": 7,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceDroppedTargetView",
+      "VoiceRenderConsentWrite",
+      "VoiceRenderEventReceipt",
+      "VoiceRenderEventView"
+     ],
+     "path": "src/voice_identity/ref_bank/render_history.rs",
+     "purpose": "A voice's render history (FIX 4396)",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 4
      }
     },
     {
@@ -69923,7 +70035,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70105,7 +70217,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 87,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70595,7 +70707,7 @@
      "purpose": "The engine's housekeeping pass: every sweep the engine relies on, run when due"
     },
     "human_task": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -71141,14 +71253,14 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -71260,7 +71372,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 208,
+     "files": 210,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71372,7 +71484,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
     "voice_identity": {
-     "files": 12,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71430,7 +71542,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4555,
+   "source_files": 4564,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72766,6 +72878,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/cua/browser_setup.rs",
+     "purpose": "Fresh-vault browser setup through the same owner doors as acceptance",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/cua/check.rs",
      "purpose": "One deterministic host-private checker",
      "surface": {
@@ -72783,7 +72905,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/drift.rs",
@@ -72799,7 +72921,7 @@
      "path": "src/cua/drift_engine.rs",
      "purpose": "Engine/fixture boundary for the S5 protocol",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -72903,7 +73025,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/run.rs",
@@ -72913,13 +73035,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/served.rs",
      "purpose": "Shipped binary lifecycle and official MCP stdio",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -73814,7 +73936,7 @@
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
     "cua": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -73914,7 +74036,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 141,
+   "source_files": 142,
    "test_files": 18
   },
   "oneiron-broker": {
@@ -81233,7 +81355,7 @@
      "path": "src/llm/budget/state.rs",
      "purpose": "Budget meter core: reserve planning and admission",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 23
      }
     },
     {
@@ -81673,7 +81795,7 @@
      "purpose": "Four-axis branch scope and exact readable/writable resource identities",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -81805,7 +81927,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1131
+      "fn": 1133
      }
     },
     {
@@ -83066,7 +83188,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1132
+      "fn": 1134
      }
     },
     {
@@ -85525,6 +85647,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/blob_artifacts/read_admission.rs",
+     "purpose": "The lanes the artifact family's raw reads admit rows through (FIX 7645): a credential's record caveats…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/body_codec.rs",
      "purpose": "Compressed bodies on the HTTP API (ARCH-0081 §8, OF-604)",
      "surface": {
@@ -85960,7 +86092,7 @@
      "path": "src/api/context_board/egress.rs",
      "purpose": "Where a chat call's context board may go (FIX 7257), for a live turn and a queued Continue or Retry alike…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -87952,9 +88084,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/voice_bank_doors.rs",
-     "purpose": "The owner's voice-bank host doors (DOOR-143, e2e VOICE-02): `vault.voices.packs.put`, `.render_consent`…",
+     "purpose": "The voice-bank host doors (DOOR-143, e2e VOICE-02, FIX 4393, 4396): `vault.voices.packs.put`…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -97778,7 +97910,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 501,
+     "files": 502,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -98228,7 +98360,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1069,
+   "source_files": 1070,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -99433,6 +99565,7 @@
       "DecisionClass",
       "DecisionDial",
       "DecisionQuestion",
+      "DecisionQuestionInput",
       "DecisionReceipt",
       "DecisionRung",
       "DecisionTime",
@@ -101058,7 +101191,8 @@
       "QuestionBackfillRequest",
       "QuestionCreateRequest",
       "QuestionCriteria",
-      "QuestionDefinition",
+      "QuestionDefinitionDecisionQuestion",
+      "QuestionDefinitionDecisionQuestionInput",
       "QuestionEditRequest",
       "QuestionMedia",
       "QuestionOutcomes",
@@ -102034,6 +102168,7 @@
       "TaskLifecycleRecord",
       "TaskOutcome",
       "TaskPhase",
+      "TaskRedo",
       "TaskRefuseDomain",
       "TaskRefuseInput",
       "TaskRefuseOutput",
@@ -102197,13 +102332,17 @@
       "VoiceClipSummary",
       "VoiceConsentBasis",
       "VoiceConsentState",
+      "VoiceDroppedTargetView",
       "VoiceIdentityView",
       "VoiceLineAtom",
       "VoicePackSummary",
       "VoiceRefOrigin",
+      "VoiceRefSubjectKind",
       "VoiceRenderConsentReceipt",
       "VoiceRenderConsentRequest",
       "VoiceRenderConsentView",
+      "VoiceRenderEventView",
+      "VoiceRenderLineageRequest",
       "VoiceTargetCloneView",
       "VoiceTargetEvictReceipt",
       "VoiceTargetEvictRequest",
@@ -102355,8 +102494,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 954,
-      "struct": 2972
+      "enum": 955,
+      "struct": 2978
      }
     },
     {

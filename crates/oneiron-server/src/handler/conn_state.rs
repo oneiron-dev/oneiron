@@ -25,8 +25,13 @@ pub(super) struct ConnState {
     pub(super) window_sync_mode: WindowSyncMode,
     pub(super) lfs_owner_mode: bool,
     /// The object of each chunk reply queued on this socket, in queue order,
-    /// so the reply is checked against the device-only flag again on release.
-    pub(super) queued_chunk_objects: std::collections::VecDeque<oneiron::origin::lfs::LfsOid>,
+    /// so the reply is checked against the device-only flag again on release,
+    /// with the authority a lift-marked object was read under, judged again
+    /// then too (FIX 2897).
+    pub(super) queued_chunk_objects: std::collections::VecDeque<(
+        oneiron::origin::lfs::LfsOid,
+        Option<oneiron::sync::chunks::LfsReadAuthority>,
+    )>,
     pub(super) protocol_version: u8,
     /// App-tier authority is established only by a successful in-band bind.
     pub(super) bound_auth: Option<CoreAuth>,
