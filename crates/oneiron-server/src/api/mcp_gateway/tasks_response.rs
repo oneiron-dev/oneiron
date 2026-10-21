@@ -199,10 +199,10 @@ pub(crate) async fn execute_mcp_generated_verb(
                 })?;
                 (output, source, carrier, epoch.or(task_epoch))
             };
-            // An act whose rows are unknown answers off this device only that
-            // it ran (FIX 5988); a read releases as before.
+            // An act whose rows are unknown (FIX 5988), or held (FIX 8171), answers
+            // off this device only that it ran; a read releases as before.
             let (output, rows) =
-                super::served_rows::unknown_act_answer(args.tool.name, actor, output, served)?;
+                super::served_rows::held_act_answer(server, args.tool.name, actor, output, served)?;
             let snapshot = McpPageSnapshot {
                 output: output.clone(),
                 source,

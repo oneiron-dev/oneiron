@@ -353,7 +353,7 @@ pub(crate) fn skill_library_view(
         files,
         capabilities,
         scans,
-        receipts: super::sdk::hub_skill_receipts_as_owner(vault, owner, input)?,
+        receipts: super::sdk_hub::hub_skill_receipts(vault, input)?,
     })
 }
 
