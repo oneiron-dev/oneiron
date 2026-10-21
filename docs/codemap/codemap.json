@@ -24244,17 +24244,16 @@
       "ProactivityDigest",
       "ProactivityPolicyProposal",
       "ProactivityPolicyRequest",
-      "ProactivityPresentation",
-      "UrgentDigestWake"
+      "ProactivityPresentation"
      ],
      "path": "src/dreamer_runner/maintenance/digest.rs",
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
       "const": 7,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 14,
-      "re-export": 3,
-      "struct": 10
+      "re-export": 4,
+      "struct": 9
      }
     },
     {
@@ -24292,6 +24291,27 @@
      "path": "src/dreamer_runner/maintenance/digest/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DigestHarmAsk",
+      "DigestHarmCandidate",
+      "DigestHarmJudgeInput",
+      "DigestHarmResult",
+      "DigestNeededBefore",
+      "DigestVersionRef",
+      "UrgentDigestAssessment"
+     ],
+     "path": "src/dreamer_runner/maintenance/digest/urgent.rs",
+     "purpose": "The digest's urgent breakthrough (OF-194 L3; ARCH-0026: \"urgent breakthrough only when waiting would harm…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 7,
+      "fn": 7,
+      "struct": 7
+     }
     },
     {
      "bucket": "m",
@@ -35682,7 +35702,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 45,
+      "const": 46,
       "fn": 1,
       "struct": 1
      }
@@ -70165,7 +70185,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 127,
+     "files": 128,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71182,7 +71202,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4534,
+   "source_files": 4535,
    "test_files": 902
   },
   "oneiron-android": {
@@ -84581,6 +84601,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/dreamer/urgent_digest.rs",
+     "purpose": "The host's half of the digest's urgent breakthrough (OF-194 L3; ARCH-0026: \"urgent breakthrough only when…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/eval_authoring.rs",
      "purpose": "The Coach's eval authoring (ARCH-0053 \"Eval authoring\", OF-578): each night it keeps each seat's test set…",
      "surface": {
@@ -97503,7 +97533,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 74,
+     "files": 75,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -97960,7 +97990,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1067,
+   "source_files": 1068,
    "test_files": 182
   },
   "oneiron-spawn": {
