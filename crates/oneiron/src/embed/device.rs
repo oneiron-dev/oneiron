@@ -2,13 +2,17 @@
 //! 2026-10-11). One model is one space on every device, so a device move never
 //! re-embeds; the device is marked beside each vector instead, so one device's
 //! vectors can be found and patched later without a migration. The mark sits
-//! outside the space identity and every key or hash that decides it.
+//! outside the space identity and every key or hash that decides it. A media
+//! vector in a declared space is marked the same way, per space (FIX 7796).
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::space::{
+    embedding_space_in_txn, has_media_vector_in_txn, media_vector_ids_in_txn, space_key,
+};
 use crate::ports::RetrievalIndexInventory;
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::ManifestDbs;
 use crate::{EntityId, Result, Vault};
 
@@ -16,6 +20,11 @@ use crate::{EntityId, Result, Vault};
 /// [`EmbeddingProvenance::unknown`].
 const EMBEDDING_DEVICE: SideTable<EntityId, EmbeddingProvenance, Named> =
     SideTable::new(&side_table::EMBEDDING_DEVICE);
+/// Who computed each media vector of a declared space. Key: space key16 +
+/// id16, the media vector's own. A media vector with no row is
+/// [`EmbeddingProvenance::unknown`].
+const MEDIA_DEVICE: SideTable<([u8; 16], EntityId), EmbeddingProvenance, Named> =
+    SideTable::new(&side_table::EMBEDDING_MEDIA_DEVICE);
 
 /// The family of device an embedding vector was computed on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -138,6 +147,47 @@ pub(crate) fn clear_all_embedding_devices_in_txn(
     EMBEDDING_DEVICE.delete_from(store, txn, &[]).map(drop)
 }
 
+/// Records who computed the media vector just written under `key`, its space
+/// key and entity, in the same transaction; `None` or an unknown device leaves
+/// no row, so a vector a caller supplied never keeps the mark of the one it
+/// replaced.
+pub(super) fn record_media_device_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut heed::RwTxn<'_>,
+    key: &([u8; 16], EntityId),
+    provenance: Option<&EmbeddingProvenance>,
+) -> Result<()> {
+    match provenance.filter(|provenance| !provenance.is_unknown()) {
+        Some(provenance) => MEDIA_DEVICE.put(store, txn, key, provenance),
+        None => MEDIA_DEVICE.delete(store, txn, key).map(drop),
+    }
+}
+
+/// Drops the mark of the media vector under `key`, with that vector.
+pub(super) fn drop_media_device_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut heed::RwTxn<'_>,
+    key: &([u8; 16], EntityId),
+) -> Result<()> {
+    MEDIA_DEVICE.delete(store, txn, key).map(drop)
+}
+
+/// Drops every media mark of the space keyed `space_key`, with its vectors.
+pub(super) fn clear_media_devices_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut heed::RwTxn<'_>,
+    space_key: &[u8; 16],
+) -> Result<()> {
+    MEDIA_DEVICE.delete_from(store, txn, space_key).map(drop)
+}
+
+/// The overlay key of the mark beside `id`'s media vector in declared space
+/// `space_id`: the `vault_meta` row a room's media door stages with its
+/// vector, held outside the room's byte budget as the vector is (FIX 2345).
+pub(super) fn media_device_row_key(space_id: &str, id: &EntityId) -> Vec<u8> {
+    MEDIA_DEVICE.key_bytes(&(space_key(space_id), *id))
+}
+
 impl Vault {
     /// Who computed `id`'s stored vector; `None` when it has none. A vector
     /// with no record reads as [`EmbeddingProvenance::unknown`].
@@ -189,6 +239,56 @@ impl Vault {
                 ids.push(id);
             }
         })?;
+        Ok(ids)
+    }
+
+    /// Who computed `id`'s stored vector in declared space `space_id`
+    /// (FIX 7796); `None` when the space holds no vector of it. A vector with
+    /// no record reads as [`EmbeddingProvenance::unknown`].
+    pub fn media_embedding_provenance(
+        &self,
+        space_id: &str,
+        id: &EntityId,
+    ) -> Result<Option<EmbeddingProvenance>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(space) = embedding_space_in_txn(&self.store, &txn, space_id)? else {
+            return Ok(None);
+        };
+        if !has_media_vector_in_txn(&self.store, &txn, &space, id)? {
+            return Ok(None);
+        }
+        Ok(Some(
+            MEDIA_DEVICE
+                .get(&self.store, &txn, &(space_key(space_id), *id))?
+                .unwrap_or_else(EmbeddingProvenance::unknown),
+        ))
+    }
+
+    /// The ids of the vectors stored in declared space `space_id` that
+    /// `device` computed, under `runtime` when one is named, in id order: what
+    /// a later patch of that space re-embeds (FIX 7796).
+    pub fn media_vectors_by_provenance(
+        &self,
+        space_id: &str,
+        device: EmbeddingDevice,
+        runtime: Option<&str>,
+    ) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(space) = embedding_space_in_txn(&self.store, &txn, space_id)? else {
+            return Ok(Vec::new());
+        };
+        let key = space_key(space_id);
+        let mut ids = Vec::new();
+        for id in media_vector_ids_in_txn(&self.store, &txn, &space)? {
+            let provenance = MEDIA_DEVICE
+                .get(&self.store, &txn, &(key, id))?
+                .unwrap_or_else(EmbeddingProvenance::unknown);
+            if provenance.device == device
+                && runtime.is_none_or(|runtime| runtime == provenance.runtime)
+            {
+                ids.push(id);
+            }
+        }
         Ok(ids)
     }
 

@@ -5,10 +5,11 @@
 //! generated SDK, remote and binding code cannot name, so the shapes are
 //! spelled here; the engine fns and their order are the route's.
 //!
-//! None of these engine fns takes the owner's proof. The proof each fn here
-//! asks for is the door's admission: a server mints it from the request, as
-//! `/v1/owner` does, and an embedded handle acts as the vault's embedded
-//! owner. A move's check runs a server's own probe towers, so it has no fn
+//! The proof each fn here asks for is the door's admission: a server mints it
+//! from the request, as `/v1/owner` does, and an embedded handle acts as the
+//! vault's embedded owner. Each space change hands it to its engine fn, which
+//! checks it again inside the write that commits the change (FIX 8200), so a
+//! proof revoked while the request waited changes nothing. A move's check runs a server's own probe towers, so it has no fn
 //! here: its server door calls `SyncServer::check_space_move`.
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -180,8 +181,12 @@ pub struct EmbeddingSpaceProbeDeleted {
 }
 
 /// An engine refusal of a space change, a bad request as the route answers
-/// it.
+/// it; an owner's proof the change's write no longer admits keeps the owner
+/// door's own refusal (FIX 8200).
 fn refused(error: crate::error::Error) -> MemoryError {
+    if error.kind() == crate::error::ErrorKind::ConsentOwnerNotAuthenticated {
+        return error.into();
+    }
     MemoryError::bad_request(error.to_string())
 }
 
@@ -216,10 +221,12 @@ pub fn read_embedding_spaces(
 /// `vault.embedding_spaces.declare`: declares or widens one space.
 pub fn declare_embedding_space_as(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     input: EmbeddingSpaceDeclareRequest,
 ) -> MemoryResult<EmbeddingSpacesView> {
-    vault.declare_embedding_space(input.0).map_err(refused)?;
+    vault
+        .declare_embedding_space(owner, input.0)
+        .map_err(refused)?;
     view(vault)
 }
 
@@ -227,12 +234,12 @@ pub fn declare_embedding_space_as(
 /// default.
 pub fn bind_embedding_slot_as(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     input: EmbeddingSpaceBindRequest,
 ) -> MemoryResult<EmbeddingSpacesView> {
     match &input.space {
-        Some(space) => vault.bind_kind_slot(input.kind, space),
-        None => vault.unbind_kind_slot(input.kind),
+        Some(space) => vault.bind_kind_slot(owner, input.kind, space),
+        None => vault.unbind_kind_slot(owner, input.kind),
     }
     .map_err(refused)?;
     view(vault)
@@ -241,11 +248,11 @@ pub fn bind_embedding_slot_as(
 /// `vault.embedding_spaces.one_space`: the one-space preset.
 pub fn bind_one_embedding_space_as(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     input: EmbeddingSpaceRequest,
 ) -> MemoryResult<EmbeddingSpacesView> {
     vault
-        .bind_one_space_for_all(&input.space)
+        .bind_one_space_for_all(owner, &input.space)
         .map_err(refused)?;
     view(vault)
 }
@@ -254,11 +261,11 @@ pub fn bind_one_embedding_space_as(
 /// move names, with its rows.
 pub fn retire_embedding_space_as(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     input: EmbeddingSpaceRequest,
 ) -> MemoryResult<EmbeddingSpacesView> {
     vault
-        .retire_embedding_space(&input.space)
+        .retire_embedding_space(owner, &input.space)
         .map_err(refused)?;
     view(vault)
 }
@@ -267,14 +274,14 @@ pub fn retire_embedding_space_as(
 /// serves to the candidate. It answers the move, as the route does.
 pub fn begin_embedding_space_move_as(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     input: EmbeddingSpaceMoveRequest,
 ) -> MemoryResult<SpaceMove> {
     let incumbent = input
         .incumbent
         .map_or(SpaceRef::TextIndex, SpaceRef::Declared);
     vault
-        .begin_space_move(&input.candidate, incumbent, input.margin)
+        .begin_space_move(owner, &input.candidate, incumbent, input.margin)
         .map_err(refused)
 }
 
@@ -302,10 +309,10 @@ pub fn find_embedding_space_move(
 /// did not read not worse.
 pub fn approve_embedding_space_move_as(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     input: EmbeddingSpaceCandidateRequest,
 ) -> MemoryResult<EmbeddingSpacesView> {
-    approve_embedding_space_move_admitted_as(vault, _owner, input, None)
+    approve_embedding_space_move_admitted_as(vault, owner, input, None)
 }
 
 /// [`approve_embedding_space_move_as`] behind the host's media egress gate
@@ -313,12 +320,12 @@ pub fn approve_embedding_space_move_as(
 /// never fills the candidate, so it does not keep the move filling.
 pub fn approve_embedding_space_move_admitted_as(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     input: EmbeddingSpaceCandidateRequest,
     egress: Option<&dyn crate::embed::EgressPredicate>,
 ) -> MemoryResult<EmbeddingSpacesView> {
     vault
-        .approve_space_move_admitted(&input.candidate, egress)
+        .approve_space_move_admitted(owner, &input.candidate, egress)
         .map_err(refused)?;
     view(vault)
 }
@@ -327,21 +334,23 @@ pub fn approve_embedding_space_move_admitted_as(
 /// again.
 pub fn undo_embedding_space_move_as(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     input: EmbeddingSpaceCandidateRequest,
 ) -> MemoryResult<EmbeddingSpacesView> {
-    vault.undo_space_move(&input.candidate).map_err(refused)?;
+    vault
+        .undo_space_move(owner, &input.candidate)
+        .map_err(refused)?;
     view(vault)
 }
 
 /// `vault.embedding_spaces.move_abandon`: ends an open move with no swap.
 pub fn abandon_embedding_space_move_as(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     input: EmbeddingSpaceCandidateRequest,
 ) -> MemoryResult<EmbeddingSpacesView> {
     vault
-        .abandon_space_move(&input.candidate)
+        .abandon_space_move(owner, &input.candidate)
         .map_err(refused)?;
     view(vault)
 }
@@ -366,7 +375,7 @@ pub fn read_embedding_space_probes(
 /// `vault.embedding_spaces.probes.put`: stores one probe, written now.
 pub fn put_embedding_space_probe_as(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     input: EmbeddingSpaceProbePutRequest,
 ) -> MemoryResult<EmbeddingSpaceProbe> {
     let mut targets = BTreeSet::from([input.family]);
@@ -381,7 +390,9 @@ pub fn put_embedding_space_probe_as(
         written_at: vault.now_recorded_at(),
         cohort: None,
     };
-    let id = vault.put_space_probe(probe.clone()).map_err(refused)?;
+    let id = vault
+        .put_space_probe(owner, probe.clone())
+        .map_err(refused)?;
     Ok(EmbeddingSpaceProbe {
         id: crate::entity_id::bytes_to_hex_lower(&id),
         probe,
@@ -391,12 +402,12 @@ pub fn put_embedding_space_probe_as(
 /// `vault.embedding_spaces.probes.delete`.
 pub fn delete_embedding_space_probe_as(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     input: EmbeddingSpaceProbeDeleteRequest,
 ) -> MemoryResult<EmbeddingSpaceProbeDeleted> {
     let id = probe_id(&input.id)?;
     Ok(EmbeddingSpaceProbeDeleted {
-        ok: vault.delete_space_probe(&id)?,
+        ok: vault.delete_space_probe(owner, &id)?,
     })
 }
 

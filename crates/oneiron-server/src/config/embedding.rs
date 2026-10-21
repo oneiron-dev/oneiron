@@ -99,8 +99,9 @@ impl EmbeddingConfig {
     /// never returned to their default, and no open move carries (FIX 1960).
     /// A system move's retirement or return to a default (a timed-out move's
     /// dropped candidate, an undo back to the vault's own text index) seeds
-    /// again (FIX 6697). The slots it binds name a system move, not the owner
-    /// (FIX 6747). Runs before the listener binds. On a replica
+    /// again (FIX 6697). The spaces it declares and the slots it binds are a
+    /// system move's, not the owner's (FIX 6747, FIX 8200). Runs before the
+    /// listener binds. On a replica
     /// ([`oneiron::sync::residence::synced_as_replica`]) it only checks the
     /// listed widths: rows it seeded would contend with the home's.
     pub fn apply_to(&self, vault: &Vault) -> anyhow::Result<()> {
@@ -121,7 +122,7 @@ impl EmbeddingConfig {
                     "embedding space stays retired over [embedding]"
                 ),
                 None => {
-                    vault.declare_embedding_space(space.clone())?;
+                    vault.seed_embedding_space(space.clone())?;
                     tracing::info!(space = %space.id, "embedding space declared from [embedding]");
                 }
             }

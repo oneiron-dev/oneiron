@@ -22,6 +22,7 @@ use super::media::{
 use super::space::InputKind;
 use super::{EgressDecision, EgressPredicate, EmbedderLocality};
 use crate::Vault;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
@@ -34,8 +35,6 @@ pub(super) use ledger::ProbeCohortLedger;
 pub const SPACE_PROBES_PER_KIND: usize = 20;
 /// Longest probe query, in bytes.
 pub const SPACE_PROBE_QUERY_MAX_LEN: usize = 2048;
-/// Most documents one probe names as its answers.
-pub const SPACE_PROBE_MAX_TARGETS: usize = 16;
 /// Width of a probe cohort's date cut, in vault seconds: the authoring pass groups a kind's
 /// documents by the window the vault learned each in, and draws its probes' families across
 /// those windows, the window holding fewest probes first and the newest on a tie.
@@ -106,10 +105,11 @@ impl SpaceProbe {
                 "a space probe's media query is none of its targets".into(),
             ));
         }
-        if self.targets.is_empty() || self.targets.len() > SPACE_PROBE_MAX_TARGETS {
-            return Err(Error::InvalidConfig(format!(
-                "a space probe names 1..={SPACE_PROBE_MAX_TARGETS} target documents"
-            )));
+        // Every target it names is kept and run (FIX 8199): no count of them is refused.
+        if self.targets.is_empty() {
+            return Err(Error::InvalidConfig(
+                "a space probe names at least one target document".into(),
+            ));
         }
         if !self.targets.contains(&self.family) {
             return Err(Error::InvalidConfig(
@@ -162,11 +162,16 @@ pub(crate) fn space_probes_in_txn(
 
 impl Vault {
     /// Stores one probe; every target must be a stored record, and a media query a stored ASSET
-    /// holding inline image or audio.
-    pub fn put_space_probe(&self, probe: SpaceProbe) -> Result<[u8; 16]> {
+    /// holding inline image or audio. The write checks the owner's proof again (FIX 8200).
+    pub fn put_space_probe(
+        &self,
+        owner: &AuthenticatedOwner,
+        probe: SpaceProbe,
+    ) -> Result<[u8; 16]> {
         probe.validate()?;
         let id = probe.id();
         let mut wtxn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &wtxn)?;
         for target in &probe.targets {
             if self.store.port_entity_record(&wtxn, target)?.is_none() {
                 return Err(Error::EntityNotFound);
@@ -191,9 +196,11 @@ impl Vault {
         space_probes_in_txn(&self.store, &rtxn)
     }
 
-    /// Deletes one probe; `false` when none had that id.
-    pub fn delete_space_probe(&self, id: &[u8; 16]) -> Result<bool> {
+    /// Deletes one probe; `false` when none had that id. The write checks the owner's proof
+    /// again (FIX 8200).
+    pub fn delete_space_probe(&self, owner: &AuthenticatedOwner, id: &[u8; 16]) -> Result<bool> {
         let mut wtxn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &wtxn)?;
         let existed = EMBEDDING_PROBE.contains(&self.store, &wtxn, id)?;
         EMBEDDING_PROBE.delete(&self.store, &mut wtxn, id)?;
         wtxn.commit()?;
@@ -205,8 +212,8 @@ impl Vault {
     /// drawn across date-cut cohorts ([`SPACE_PROBE_COHORT_SECS`]): the cohort holding fewest
     /// probes first, the newest on a tie, and its newest document first. Each query it writes
     /// is stored with that document as its family and cohort, and as its targets that document
-    /// and each one a `DerivedFrom` edge away that is a document of `kind`, up to
-    /// [`SPACE_PROBE_MAX_TARGETS`] (ARCH-0053 `#eval-derivation`).
+    /// and each one a `DerivedFrom` edge away that is a document of `kind`, all of them
+    /// (ARCH-0053 `#eval-derivation`).
     ///
     /// # Errors
     ///
@@ -414,8 +421,8 @@ fn draw_across_cohorts(
 
 /// The documents that answer a probe written from `family`: it, and each record one
 /// `DerivedFrom` edge away (a summary written from it, or what it was written from) that is a
-/// document of `kind` here, in id order up to [`SPACE_PROBE_MAX_TARGETS`]. Derived rows
-/// inherit their source's family (ARCH-0053 `#eval-derivation`).
+/// document of `kind` here, every one of them. Derived rows inherit their source's family
+/// (ARCH-0053 `#eval-derivation`).
 fn family_targets_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -432,9 +439,6 @@ fn family_targets_in(
     let peers: BTreeSet<EntityId> = peers.collect::<Result<_>>()?;
     let kinds = BTreeSet::from([kind]);
     for peer in peers {
-        if targets.len() >= SPACE_PROBE_MAX_TARGETS {
-            break;
-        }
         let mut read = MediaEmbedReport::default();
         let answers = match kind {
             InputKind::Text => {

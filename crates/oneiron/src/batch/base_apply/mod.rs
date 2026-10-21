@@ -686,10 +686,18 @@ pub(super) fn apply_ops_with_origin(
                 kind,
                 text_hash,
                 vector,
+                provenance,
             } => {
                 let vector = Zeroizing::new(vector);
                 crate::embed::replay_media_vector_in_txn(
-                    store, wtxn, &space, &id, kind, text_hash, &vector,
+                    store,
+                    wtxn,
+                    &space,
+                    &id,
+                    kind,
+                    text_hash,
+                    &vector,
+                    provenance.as_ref(),
                 )?;
             }
             BatchOp::Phonetic { id, codes } => {
