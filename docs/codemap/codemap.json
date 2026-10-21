@@ -5470,7 +5470,7 @@
      "path": "src/batch/export/archive_spool.rs",
      "purpose": "FIX 2766 (rule 5): the whole-vault archive is built through spool files and read member by member, so no…",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 1
      }
     },
@@ -5492,6 +5492,16 @@
       "crate-vis": 8,
       "enum": 2,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/asset_reserve.rs",
+     "purpose": "The body instances an archive import's File ASSETs may spill into (FIX 3677, KS-2A): minted before the…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -5780,7 +5790,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 13
      }
     },
@@ -5826,6 +5836,16 @@
      "purpose": "The body instances an archive import's run results spill into (KS-2A, FIX 5683 part A): minted before the…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/snapshot_body.rs",
+     "purpose": "FIX 3677: a live row's body as the whole-vault snapshot reads it",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -52972,9 +52992,19 @@
      "path": "src/serialize/export_value.rs",
      "purpose": "Credential-safe, type-preserving MessagePack values for whole-vault JSON",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 14,
       "enum": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/export_value/file_stream.rs",
+     "purpose": "FIX 3677: [`super::attaches_as_file`] read as a body streams, so an archive file is classified with no…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -56641,7 +56671,7 @@
      "path": "src/store/asset_body/read.rs",
      "purpose": "Reading ASSET bodies whatever plane holds them (FIX 3677): a logical reader that streams a body file…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -70215,7 +70245,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 140,
+     "files": 142,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71321,7 +71351,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -71659,7 +71689,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4572,
+   "source_files": 4575,
    "test_files": 902
   },
   "oneiron-android": {
@@ -75401,7 +75431,7 @@
       "enum": 4,
       "fn": 6,
       "mod": 1,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 7,
       "trait": 1
      }
@@ -75448,18 +75478,42 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "TscRsBudget",
       "TscRsWasm"
      ],
      "path": "src/tsc_rs.rs",
-     "purpose": "tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime",
+     "purpose": "tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime…",
      "surface": {
       "const": 1,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TsrsWasm"
+     ],
+     "path": "src/tsrs.rs",
+     "purpose": "tsrs in process: the pinned Wasm build of oxc's Rust port of TypeScript 7 (`@tsrs/wasm`, vendored in…",
+     "surface": {
+      "const": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/wasm.rs",
+     "purpose": "The Wasmtime runner of the in-process backends: tsc-rs (`components/tsc-rs`) and tsrs (`vendor/tsrs`)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -75496,14 +75550,28 @@
     "tsc_rs": {
      "files": 1,
      "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime…"
+    },
+    "tsrs": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "tsrs in process: the pinned Wasm build of oxc's Rust port of TypeScript 7 (`@tsrs/wasm`, vendored in…"
+    },
+    "wasm": {
+     "files": 1,
+     "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime"
+     "purpose": "The Wasmtime runner of the in-process backends: tsc-rs (`components/tsc-rs`) and tsrs (`vendor/tsrs`)"
     }
    },
    "over_bar": 0,
    "purpose": "An optional type check of code-mode programs before they run",
-   "source_files": 6,
+   "source_files": 8,
    "test_files": 1
   },
   "oneiron-container": {
