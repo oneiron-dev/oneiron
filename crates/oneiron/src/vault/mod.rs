@@ -78,6 +78,9 @@ pub struct Vault {
     /// The rows over live work this vault holds open, and the host's door
     /// for their crossings ([`Vault::set_live_rows`]).
     pub(crate) live_rows: crate::live_rows::LiveRowsCell,
+    /// What the runtime witnesses of each leased attempt it runs now (OF-568
+    /// L5). In memory only: never persisted, never restored.
+    pub(crate) attempt_activity: crate::code_run::activity::AttemptActivityRuntime,
     /// Task work's one fair line on this vault, whichever door the work came
     /// in by ([`Vault::admit_task_work`]).
     pub(crate) task_work: crate::work_line::WorkLine<crate::EntityId>,

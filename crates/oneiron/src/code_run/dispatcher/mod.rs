@@ -60,6 +60,9 @@ pub(crate) use self::reader_spawn::ReaderChildBinding;
 pub struct HostSelfDispatcher<'a> {
     pub(super) agent_parent: Option<crate::attempt_queue::AttemptId>,
     pub(super) agent_lease: Option<crate::agent_def::AgentAuthorLease>,
+    /// The run's binding on its vault's attempt activity witness (OF-568
+    /// L5), held while it lives; `None` unless a lease binds the run.
+    pub(super) activity: Option<crate::code_run::activity::AttemptActivityBinding>,
     /// The run's own vault as the host holds it, lent to the callable skills
     /// its program calls (OF-353): a foreign-tier skill's egress relay keeps
     /// it past the call.
@@ -271,6 +274,7 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(Self {
             agent_parent: None,
             agent_lease: None,
+            activity: None,
             skill_vault: None,
             storage,
             actor,
@@ -526,6 +530,8 @@ impl<'a> HostSelfDispatcher<'a> {
             .agent_lease
             .as_ref()
             .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (OF-568 L5).
+        let _tool = self.activity_tool();
         // The descriptor bridge answers before the policy probe and the door:
         // a descriptor is no effect, so neither rules on it. Its own verb
         // hooks run around it on canonical storage, reading as the run's

@@ -214,7 +214,10 @@ impl EngineNativeExecutor<'_> {
                 &record,
                 &wire_prompt.stamp.resolved_fingerprint,
             );
-            let response = self.backend.generate(request, self.lease).await?;
+            let response = {
+                let _generating = self.gated_write.activity_generating();
+                self.backend.generate(request, self.lease).await
+            }?;
             self.post_turn_hooks(turn, &response)?;
             // The provider that answered is the one this turn's program
             // speaks for: each verb call it makes carries the name (OF-560).

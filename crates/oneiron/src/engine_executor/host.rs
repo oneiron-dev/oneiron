@@ -505,6 +505,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         // This call's row keeps its own position: a callable skill's calls
         // take the positions after it, and their rows land first.
         let place = self.bridge_calls.len();
+        // The call, a callable skill's or a reader's included, holds the
+        // attempt's tool witness open until it is answered (OF-568 L5).
+        let _tool = self.gated_write.activity_tool();
         let dispatched = match (&call, runtime) {
             (SelfCall::SkillsCall(skill), Some((runtime, parent))) => {
                 let skill = skill.clone();
@@ -1493,6 +1496,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
             "executor result storage unavailable".into(),
         ))?;
         self.streamed.write(storage, stream, frame)?;
+        self.gated_write.activity_streamed(frame);
         Ok(true)
     }
 

@@ -509,6 +509,8 @@ class HealthSilenceActivity(TypedDict):
     own_call_at: NotRequired[int | None]
     own_step_at: NotRequired[int | None]
     actor_only_at: NotRequired[int | None]
+    stream_at: NotRequired[int | None]
+    tool_finished_at: NotRequired[int | None]
     other_session: NotRequired[HealthOtherSession | None]
 class AgentHealthCard(TypedDict):
     subject: EntityId

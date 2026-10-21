@@ -577,6 +577,7 @@ impl Vault {
             launch_usd_prices: Default::default(),
             message_streams: Default::default(),
             live_rows: Default::default(),
+            attempt_activity: Default::default(),
             task_work: crate::work_line::WorkLine::new(
                 None,
                 crate::work_line::TASK_WORK_BOUND,
