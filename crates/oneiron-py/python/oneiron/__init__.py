@@ -5513,6 +5513,9 @@ class Oneiron:
         def find(self, spec):
             """The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."""
             return json.loads(_translate(lambda: self._client.self_browser_library_find(json.dumps(spec))))
+        def draft(self, spec):
+            """Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press."""
+            return json.loads(_translate(lambda: self._client.self_browser_library_draft(json.dumps(spec))))
         def propose(self, spec):
             """Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."""
             return json.loads(_translate(lambda: self._client.self_browser_library_propose(json.dumps(spec))))

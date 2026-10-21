@@ -5566,6 +5566,11 @@ export_facade! {
     let output = client.self_browser_library_find(&input)?;
     crate::codec::lift_record("self.browser.library.find", &output)
 };
+"self.browser.library.draft" => fn self_browser_library_draft(&self, input: LiveRunRequestDraftInput) -> BrowserAnswerDraftOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryDraftInput> = crate::codec::lower_record("self.browser.library.draft", input)?;
+    let output = client.self_browser_library_draft(&input)?;
+    crate::codec::lift_record("self.browser.library.draft", &output)
+};
 "self.browser.library.propose" => fn self_browser_library_propose(&self, input: LiveRunRequestProposeInput) -> BrowserAnswerProposeOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryProposeInput> = crate::codec::lower_record("self.browser.library.propose", input)?;
     let output = client.self_browser_library_propose(&input)?;

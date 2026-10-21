@@ -1145,6 +1145,7 @@ selfBrowserCrop(input: unknown): unknown
 selfBrowserZoom(input: unknown): unknown
 selfBrowserBatch(input: unknown): unknown
 selfBrowserLibraryFind(input: unknown): unknown
+selfBrowserLibraryDraft(input: unknown): unknown
 selfBrowserLibraryPropose(input: unknown): unknown
 selfBrowserLibraryRetire(input: unknown): unknown
 selfBrowserLibraryRetired(input: unknown): unknown

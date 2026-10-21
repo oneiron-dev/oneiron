@@ -3460,6 +3460,9 @@ impl OneironClient {
                 "self.browser.library.find" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BrowserLibraryFindOutput,
                 >(client, verb, &input),
+                "self.browser.library.draft" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BrowserLibraryDraftOutput,
+                >(client, verb, &input),
                 "self.browser.library.propose" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BrowserLibraryProposeOutput,
                 >(client, verb, &input),
@@ -17250,6 +17253,20 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.browser.library.find", value)
+    }
+    pub fn self_browser_library_draft(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::BrowserLibraryDraftInput,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::BrowserLibraryDraftOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.browser.library.draft", value)
     }
     pub fn self_browser_library_propose(
         &self,

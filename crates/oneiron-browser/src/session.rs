@@ -68,11 +68,13 @@
 //! them, and the fresh guest a proposal's replay runs on hand the secrets
 //! their reads find to it, and type and expect a handle through it.
 
+mod draft;
 mod fresh;
 mod guest;
 mod request;
 pub(crate) mod storage;
 pub(crate) mod switch;
+mod trail;
 
 pub use fresh::FreshGuest;
 pub use guest::{BrowserGuestStarter, StartedGuest};
@@ -80,6 +82,7 @@ pub use guest::{BrowserGuestStarter, StartedGuest};
 use self::guest::EngineGuest;
 use self::storage::{Collector, OriginSnapshots};
 use self::switch::OriginHistory;
+use self::trail::{Acted, Event, typed_action};
 use crate::driver::CdpDriver;
 use crate::driver::pages::Base;
 use crate::request::{BrowserRequestHandler, Custody};
@@ -88,17 +91,17 @@ use crate::secret::{Secrets, entry};
 use crate::stop::elapsed_ms;
 use crate::{
     AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserEngine, BrowserError,
-    BrowserPersonInput, BrowserTab, ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE,
-    EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput,
-    ExpectOutput, FieldWriter, FindInput, FindOutput, HandleInfo, HandoverInput, HandoverOutput,
-    ImageOutput, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
-    LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider,
-    NoWriter, Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode,
-    ProposeInput, ProposeOutput, ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput,
-    ScreenshotOutput, ScreenshotTrigger, SecretCustody, SecretKind, SelectInput, SendPolicy,
-    StoragePhase, SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord,
-    TextProvenance, TypeInput, ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput,
-    site_of,
+    BrowserPersonInput, BrowserTab, ClickInput, CropInput, DraftInput, DraftOutput, EFFECT_ACCOUNT,
+    EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt,
+    ExpectInput, ExpectOutput, FieldWriter, FindInput, FindOutput, HandleInfo, HandoverInput,
+    HandoverOutput, ImageOutput, LibraryFindInput, LibraryFindOutput, LibraryRetireInput,
+    LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput,
+    LibraryRunOutput, NoDecider, NoWriter, Observation, ObservationPage, ObserveInput, OpenInput,
+    PointInput, PressMode, ProposeInput, ProposeOutput, ReceiptEvidenceSink, ReplayAction,
+    RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SecretCustody,
+    SecretKind, SelectInput, SendPolicy, StepStop, StoragePhase, SwitchEngineInput,
+    SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TextProvenance, TypeInput, ViewInput,
+    WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -164,8 +167,18 @@ pub struct BrowserSession {
     guest: Box<dyn SessionLease>,
     manifest: SessionManifest,
     policy: SendPolicy,
-    receipts: Vec<EffectReceipt>,
+    /// Every effect's receipt and every step that stopped, in order, on
+    /// one sequence (`trail`, CUA E7).
+    trail: Vec<Event>,
     receipt_seq: u64,
+    /// What the next receipt keeps for a replay, set by the verb that
+    /// makes it.
+    acted: Option<Acted>,
+    /// The stop the last failing effect verb noted, for a batch's stop of
+    /// the same step to complete; cleared at every verb's entry.
+    stop_pending: Option<u64>,
+    /// The effect class whose press refused the effect verb running now.
+    press_refused: Option<String>,
     decider: Option<Box<dyn RoutineDecider>>,
     /// The host's writer of a Fill's text (CUA E6), lent with the decider.
     field_writer: Option<Box<dyn FieldWriter>>,
@@ -245,8 +258,11 @@ impl BrowserSession {
             guest: lease,
             manifest,
             policy: config.policy.clone(),
-            receipts: Vec::new(),
+            trail: Vec::new(),
             receipt_seq: 0,
+            acted: None,
+            stop_pending: None,
+            press_refused: None,
             decider: None,
             field_writer: None,
             typed: None,
@@ -345,9 +361,8 @@ impl BrowserSession {
     }
 
     /// Every effect this session receipted, in order.
-    #[must_use]
-    pub fn receipts(&self) -> &[EffectReceipt] {
-        &self.receipts
+    pub fn receipts(&self) -> impl Iterator<Item = &EffectReceipt> {
+        self.trail.iter().filter_map(Event::receipt)
     }
 
     /// The press policy as it stands, batch counts spent down.
@@ -587,6 +602,7 @@ impl BrowserSession {
     /// leaves the front where it was, for the verb's own answer; a tab a
     /// Lightpanda guest cannot follow is the verb's refusal.
     fn live(&mut self) -> Result<&mut CdpDriver, BrowserError> {
+        self.stop_pending = None;
         self.agent_has()?;
         self.guest_up()?;
         if let (_, Some(refused)) = self.driver.follow_or_refusal() {
@@ -605,7 +621,12 @@ impl BrowserSession {
     }
 
     fn press_for(&mut self, class: &str, row: &Row) -> Result<PressMode, BrowserError> {
-        press_for(&mut self.policy, class, row)
+        let pressed = press_for(&mut self.policy, class, row);
+        // A refused press ends a draft as the press would (CUA E7).
+        if pressed.is_err() {
+            self.press_refused = Some(class.to_owned());
+        }
+        pressed
     }
 
     /// Types `input`, its receipt naming where the text came from
@@ -613,14 +634,23 @@ impl BrowserSession {
     fn type_as(
         &mut self,
         input: TypeInput,
-        provenance: TextProvenance,
+        mut provenance: TextProvenance,
     ) -> Result<Observation, BrowserError> {
         let started = Instant::now();
         let entry = entry(input.text.as_deref(), input.secret.as_deref())?;
         let target = self.live()?.resolve_target(&input.target)?;
+        let source = self.source();
         let base = Base::of(input.base);
         let typed = self.driver.type_target(&target, entry, input.clear, &base);
         let mut observation = self.crossed(typed)?;
+        // The operand as typed, a secret's taken into custody (CUA E7).
+        let operand = self.operand(&target.row, entry, source.origin.as_deref());
+        let locator = target.row.locator.clone();
+        let action = typed_action(locator, operand, input.clear, provenance.fill.take());
+        self.acted = Some(Acted {
+            action: Some(action),
+            source,
+        });
         self.typed = Some(provenance);
         self.receipt(
             "type",
@@ -648,6 +678,14 @@ impl BrowserSession {
         started: Instant,
     ) {
         self.receipt_seq += 1;
+        // What the verb kept for a replay, and where it began (CUA E7).
+        let (action, source) = self
+            .acted
+            .take()
+            .map_or((None, None), |acted| (acted.action, Some(acted.source)));
+        let (source_url, source_origin, tab) = source.map_or((None, None, None), |source| {
+            (source.url, source.origin, Some(source.tab))
+        });
         // Never compared: each receipt's screenshot is a capture of its own.
         let (screenshot, capture_id) = self
             .driver
@@ -677,6 +715,11 @@ impl BrowserSession {
             engine_switch: None,
             text_source: None,
             text_ref: None,
+            action,
+            source_url,
+            source_origin,
+            tab,
+            result_tab: Some(self.driver.front_target().to_owned()),
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(started),
         };
@@ -696,7 +739,7 @@ impl BrowserSession {
             }
             self.receipt_sink = Some(sink);
         }
-        self.receipts.push(receipt.clone());
+        self.keep(receipt.clone());
         self.landed();
         observation.receipt = Some(receipt);
     }
@@ -775,15 +818,26 @@ pub(crate) fn receipt_class(
     })
 }
 
-impl BrowserDriver for BrowserSession {
-    fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError> {
+impl BrowserSession {
+    /// `open`, as [`BrowserDriver::open`] runs it.
+    fn open_page(&mut self, input: OpenInput) -> Result<Observation, BrowserError> {
         let started = Instant::now();
         self.agent_has()?;
         if !web_page(&input.url) {
             return Err(BrowserError::Url(input.url));
         }
-        let opened = self.live()?.open(input);
+        self.live()?;
+        let source = self.source();
+        // The URL asked for, kept apart from the page a redirect left.
+        let action = ReplayAction::Open {
+            url: input.url.clone(),
+        };
+        let opened = self.driver.open(input);
         let mut observation = self.crossed(opened)?;
+        self.acted = Some(Acted {
+            action: Some(action),
+            source,
+        });
         self.receipt(
             "open",
             None,
@@ -803,6 +857,104 @@ impl BrowserDriver for BrowserSession {
         Ok(observation)
     }
 
+    /// `click`, as [`BrowserDriver::click`] runs it.
+    fn click_row(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
+        let target = self.live()?.resolve_target(&input.target)?;
+        let source = self.source();
+        let class = effect_class(&target.row.name);
+        let press = match class {
+            Some(class) => self.press_for(class, &target.row)?,
+            None => PressMode::None,
+        };
+        let clicked = self.driver.click_target(&target, &Base::of(input.base));
+        let mut observation = self.crossed(clicked)?;
+        let class = receipt_class(class, Some(&target.row));
+        let action = ReplayAction::Click {
+            locator: target.row.locator.clone(),
+        };
+        self.acted = Some(Acted {
+            action: Some(action),
+            source,
+        });
+        self.receipt(
+            "click",
+            Some(&target.row),
+            class,
+            press,
+            &mut observation,
+            started,
+        );
+        self.undelivered()?;
+        Ok(observation)
+    }
+
+    /// `click_at`, as [`BrowserDriver::click_at`] runs it: a point, which
+    /// no replay step takes (CUA E7).
+    fn click_point(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
+        let (x, y) = self.live()?.point(&input)?;
+        let source = self.source();
+        let row = self.driver.row_at(x, y)?;
+        let class = row.as_ref().and_then(|row| effect_class(&row.name));
+        let press = match (class, &row) {
+            (Some(class), Some(row)) => self.press_for(class, row)?,
+            _ => PressMode::None,
+        };
+        let base = Base::of(input.base);
+        let clicked = self.driver.click_point(x, y, row.as_ref(), &base);
+        let mut observation = self.crossed(clicked)?;
+        let class = receipt_class(class, row.as_ref());
+        self.acted = Some(Acted {
+            action: None,
+            source,
+        });
+        self.receipt(
+            "click_at",
+            row.as_ref(),
+            class,
+            press,
+            &mut observation,
+            started,
+        );
+        self.undelivered()?;
+        Ok(observation)
+    }
+
+    /// `select`, as [`BrowserDriver::select`] runs it.
+    fn select_option(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
+        let target = self.live()?.resolve_target(&input.target)?;
+        let source = self.source();
+        let base = Base::of(input.base);
+        let selected = self.driver.select_target(&target, &input.option, &base);
+        let mut observation = self.crossed(selected)?;
+        let action = ReplayAction::Select {
+            locator: target.row.locator.clone(),
+            option: input.option,
+        };
+        self.acted = Some(Acted {
+            action: Some(action),
+            source,
+        });
+        self.receipt(
+            "select",
+            Some(&target.row),
+            None,
+            PressMode::None,
+            &mut observation,
+            started,
+        );
+        self.undelivered()?;
+        Ok(observation)
+    }
+}
+
+impl BrowserDriver for BrowserSession {
+    fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError> {
+        self.acting("open", |session| session.open_page(input))
+    }
+
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
         self.live()?.observe(input)
     }
@@ -820,55 +972,17 @@ impl BrowserDriver for BrowserSession {
     }
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
-        let started = Instant::now();
-        let target = self.live()?.resolve_target(&input.target)?;
-        let class = effect_class(&target.row.name);
-        let press = match class {
-            Some(class) => self.press_for(class, &target.row)?,
-            None => PressMode::None,
-        };
-        let clicked = self.driver.click_target(&target, &Base::of(input.base));
-        let mut observation = self.crossed(clicked)?;
-        let class = receipt_class(class, Some(&target.row));
-        self.receipt(
-            "click",
-            Some(&target.row),
-            class,
-            press,
-            &mut observation,
-            started,
-        );
-        self.undelivered()?;
-        Ok(observation)
+        self.acting("click", |session| session.click_row(input))
     }
 
     fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
-        let started = Instant::now();
-        let (x, y) = self.live()?.point(&input)?;
-        let row = self.driver.row_at(x, y)?;
-        let class = row.as_ref().and_then(|row| effect_class(&row.name));
-        let press = match (class, &row) {
-            (Some(class), Some(row)) => self.press_for(class, row)?,
-            _ => PressMode::None,
-        };
-        let base = Base::of(input.base);
-        let clicked = self.driver.click_point(x, y, row.as_ref(), &base);
-        let mut observation = self.crossed(clicked)?;
-        let class = receipt_class(class, row.as_ref());
-        self.receipt(
-            "click_at",
-            row.as_ref(),
-            class,
-            press,
-            &mut observation,
-            started,
-        );
-        self.undelivered()?;
-        Ok(observation)
+        self.acting("click_at", |session| session.click_point(input))
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
-        self.type_as(input, TextProvenance::supplied())
+        self.acting("type", |session| {
+            session.type_as(input, TextProvenance::supplied())
+        })
     }
 
     fn fill_text(
@@ -876,25 +990,11 @@ impl BrowserDriver for BrowserSession {
         input: TypeInput,
         provenance: TextProvenance,
     ) -> Result<Observation, BrowserError> {
-        self.type_as(input, provenance)
+        self.acting("type", |session| session.type_as(input, provenance))
     }
 
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
-        let started = Instant::now();
-        let target = self.live()?.resolve_target(&input.target)?;
-        let base = Base::of(input.base);
-        let selected = self.driver.select_target(&target, &input.option, &base);
-        let mut observation = self.crossed(selected)?;
-        self.receipt(
-            "select",
-            Some(&target.row),
-            None,
-            PressMode::None,
-            &mut observation,
-            started,
-        );
-        self.undelivered()?;
-        Ok(observation)
+        self.acting("select", |session| session.select_option(input))
     }
 
     fn wait_for(&mut self, input: WaitForInput) -> Result<WaitForOutput, BrowserError> {
@@ -959,6 +1059,7 @@ impl BrowserDriver for BrowserSession {
     fn library_run(&mut self, input: LibraryRunInput) -> Result<LibraryRunOutput, BrowserError> {
         // A run refused mid-takeover would count as a missed postcondition.
         self.agent_has()?;
+        self.stop_pending = None;
         let mut output = self.with_library(|session, library, decider, writer| {
             crate::library::run(session, library, decider, writer, input)
         })?;
@@ -996,6 +1097,15 @@ impl BrowserDriver for BrowserSession {
         })
     }
 
+    fn library_draft(&mut self, input: DraftInput) -> Result<DraftOutput, BrowserError> {
+        self.agent_has()?;
+        self.draft(input)
+    }
+
+    fn note_stop(&mut self, stop: StepStop) {
+        self.noted(stop);
+    }
+
     fn handover(&mut self, input: HandoverInput) -> Result<HandoverOutput, BrowserError> {
         self.live()?;
         let reason = input
@@ -1029,6 +1139,7 @@ impl BrowserDriver for BrowserSession {
     }
 
     fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {
+        self.stop_pending = None;
         let mut decider = self.decider.take();
         let writer = self.field_writer.take();
         let lent: &dyn FieldWriter = match writer.as_deref() {

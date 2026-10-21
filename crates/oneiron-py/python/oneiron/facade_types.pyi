@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1132 facade rows, 3950 declarations.
-Inputs: 1067 of 1132 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1019 of 1132 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1133 facade rows, 3961 declarations.
+Inputs: 1068 of 1133 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1020 of 1133 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -19718,6 +19718,49 @@ class SwitchOutcomeFailed(TypedDict):
     detail: str
 SwitchOutcome = SwitchOutcomeSwitched | SwitchOutcomeUnchanged | SwitchOutcomeFailed
 EngineSwitchRecord = TypedDict("EngineSwitchRecord", {"from": BrowserEngine, "to": BrowserEngine, "reason": str, "url": str, "carried": NotRequired[list[SwitchCarried]], "not_carried": NotRequired[list[SwitchNotCarried]], "outcome": SwitchOutcome})
+OperandGap = Literal["no_custody", "refused", "unknown_kind", "unbound"]
+class TypeOperandLiteral(TypedDict):
+    operand: Literal["literal"]
+    text: str
+class TypeOperandSecret(TypedDict):
+    operand: Literal["secret"]
+    kind: SecretKind
+    handle: str
+class TypeOperandWithheld(TypedDict):
+    operand: Literal["withheld"]
+    kind: NotRequired[SecretKind | None]
+    cause: OperandGap
+TypeOperand = TypeOperandLiteral | TypeOperandSecret | TypeOperandWithheld
+class TextReference(TypedDict):
+    id: str
+    text: str
+class FieldSpec(TypedDict):
+    supplied: NotRequired[str | None]
+    references: NotRequired[list[TextReference]]
+    template: NotRequired[str | None]
+    generate: NotRequired[bool]
+    instruction: NotRequired[str | None]
+    enum_values: NotRequired[list[str] | None]
+class ReplayActionOpen(TypedDict):
+    action: Literal["open"]
+    url: str
+class ReplayActionClick(TypedDict):
+    action: Literal["click"]
+    locator: str
+class ReplayActionType(TypedDict):
+    action: Literal["type"]
+    locator: str
+    operand: TypeOperand
+    clear: NotRequired[bool]
+class ReplayActionSelect(TypedDict):
+    action: Literal["select"]
+    locator: str
+    option: str
+class ReplayActionFill(TypedDict):
+    action: Literal["fill"]
+    locator: str
+    field: FieldSpec
+ReplayAction = ReplayActionOpen | ReplayActionClick | ReplayActionType | ReplayActionSelect | ReplayActionFill
 class EffectReceipt(TypedDict):
     seq: int
     verb: str
@@ -19737,6 +19780,11 @@ class EffectReceipt(TypedDict):
     engine_switch: NotRequired[EngineSwitchRecord | None]
     text_source: NotRequired[TextSource | None]
     text_ref: NotRequired[str | None]
+    action: NotRequired[ReplayAction | None]
+    source_url: NotRequired[str | None]
+    source_origin: NotRequired[str | None]
+    tab: NotRequired[str | None]
+    result_tab: NotRequired[str | None]
     duration_ms: int
 class SecretParam(TypedDict):
     name: str
@@ -19895,16 +19943,6 @@ class DecideStep(TypedDict):
     secret: NotRequired[str | None]
     clear: NotRequired[bool]
     option: NotRequired[str | None]
-class TextReference(TypedDict):
-    id: str
-    text: str
-class FieldSpec(TypedDict):
-    supplied: NotRequired[str | None]
-    references: NotRequired[list[TextReference]]
-    template: NotRequired[str | None]
-    generate: NotRequired[bool]
-    instruction: NotRequired[str | None]
-    enum_values: NotRequired[list[str] | None]
 class BatchStepOpen(TypedDict):
     step: Literal["open"]
     url: str
@@ -20000,6 +20038,12 @@ class LibraryFindOutput(TypedDict):
     site: str
     workflows: list[LibraryCard]
 BrowserLibraryFindOutput = BrowserAnswer[LibraryFindOutput]
+class DraftInput(TypedDict):
+    subgoal: str
+    postcondition: NotRequired[list[ExpectInput]]
+    after_seq: NotRequired[int | None]
+    through_seq: NotRequired[int | None]
+    past_press: NotRequired[bool]
 class ProposeInput(TypedDict):
     subgoal: str
     params: NotRequired[list[str]]
@@ -20009,6 +20053,72 @@ class ProposeInput(TypedDict):
     replay_args: NotRequired[dict[str, str]]
     supersedes: NotRequired[str | None]
     seed: NotRequired[WorkflowSeed | None]
+SlotField = Literal["text", "option"]
+class SlotCandidate(TypedDict):
+    step: int
+    seq: int
+    field: SlotField
+    literal: str
+    suggested_param: str
+class DraftGapKindPrePress(TypedDict):
+    why: Literal["pre_press"]
+    effect_class: str
+class DraftGapKindUnknownPress(TypedDict):
+    why: Literal["unknown_press"]
+class DraftGapKindNoAction(TypedDict):
+    why: Literal["no_action"]
+class DraftGapKindSecretWithheld(TypedDict):
+    why: Literal["secret_withheld"]
+    kind: NotRequired[SecretKind | None]
+    cause: OperandGap
+class DraftGapKindFailed(TypedDict):
+    why: Literal["failed"]
+    cause: BatchStopCause
+class DraftGapKindNoEffect(TypedDict):
+    why: Literal["no_effect"]
+class DraftGapKindMissingOpening(TypedDict):
+    why: Literal["missing_opening"]
+class DraftGapKindEmptySpan(TypedDict):
+    why: Literal["empty_span"]
+class DraftGapKindNoLiveOrigin(TypedDict):
+    why: Literal["no_live_origin"]
+class DraftGapKindForeignOrigin(TypedDict):
+    why: Literal["foreign_origin"]
+    origin: NotRequired[str | None]
+class DraftGapKindTabChange(TypedDict):
+    why: Literal["tab_change"]
+class DraftGapKindMissingContext(TypedDict):
+    why: Literal["missing_context"]
+class DraftGapKindCheckUnknownRef(TypedDict):
+    why: Literal["check_unknown_ref"]
+    check: int
+class DraftGapKindCheckSecretWithheld(TypedDict):
+    why: Literal["check_secret_withheld"]
+    check: int
+    cause: OperandGap
+class DraftGapKindNoPostcondition(TypedDict):
+    why: Literal["no_postcondition"]
+class DraftGapKindNoSubgoal(TypedDict):
+    why: Literal["no_subgoal"]
+DraftGapKind = DraftGapKindPrePress | DraftGapKindUnknownPress | DraftGapKindNoAction | DraftGapKindSecretWithheld | DraftGapKindFailed | DraftGapKindNoEffect | DraftGapKindMissingOpening | DraftGapKindEmptySpan | DraftGapKindNoLiveOrigin | DraftGapKindForeignOrigin | DraftGapKindTabChange | DraftGapKindMissingContext | DraftGapKindCheckUnknownRef | DraftGapKindCheckSecretWithheld | DraftGapKindNoPostcondition | DraftGapKindNoSubgoal
+class DraftGap(TypedDict):
+    seq: NotRequired[int | None]
+    verb: NotRequired[str | None]
+    gap: DraftGapKind
+class PressedThrough(TypedDict):
+    seq: int
+    effect_class: str
+class DraftOutput(TypedDict):
+    site: NotRequired[str | None]
+    origin: NotRequired[str | None]
+    after_seq: int
+    through_seq: int
+    proposal: ProposeInput
+    slot_candidates: NotRequired[list[SlotCandidate]]
+    gaps: NotRequired[list[DraftGap]]
+    pressed_through: NotRequired[list[PressedThrough]]
+    complete: bool
+BrowserLibraryDraftOutput = BrowserAnswer[DraftOutput]
 WorkflowCheck = Literal["solved", "replay", "secret_replay", "held_out", "fresh_guest", "supersedes"]
 SupersedeRefusal = Literal["malformed", "not_on_site", "same_record", "not_filer"]
 class AdmissionRefusalHeldOut(TypedDict):

@@ -1210,6 +1210,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.browser.zoom", post(facade_route))
         .route("/self.browser.batch", post(facade_route))
         .route("/self.browser.library.find", post(facade_route))
+        .route("/self.browser.library.draft", post(facade_route))
         .route("/self.browser.library.propose", post(facade_route))
         .route("/self.browser.library.retire", post(facade_route))
         .route("/self.browser.library.retired", post(facade_route))
