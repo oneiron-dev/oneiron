@@ -13,6 +13,7 @@ pub(crate) use reply::generate_reply;
 mod scratchpad;
 mod session;
 mod standing;
+mod turn_actions;
 
 pub(crate) use board::{
     ContextBoardProjectControls, ContextBoardRenderBudget, ContextBoardRoomControls,
@@ -24,6 +25,7 @@ pub(crate) use memories::*;
 pub(crate) use prefix::*;
 pub(crate) use scratchpad::*;
 pub(crate) use session::*;
+pub(crate) use turn_actions::action_board;
 
 use super::CoreContextPackRequest;
 use super::CoreContextPackResponse;

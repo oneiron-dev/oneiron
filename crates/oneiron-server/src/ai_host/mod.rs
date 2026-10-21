@@ -483,6 +483,10 @@ pub struct AiHost {
     /// The bound host's recheck of the turn programs held for want of it
     /// (FIX 6059), stopped with the host.
     program_monitor: OnceLock<turn_program_host::HostProgramMonitor>,
+    /// The turn-action worker, started once: with a host started on its
+    /// own, or at [`Self::bind_turn_actions`] for one attached to a server
+    /// (FIX 6920), whose queue, boot backlog included, waits for it.
+    turn_actions: OnceLock<()>,
 }
 
 /// The sieve's backlog drain and the stop it checks between passes.
@@ -513,7 +517,7 @@ impl AiHost {
             server.host_root_provisioned(),
             server.run_receipts(),
             Some(server.host_account()),
-            device,
+            Some(device),
             server.broker_context(),
         )
         .await;
@@ -598,6 +602,17 @@ impl AiHost {
         true
     }
 
+    /// Starts the turn-action worker of a host attached to `server`, now
+    /// that `server` exists (FIX 6920): each queued Continue and Retry reads
+    /// a fresh context board through it, held weakly. Until this bind an
+    /// attached host's queued actions wait; a second bind, or one on a host
+    /// started on its own, starts nothing, so one worker drains the queue.
+    pub(crate) fn bind_turn_actions(&self, server: &Arc<SyncServer>) {
+        if self.turn_actions.set(()).is_ok() {
+            turn_actions::spawn_hosted(server.vault(), &self.handle, Arc::downgrade(server));
+        }
+    }
+
     /// Admits each Dreamer pass, its home-timer pump and its stewardship
     /// drafts through `admit`: managed serve's reap freeze. Until a bind,
     /// everything is admitted; a second bind keeps the first.
@@ -631,21 +646,23 @@ impl AiHost {
         receipts: Arc<dyn RunReceiptSink>,
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
     ) -> Self {
-        Self::start_with(vault, models, host_root, receipts, account, false, None).await
+        Self::start_with(vault, models, host_root, receipts, account, None, None).await
     }
 
-    /// `start_receipted`, on a device host when `device`, its `key_secret`
-    /// providers sending through `broker`, the vault's one credential-broker
-    /// context.
+    /// `start_receipted`, `attached` to a server when `Some`, on a device
+    /// host when `Some(true)`, its `key_secret` providers sending through
+    /// `broker`, the vault's one credential-broker context. An attached
+    /// host's turn-action worker waits for [`Self::bind_turn_actions`].
     async fn start_with(
         vault: Arc<Vault>,
         models: Option<&ModelsConfig>,
         host_root: bool,
         receipts: Arc<dyn RunReceiptSink>,
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
-        device: bool,
+        attached: Option<bool>,
         broker: Option<&BrokerContext>,
     ) -> Self {
+        let device = attached == Some(true);
         recover_dead_leases(&vault);
         let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
         let mut runtime = ModelRuntime::build_hosted(models, broker, rests)
@@ -678,6 +695,11 @@ impl AiHost {
             pass_admission: dreamer::PassAdmission::default(),
             dreamer_fallback: OnceLock::new(),
             program_monitor: OnceLock::new(),
+            turn_actions: if attached.is_some() {
+                OnceLock::new()
+            } else {
+                OnceLock::from(())
+            },
         };
         let Some(models) = models else {
             served_without_dreamer(&vault, device);
@@ -714,7 +736,11 @@ impl AiHost {
             Err(reason) => status.update(|status| status.workflows = WorkStatus::idle(reason)),
         }
         host.handle = handle;
-        turn_actions::spawn(&vault, &host.handle);
+        // An attached host's worker starts once its server is bound
+        // (FIX 6920), so it alone takes up the queue.
+        if attached.is_none() {
+            turn_actions::spawn(&vault, &host.handle);
+        }
         // A provider's recovery resumes the Dreamer's outage parks and the
         // agent runs' (FIX 3194), so it runs whether or not a Dreamer does.
         resume_on_recovery(&vault, &runtime);
