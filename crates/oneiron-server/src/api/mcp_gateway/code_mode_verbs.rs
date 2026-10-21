@@ -45,10 +45,6 @@ mod task_workflow;
 
 // The strict library try a TASK-bound program's run takes before its
 // planner (CUA E4).
-#[allow(
-    unused_imports,
-    reason = "resident_pump's run_bound, its caller, lands in L09's CUA E4 TASK-side PR"
-)]
 pub(crate) use self::task_workflow::{WorkflowPreflight, preflight_task_workflow};
 
 use self::receipt_evidence::ReceiptWriter;
