@@ -29,6 +29,7 @@
 //! A leased run's planned team writes its start on the run's own seat and
 //! line, and a planned team's leader runs with the exact pattern pack its
 //! launch froze (DOOR-111 S4c, `pattern_launch`).
+mod browser_workflow;
 mod craft;
 pub(super) mod pattern_launch;
 
@@ -433,7 +434,10 @@ impl SyncServer {
         // host's live runs unless it parked on a durable wait or a provider
         // outage (FIX 3194).
         let waits = match &ran {
-            Ok(outcome) => matches!(outcome.status, EngineExecutorStatus::Waiting(_)),
+            Ok(BoundRun::Agent(outcome)) => {
+                matches!(outcome.status, EngineExecutorStatus::Waiting(_))
+            }
+            Ok(BoundRun::Library(_)) => false,
             Err(error) => parks_on_outage(error),
         };
         let run = EntityId::from_bytes(*id.as_bytes()).ok();
@@ -487,6 +491,14 @@ fn claim(vault: &Vault, id: AttemptId, of: RunOf) -> oneiron::Result<Option<Clai
     Ok(claimed.map(|(claimed, briefing)| claimed.asked(vault, briefing.as_deref())))
 }
 
+/// What a leased run came to: its executor's outcome, or the receipt NOTE
+/// of a try whose bound library program met its TASK's goal before any
+/// seat was born (CUA E4).
+enum BoundRun {
+    Agent(EngineExecutorOutcome),
+    Library(EntityId),
+}
+
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
 /// enters again at once, a full window once its compaction can land.
 fn run_bound(
@@ -496,13 +508,15 @@ fn run_bound(
     key: &str,
     seats: &ReaderSeats,
     runtime: tokio::runtime::Handle,
-) -> Result<EngineExecutorOutcome, EngineRunError> {
+) -> Result<BoundRun, EngineRunError> {
     let vault = server.vault();
     let status = &claimed.status;
     let actor = agent_dispatch_actor(&status.input).map_err(text)?;
     // The run is the attempt's own: a retry is a fresh attempt, and so a
     // fresh run.
     let run_id = EntityId::from_bytes(*status.attempt.id.as_bytes()).map_err(text)?;
+    // One door for the whole run, so its browser lives as long as the run.
+    let door = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
     let template = provider
         .executor_config(vault, run_id, &claimed.task)
         .map_err(text)?;
@@ -514,6 +528,24 @@ fn run_bound(
     let continued = continued_config(vault, &status.attempt, &template)?;
     let continues = continued.is_some();
     let mut config = continued.unwrap_or_else(|| template.clone());
+    // CUA E4 (FIX 7603): a try whose TASK binds a library program runs it
+    // strict on this door before its seat is born. One that met its TASK's
+    // goal settles the try with no model call; one that handed off names its
+    // receipt to the planner after its task. A continued run's source ran it.
+    if !continues {
+        match browser_workflow::before_seat(
+            vault,
+            &*door,
+            actor,
+            &status.attempt,
+            run_id,
+            unix_now(),
+        )? {
+            browser_workflow::BeforeSeat::Unbound => {}
+            browser_workflow::BeforeSeat::Done(receipt) => return Ok(BoundRun::Library(receipt)),
+            browser_workflow::BeforeSeat::Handoff(text) => config.task.push_str(&text),
+        }
+    }
     // FIX 4472: the run is born on a model its frozen definition lists. A
     // listed model its provider retired, or no registry row names (FIX
     // 4545), tells the owner, once, and the run goes on with the rest of the
@@ -696,17 +728,21 @@ fn run_bound(
     // The run's caller, as this host leased it: its reader children and its
     // compaction read under that one binding.
     let caller = pump_caller(actor);
-    let mut seat = seats.seat(
+    // A scoped child queued under the run borrows the lease of the attempt
+    // it is (FIX 7507): it lives only while this host holds that lease. No
+    // clock is lent, so its children keep one window from its first spawn,
+    // and its ordinary readers outlive it as before.
+    let parent = crate::ai_host::scoped_child::ReaderParentHost::for_attempt(&status.attempt);
+    let mut seat = seats.seat_with_parent(
         run_id,
         metered.clone(),
         caller.locality(),
         provider.reader_window_tokens(),
+        parent.as_ref(),
     );
     // FIX 4539: its reader and summary children are held to the list its
     // frozen definition names, as its own seat is.
     seat.listed = definition.models.clone();
-    // One door for the whole run, so its browser lives as long as the run.
-    let door = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -766,7 +802,7 @@ fn run_bound(
                 full += 1;
                 std::thread::sleep(WINDOW_FULL_WAIT);
             }
-            _ => return Ok(outcome),
+            _ => return Ok(BoundRun::Agent(outcome)),
         }
     }
 }
@@ -1191,7 +1227,7 @@ fn settle(
     vault: &Vault,
     decisions: &DecisionHost,
     claimed: &Claimed,
-    ran: Result<EngineExecutorOutcome, EngineRunError>,
+    ran: Result<BoundRun, EngineRunError>,
 ) -> oneiron::Result<()> {
     let status = &claimed.status;
     let attempt = &status.attempt;
@@ -1214,7 +1250,12 @@ fn settle(
     };
     let mut retry_at = now;
     let reason = match ran {
-        Ok(outcome) => match outcome.status {
+        // CUA E4: a bound try whose program met its TASK's goal settles on
+        // its receipt, with no model call.
+        Ok(BoundRun::Library(receipt)) => {
+            return browser_workflow::complete(vault, decisions, claimed, receipt, now);
+        }
+        Ok(BoundRun::Agent(outcome)) => match outcome.status {
             EngineExecutorStatus::Complete => {
                 return complete(vault, decisions, claimed, &outcome, now);
             }

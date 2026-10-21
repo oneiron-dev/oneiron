@@ -20,8 +20,13 @@
 //! and a backup restore returns them (`CALL_RECEIPT` is LIVE in the restore
 //! classes); erasing an actor is one-way and rewrites who called in each of
 //! its receipts to [`ERASED_CALL_IDENTITY`], keeping each receipt, its ref
-//! and its time (`Vault::erase_call_receipt_actor_in_txn`). No prune
-//! policy ages them out.
+//! and its time, and drops the attempt each named
+//! (`Vault::erase_call_receipt_actor_in_txn`). No prune policy ages them out.
+//!
+//! OF-568 L4: a call that held a live run states the attempt it ran inside
+//! ([`CallAttemptRef`]), as the host witnessed it at the hold
+//! ([`CallAttemptWitness`]); a call that held none, or more than one, states
+//! none. The attempt is never inferred from the request or the actor.
 //!
 //! The lookup ([`Memory::call_receipt`]) is scoped: the caller's bound actor
 //! must be the receipt's actor, or the vault's live owner. Any other caller
@@ -123,6 +128,11 @@ pub struct CallReceipt {
     /// ([`ActionInputs::action_digest`], OF-568); `None` when they were not
     /// captured.
     pub action_digest: Option<String>,
+    /// The attempt the call ran inside (OF-568 L4): the try whose live run
+    /// it held, at the lease generation it held, as the host witnessed it.
+    /// `None` when no single attempt is witnessed (the call held no live
+    /// run, or more than one), and once its actor is erased. Never a guess.
+    pub attempt_ref: Option<CallAttemptRef>,
     /// The row ids the reply was derived from, when the transport knows
     /// them; at most [`MAX_CALL_RECEIPT_SERVED`].
     pub served: Vec<String>,
@@ -149,7 +159,53 @@ pub struct CallReceiptInput {
     /// The input versions captured before the call ran; `None` when the
     /// transport captured none, and the receipt then states no action digest.
     pub inputs: Option<ActionInputs>,
+    /// The attempt the transport saw the call hold a live run of, as the
+    /// host witnessed it (OF-568 L4); `None` when it saw none, or more than
+    /// one.
+    pub attempt: Option<CallAttemptWitness>,
     pub served: Vec<String>,
+}
+
+/// The attempt a call ran inside, as its receipt states it (OF-568 L4): the
+/// try whose live run the call held, and the lease generation it held it at.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct CallAttemptRef {
+    /// The attempt's id, as 32 hex.
+    pub attempt: EntityId,
+    /// The lease generation the call held it at.
+    pub generation: u32,
+}
+
+/// The host's witness that a call held one attempt's live run (OF-568 L4):
+/// minted from the host binding a live run seals
+/// ([`crate::task_verb::HostBinding::call_attempt_witness`]), never from
+/// request text, so no caller can name one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CallAttemptWitness {
+    attempt: crate::attempt_queue::AttemptId,
+    generation: u32,
+}
+
+impl CallAttemptWitness {
+    /// The witness of the try `attempt` held at lease `generation`, from a
+    /// sealed binding.
+    pub(crate) const fn sealed(attempt: crate::attempt_queue::AttemptId, generation: u32) -> Self {
+        Self {
+            attempt,
+            generation,
+        }
+    }
+
+    /// The ref a receipt states; `None` for an id no entity id can carry.
+    fn attempt_ref(self) -> Option<CallAttemptRef> {
+        Some(CallAttemptRef {
+            attempt: EntityId::from_bytes(*self.attempt.as_bytes()).ok()?,
+            generation: self.generation,
+        })
+    }
 }
 
 /// The versions of the inputs one tool or check run read, captured before
@@ -403,6 +459,8 @@ impl Vault {
             request_digest: input.request_digest,
             result_digest: input.result_digest,
             action_digest,
+            // As witnessed at the hold: no lease is read again here.
+            attempt_ref: input.attempt.and_then(CallAttemptWitness::attempt_ref),
             served: served.into_iter().map(bounded).collect(),
             served_records: Vec::new(),
         };
@@ -416,9 +474,9 @@ impl Vault {
     /// Appends a second receipt, in its own grouped write transaction,
     /// copied from the call's own row `original_ref` as it is stored now: its
     /// transport, verb, caller (so an erased one stays erased), request and
-    /// action digests, with the refusal as its outcome and result digest and
-    /// no served rows. The call's own row is never changed. Returns the new
-    /// ref, or `None` when `original_ref` names no row.
+    /// action digests and attempt, with the refusal as its outcome and result
+    /// digest and no served rows. The call's own row is never changed.
+    /// Returns the new ref, or `None` when `original_ref` names no row.
     ///
     /// # Errors
     ///
@@ -457,7 +515,8 @@ impl Vault {
     /// Erasing `actor` (FIX 812, Engine ruling 10-18): each call receipt it
     /// made keeps its existence, its ref, its time, its verb, its outcome and
     /// its digests, and states [`ERASED_CALL_IDENTITY`] for who called: the
-    /// actor, its class and the credential it presented. One-way, in the
+    /// actor, its class and the credential it presented. The attempt it
+    /// named, a link to who called, is dropped (OF-568 L4). One-way, in the
     /// erase's own transaction. An id whose entity is no actor scans nothing;
     /// a receipt row that cannot be read fails the erase rather than keep an
     /// identity it cannot prove scrubbed.
@@ -491,6 +550,7 @@ impl Vault {
             if receipt.credential_ref.is_some() {
                 receipt.credential_ref = Some(ERASED_CALL_IDENTITY.to_owned());
             }
+            receipt.attempt_ref = None;
             CALL_RECEIPTS.put(self, wtxn, &id, &receipt)?;
         }
         Ok(())

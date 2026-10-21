@@ -441,17 +441,24 @@ pub(crate) async fn vault_artifacts_review_slides(
                 .filter_map(|unit| unit.review_image_ref.as_deref()),
         ),
     );
+    // A caller who leaves stops the render its worker runs (FIX 7653).
+    let (_stop, stop) = crate::slide_render::StopOnDrop::new();
     let (answer, mut listed) =
         credential_listing(server, auth, caller, VERB, move |server, _, memory| {
             let host = server.decision_host();
+            // Its render takes a turn in the renderer line as it starts, at
+            // the caller's fair place, and gives it back before the ladder
+            // reads the units (FIX 7653).
+            let renderer =
+                crate::slide_render::AdmittedRenderer::at_render(server, Some(caller.0), stop);
             memory.artifacts_review_slides_through(
                 &input,
                 &crate::decision_artifact::HostUnitDecider::new(server, caller.1, VERB),
                 host.dial(oneiron::llm::decision::DecisionRung::Big),
                 &host.bands(),
-                crate::slide_render::host_renderer().map(|renderer| {
-                    renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
-                }),
+                renderer
+                    .as_ref()
+                    .map(crate::slide_render::AdmittedRenderer::slides),
             )
         })
         .await;
@@ -560,12 +567,16 @@ pub(crate) async fn vault_artifacts_admit(
 /// drawn by this host's review renderer on a blocking thread, for a
 /// credential that reads the artifact. Beside it, the rows its reads listed
 /// (the package version it projects over and each live-born picture's
-/// asset, a held drawing's too, FIX 5455) and the head it draws from.
+/// asset, a held drawing's too, FIX 5455) and the head it draws from. The
+/// preview takes its turn in the renderer line before any of its work and
+/// keeps it, with the memory it leased, until its answer is encoded
+/// (FIX 7653); a refusal at the render's deadline or a machine floor is
+/// typed.
 pub(crate) async fn vault_artifacts_body_deck_preview(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::office_body::DeckPreviewRequest,
-) -> Listed<oneiron::office_body::DeckPreview> {
+) -> Listed<crate::slide_render::RenderedPreview> {
     const VERB: &str = "vault.artifacts.body.deck.preview";
     let admitted = || -> MemoryResult<(EntityId, EdgeActorClass)> {
         let caller = super::owner_binding::facade_caller_or(server, auth, || {
@@ -588,14 +599,23 @@ pub(crate) async fn vault_artifacts_body_deck_preview(
     };
     let beside =
         read_beside(std::iter::once(input.artifact_ref.as_str()).chain(input.fork_ref.as_deref()));
+    // The caller's fair turn in the renderer line comes before any of the
+    // preview's work, a kept drawing's included (FIX 7653); its worker keeps
+    // it until it ends, and a caller who leaves stops it.
+    let Ok(turn) = server.renderer_turns.admit(caller.0).await else {
+        return refused(crate::slide_render::RenderRefusal::Deadline.memory_error());
+    };
+    let (_stop, stop) = crate::slide_render::StopOnDrop::new();
     let (answer, mut listed) =
-        credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-            memory.artifacts_body_deck_preview(
+        credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+            let renderer = crate::slide_render::AdmittedRenderer::held(server, turn, stop)?;
+            let preview = memory.artifacts_body_deck_preview(
                 &input,
-                crate::slide_render::host_renderer().map(|renderer| {
-                    renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
-                }),
-            )
+                renderer
+                    .as_ref()
+                    .map(crate::slide_render::AdmittedRenderer::slides),
+            );
+            crate::slide_render::rendered(preview, renderer)
         })
         .await;
     listed.extend(beside);
