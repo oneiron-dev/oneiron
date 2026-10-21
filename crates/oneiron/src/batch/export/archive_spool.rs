@@ -189,6 +189,42 @@ impl FileSpool {
         Ok(())
     }
 
+    /// [`Self::attach`] for a body read from `body` as it streams (FIX 3677),
+    /// `bytes` long with BLAKE3 `digest`, as its source names it: it is
+    /// staged a chunk at a time, each byte hashed as it is copied, and read
+    /// to its end, so the source's own check runs too. It is indexed only
+    /// once both agree with those facts; one that fails is cut off again and
+    /// nothing names it. One already spooled is still read and checked, then
+    /// cut off. Returns the digest.
+    pub(crate) fn attach_reader(
+        &mut self,
+        bytes: u64,
+        digest: [u8; 32],
+        body: &mut dyn Read,
+    ) -> Result<String> {
+        let mut hasher = blake3::Hasher::new();
+        let staged = self.stage(bytes, |out| {
+            let mut chunk = vec![0; 64 * 1024];
+            loop {
+                let read = match body.read(&mut chunk) {
+                    Ok(0) => return Ok(()),
+                    Ok(read) => read,
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(error) => return Err(error.into()),
+                };
+                hasher.update(&chunk[..read]);
+                out.write_all(&chunk[..read])?;
+            }
+        })?;
+        if *hasher.finalize().as_bytes() != digest {
+            self.discard_staged(staged)?;
+            return Err(Error::CorruptedIndex("attached file digest"));
+        }
+        let named = crate::entity_id::bytes_to_hex_lower(&digest);
+        self.commit_staged(named.clone(), staged)?;
+        Ok(named)
+    }
+
     /// Copies a body through `copy` onto the spool's end without indexing it
     /// (FIX 7213), so a scan reads it there before it is kept: the one copy
     /// of it on disk. A copy that fails, or is not the `bytes` long the

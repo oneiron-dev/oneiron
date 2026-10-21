@@ -2,8 +2,8 @@
 use std::sync::Arc;
 
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
-use oneiron::{EdgeActorClass, EntityId};
 use oneiron::task_verb::sdk::{self, *};
+use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::Listed;
 use super::hub_doors::owner_call;
