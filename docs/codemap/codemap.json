@@ -37453,7 +37453,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/response_pins.rs",
@@ -42439,7 +42439,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 39,
       "fn": 12,
       "struct": 2
      }
@@ -49364,7 +49364,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/response_rows.rs",
@@ -56808,7 +56808,7 @@
      "path": "src/store/body_envelope/response.rs",
      "purpose": "Row-held response bodies under body custody (KS-2B1, FIX 5683 part B1; owner KEY STORE = A)",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -56818,17 +56818,28 @@
      "path": "src/store/body_envelope/retention.rs",
      "purpose": "Body instance retirement (KS-2A, FIX 5683 part A; ARCH-0038 #erase-checkpoint-bodies): a delete keeps an…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 14
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/retention_policy.rs",
+     "purpose": "Retiring the body instances nothing needs any longer (KS-2A, FIX 6022, 6228; CALLS BODY_INSTANCE_RETENTION…",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/body_envelope/rows.rs",
      "purpose": "A body instance's row (FIX 5348, KS-2A): one per digest, in `PROVENANCE_BODY_KEY`, beside the body's…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 14
      }
     },
     {
@@ -57266,6 +57277,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/body_history.rs",
+     "purpose": "A vault's body history in its exterior custody (KS-2A/KS-2B1, FIX 6229, 6023): the obligations an erase…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -57341,6 +57362,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/kept_images.rs",
+     "purpose": "What keeps a body instance's key past its last row (FIX 6022, 6228): the in-flight leases of this process…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -57350,7 +57381,7 @@
      "path": "src/store/key_custody/log.rs",
      "purpose": "The keyless custody log (KS-4, FIX 5685) and the local journal it is kept in, beside the vault and outside…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 33,
       "fn": 3,
       "struct": 2
      }
@@ -57362,7 +57393,7 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "mod": 1,
       "re-export": 1
      }
@@ -57492,7 +57523,7 @@
      "path": "src/store/key_custody/retirement.rs",
      "purpose": "Durable retirement intents and the one finisher that carries them out",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -58027,7 +58058,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "IdempotencyEntry",
@@ -58036,7 +58067,7 @@
      "path": "src/store/sync_responses.rs",
      "purpose": "The host's row-held responses in `sync_state` under body custody (KS-2B2, FIX 5683 part B2; owner KEY STORE…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 2,
       "re-export": 1,
       "struct": 2
@@ -71530,7 +71561,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 129,
+     "files": 132,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71756,7 +71787,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4579,
+   "source_files": 4582,
    "test_files": 902
   },
   "oneiron-android": {
