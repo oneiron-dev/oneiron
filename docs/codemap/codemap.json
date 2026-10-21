@@ -21248,6 +21248,7 @@
       "RunnerWork",
       "SeatAuth",
       "SeatIdentity",
+      "SeatPassedOver",
       "SeatRoute",
       "SeatSpent",
       "SkippedRunnerSeat"
@@ -21257,7 +21258,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 3,
-      "enum": 5,
+      "enum": 6,
       "fn": 13,
       "struct": 5
      }
@@ -21277,7 +21278,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ByoaInputStager",
@@ -21286,7 +21287,7 @@
      "path": "src/dispatch_byoa/staged_input.rs",
      "purpose": "A CLI run's job carried as a file in its checkout, never in argv: one argv entry has an OS limit (Linux…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -21340,6 +21341,7 @@
      "notable": [
       "BindRunnerWork",
       "RunnerSeatChoice",
+      "RunnerTaskSource",
       "RunnerWorkBinding",
       "RunnerWorkBindingId",
       "RunnerWorkBound",
@@ -21351,9 +21353,19 @@
      "purpose": "A Dreamer's runner work, bound once and handed seat to seat (OF-137): \"the router mints the next attempt on…",
      "surface": {
       "crate-vis": 3,
-      "enum": 4,
+      "enum": 5,
       "fn": 6,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/work_hand_off.rs",
+     "purpose": "A spent seat's work handed to the next seat (OF-137): \"the router mints the next attempt on the next seat…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -21759,6 +21771,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resident_dream/reply.rs",
+     "purpose": "What a resident's dreaming reply must hold to land: a diary entry",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22019,7 +22041,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -22251,6 +22273,16 @@
      "surface": {
       "crate-vis": 21,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/wake_plan/chunks.rs",
+     "purpose": "Rule 5 for a selection retry's source budget (L02-38): `max_sources` is a work size, never a total",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -34661,7 +34693,7 @@
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -68063,7 +68095,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68077,7 +68109,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 80,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69122,7 +69154,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4370,
+   "source_files": 4373,
    "test_files": 902
   },
   "oneiron-android": {
@@ -89885,7 +89917,7 @@
      "path": "src/idempotency/caller.rs",
      "purpose": "The partition a keyed non-core route keeps its caller's replays in on a vault no supervisor manages (FIX…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
