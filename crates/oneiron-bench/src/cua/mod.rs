@@ -1,5 +1,6 @@
 //! Synthetic browser bench: engine outcomes are not oracle passes.
 mod args;
+mod browser_setup;
 mod check;
 mod config;
 mod drift;

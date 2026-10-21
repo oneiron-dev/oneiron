@@ -125,6 +125,8 @@ pub(super) async fn campaign(plan_path:&Path,submissions_path:&Path,out:&Path) -
             if let Some(id)=event["workflow"].as_str() {retired.insert(id.to_owned());}
         }
     }
+    let mut driver = config.as_ref().ok().map(|config|
+        FixtureTransport::new(config, &base, &plan.server, out.join("browser-preflight")));
     for assignment in &assignments {
         if terminal.contains_key(&assignment.cell.id) {continue}
         let program=programs.get(&assignment.source);
@@ -139,15 +141,18 @@ pub(super) async fn campaign(plan_path:&Path,submissions_path:&Path,out:&Path) -
             } else if let Err(error)=&config {
                 stop(&mut row,"runtime_config_unavailable",error);
             } else {
-                let config=config.as_ref().map_err(Clone::clone)?;
-                let mut driver=FixtureTransport {config,plan:&base};
-                dispatch(&mut driver,assignment,program,&terminal,&mut retired,&out.join("started.jsonl"),&mut row).await;
+                let driver=driver.as_mut().ok_or("s5_driver_unavailable")?;
+                dispatch(driver,assignment,program,&terminal,&mut retired,&out.join("started.jsonl"),&mut row).await;
             }
         } else { stop(&mut row,"program_source_missing","assigned author/family retained; A4 is not substituted for a learned author"); }
         rows::append(&out.join("rows.jsonl"),&row)?;
         terminal.insert(assignment.cell.id.clone(),row);
     }
-    write_summary(out,&assignments,&terminal,&plan_digest,&config_digest)
+    write_summary(out,&assignments,&terminal,&plan_digest,&config_digest)?;
+    if let Some(cause) = driver.as_ref().and_then(|driver| driver.setup_failure()) {
+        return Err(cause.into());
+    }
+    Ok(())
 }
 async fn dispatch<E:Engine>(driver:&mut E,assignment:&Assignment,program:&Program,terminal:&BTreeMap<String,DriftRow>,
     retired:&mut BTreeSet<String>,started:&Path,row:&mut DriftRow) {

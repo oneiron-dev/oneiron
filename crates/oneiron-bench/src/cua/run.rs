@@ -62,6 +62,9 @@ pub(super) async fn campaign(plan_path: &Path, binary: &Path, pins: &Path, out: 
     let ledger = if let Ok(config) = &config {
         Some(Arc::new(Mutex::new(Ledger::open(&config.cash_ledger,&config_digest)?)))
     } else { None };
+    let mut setup_stop: Option<Value> = terminal.values().find_map(|row|
+        row.harness_stop.as_ref().filter(|s| matches!(s["cause"].as_str(),
+            Some("browser_pack_unavailable" | "browser_guest_unverified"))).cloned());
     for cell in &plan.cells {
         let key = digest(format!("{plan_digest}:{config_digest}:{}",cell.id).as_bytes());
         if terminal.contains_key(&key) { continue }
@@ -72,6 +75,9 @@ pub(super) async fn campaign(plan_path: &Path, binary: &Path, pins: &Path, out: 
         if started.contains(&key) {
             rows::blocked(&mut row,"interrupted","previous trial started without a terminal row; no rerun");
             row.status = "interrupted".into();
+        } else if let Some(cause) = &setup_stop {
+            row.status = if cause["detail"].as_str().is_some_and(|s| s.contains("timeout")) {"failed"} else {"blocked"}.into();
+            row.harness_stop = Some(cause.clone());
         } else if let Some(reason) = identity_error {
             rows::blocked(&mut row,reason,"frozen evidence changed; no candidate dispatched");
         } else {
@@ -89,6 +95,10 @@ pub(super) async fn campaign(plan_path: &Path, binary: &Path, pins: &Path, out: 
                         fs::create_dir(&row.evidence).map_err(|e| e.to_string())?;
                         let result = trial(&plan,config,binary,cell,&mut row,ledger.as_ref().ok_or("cash_ledger_missing")?.clone()).await;
                         if let Err(error) = result {
+                            if row.harness_stop.as_ref().is_some_and(|s| matches!(s["cause"].as_str(),
+                                Some("browser_pack_unavailable" | "browser_guest_unverified"))) {
+                                setup_stop = row.harness_stop.clone();
+                            }
                             if error.starts_with("fixture_transport_unavailable:") {
                                 rows::blocked(&mut row,"fixture_transport_unavailable",&error);
                             } else {
@@ -104,6 +114,9 @@ pub(super) async fn campaign(plan_path: &Path, binary: &Path, pins: &Path, out: 
             }
         }
         rows::append(&out.join("rows.jsonl"),&row)?;
+    }
+    if let Some(stop) = setup_stop {
+        return Err(format!("{}:{}",stop["cause"].as_str().unwrap_or("browser_pack_unavailable"),stop["detail"]));
     }
     Ok(())
 }
@@ -144,7 +157,14 @@ async fn trial(plan: &Plan, config: &Config, binary: &Path, cell: &Cell, row: &m
     let mut artifact_files = json!({});
     let execution: Result<()> = async {
         served = Some(Served::fresh(binary,&row.evidence,arm,&config.browser,plan,
-            startup_deadline.saturating_duration_since(Instant::now()),Duration::from_millis(config.continuation_poll_ms)).await?);
+            startup_deadline.saturating_duration_since(Instant::now()),Duration::from_millis(config.continuation_poll_ms)).await
+            .map_err(|detail| {
+                let cause = detail.split(':').next().unwrap_or("run_failed");
+                if matches!(cause,"browser_pack_unavailable" | "browser_guest_unverified") {
+                    row.harness_stop = Some(json!({"cause":cause,"detail":detail,"scope":"browser_setup"}));
+                }
+                detail
+            })?);
         setup_ms = started.elapsed().as_secs_f64()*1000.0;
         let task = fixture::task_packet(cell,&reset)?;
         write_json(&row.evidence.join("task-packet.json"),&json!({"entry_url":fixture::entry_url(&reset)?,"task":task}))?;
@@ -224,7 +244,9 @@ async fn trial(plan: &Plan, config: &Config, binary: &Path, cell: &Cell, row: &m
     observed["campaign_cash_reservation_usd"] = json!(ledger.lock().map_err(|_| "cash_ledger_lock_failed")?.reserved() as f64/1_000_000.0);
     let provider_stop = ledger.lock().map_err(|_| "cash_ledger_lock_failed")?.blocked(cell.arm == "D");
     if let Some(stop) = provider_stop {
-        row.harness_stop = Some(json!({"cause":stop,"scope":"provider_gate"}));
+        if row.harness_stop.is_none() {
+            row.harness_stop = Some(json!({"cause":stop,"scope":"provider_gate"}));
+        }
     }
     if observed["action_cap_overshoot"] == true {
         observed["action_cap_reason"] = json!("observed_effect_receipts_exceed_cap");

@@ -3,7 +3,7 @@ use std::{fs, path::{Path, PathBuf}, process::Stdio, time::Duration};
 use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines}, process::{Child, ChildStdin, ChildStdout, Command}, time::Instant};
 use serde_json::{Value, json};
 use rand::RngCore;
-use super::{Result, config::Arm, fixture, rows, taskgen::Plan, write_json};
+use super::{Result, config::Arm, browser_setup, fixture, rows, taskgen::Plan, write_json};
 
 pub(super) struct Process { child: Child, group: u32 }
 impl Process {
@@ -41,7 +41,7 @@ pub(super) fn isolated(binary: &Path) -> Command {
     command.env("NO_COLOR", "1");
     command
 }
-async fn once(mut command: Command, deadline: Instant, log: &Path) -> Result<()> {
+pub(super) async fn once(mut command: Command, deadline: Instant, log: &Path) -> Result<()> {
     command.stdout(fs::File::create(log).map_err(|e| e.to_string())?)
         .stderr(fs::File::create(log.with_extension("stderr")).map_err(|e| e.to_string())?);
     let mut process = Process::spawn(command)?;
@@ -92,6 +92,7 @@ impl Served {
         let port = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?
             .local_addr().map_err(|e| e.to_string())?.port();
         let origin = format!("http://127.0.0.1:{port}");
+        browser_setup::bootstrap(binary, &config, &issuer, &origin, dir, browser, deadline).await?;
         let mut serve = isolated(binary);
         serve.args(["serve", "--host", "127.0.0.1", "--port", &port.to_string(), "--config"]).arg(&config)
             .env("ONEIRON_AUTH_SECRET", &issuer).env("ONEIRON_EGRESS_CONFIG", &egress).env("RUST_LOG", "warn,oneiron::run_receipt=info")
@@ -111,6 +112,7 @@ impl Served {
             if Instant::now() >= deadline { return Err("server_startup_timeout".into()) }
             tokio::time::sleep_until((Instant::now()+poll).min(deadline)).await;
         }
+        browser_setup::install(binary, &client, &origin, dir, deadline).await?;
         let mut bridge_cmd = isolated(binary);
         bridge_cmd.args(["mcp", "--surface", "tool-first", "--url", &origin, "--credential-file"]).arg(&credential)
             .stdin(Stdio::piped()).stdout(Stdio::piped())
