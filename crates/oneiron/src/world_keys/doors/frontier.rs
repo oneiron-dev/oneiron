@@ -147,10 +147,17 @@ impl Vault {
         if base.union(&authors).count() <= MAX_PARENTS / 2 {
             base.extend(authors);
         }
-        if FRONTIER_WIDTH_ON_SELECTED_PARENTS
-            && let Some(plan) = self.selected_frontier_plan_in_txn(txn, input, &base)?
-        {
-            return Ok(Ok(plan));
+        if FRONTIER_WIDTH_ON_SELECTED_PARENTS {
+            // A frontier that does not read here leaves the plan on today's
+            // path: the explicit width rule below decides, as it did.
+            match self.selected_frontier_plan_in_txn(txn, input, &base) {
+                Ok(Some(plan)) => return Ok(Ok(plan)),
+                Ok(None) => {}
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "a world key's frontier did not read for its width; its records keep today's plan"
+                ),
+            }
         }
         // Each record names its signer's previous row of the world beside
         // these: the first names the scope head, which counts once when it is
