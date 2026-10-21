@@ -171,7 +171,7 @@ pub(super) fn rebind_held_in_txn(
     Ok(applied)
 }
 
-/// Whether `held`, the pieces of the carrier this vault keeps as its
+/// Whether `pieces`, those of the carrier this vault keeps as its
 /// latest, brings a record pending here that the live floor now admits
 /// (CALLS CUSTODY_CARRIER_PENDING_FLOOR): whole and live, standing on
 /// `fold`, sealed to `this` machine, of a portable record this vault does
@@ -183,12 +183,12 @@ fn pending_carrier_in_txn(
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
     this: Option<EntityId>,
-    held: &super::CustodyPieces,
+    pieces: &super::CustodyPieces,
 ) -> Result<bool> {
-    let transition = held.lead();
+    let transition = pieces.lead();
     if transition.status == crate::secret_custody::SecretCustodyStatus::Revoked
         || fold.custody_revoked(&transition.id)
-        || !held.permits().any(|permit| Some(permit.machine) == this)
+        || !pieces.permits().any(|permit| Some(permit.machine) == this)
     {
         return Ok(false);
     }
@@ -207,7 +207,7 @@ fn pending_carrier_in_txn(
         CustodyCarrierPendingFloor::ApplyWhenFloorAdmits => Ok(
             super::super::refuse_bindings_wider_than_live_floor(&vault.store, txn, &carried)
                 .is_ok()
-                && held.verify(fold).is_ok()
+                && pieces.verify(fold).is_ok()
                 && super::super::doors::can_bind_synced_name_in_txn(
                     &vault.store,
                     txn,
