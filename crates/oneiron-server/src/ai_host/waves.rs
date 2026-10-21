@@ -299,7 +299,7 @@ pub(super) fn run_once(
     runner.forget(attempt.id);
     // Only a plan that fails because its step budget ran out is held; every
     // other failure fails as before, and so does a hold the queue refuses.
-    let held = result.is_err() && exhausted.get() && hold_for_budget(&queue, &attempt);
+    let held = result.is_err() && exhausted.get() && hold_for_budget(vault, &queue, &attempt);
     status.update(|status| {
         status.workflows.state = WorkState::Waiting;
         match &result {
@@ -337,9 +337,11 @@ pub(super) fn run_once(
 }
 
 /// Holds the leased plan at its spend cap through the queue's budget hold,
-/// with the checkpoint before its model call. Whether it held: a refusal is
-/// logged, and the plan then fails as it did before the hold existed.
-fn hold_for_budget(queue: &AttemptQueue<'_>, attempt: &AttemptRecord) -> bool {
+/// with the checkpoint before its model call, then tells the vault's Owners
+/// in their inbox (FIX 6148). Whether it held: a refusal is logged, and the
+/// plan then fails as it did before the hold existed. A notice that is not
+/// recorded is logged, and the plan stays held.
+fn hold_for_budget(vault: &Vault, queue: &AttemptQueue<'_>, attempt: &AttemptRecord) -> bool {
     let now = super::unix_now();
     match queue.hold_for_budget(HoldAttemptForBudget {
         id: attempt.id,
@@ -348,7 +350,12 @@ fn hold_for_budget(queue: &AttemptQueue<'_>, attempt: &AttemptRecord) -> bool {
         resume_point: AttemptResumePoint::new(HOLD_RESUME_POINT, now),
         now,
     }) {
-        Ok(_) => true,
+        Ok(held) => {
+            if let Err(error) = vault.notify_attempt_budget_hold(held.id, now) {
+                tracing::warn!(kind = ?error.kind(), attempt = ?held.id, "a held wave plan's owner notice was not recorded");
+            }
+            true
+        }
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), attempt = ?attempt.id, "a wave plan's budget hold was refused; it fails");
             false
