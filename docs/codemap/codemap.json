@@ -6066,19 +6066,19 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 40,
+      "crate-vis": 41,
       "enum": 1,
       "re-export": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/secret_scan/container.rs",
      "purpose": "Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -6244,7 +6244,7 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -6285,6 +6285,16 @@
      "purpose": "A file's marks for the values custody came to know after it was stored (FIX 2781)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/retained_repo.rs",
+     "purpose": "The mark of each key a retained repository blob holds (FIX 7608, owner ruling SECRETS-IN-REPOS = A)",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -6949,7 +6959,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 2,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -7291,14 +7301,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SignatureImagePlan"
+     ],
      "path": "src/blob_artifact/esign/signature_image.rs",
      "purpose": "Capability-bound, decoded and re-encoded signature images",
      "surface": {
       "crate-vis": 2,
-      "fn": 2
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -7377,7 +7390,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArtifactExport",
@@ -7391,7 +7404,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 4
      }
     },
@@ -7540,7 +7553,8 @@
      "path": "src/blob_artifact/version_rows.rs",
      "purpose": "The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -8840,6 +8854,7 @@
       "RecentRun",
       "Retired",
       "RetiredWorkflow",
+      "TypeFilterMalformed",
       "WorkflowRecord",
       "WorkflowResolution"
      ],
@@ -8849,8 +8864,8 @@
       "const": 4,
       "crate-vis": 2,
       "enum": 5,
-      "fn": 13,
-      "struct": 3
+      "fn": 14,
+      "struct": 4
      }
     },
     {
@@ -12448,7 +12463,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 14,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -20274,7 +20289,7 @@
      "path": "src/credential_door/binary_scan.rs",
      "purpose": "The pre-receive scan over every pushed blob, binary bytes included (owner ruling G7-BINARY = A, FIX 6871)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -20344,7 +20359,7 @@
      "path": "src/credential_door/door_types.rs",
      "purpose": "Door constants, floor names and prefixes, error type, and small naming helpers",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 28
      }
     },
     {
@@ -22339,9 +22354,49 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt.rs",
      "purpose": "The Dreamer writes a declared scope summary's body (ARCH-0006a)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_claims.rs",
+     "purpose": "The claims an Arc's call reads (FIX 7509 P8): for every subject the Arc's TURNs name (their `mentions` and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_compose.rs",
+     "purpose": "An Arc's composition (FIX 7509 P8, SUMMARY-SOURCE = A)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_evidence.rs",
+     "purpose": "An Arc's evidence (FIX 7509 P8, SUMMARY-SOURCE = A), read in one snapshot: its sittings' summary lines, each…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_turns.rs",
+     "purpose": "The turns an Arc's reply names to open (FIX 7509 P8): when a line and the claims disagree, the model names…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -23392,7 +23447,7 @@
       "crate-vis": 6,
       "enum": 6,
       "fn": 12,
-      "re-export": 3,
+      "re-export": 5,
       "struct": 7
      }
     },
@@ -23441,6 +23496,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HealthBriefPin",
+      "HealthObservedBrief"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/brief.rs",
+     "purpose": "The typed brief one agent-health review observed (OF-568 L7, agent-mind §3.5: \"the evidence: the brief…",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/agent_health/check_repeat.rs",
      "purpose": "`failed_check_repeat` (agent-mind §3.4): the same check fails again on the same inputs",
@@ -23470,6 +23539,19 @@
      "surface": {
       "crate-vis": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HealthReviewReceipt"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/outcomes.rs",
+     "purpose": "Reviewer outcome receipts (OF-568 L9, agent-mind §3.7: \"Score the reviewer\"; \"Health flags never move…",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
      }
     },
     {
@@ -24758,6 +24840,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/arc_backstop.rs",
+     "purpose": "The Arc backstop (FIX 7509 P8, ARCH-0026: \"The nightly sweep is the backstop only\"): Arcs aged a nightly…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "WakeCancellation",
       "WakePassDeadline"
@@ -24880,7 +24973,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "mod": 1,
       "re-export": 15
      }
@@ -25065,7 +25158,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ProjectorPolicy"
@@ -25322,6 +25415,16 @@
      "surface": {
       "fn": 9,
       "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/statement_material.rs",
+     "purpose": "A text's statement material (ARCH-0026 RD-26): one BLAKE3 digest per sentence with words in it, read the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -33631,7 +33734,7 @@
      "path": "src/learning/evidence.rs",
      "purpose": "The anchored-evidence ledger: the only input the projector reads",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 6,
       "struct": 3
@@ -42342,7 +42445,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 14,
       "re-export": 2
      }
@@ -42723,6 +42826,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/origin/secret_marks.rs",
+     "purpose": "A pushed key's mark (FIX 7608, owner ruling SECRETS-IN-REPOS = A): the immutable `repo.secret_mark` facts an…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/origin/smart_http/advertise.rs",
      "purpose": "The publication-gated ref-advertisement rewrite: pkt-line state machine and keep policy",
      "surface": {
@@ -42903,7 +43016,7 @@
      "path": "src/origin/smart_http/intent.rs",
      "purpose": "The crash-durable per-ref intent journal and its reconcile/resume path",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -42917,6 +43030,16 @@
      "purpose": "The push authority on a receive-pack intent (FIX 6867, G1-PUSH): the final writer takes the stamp's…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/intent/record.rs",
+     "purpose": "The receive-pack intent's recorder: the one write that journals an admitted push while pre-receive still…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -43000,8 +43123,8 @@
      "path": "src/origin/smart_http/mod.rs",
      "purpose": "Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908)",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 13
+      "crate-vis": 4,
+      "re-export": 14
      }
     },
     {
@@ -43080,6 +43203,19 @@
      "path": "src/origin/smart_http/scan_cap_tests.rs",
      "purpose": "No origin scan refuses for how many rows it reads (rule 5): a repository keeps taking pushes, advertisements…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReceiveSecretMarks"
+     ],
+     "path": "src/origin/smart_http/secret_marks.rs",
+     "purpose": "The marks a push's admitted scan hits carry from the door window to the push's intent (FIX 7608, owner…",
+     "surface": {
+      "crate-vis": 8,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -50296,6 +50432,46 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/arc.rs",
+     "purpose": "A conversation's Arc (FIX 7509 P8, ARCH-0026 Dreamer row 4): one stable summary per conversation path…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/arc_gate.rs",
+     "purpose": "An Arc's surprise gate and owed state (FIX 7509 P8, ARCH-0026 #gate): \"It compares the new material against…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/arc_sources.rs",
+     "purpose": "What an Arc is written from (FIX 7509 P8, SUMMARY-SOURCE = A): the current summary of each closed sitting…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/arc_validation.rs",
+     "purpose": "An Arc's landing check (FIX 7509 P8), read in the landing writer before its body is minted: no Arc lands…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -50323,7 +50499,7 @@
      "path": "src/scope_summary/derivation.rs",
      "purpose": "Scope-summary derivation envelopes and change-driven re-derivation",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 11,
       "fn": 1,
       "struct": 5
      }
@@ -50349,7 +50525,7 @@
      "path": "src/scope_summary/mod.rs",
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "re-export": 7
      }
     },
@@ -50428,7 +50604,7 @@
      "path": "src/scope_summary/request.rs",
      "purpose": "Scope-only declarations, exact-source fences and atomic Dreamer landings",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -60471,15 +60647,35 @@
       "QueueTaskBrief",
       "SpawnPins",
       "StoredBrief",
-      "TypeRef"
+      "TypeRef",
+      "WorkflowBinding"
      ],
      "path": "src/task_verb/brief.rs",
      "purpose": "The queue task brief (OF-220): the typed why-carrier one TASK holds",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
-      "fn": 4,
-      "struct": 14
+      "fn": 5,
+      "struct": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TaskWorkflowAttempt",
+      "TaskWorkflowCheck",
+      "TaskWorkflowPin",
+      "TaskWorkflowReport",
+      "TaskWorkflowUnavailable"
+     ],
+     "path": "src/task_verb/browser_workflow.rs",
+     "purpose": "A TASK's bound library program, pinned per try (CUA E4; DESIGN-2 §2, owner C1 = A)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 3,
+      "fn": 12,
+      "struct": 2
      }
     },
     {
@@ -60868,7 +61064,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -60940,15 +61136,18 @@
       "TaskReportBody",
       "TaskStatusQuery",
       "TaskStatusView",
-      "TaskVia"
+      "TaskVia",
+      "TaskWorkflowHandoff",
+      "TaskWorkflowOutcome",
+      "TaskWorkflowStatus"
      ],
      "path": "src/task_verb/highway_types.rs",
      "purpose": "The task highway's typed calls, durable handles, outcomes and status view (OF-220)",
      "surface": {
       "crate-vis": 11,
-      "enum": 6,
-      "fn": 1,
-      "struct": 10
+      "enum": 8,
+      "fn": 2,
+      "struct": 11
      }
     },
     {
@@ -61003,10 +61202,10 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 43,
+      "crate-vis": 44,
       "fn": 1,
       "mod": 5,
-      "re-export": 27
+      "re-export": 28
      }
     },
     {
@@ -61299,7 +61498,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RunnerDoneAnswer",
@@ -61309,7 +61508,7 @@
      "purpose": "A runner's \"Done means met?\", answered before it settles (OF-533)",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -63330,7 +63529,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -68897,7 +69096,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 137,
+     "files": 138,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69296,7 +69495,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 103,
+     "files": 107,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69324,7 +69523,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 116,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69338,7 +69537,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 46,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69702,7 +69901,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 99,
+     "files": 102,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69954,7 +70153,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 13,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70171,7 +70370,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 205,
+     "files": 206,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70339,9 +70538,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 181,
+   "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4468,
+   "source_files": 4485,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74357,13 +74556,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 55,
+      "const": 56,
       "crate-vis": 1
      }
     },
@@ -74655,7 +74854,7 @@
      "purpose": "The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520)",
      "surface": {
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 2,
       "trait": 1
      }
@@ -77762,7 +77961,7 @@
      "purpose": "Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep",
      "surface": {
       "crate-vis": 4,
-      "fn": 7,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -84863,7 +85062,7 @@
      "path": "src/api/esign/ingress.rs",
      "purpose": "Token-first ingress at the public signing doors (FIX 3808, Engine rulings 10-18 and 10-19)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 14
      }
     },
     {
@@ -86735,7 +86934,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs.rs",
      "purpose": "Code mode's verb calls at their SDK paths: the SDK verb table through the tool door",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -86766,6 +86965,16 @@
      "purpose": "A room write a session-bound code run stages, at this connector's door (WILL L11-01, S01-2a)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/code_mode_verbs/task_workflow.rs",
+     "purpose": "The strict library try a TASK-bound browser program takes before its run's planner (CUA E4; owner pick C1 =…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -86815,7 +87024,7 @@
      "path": "src/api/mcp_gateway/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -91706,13 +91915,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 21
      }
     },
     {
@@ -96028,7 +96237,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 497,
+     "files": 498,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -96317,7 +96526,7 @@
     "machine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
@@ -96478,7 +96687,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1051,
+   "source_files": 1052,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -98197,6 +98406,8 @@
       "HandoffAlarmRequest",
       "HandoverInput",
       "HandoverOutput",
+      "HealthBriefPin",
+      "HealthReviewReceipt",
       "HeapDropReport",
       "HeldAttempt",
       "HeldFailureSignalBatchView",
@@ -100267,6 +100478,9 @@
       "TaskWaitRequest",
       "TaskWaveReceipt",
       "TaskWaveRequest",
+      "TaskWorkflowHandoff",
+      "TaskWorkflowOutcome",
+      "TaskWorkflowStatus",
       "TasksOverflow",
       "TasksSection",
       "TeacherProbeApproval",
@@ -100509,6 +100723,7 @@
       "WitnessAssertions",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
+      "WorkflowBinding",
       "WorkflowCheck",
       "WorkflowDispatchRequest",
       "WorkflowPersonDispatchRequest",
@@ -100561,8 +100776,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 938,
-      "struct": 2944
+      "enum": 940,
+      "struct": 2948
      }
     },
     {

@@ -11,9 +11,7 @@
 use lopdf::xref::XrefEntry;
 use lopdf::{Document, LoadOptions, Object, ObjectId, ObjectStream, Stream};
 
-use super::{
-    Budget, MAX_MEMBER_BYTES, MAX_PDF_OBJECTS, Stop, Walked, encode_failed, over_budget, unreadable,
-};
+use super::{Budget, Stop, Walked, encode_failed, over_budget, unreadable};
 use crate::blob_artifact::esign::render::{PdfPreparationError, decode_stream};
 use crate::secret_custody::MemberStep;
 
@@ -110,7 +108,7 @@ fn load(
                 defer(object);
                 Some((id, Object::Null))
             }),
-            max_decompressed_size: Some(MAX_MEMBER_BYTES),
+            max_decompressed_size: budget.decompressed_ceiling(),
             ..LoadOptions::default()
         },
     )
@@ -118,8 +116,8 @@ fn load(
     if document.trailer.has(b"Encrypt") || document.is_encrypted() || document.was_encrypted() {
         return Err(unreadable());
     }
-    if document.objects.len() > MAX_PDF_OBJECTS
-        || document.reference_table.entries.len() > MAX_PDF_OBJECTS
+    if budget.objects_over(document.objects.len())
+        || budget.objects_over(document.reference_table.entries.len())
     {
         return Err(over_budget());
     }
@@ -156,7 +154,7 @@ fn load(
                 document.objects.entry(held).or_insert(object);
             }
         }
-        if document.objects.len() > MAX_PDF_OBJECTS {
+        if budget.objects_over(document.objects.len()) {
             return Err(over_budget());
         }
     }

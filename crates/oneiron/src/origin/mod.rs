@@ -38,4 +38,5 @@ mod repo_import;
 pub(crate) use repo_import::{ImportedCodeRepo, ServedImportSource};
 pub mod residence;
 pub mod secret_manifest;
+pub(crate) mod secret_marks;
 pub mod tree;
