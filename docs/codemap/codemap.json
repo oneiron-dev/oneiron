@@ -2963,6 +2963,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/current_scope.rs",
+     "purpose": "The current scope a pact and a guest's credential stand in (Phase2 C)",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -3487,7 +3497,7 @@
      "path": "src/authority/machine_profile/apply.rs",
      "purpose": "The fold transitions of a machine revision: a roster revision, an owner anchor's mark, and the checks every…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -3868,7 +3878,7 @@
      "path": "src/authority/slip.rs",
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 15,
       "struct": 4
      }
@@ -5895,7 +5905,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -12336,6 +12346,16 @@
      "surface": {
       "crate-vis": 3,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/guest_bound.rs",
+     "purpose": "FIX 7929: a guest's read stays inside its grant's current effective scope at every row, in the serving…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -62168,7 +62188,7 @@
      "path": "src/task_verb/ask_guest.rs",
      "purpose": "Ask-scoped guest authority: reuse a person's owner-stamped bounds",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -71158,7 +71178,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 193,
+     "files": 194,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71291,7 +71311,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 88,
+     "files": 89,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72623,7 +72643,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4660,
+   "source_files": 4662,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72834,23 +72854,25 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FederationGrantActivation",
       "FederationLifecycleAction",
       "FederationLifecycleKind",
       "FederationLifecycleRejection",
+      "FederationNarrowing",
       "FederationPactGesture",
       "FederationPactState",
-      "FederationPactStatus"
+      "FederationPactStatus",
+      "NarrowingParty"
      ],
      "path": "src/authority/federation_pact.rs",
      "purpose": "Federation lifecycle and pact types",
      "surface": {
-      "enum": 4,
+      "enum": 5,
       "fn": 6,
-      "struct": 3
+      "struct": 4
      }
     },
     {
