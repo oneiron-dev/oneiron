@@ -191,8 +191,10 @@ fn encode_stored_body(stored: &StoredCustody) -> Result<Vec<u8>> {
 /// and journaled before the row commits (CALLS `KS-6 leaf deposit`). An
 /// empty value is stored empty, under no key, so a revoke never waits on
 /// custody. A custody that cannot take the key (an archived vault's, or a
-/// fault) refuses the write: a value never rests in the clear (Engine
-/// 10-21 19:1x, CALLS `KS-6 seal fault refuses`).
+/// fault) answers the typed, recoverable `credential_custody_unavailable`
+/// for record `id`, every write path alike (register, the owner's door,
+/// mask, reclaim, import, rotate, receive): a value never rests in the
+/// clear (Engine 10-21 19:5x, CALLS `KS-6 seal fault refuses`).
 pub(super) fn sealed_body_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -203,23 +205,59 @@ pub(super) fn sealed_body_in_txn(
         return encode_custody_map(rec, BodyValue::Sealed(Vec::new()));
     }
     match CUSTODY_SEAL_FAULT {
-        CustodySealFault::RefuseNeverClear => {}
+        CustodySealFault::TypedRetryNeverClear => {}
     }
-    let leaf = store.credential_value_leaf_in_txn(wtxn, id, rec.rotation_generation)?;
-    let sealed = seal_value(&leaf, id, rec.rotation_generation, &rec.value_bytes)?;
+    let sealed = store
+        .credential_value_leaf_in_txn(wtxn, id, rec.rotation_generation)
+        .and_then(|leaf| seal_value(&leaf, id, rec.rotation_generation, &rec.value_bytes))
+        .map_err(|error| custody_unavailable(store, wtxn, id, &rec.name, &error))?;
     encode_custody_map(rec, BodyValue::Sealed(sealed))
 }
 
 /// What a write does when custody cannot take a value's key (CALLS `KS-6
-/// seal fault refuses`, Engine 10-21 19:1x: keep the at-rest seal).
+/// seal fault refuses`, Engine 10-21 19:5x: keep the at-rest seal).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CustodySealFault {
-    /// The write is refused with custody's error: no value rests in the
-    /// clear, and no carrier is kept beside a sealed one.
-    RefuseNeverClear,
+    /// The write answers `credential_custody_unavailable`, naming the
+    /// credential's handle and the way out (retry: a custody store fault),
+    /// logged by key and kind: never a raw custody or I/O error, no value
+    /// in the clear, and no carrier kept beside a sealed one.
+    TypedRetryNeverClear,
 }
 
-const CUSTODY_SEAL_FAULT: CustodySealFault = CustodySealFault::RefuseNeverClear;
+const CUSTODY_SEAL_FAULT: CustodySealFault = CustodySealFault::TypedRetryNeverClear;
+
+/// The handle a typed custody answer names record `id` by: its short id,
+/// or, for a record that has none yet, its name.
+fn credential_handle(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId, name: &str) -> String {
+    crate::ports::ShortIdStoreRead::port_short_id_reference(store, txn, id)
+        .ok()
+        .flatten()
+        .map_or_else(
+            || name.to_owned(),
+            |(short, hash)| format!("{short}:{hash:02x}"),
+        )
+}
+
+/// `credential_custody_unavailable` for record `id`, named `name` (Engine
+/// 10-21 19:5x): custody could not mint or publish its new value's key.
+/// Logged by key and kind, never a byte.
+fn custody_unavailable(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    name: &str,
+    error: &Error,
+) -> Error {
+    tracing::warn!(
+        credential = %id.to_hex(),
+        kind = ?error.kind(),
+        "credential_custody_unavailable: custody could not take a credential value's key"
+    );
+    Error::Secret(crate::error::SecretError::CredentialCustodyUnavailable {
+        handle: credential_handle(store, txn, id, name),
+    })
+}
 
 /// Opens `stored`'s value for record `id` into its record. The caller holds
 /// a writer, or took the custody read guard before its snapshot.
@@ -265,26 +303,31 @@ pub(super) fn read_opened_in_txn(
     let Some(stored) = read_stored_custody_in_txn(store, txn, id)? else {
         return Ok(None);
     };
+    let name = stored.record.name.clone();
     open_stored(store, id, stored)
         .map(Some)
-        .map_err(|error| leaf_unreadable(store, txn, id, &error))
+        .map_err(|error| leaf_unreadable(store, txn, id, &name, &error))
 }
 
-/// `credential_leaf_unreadable` for record `id` (Engine 10-21 19:1x): an
-/// integrity fault the caller answers typed, naming the credential's
-/// handle and the way out (re-enter or reissue it). Logged by key and kind,
-/// never a byte.
-fn leaf_unreadable(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId, error: &Error) -> Error {
+/// `credential_leaf_unreadable` for record `id`, named `name` (Engine
+/// 10-21 19:1x): an integrity fault the caller answers typed, naming the
+/// credential's handle and the way out (retry, or re-enter or reissue it).
+/// Logged by key and kind, never a byte.
+fn leaf_unreadable(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    name: &str,
+    error: &Error,
+) -> Error {
     tracing::warn!(
         credential = %id.to_hex(),
         kind = ?error.kind(),
         "credential_leaf_unreadable: a credential's custody key did not open its value"
     );
-    let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(store, txn, id)
-        .ok()
-        .flatten()
-        .map_or_else(|| id.to_hex(), |(name, hash)| format!("{name}:{hash:02x}"));
-    Error::Secret(crate::error::SecretError::CredentialLeafUnreadable { handle })
+    Error::Secret(crate::error::SecretError::CredentialLeafUnreadable {
+        handle: credential_handle(store, txn, id, name),
+    })
 }
 
 /// Record `id` with no value: every field a door reads but the value,

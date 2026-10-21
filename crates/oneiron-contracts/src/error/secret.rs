@@ -220,6 +220,16 @@ pub enum SecretError {
          vault's key custody; re-enter or reissue that credential"
     )]
     CredentialLeafUnreadable { handle: String },
+    /// This vault's key custody could not mint or publish the key a new
+    /// credential value is sealed under (KS-6, Engine 10-21 19:5x): a
+    /// recoverable store fault, named by the credential's handle with the
+    /// way out, never by a byte. Nothing was written.
+    #[error(
+        "credential_custody_unavailable: the value of credential `{handle}` could not be sealed \
+         under a key of this vault's key custody, so nothing was written; retry (a custody store \
+         fault)"
+    )]
+    CredentialCustodyUnavailable { handle: String },
 }
 
 /// What the vault records of a kit seed's root.
@@ -270,6 +280,7 @@ impl SecretError {
             Self::UnverifiedKitRestore { .. } => ErrorKind::UnverifiedKitRestore,
             Self::KitConfirmationStale { .. } => ErrorKind::KitConfirmationStale,
             Self::CredentialLeafUnreadable { .. } => ErrorKind::CredentialLeafUnreadable,
+            Self::CredentialCustodyUnavailable { .. } => ErrorKind::CredentialCustodyUnavailable,
         }
     }
 }
