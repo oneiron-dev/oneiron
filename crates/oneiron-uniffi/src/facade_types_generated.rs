@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1127 facade rows, 3889 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1079.
+// UniFFI census: 1129 facade rows, 3904 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1081.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -1411,6 +1411,8 @@ pub enum AgentHealthCounter {
     QueueWait,
     #[serde(rename = "few_runs")]
     FewRuns,
+    #[serde(rename = "environment_cause")]
+    EnvironmentCause,
 }
 
 /// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthMove`.
@@ -1643,6 +1645,34 @@ pub struct HealthReviewReceipt {
     pub projected: bool,
 }
 
+/// `oneiron::dreamer_runner::maintenance::agent_health::environment::HealthCauseSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HealthCauseSource {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "skill", default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(rename = "share")]
+    pub share: f64,
+    #[serde(
+        rename = "judge_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judge_revision: Option<String>,
+    #[serde(
+        rename = "displaced_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub displaced_by: Option<String>,
+}
+
 /// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCard`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -1721,6 +1751,8 @@ pub struct AgentHealthCard {
     pub reviewer: String,
     #[serde(rename = "review_outcomes")]
     pub review_outcomes: Vec<HealthReviewReceipt>,
+    #[serde(rename = "causes")]
+    pub causes: Vec<HealthCauseSource>,
 }
 
 /// `oneiron::run_tree::types::RunTreeStatus`.
@@ -4228,11 +4260,93 @@ pub struct AttemptView {
     pub backoff_until: Option<u64>,
 }
 
+/// `oneiron_browser::stop::StrictDenial`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum StrictDenial {
+    #[serde(rename = "rule_abstained")]
+    RuleAbstained,
+    #[serde(rename = "no_rule")]
+    NoRule,
+    #[serde(rename = "image")]
+    Image,
+}
+
+/// `oneiron_browser::stop::AskUpReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "why")]
+pub enum AskUpReason {
+    #[serde(rename = "asked")]
+    Asked {
+        #[serde(rename = "ladder", default, skip_serializing_if = "Option::is_none")]
+        ladder: Option<String>,
+    },
+    #[serde(rename = "looks")]
+    Looks,
+    #[serde(rename = "no_answer")]
+    NoAnswer,
+    #[serde(rename = "wrong_answer")]
+    WrongAnswer,
+    #[serde(rename = "strict")]
+    Strict {
+        #[serde(rename = "denied")]
+        denied: StrictDenial,
+    },
+}
+
+/// `oneiron_browser::stop::ClockScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ClockScope {
+    #[serde(rename = "wait")]
+    Wait,
+    #[serde(rename = "navigation")]
+    Navigation,
+    #[serde(rename = "decision")]
+    Decision,
+}
+
+/// `oneiron_browser::stop::BatchStopCause`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "cause")]
+pub enum BatchStopCause {
+    #[serde(rename = "postcondition_unmet")]
+    PostconditionUnmet,
+    #[serde(rename = "locator_missing")]
+    LocatorMissing,
+    #[serde(rename = "incomplete_observation")]
+    IncompleteObservation,
+    #[serde(rename = "decider_asked_up")]
+    DeciderAskedUp {
+        #[serde(rename = "reason")]
+        reason: AskUpReason,
+    },
+    #[serde(rename = "clock")]
+    Clock {
+        #[serde(rename = "scope")]
+        scope: ClockScope,
+    },
+    #[serde(rename = "press_needed")]
+    PressNeeded,
+    #[serde(rename = "taken_over")]
+    TakenOver,
+    #[serde(rename = "field_text")]
+    FieldText,
+    #[serde(rename = "no_progress")]
+    NoProgress,
+    #[serde(rename = "browser")]
+    Browser {
+        #[serde(rename = "code")]
+        code: String,
+    },
+}
+
 /// `oneiron::task_verb::highway_types::TaskWorkflowHandoff`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum TaskWorkflowHandoff {
     #[serde(rename = "program")]
-    Program,
+    Program {
+        #[serde(rename = "stop_cause")]
+        stop_cause: BatchStopCause,
+    },
     #[serde(rename = "goal_unmet")]
     GoalUnmet,
     #[serde(rename = "retired")]
@@ -32923,6 +33037,254 @@ pub struct CodeExportResult {
     pub wire_rejected: bool,
 }
 
+/// `oneiron::origin::export_preview::types::CodeExportPreviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeExportPreviewRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "code_repo")]
+    pub code_repo: String,
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(
+        rename = "expected_old_oid",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_old_oid: Option<String>,
+    #[serde(rename = "endpoint")]
+    pub endpoint: String,
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportSide`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeExportSide {
+    #[serde(rename = "before")]
+    Before,
+    #[serde(rename = "after")]
+    After,
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportByteHandle`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeExportByteHandle {
+    #[serde(rename = "preview_digest")]
+    pub preview_digest: String,
+    #[serde(rename = "side")]
+    pub side: CodeExportSide,
+    #[serde(rename = "path")]
+    pub path: String,
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportFileIdentity`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeExportFileIdentity {
+    #[serde(rename = "mode")]
+    pub mode: u32,
+    #[serde(rename = "size_bytes")]
+    pub size_bytes: u64,
+    #[serde(rename = "git_oid")]
+    pub git_oid: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "handle")]
+    pub handle: CodeExportByteHandle,
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportFileDelta`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeExportFileDelta {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "before", default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<CodeExportFileIdentity>,
+    #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<CodeExportFileIdentity>,
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportPreview`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeExportPreview {
+    #[serde(rename = "request")]
+    pub request: CodeExportPreviewRequest,
+    #[serde(rename = "code_repo")]
+    pub code_repo: String,
+    #[serde(rename = "origin_repo_id")]
+    pub origin_repo_id: String,
+    #[serde(rename = "object_store")]
+    pub object_store: String,
+    #[serde(
+        rename = "source_tree",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_tree: Option<String>,
+    #[serde(rename = "target_tree")]
+    pub target_tree: String,
+    #[serde(rename = "inventory_digest")]
+    pub inventory_digest: String,
+    #[serde(rename = "preview_digest")]
+    pub preview_digest: String,
+    #[serde(rename = "exact")]
+    pub exact: bool,
+    #[serde(
+        rename = "observed_ref_oid",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observed_ref_oid: Option<String>,
+    #[serde(rename = "expected_matches_observed")]
+    pub expected_matches_observed: bool,
+    #[serde(rename = "before_paths")]
+    pub before_paths: Vec<String>,
+    #[serde(rename = "after_paths")]
+    pub after_paths: Vec<String>,
+    #[serde(rename = "files")]
+    pub files: Vec<CodeExportFileDelta>,
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportBlockingSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum CodeExportBlockingSource {
+    #[serde(rename = "entity")]
+    Entity {
+        #[serde(rename = "entity")]
+        entity: String,
+    },
+    #[serde(rename = "file")]
+    File {
+        #[serde(rename = "side")]
+        side: CodeExportSide,
+        #[serde(rename = "path")]
+        path: String,
+        #[serde(rename = "entity", default, skip_serializing_if = "Option::is_none")]
+        entity: Option<String>,
+    },
+    #[serde(rename = "object")]
+    Object {
+        #[serde(rename = "object_store")]
+        object_store: String,
+        #[serde(rename = "oid")]
+        oid: String,
+    },
+    #[serde(rename = "evidence")]
+    Evidence {
+        #[serde(rename = "reference")]
+        reference: String,
+    },
+    #[serde(rename = "outside_grant")]
+    OutsideGrant,
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportPreviewBlockReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeExportPreviewBlockReason {
+    #[serde(rename = "unavailable")]
+    Unavailable,
+    #[serde(rename = "withheld")]
+    Withheld,
+    #[serde(rename = "masked")]
+    Masked,
+    #[serde(rename = "incomplete_evidence")]
+    IncompleteEvidence,
+    #[serde(rename = "unreviewed")]
+    Unreviewed,
+    #[serde(rename = "unsupported_tree")]
+    UnsupportedTree,
+    #[serde(rename = "outside_grant")]
+    OutsideGrant,
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportPreviewBlocker`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeExportPreviewBlocker {
+    #[serde(rename = "source")]
+    pub source: CodeExportBlockingSource,
+    #[serde(rename = "reason")]
+    pub reason: CodeExportPreviewBlockReason,
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(rename = "way_out")]
+    pub way_out: String,
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportPreviewHold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeExportPreviewHold {
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "blockers")]
+    pub blockers: Vec<CodeExportPreviewBlocker>,
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportPreviewAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum CodeExportPreviewAnswer {
+    #[serde(rename = "ready")]
+    Ready {
+        #[serde(rename = "preview")]
+        preview: CodeExportPreview,
+    },
+    #[serde(rename = "held")]
+    Held {
+        #[serde(rename = "hold")]
+        hold: CodeExportPreviewHold,
+    },
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportFileReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeExportFileReadRequest {
+    #[serde(rename = "preview")]
+    pub preview: CodeExportPreviewRequest,
+    #[serde(rename = "handle")]
+    pub handle: CodeExportByteHandle,
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportFileBytes`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeExportFileBytes {
+    #[serde(rename = "handle")]
+    pub handle: CodeExportByteHandle,
+    #[serde(rename = "mode")]
+    pub mode: u32,
+    #[serde(rename = "size_bytes")]
+    pub size_bytes: u64,
+    #[serde(rename = "git_oid")]
+    pub git_oid: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "bytes")]
+    pub bytes: Vec<u8>,
+}
+
+/// `oneiron::origin::export_preview::types::CodeExportFileReadAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum CodeExportFileReadAnswer {
+    #[serde(rename = "ready")]
+    Ready {
+        #[serde(rename = "file")]
+        file: CodeExportFileBytes,
+    },
+    #[serde(rename = "held")]
+    Held {
+        #[serde(rename = "hold")]
+        hold: CodeExportPreviewHold,
+    },
+}
+
 /// `oneiron::code_revision::import_types::CodeImportAcceptance`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -43198,6 +43560,8 @@ pub enum ModelRole {
     LocalVision,
     #[serde(rename = "coach")]
     Coach,
+    #[serde(rename = "browser_planner")]
+    BrowserPlanner,
 }
 
 /// `oneiron::llm::manifest::doors::ModelRoleRead`.
@@ -60591,85 +60955,6 @@ pub enum SubgoalStatus {
     NeedsAgent,
     #[serde(rename = "NEEDS_YOU")]
     NeedsYou,
-}
-
-/// `oneiron_browser::stop::StrictDenial`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum StrictDenial {
-    #[serde(rename = "rule_abstained")]
-    RuleAbstained,
-    #[serde(rename = "no_rule")]
-    NoRule,
-    #[serde(rename = "image")]
-    Image,
-}
-
-/// `oneiron_browser::stop::AskUpReason`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "why")]
-pub enum AskUpReason {
-    #[serde(rename = "asked")]
-    Asked {
-        #[serde(rename = "ladder", default, skip_serializing_if = "Option::is_none")]
-        ladder: Option<String>,
-    },
-    #[serde(rename = "looks")]
-    Looks,
-    #[serde(rename = "no_answer")]
-    NoAnswer,
-    #[serde(rename = "wrong_answer")]
-    WrongAnswer,
-    #[serde(rename = "strict")]
-    Strict {
-        #[serde(rename = "denied")]
-        denied: StrictDenial,
-    },
-}
-
-/// `oneiron_browser::stop::ClockScope`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ClockScope {
-    #[serde(rename = "wait")]
-    Wait,
-    #[serde(rename = "navigation")]
-    Navigation,
-    #[serde(rename = "decision")]
-    Decision,
-}
-
-/// `oneiron_browser::stop::BatchStopCause`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "cause")]
-pub enum BatchStopCause {
-    #[serde(rename = "postcondition_unmet")]
-    PostconditionUnmet,
-    #[serde(rename = "locator_missing")]
-    LocatorMissing,
-    #[serde(rename = "incomplete_observation")]
-    IncompleteObservation,
-    #[serde(rename = "decider_asked_up")]
-    DeciderAskedUp {
-        #[serde(rename = "reason")]
-        reason: AskUpReason,
-    },
-    #[serde(rename = "clock")]
-    Clock {
-        #[serde(rename = "scope")]
-        scope: ClockScope,
-    },
-    #[serde(rename = "press_needed")]
-    PressNeeded,
-    #[serde(rename = "taken_over")]
-    TakenOver,
-    #[serde(rename = "field_text")]
-    FieldText,
-    #[serde(rename = "no_progress")]
-    NoProgress,
-    #[serde(rename = "browser")]
-    Browser {
-        #[serde(rename = "code")]
-        code: String,
-    },
 }
 
 /// `oneiron_browser::stop::CheckReceipt`.

@@ -337,6 +337,12 @@ side_tables! {
     /// Persisted audit report of a judge run against the held-out fixture set, keyed by run time then
     /// evidence sequence. Key: u64be + u64be.
     SKILL_ATTRIBUTION_AUDIT: VaultMeta b"skill_attribution:audit:v1:" Raw;
+    /// One label the attribution judge settled on a terminal attempt's outcome evidence, kept
+    /// whatever its subject routing (OF-568 L10): source id, evidence sequence, receipt, actor
+    /// (nil once erased), skill, label, share, judge revision, time. Key: hash32 (blake3 of the
+    /// terminal pack receipt id) + u64be (evidence sequence).
+    SKILL_ATTRIBUTION_CAUSE: VaultMeta b"skill_attribution:cause:v1:" Named Engine
+        => crate::skill_attribution::erase_attribution_cause_actor_in_txn;
     /// One matched-fork contribution check: the verdict and the pair it was read from (both fork
     /// receipts and results, the anchor, the axis). Key: string (attempt receipt "\0" skill hex
     /// "\0" axis).

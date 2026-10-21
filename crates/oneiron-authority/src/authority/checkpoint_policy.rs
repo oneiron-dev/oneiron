@@ -35,8 +35,6 @@ const CHECKPOINT_CHOICE_KEYS: [&str; 3] = ["roots", "quorum", "hardware"];
 /// and machine answer ones: BLAKE3 over it and the vault's sorted live
 /// choice hashes, in the `PolicyRevision` shape.
 pub const CHECKPOINT_POLICY_REVISION_CONTEXT: &[u8] = b"oneiron/checkpoint-policy-revision/v1";
-/// The most roots one choice names: its quorum is one byte.
-pub const CHECKPOINT_POLICY_ROOTS_MAX: usize = u8::MAX as usize;
 
 /// A checkpoint policy act's `seen` over the vault's live choices, zero for
 /// a vault no choice names.
@@ -70,10 +68,11 @@ pub struct CheckpointRootChoice {
 
 impl CheckpointRootChoice {
     /// Canonical or refused: roots ascending, distinct and well formed, and
-    /// a quorum between one and the roots named.
+    /// a quorum between one and the roots named. However many roots a choice
+    /// names, it is never refused for their count (Phase2 A, FIX 7909): the
+    /// quorum alone is one byte, and the writer measures the roots.
     pub fn validate(&self) -> Result<()> {
         if self.roots.is_empty()
-            || self.roots.len() > CHECKPOINT_POLICY_ROOTS_MAX
             || self.quorum == 0
             || usize::from(self.quorum) > self.roots.len()
             || self.roots.windows(2).any(|pair| pair[0] >= pair[1])

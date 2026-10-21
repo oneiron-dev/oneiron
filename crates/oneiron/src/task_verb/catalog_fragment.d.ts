@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3960 declarations.
-// Replies: 1057 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1179 code-mode rows (1139 host rows, 40 run rows), 3975 declarations.
+// Replies: 1059 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -111,7 +111,7 @@ declare namespace Sdk {
   type AgentHealthSignal = "loop" | "failed_check_repeat" | "cost_spike" | "long_wait" | "silent" | "duplicate_work" | "unsupported_done" | "misalignment";
   type AgentHealthTone = "struggling" | "off_course" | "concern";
   type AgentHealthConfidence = "high" | "low";
-  type AgentHealthCounter = "results_changed" | "refused_calls" | "queue_wait" | "few_runs";
+  type AgentHealthCounter = "results_changed" | "refused_calls" | "queue_wait" | "few_runs" | "environment_cause";
   type AgentHealthMove = "note" | "steer" | "budget" | "reassign" | "ask_coach" | "hold";
   type AgentHealthOutcome = "open" | "confirmed" | "dismissed" | "unresolved";
   type HealthBriefPin = { task: EntityId; rev: number; digest: string; observed_at: number };
@@ -124,7 +124,8 @@ declare namespace Sdk {
   type AgentHealthCoachApplication = { by: EntityId; at: number; skill: EntityId; version: string; instructions: string; candidate: EntityId; state: AgentHealthApplicationState; verdict?: EntityId | null; disposition?: string | null; updated_at: number };
   type AgentHealthCoachAsk = { asked_by: EntityId; asked_at: number; diagnostic?: EntityId | null; attempt: string; observed_brief?: HealthBriefPin | null; answer?: AgentHealthCoachAnswer | null; application?: AgentHealthCoachApplication | null };
   type HealthReviewReceipt = { receipt: string; outcome: AgentHealthOutcome; by: EntityId; by_owner: boolean; at: number; reviewer: string; dial: number; measured: number; diagnostics: EntityId[]; evidence: EntityId[]; observed_brief?: HealthBriefPin | null; label?: boolean | null; projected: boolean };
-  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[] };
+  type HealthCauseSource = { source: EntityId; receipt: string; skill?: EntityId | null; label: string; share: number; judge_revision?: string | null; displaced_by?: string | null };
+  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[] };
   type RunTreeStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned";
   type RunTreeTimestamps = { created_at: number; updated_at: number };
   type RunTreeFailure = { reason: string };
@@ -313,7 +314,11 @@ declare namespace Sdk {
   type WorldPrivacyWaitStatus = { state: "pending" } | { state: "applied"; receipt_id: string } | { state: "declined" };
   type WorldPrivacyWaitResult = { request_id: string; world: string; status: WorldPrivacyWaitStatus };
   type TaskAskStatus = { Pending: { hold?: TaskAskHoldReason | null } } | { Changed: { voided: EntityId[]; generation: number } } | { Settled: TaskAskResult } | { WorldPrivacy: WorldPrivacyWaitResult };
-  type TaskWorkflowHandoff = "program" | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } };
+  type StrictDenial = "rule_abstained" | "no_rule" | "image";
+  type AskUpReason = { why: "asked"; ladder?: string | null } | { why: "looks" } | { why: "no_answer" } | { why: "wrong_answer" } | { why: "strict"; denied: StrictDenial };
+  type ClockScope = "wait" | "navigation" | "decision";
+  type BatchStopCause = { cause: "postcondition_unmet" } | { cause: "locator_missing" } | { cause: "incomplete_observation" } | { cause: "decider_asked_up"; reason: AskUpReason } | { cause: "clock"; scope: ClockScope } | { cause: "press_needed" } | { cause: "taken_over" } | { cause: "field_text" } | { cause: "no_progress" } | { cause: "browser"; code: string };
+  type TaskWorkflowHandoff = { program: { stop_cause: BatchStopCause } } | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } };
   type TaskWorkflowOutcome = "pending" | { done: { receipt_ref: EntityId } } | { handoff: { cause: TaskWorkflowHandoff; receipt_ref: EntityId } };
   type TaskWorkflowStatus = { attempt_ref: string; requested: EntityId; resolved?: EntityId | null; brief: BriefStamp; outcome: TaskWorkflowOutcome };
   type TaskStatusView = { handle: TaskHandle; task_ref?: EntityId | null; phase: TaskPhase; brief_current?: BriefStamp | null; brief_running?: BriefStamp | null; attempt?: AttemptView | null; pending: boolean; asks: [TaskAskHandle, TaskAskStatus][]; last_receipt?: string | null; workflow?: TaskWorkflowStatus | null; observed: string };
@@ -2193,6 +2198,20 @@ declare namespace Sdk {
   type OriginPublicationState = "prepared" | "published" | "failed" | "conflicted";
   type OriginPublicationView = { receipt: EntityId; repo_id: EntityId; ref_name: string; git_commit: string; provenance_receipt: EntityId; publication_claim?: EntityId | null; actor?: EntityId | null; status: OriginPublicationState; failure?: string | null; created_at: number; finished_at?: number | null };
   type CodeExportResult = { revision: EntityId; git_commit: string; remote_url: string; receipt: EntityId; publication: OriginPublicationView; ref_was_already_applied: boolean; wire_replayed: boolean; wire_rejected: boolean };
+  type CodeExportPreviewRequest = { repo: string; code_repo: EntityId; checkout: string; epoch: number; revision: EntityId; ref_name: string; expected_old_oid?: string | null; endpoint: string };
+  type CodeExportSide = "before" | "after";
+  type CodeExportByteHandle = { preview_digest: string; side: CodeExportSide; path: string };
+  type CodeExportFileIdentity = { mode: number; size_bytes: number; git_oid: string; content_hash: string; handle: CodeExportByteHandle };
+  type CodeExportFileDelta = { path: string; before?: CodeExportFileIdentity | null; after?: CodeExportFileIdentity | null };
+  type CodeExportPreview = { request: CodeExportPreviewRequest; code_repo: EntityId; origin_repo_id: EntityId; object_store: string; source_tree?: string | null; target_tree: string; inventory_digest: string; preview_digest: string; exact: boolean; observed_ref_oid?: string | null; expected_matches_observed: boolean; before_paths: string[]; after_paths: string[]; files: CodeExportFileDelta[] };
+  type CodeExportBlockingSource = { kind: "entity"; entity: EntityId } | { kind: "file"; side: CodeExportSide; path: string; entity?: EntityId | null } | { kind: "object"; object_store: string; oid: string } | { kind: "evidence"; reference: string } | { kind: "outside_grant" };
+  type CodeExportPreviewBlockReason = "unavailable" | "withheld" | "masked" | "incomplete_evidence" | "unreviewed" | "unsupported_tree" | "outside_grant";
+  type CodeExportPreviewBlocker = { source: CodeExportBlockingSource; reason: CodeExportPreviewBlockReason; message: string; way_out: string };
+  type CodeExportPreviewHold = { code: string; blockers: CodeExportPreviewBlocker[] };
+  type CodeExportPreviewAnswer = { state: "ready"; preview: CodeExportPreview } | { state: "held"; hold: CodeExportPreviewHold };
+  type CodeExportFileReadRequest = { preview: CodeExportPreviewRequest; handle: CodeExportByteHandle };
+  type CodeExportFileBytes = { handle: CodeExportByteHandle; mode: number; size_bytes: number; git_oid: string; content_hash: string; bytes: number[] };
+  type CodeExportFileReadAnswer = { state: "ready"; file: CodeExportFileBytes } | { state: "held"; hold: CodeExportPreviewHold };
   type CodeImportAcceptance = { manifest_digest: string; baseline_revision: EntityId; catalog: LensCatalog; review_verdict?: EntityId | null };
   type CodeRepoImportRequest = { repo: string; project: EntityId; source_ref: string; source_commit: string; admission_receipt: EntityId; accept?: CodeImportAcceptance | null };
   type CodeImportAnchor = { repo: EntityId; project: EntityId; served_repo: string; object_store: string; source_ref: string; source_commit: string; source_tree: string; admission_receipt: EntityId; receive_provenance: EntityId; snapshot: EntityId; snapshot_fork_hash: string };
@@ -2779,7 +2798,7 @@ declare namespace Sdk {
   type SkillPackOutcomeRequest = { attempt_receipt: string; outcome_receipt: string; succeeded: boolean; axis: string; at: number; goal_revision?: string | null };
   type SkillPackOutcomeProjection = { receipt: LateCreditReceipt; persisted: boolean };
   type SkillPackCreditRequest = { receipt_id: string };
-  type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach";
+  type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach" | "browser_planner";
   type ModelTierRef = string;
   type ModelDisposition = "offline" | "served";
   type ModelBinding = { model: ModelId; slot: ModelSlot; tier: ModelTierRef; route_models?: Record<string, ModelId>; disposition?: ModelDisposition | null; reads_audio?: boolean };
@@ -3120,10 +3139,6 @@ declare namespace Sdk {
   type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text: string; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
-  type StrictDenial = "rule_abstained" | "no_rule" | "image";
-  type AskUpReason = { why: "asked"; ladder?: string | null } | { why: "looks" } | { why: "no_answer" } | { why: "wrong_answer" } | { why: "strict"; denied: StrictDenial };
-  type ClockScope = "wait" | "navigation" | "decision";
-  type BatchStopCause = { cause: "postcondition_unmet" } | { cause: "locator_missing" } | { cause: "incomplete_observation" } | { cause: "decider_asked_up"; reason: AskUpReason } | { cause: "clock"; scope: ClockScope } | { cause: "press_needed" } | { cause: "taken_over" } | { cause: "field_text" } | { cause: "no_progress" } | { cause: "browser"; code: string };
   type CheckReceipt = { expect: ExpectInput; observed: ExpectOutput };
   type FailedStepReceipt = { step?: number | null; stop_cause: BatchStopCause; missed?: CheckReceipt[]; observation?: Observation2 | null; error?: string | null };
   type StepRebound = { step: number; rebound: Rebound };
@@ -4973,7 +4988,13 @@ declare const vault: Sdk.VaultHost & {
     /** The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort. */
     diff(input: Sdk.CodeDiffRequest): Promise<Sdk.CodeDiffView | null | StoredResult>;
     /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
-    export(input: Sdk.CodeExportRequest): Promise<Sdk.CodeExportResult | StoredResult>;
+    export: ((input: Sdk.CodeExportRequest) => Promise<Sdk.CodeExportResult | StoredResult>) & {
+      /** Read the complete raw-byte and Git-mode delta for one explicit sealed export revision and ref expectation. Live owner or a caller under one covering Grant. Missing, withheld or masked sources return a typed hold; no export or ref is written. */
+      preview: ((input: Sdk.CodeExportPreviewRequest) => Promise<Sdk.CodeExportPreviewAnswer | StoredResult>) & {
+        /** Read the exact bytes and mode of one changed preview side by its recomputed handle. Live owner or a caller under one covering preview Grant. Missing, withheld or masked sources return a typed hold; no caller-selected host file is read. */
+        read(input: Sdk.CodeExportFileReadRequest): Promise<Sdk.CodeExportFileReadAnswer | StoredResult>;
+      };
+    };
     forks: {
       /** Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork. */
       get(input: Sdk.CodeForkGetRequest): Promise<Sdk.CodeForkView | null | StoredResult>;

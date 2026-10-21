@@ -628,15 +628,14 @@ fn reverse_rematerialize_scan(
     // every revision learned since (Astra #1434 F2).
     wrote_any |= super::project_history::carry_project_history(vault, doc)?;
 
-    // OF-422: the owner-signed custody transitions this vault wrote that ride
-    // this window, never a custody row.
-    wrote_any |= crate::sync::custody::mirror_custody_transitions(vault, doc, window_key)?;
-
     // Commit all bridge writes with origin tag
     if wrote_any {
         let origin = bridge::origin_for_mirrors(&mirror_sources)?;
         doc.commit_with(CommitOptions::new().origin(&origin));
     }
+    // OF-422: the owner-signed custody transitions this vault wrote that ride
+    // this window, never a custody row, each piece in a commit of its own.
+    crate::sync::custody::mirror_custody_transitions(vault, doc, window_key)?;
     // FIX 853: each document and pin commits on its own, a part to a
     // commit, so no one update outgrows a frame.
     for id in &messages {

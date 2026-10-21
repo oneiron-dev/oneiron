@@ -5683,6 +5683,23 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_export_preview(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.export.preview")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.export.preview", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_export_preview_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.export.preview.read")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.export.preview.read", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_import(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.code.import")?;
         let output = py

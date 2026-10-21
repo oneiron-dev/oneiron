@@ -45,10 +45,6 @@ mod task_workflow;
 
 // The strict library try a TASK-bound program's run takes before its
 // planner (CUA E4).
-#[allow(
-    unused_imports,
-    reason = "resident_pump's run_bound, its caller, lands in L09's CUA E4 TASK-side PR"
-)]
 pub(crate) use self::task_workflow::{WorkflowPreflight, preflight_task_workflow};
 
 use self::receipt_evidence::ReceiptWriter;
@@ -58,6 +54,7 @@ use super::admission::{
 };
 use super::tasks_response::{McpCodeRun, execute_agent_verb_input, mcp_agent_verb_arguments};
 use super::{McpCallContext, McpGatewayError};
+use crate::ai_host::browser_planner::BrowserPlannerRun;
 use crate::decision_host::PLACEMENT_BUDGET;
 use crate::decision_verdict::{HELD_IMAGE, HELD_PREFIX, HeldImage};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, try_registered_surface};
@@ -117,6 +114,9 @@ pub(crate) struct RunGuests {
     desktop: Option<RunDesktop>,
     /// The words the newest browser call was refused with (FIX 6887).
     refused: browser_guest::KeptRefusal,
+    /// The run's browser planner state beside its browser's seat (CUA E5),
+    /// fed how each batch and library run ended.
+    planner: Option<Arc<BrowserPlannerRun>>,
 }
 
 /// One run's browser guest. It starts on the first call that needs it and
@@ -703,6 +703,17 @@ impl RunBrowser {
         })
     }
 
+    /// The run's browser planner state (CUA E5), bound beside this
+    /// browser's seat, when the host's code mode routes the run's steps.
+    fn planner(&self, server: &SyncServer) -> Option<Arc<BrowserPlannerRun>> {
+        let runs = server
+            .code_execution_host()?
+            .engine_native()?
+            .provider()
+            .browser_planner()?;
+        Some(runs.bind(self.run_id, &self.session))
+    }
+
     /// The fresh guest this run's proposals replay on, for one call of
     /// `decider`'s caller (`invocation`).
     fn fresh_guest(
@@ -857,8 +868,10 @@ impl RunDesktop {
 impl RunGuests {
     /// The guests the host gives run `run_id`.
     pub(crate) fn new(server: &SyncServer, run_id: oneiron::EntityId) -> Self {
+        let browser = RunBrowser::new(server, run_id);
         Self {
-            browser: RunBrowser::new(server, run_id),
+            planner: browser.as_ref().and_then(|guest| guest.planner(server)),
+            browser,
             desktop: RunDesktop::new(server, run_id),
             refused: browser_guest::KeptRefusal::default(),
         }
@@ -866,8 +879,10 @@ impl RunGuests {
 
     /// Binds only this attached run's browser for a public host call.
     pub(crate) fn browser(server: &SyncServer, run_id: oneiron::EntityId) -> Self {
+        let browser = RunBrowser::new(server, run_id);
         Self {
-            browser: RunBrowser::new(server, run_id),
+            planner: browser.as_ref().and_then(|guest| guest.planner(server)),
+            browser,
             desktop: None,
             refused: browser_guest::KeptRefusal::default(),
         }
@@ -990,6 +1005,18 @@ impl RunGuests {
         }
         if let Some(receipts) = output.get("receipts") {
             tracing::info!(verb, ?receipts, "browser batch receipts");
+        }
+        // CUA E5: how a batch or library run ended reaches the run's browser
+        // planner here, at execution, before its answer goes back.
+        if let Some(planner) = &self.planner {
+            let mut library = VaultLibrary {
+                server: Arc::clone(server),
+                by,
+            };
+            planner.observe(call.verb, &call.input, &output, |workflow| {
+                let filed = library.program(workflow).ok().flatten()?;
+                Some(filed.program.subgoal)
+            });
         }
         Ok(Ok(AgentVerbAnswer {
             output,

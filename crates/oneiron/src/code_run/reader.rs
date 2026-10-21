@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use super::ScopedChildSpec;
 use crate::agent_def::AgentModel;
 use crate::agent_dispatch::SpendScopeId;
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::vault::VaultId;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
@@ -112,6 +112,9 @@ pub struct SpawnHostSeat {
     /// The list the run's agent froze (FIX 4539); empty for a run of no
     /// agent, or of one that lists none.
     pub listed: Vec<AgentModel>,
+    /// The lease of the attempt the run is, which a scoped child queued
+    /// under this seat borrows (FIX 7507); never a read's or a summary's.
+    pub parent_lease: Option<BorrowedAttemptLease>,
 }
 
 /// The window a seat names when its host knows none, in tokens.
@@ -520,8 +523,12 @@ pub struct SpawnParentBinding {
     pub route: ReaderRoute,
     pub spend: ReaderSpend,
     pub deadline: RunDeadline,
+    /// When this job stops (`reader_job_cutoff`): a summary may use the fold reserve.
     pub child_cutoff_unix_ms: u64,
     pub listed: Vec<AgentModel>,
+    /// The parent attempt's lease a scoped child borrowed (FIX 7507).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_lease: Option<BorrowedAttemptLease>,
 }
 
 /// Where a child stands. A settled one (`Done`, `Partial`, `Failed`) never

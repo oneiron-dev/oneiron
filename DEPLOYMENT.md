@@ -210,6 +210,7 @@ embedder_requests = 2048          # requests `embedder serve` holds at once; pas
 embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until delivered; past it they queue
 decision_reads = 2048             # owner decision-read probes held at once; past it they queue
 task_work = 2048                  # can, ask, wait and tasks.answer calls the vault runs at once; past it each caller waits a fair turn, then runs
+renderer_work = 2                 # deck and slide renders at once (LibreOffice + pdftoppm); past it each caller waits a fair turn, then render_deadline (default: a quarter of the cores, at least 1)
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
 retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)
@@ -322,6 +323,7 @@ organ_note_bytes = 256            # bytes of one note (an encoded locator, a war
 organ_loss_code_bytes = 64        # bytes of one loss's code an organ call's receipt keeps; past it the code is kept whole and the row asks
 organ_memory_bytes = 2147483648   # bytes the organ host's budget holds when a live call grows past it (measured at the host's own budget); one elected call goes on with its overcommit on its receipt, new calls wait for the drain, and the row asks
 deadline_jobs_per_caller = 2048   # recalls and searches one caller has running at once under a deadline, each counted until its work ends; past it the job runs on and the row asks (the deadline_jobs_high check, naming the caller and the count, once per caller per minute)
+authority_record_items = 4096     # items one signed authority record carries for its owner (custody recipients, checkpoint roots, model routes, mesh addresses or ALPN grants, a machine revision's acknowledged acts); past it the record is signed and kept whole and the row asks
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

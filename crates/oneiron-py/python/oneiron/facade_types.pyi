@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1127 facade rows, 3907 declarations.
-Inputs: 1062 of 1127 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1014 of 1127 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1129 facade rows, 3922 declarations.
+Inputs: 1064 of 1129 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1016 of 1129 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -422,7 +422,7 @@ class ConcernCardRequest(TypedDict):
 AgentHealthSignal = Literal["loop", "failed_check_repeat", "cost_spike", "long_wait", "silent", "duplicate_work", "unsupported_done", "misalignment"]
 AgentHealthTone = Literal["struggling", "off_course", "concern"]
 AgentHealthConfidence = Literal["high", "low"]
-AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs"]
+AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs", "environment_cause"]
 AgentHealthMove = Literal["note", "steer", "budget", "reassign", "ask_coach", "hold"]
 AgentHealthOutcome = Literal["open", "confirmed", "dismissed", "unresolved"]
 class HealthBriefPin(TypedDict):
@@ -493,6 +493,14 @@ class HealthReviewReceipt(TypedDict):
     observed_brief: NotRequired[HealthBriefPin | None]
     label: NotRequired[bool | None]
     projected: bool
+class HealthCauseSource(TypedDict):
+    source: EntityId
+    receipt: str
+    skill: NotRequired[EntityId | None]
+    label: str
+    share: float
+    judge_revision: NotRequired[str | None]
+    displaced_by: NotRequired[str | None]
 class AgentHealthCard(TypedDict):
     subject: EntityId
     signal: AgentHealthSignal
@@ -523,6 +531,7 @@ class AgentHealthCard(TypedDict):
     observed_brief: NotRequired[HealthBriefPin | None]
     reviewer: str
     review_outcomes: list[HealthReviewReceipt]
+    causes: list[HealthCauseSource]
 RunTreeStatus = Literal["queued", "running", "paused", "completed", "failed", "cancelled", "abandoned"]
 class RunTreeTimestamps(TypedDict):
     created_at: int
@@ -1552,6 +1561,49 @@ class TaskAskStatusSettled(TypedDict):
 class TaskAskStatusWorldPrivacy(TypedDict):
     WorldPrivacy: WorldPrivacyWaitResult
 TaskAskStatus = TaskAskStatusPending | TaskAskStatusChanged | TaskAskStatusSettled | TaskAskStatusWorldPrivacy
+StrictDenial = Literal["rule_abstained", "no_rule", "image"]
+class AskUpReasonAsked(TypedDict):
+    why: Literal["asked"]
+    ladder: NotRequired[str | None]
+class AskUpReasonLooks(TypedDict):
+    why: Literal["looks"]
+class AskUpReasonNoAnswer(TypedDict):
+    why: Literal["no_answer"]
+class AskUpReasonWrongAnswer(TypedDict):
+    why: Literal["wrong_answer"]
+class AskUpReasonStrict(TypedDict):
+    why: Literal["strict"]
+    denied: StrictDenial
+AskUpReason = AskUpReasonAsked | AskUpReasonLooks | AskUpReasonNoAnswer | AskUpReasonWrongAnswer | AskUpReasonStrict
+ClockScope = Literal["wait", "navigation", "decision"]
+class BatchStopCausePostconditionUnmet(TypedDict):
+    cause: Literal["postcondition_unmet"]
+class BatchStopCauseLocatorMissing(TypedDict):
+    cause: Literal["locator_missing"]
+class BatchStopCauseIncompleteObservation(TypedDict):
+    cause: Literal["incomplete_observation"]
+class BatchStopCauseDeciderAskedUp(TypedDict):
+    cause: Literal["decider_asked_up"]
+    reason: AskUpReason
+class BatchStopCauseClock(TypedDict):
+    cause: Literal["clock"]
+    scope: ClockScope
+class BatchStopCausePressNeeded(TypedDict):
+    cause: Literal["press_needed"]
+class BatchStopCauseTakenOver(TypedDict):
+    cause: Literal["taken_over"]
+class BatchStopCauseFieldText(TypedDict):
+    cause: Literal["field_text"]
+class BatchStopCauseNoProgress(TypedDict):
+    cause: Literal["no_progress"]
+class BatchStopCauseBrowser(TypedDict):
+    cause: Literal["browser"]
+    code: str
+BatchStopCause = BatchStopCausePostconditionUnmet | BatchStopCauseLocatorMissing | BatchStopCauseIncompleteObservation | BatchStopCauseDeciderAskedUp | BatchStopCauseClock | BatchStopCausePressNeeded | BatchStopCauseTakenOver | BatchStopCauseFieldText | BatchStopCauseNoProgress | BatchStopCauseBrowser
+class TaskWorkflowHandoffProgramBody(TypedDict):
+    stop_cause: BatchStopCause
+class TaskWorkflowHandoffProgram(TypedDict):
+    program: TaskWorkflowHandoffProgramBody
 class TaskWorkflowHandoffRetiredBody(TypedDict):
     id: EntityId
     reason: NotRequired[str | None]
@@ -1565,7 +1617,7 @@ class TaskWorkflowHandoffUnreadableBody(TypedDict):
     id: EntityId
 class TaskWorkflowHandoffUnreadable(TypedDict):
     unreadable: TaskWorkflowHandoffUnreadableBody
-TaskWorkflowHandoff = Literal["program", "goal_unmet"] | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+TaskWorkflowHandoff = Literal["goal_unmet"] | TaskWorkflowHandoffProgram | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
 class TaskWorkflowOutcomeDoneBody(TypedDict):
     receipt_ref: EntityId
 class TaskWorkflowOutcomeDone(TypedDict):
@@ -10569,6 +10621,96 @@ class CodeExportResult(TypedDict):
     ref_was_already_applied: bool
     wire_replayed: bool
     wire_rejected: bool
+class CodeExportPreviewRequest(TypedDict):
+    repo: str
+    code_repo: EntityId
+    checkout: str
+    epoch: int
+    revision: EntityId
+    ref_name: str
+    expected_old_oid: NotRequired[str | None]
+    endpoint: str
+CodeExportSide = Literal["before", "after"]
+class CodeExportByteHandle(TypedDict):
+    preview_digest: str
+    side: CodeExportSide
+    path: str
+class CodeExportFileIdentity(TypedDict):
+    mode: int
+    size_bytes: int
+    git_oid: str
+    content_hash: str
+    handle: CodeExportByteHandle
+class CodeExportFileDelta(TypedDict):
+    path: str
+    before: NotRequired[CodeExportFileIdentity | None]
+    after: NotRequired[CodeExportFileIdentity | None]
+class CodeExportPreview(TypedDict):
+    request: CodeExportPreviewRequest
+    code_repo: EntityId
+    origin_repo_id: EntityId
+    object_store: str
+    source_tree: NotRequired[str | None]
+    target_tree: str
+    inventory_digest: str
+    preview_digest: str
+    exact: bool
+    observed_ref_oid: NotRequired[str | None]
+    expected_matches_observed: bool
+    before_paths: list[str]
+    after_paths: list[str]
+    files: list[CodeExportFileDelta]
+class CodeExportBlockingSourceEntity(TypedDict):
+    kind: Literal["entity"]
+    entity: EntityId
+class CodeExportBlockingSourceFile(TypedDict):
+    kind: Literal["file"]
+    side: CodeExportSide
+    path: str
+    entity: NotRequired[EntityId | None]
+class CodeExportBlockingSourceObject(TypedDict):
+    kind: Literal["object"]
+    object_store: str
+    oid: str
+class CodeExportBlockingSourceEvidence(TypedDict):
+    kind: Literal["evidence"]
+    reference: str
+class CodeExportBlockingSourceOutsideGrant(TypedDict):
+    kind: Literal["outside_grant"]
+CodeExportBlockingSource = CodeExportBlockingSourceEntity | CodeExportBlockingSourceFile | CodeExportBlockingSourceObject | CodeExportBlockingSourceEvidence | CodeExportBlockingSourceOutsideGrant
+CodeExportPreviewBlockReason = Literal["unavailable", "withheld", "masked", "incomplete_evidence", "unreviewed", "unsupported_tree", "outside_grant"]
+class CodeExportPreviewBlocker(TypedDict):
+    source: CodeExportBlockingSource
+    reason: CodeExportPreviewBlockReason
+    message: str
+    way_out: str
+class CodeExportPreviewHold(TypedDict):
+    code: str
+    blockers: list[CodeExportPreviewBlocker]
+class CodeExportPreviewAnswerReady(TypedDict):
+    state: Literal["ready"]
+    preview: CodeExportPreview
+class CodeExportPreviewAnswerHeld(TypedDict):
+    state: Literal["held"]
+    hold: CodeExportPreviewHold
+CodeExportPreviewAnswer = CodeExportPreviewAnswerReady | CodeExportPreviewAnswerHeld
+class CodeExportFileReadRequest(TypedDict):
+    preview: CodeExportPreviewRequest
+    handle: CodeExportByteHandle
+class CodeExportFileBytes(TypedDict):
+    handle: CodeExportByteHandle
+    mode: int
+    size_bytes: int
+    git_oid: str
+    content_hash: str
+    bytes: list[int]
+class CodeExportFileReadAnswerReady(TypedDict):
+    state: Literal["ready"]
+    file: CodeExportFileBytes
+class CodeExportFileReadAnswerHeld(TypedDict):
+    state: Literal["held"]
+    hold: CodeExportPreviewHold
+CodeExportFileReadAnswer = CodeExportFileReadAnswerReady | CodeExportFileReadAnswerHeld
 class CodeImportAcceptance(TypedDict):
     manifest_digest: str
     baseline_revision: EntityId
@@ -13729,7 +13871,7 @@ class SkillPackOutcomeProjection(TypedDict):
     persisted: bool
 class SkillPackCreditRequest(TypedDict):
     receipt_id: str
-ModelRole = Literal["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach"]
+ModelRole = Literal["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach", "browser_planner"]
 ModelTierRef = str
 ModelDisposition = Literal["offline", "served"]
 class ModelBinding(TypedDict):
@@ -19641,45 +19783,6 @@ class BatchInput(TypedDict):
     until_ms: NotRequired[int | None]
     no_model: NotRequired[bool]
 SubgoalStatus = Literal["done", "NEEDS_AGENT", "NEEDS_YOU"]
-StrictDenial = Literal["rule_abstained", "no_rule", "image"]
-class AskUpReasonAsked(TypedDict):
-    why: Literal["asked"]
-    ladder: NotRequired[str | None]
-class AskUpReasonLooks(TypedDict):
-    why: Literal["looks"]
-class AskUpReasonNoAnswer(TypedDict):
-    why: Literal["no_answer"]
-class AskUpReasonWrongAnswer(TypedDict):
-    why: Literal["wrong_answer"]
-class AskUpReasonStrict(TypedDict):
-    why: Literal["strict"]
-    denied: StrictDenial
-AskUpReason = AskUpReasonAsked | AskUpReasonLooks | AskUpReasonNoAnswer | AskUpReasonWrongAnswer | AskUpReasonStrict
-ClockScope = Literal["wait", "navigation", "decision"]
-class BatchStopCausePostconditionUnmet(TypedDict):
-    cause: Literal["postcondition_unmet"]
-class BatchStopCauseLocatorMissing(TypedDict):
-    cause: Literal["locator_missing"]
-class BatchStopCauseIncompleteObservation(TypedDict):
-    cause: Literal["incomplete_observation"]
-class BatchStopCauseDeciderAskedUp(TypedDict):
-    cause: Literal["decider_asked_up"]
-    reason: AskUpReason
-class BatchStopCauseClock(TypedDict):
-    cause: Literal["clock"]
-    scope: ClockScope
-class BatchStopCausePressNeeded(TypedDict):
-    cause: Literal["press_needed"]
-class BatchStopCauseTakenOver(TypedDict):
-    cause: Literal["taken_over"]
-class BatchStopCauseFieldText(TypedDict):
-    cause: Literal["field_text"]
-class BatchStopCauseNoProgress(TypedDict):
-    cause: Literal["no_progress"]
-class BatchStopCauseBrowser(TypedDict):
-    cause: Literal["browser"]
-    code: str
-BatchStopCause = BatchStopCausePostconditionUnmet | BatchStopCauseLocatorMissing | BatchStopCauseIncompleteObservation | BatchStopCauseDeciderAskedUp | BatchStopCauseClock | BatchStopCausePressNeeded | BatchStopCauseTakenOver | BatchStopCauseFieldText | BatchStopCauseNoProgress | BatchStopCauseBrowser
 class CheckReceipt(TypedDict):
     expect: ExpectInput
     observed: ExpectOutput

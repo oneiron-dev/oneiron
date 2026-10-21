@@ -1943,6 +1943,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BorrowedAttemptLease"
+     ],
+     "path": "src/attempt_queue/borrowed_lease.rs",
+     "purpose": "A parent attempt's lease as a child borrows it (FIX 7507): the attempt, its lease owner and its lease…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "HoldAttemptForBudget"
      ],
      "path": "src/attempt_queue/budget_hold.rs",
@@ -2253,7 +2267,7 @@
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
       "crate-vis": 17,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -2538,6 +2552,22 @@
      "purpose": "An owner act signed outside the authority log, judged at its own causal point (FIX 4649, mesh contract §4)…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityWorkPolicy",
+      "AuthorityWorkWaitExpired"
+     ],
+     "path": "src/authority/admission.rs",
+     "purpose": "Measured admission for authority work (Phase2 A: FIX 7906, 7909, 7911, 7912, 7921, 7922, 7930)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 4,
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -3538,8 +3568,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 33,
-      "re-export": 59
+      "crate-vis": 34,
+      "re-export": 60
      }
     },
     {
@@ -14098,7 +14128,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 25,
       "mod": 7,
       "re-export": 23
      }
@@ -14176,6 +14206,17 @@
      "path": "src/code_run/reader_brief.rs",
      "purpose": "The task text a reader child's run is given: a read child's names its one source; a scoped child's (FIX…",
      "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/reader_clock.rs",
+     "purpose": "Which part of its parent's clock a reader job runs to (FIX 7507 PR3), and the parent attempt lease a scoped…",
+     "surface": {
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -14433,9 +14474,9 @@
      "path": "src/code_run/scoped_child.rs",
      "purpose": "Scoped children (FIX 7507 PR2): a separate code-mode agent a host queues on the reader-job machinery…",
      "surface": {
-      "const": 3,
-      "crate-vis": 6,
-      "fn": 8,
+      "const": 5,
+      "crate-vis": 7,
+      "fn": 11,
       "struct": 4,
       "trait": 1
      }
@@ -14675,7 +14716,7 @@
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "enum": 1,
       "fn": 11,
       "struct": 2
@@ -14688,7 +14729,8 @@
      "path": "src/code_run/storage/reader_jobs/scoped.rs",
      "purpose": "A host's scoped child (FIX 7507 PR2), queued on its parent's reader rows as every child of the parent is…",
      "surface": {
-      "fn": 1
+      "crate-vis": 3,
+      "fn": 2
      }
     },
     {
@@ -23447,7 +23489,7 @@
       "crate-vis": 6,
       "enum": 6,
       "fn": 12,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 7
      }
     },
@@ -23545,6 +23587,19 @@
      "purpose": "`duplicate_work` on action digests (agent-mind §3.4, OF-568): two attempts ran the same action on the same…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HealthCauseSource"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/environment.rs",
+     "purpose": "What the attribution judge settled on a finding's exact attempt (OF-568 L10, agent-mind §3.5: \"An…",
+     "surface": {
+      "crate-vis": 6,
+      "struct": 1
      }
     },
     {
@@ -32399,7 +32454,7 @@
      "path": "src/identity.rs",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -36609,6 +36664,7 @@
      "purpose": "The seat pick as typed decisions through the host's ladder, and the note seam beside it",
      "surface": {
       "crate-vis": 1,
+      "fn": 1,
       "struct": 1,
       "trait": 1
      }
@@ -38673,17 +38729,31 @@
      "path": "src/memory/origin_doors/mod.rs",
      "purpose": "Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication…",
      "surface": {
-      "re-export": 6
+      "re-export": 8
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/origin_doors/operations.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 3,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CodeExportPreviewProof"
+     ],
+     "path": "src/memory/origin_doors/preview.rs",
+     "purpose": "The exact export preview doors (FIX 6869, G4 PR3): `vault.code.export.preview` and…",
+     "surface": {
+      "enum": 1,
+      "fn": 3
      }
     },
     {
@@ -42188,10 +42258,69 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/origin/export_input.rs",
+     "purpose": "What an engine commit export stands on (FIX 6869, G4 PR3): the shared load the exporter and the exact…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/origin/export_parent.rs",
      "purpose": "CALL G \"import export parents\" (FIX 6869, G4 PR1): the Git parents of an import-bound tested revision's…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/export_preview.rs",
+     "purpose": "The exact export preview (FIX 6869, G4 PR3): what `vault.code.export` would write for one explicit sealed…",
+     "surface": {
+      "crate-vis": 6,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/export_preview/handles.rs",
+     "purpose": "A preview's identity and its byte handles (FIX 6869, G4 PR3, CALL O)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeExportBlockingSource",
+      "CodeExportByteHandle",
+      "CodeExportFileBytes",
+      "CodeExportFileDelta",
+      "CodeExportFileIdentity",
+      "CodeExportFileReadAnswer",
+      "CodeExportFileReadRequest",
+      "CodeExportPreview",
+      "CodeExportPreviewAnswer",
+      "CodeExportPreviewBlockReason",
+      "CodeExportPreviewBlocker",
+      "CodeExportPreviewHold",
+      "CodeExportPreviewRequest",
+      "CodeExportSide"
+     ],
+     "path": "src/origin/export_preview/types.rs",
+     "purpose": "The wire shapes of the exact export preview (FIX 6869, G4 PR3)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 5,
+      "struct": 9
      }
     },
     {
@@ -42466,7 +42595,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
       "crate-vis": 6,
-      "mod": 14,
+      "mod": 15,
       "re-export": 2
      }
     },
@@ -51087,7 +51216,7 @@
      "path": "src/secret_custody/transition.rs",
      "purpose": "OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as a custody…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -51109,6 +51238,16 @@
      "purpose": "The bytes of a custody transition: its strict codec, the transcript its signature covers, and the value…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/transition/pieces.rs",
+     "purpose": "A custody transition in pieces (CALLS `Phase2 custody pieces request bound`, Engine 10-22 02:2x; FIX 7906…",
+     "surface": {
+      "crate-vis": 23
      }
     },
     {
@@ -53180,6 +53319,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttributionCauseRecord"
+     ],
+     "path": "src/skill_attribution/causes.rs",
+     "purpose": "The labels the attribution judge settled on each attempt's terminal outcome, kept whatever their subject…",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -53244,7 +53396,7 @@
      "path": "src/skill_attribution/judge_supersession.rs",
      "purpose": "Judge-revision provenance for routed receipts, and non-destructive displacement",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -53271,8 +53423,8 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 10,
-      "re-export": 14
+      "crate-vis": 11,
+      "re-export": 15
      }
     },
     {
@@ -53305,7 +53457,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_attribution/projector.rs",
@@ -62095,7 +62247,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1156
+      "fn": 1158
      }
     },
     {
@@ -66172,7 +66324,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 15,
+      "fn": 17,
       "struct": 4,
       "trait": 2
      }
@@ -69097,14 +69249,14 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 191,
+     "files": 192,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69279,7 +69431,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 134,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69545,7 +69697,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 120,
+     "files": 121,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69881,7 +70033,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 245,
+     "files": 246,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69923,7 +70075,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 102,
+     "files": 106,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70182,7 +70334,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70280,7 +70432,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -70562,7 +70714,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4487,
+   "source_files": 4498,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70659,7 +70811,7 @@
      "path": "src/authority/checkpoint_policy.rs",
      "purpose": "The owner's choice of his vault's checkpoint root policy (mesh PR2c, §A 06, K06), and its wire codec",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 2,
       "fn": 5,
       "struct": 2
@@ -70865,7 +71017,7 @@
      "path": "src/authority/machine_profile.rs",
      "purpose": "The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 5,
       "enum": 3,
       "fn": 8,
@@ -70987,7 +71139,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CustodyChange",
@@ -71000,7 +71152,7 @@
       "const": 2,
       "crate-vis": 3,
       "enum": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -71165,7 +71317,7 @@
      "path": "src/authority/world_privacy.rs",
      "purpose": "A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may…",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 2,
       "enum": 4,
       "fn": 3,
@@ -71871,6 +72023,126 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/args.rs",
+     "purpose": "Explicit CLI flags and a Linux-only execution guard",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/check.rs",
+     "purpose": "One deterministic host-private checker",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/config.rs",
+     "purpose": "Deployment supplies exact pins; no marketing-name or backend substitution",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/fixture.rs",
+     "purpose": "PRIVATE S1 lifecycle",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/measures.rs",
+     "purpose": "Receipt observations, not replacements for the engine's success ledger",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/mod.rs",
+     "purpose": "Synthetic browser bench: engine outcomes are not oracle passes",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/provider_gate.rs",
+     "purpose": "Pass-through only: exact wire identities and durable campaign cash reservations",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/report.rs",
+     "purpose": "Assigned denominators, separate safety axes and descriptive medians only",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/rows.rs",
+     "purpose": "Durable terminal rows",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/run.rs",
+     "purpose": "One assigned trial, one original deadline and no failure retries",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/served.rs",
+     "purpose": "Shipped binary lifecycle and official MCP stdio",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/taskgen.rs",
+     "purpose": "Freeze paired seeds, disjoint holdouts and rotated arm assignments",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -72143,7 +72415,7 @@
      "path": "src/interface_bench/mod.rs",
      "purpose": "Campaign #5 interface bench task generation and smoke harness",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -72163,7 +72435,7 @@
      "path": "src/interface_bench/taskgen.rs",
      "purpose": "Fixture and task generation plus atomic JSON writers",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -72751,6 +73023,13 @@
      "layout": "dir",
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
+    "cua": {
+     "files": 12,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Synthetic browser bench: engine outcomes are not oracle passes"
+    },
     "eval": {
      "files": 3,
      "impl_vault": false,
@@ -72845,7 +73124,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 123,
+   "source_files": 135,
    "test_files": 18
   },
   "oneiron-broker": {
@@ -74882,6 +75161,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/limit_ask/cgroup.rs",
+     "purpose": "The memory cgroup this process runs in (FIX 8067), and what its limits leave (FIX 8066)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -75276,7 +75565,7 @@
      "purpose": "Identity-topology lifecycle states and per-op rejections: the values the topology ledger, the sync replay…"
     },
     "limit_ask": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -75376,7 +75665,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 58,
+   "source_files": 59,
    "test_files": 1
   },
   "oneiron-crypto": {
@@ -80543,7 +80832,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1127
+      "fn": 1129
      }
     },
     {
@@ -81758,7 +82047,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1128
+      "fn": 1130
      }
     },
     {
@@ -83216,7 +83505,7 @@
      "path": "src/admission.rs",
      "purpose": "Admission for work a remote caller can start",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -83226,6 +83515,19 @@
      "path": "src/admission/tests.rs",
      "purpose": "The queue law every permit site shares (ARCH-0044 C5, SEC rule 5): past the bound, work waits and is served…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BrowserPlannerRuns"
+     ],
+     "path": "src/ai_host/browser_planner.rs",
+     "purpose": "A code-mode run's browser planner (CUA E5, DESIGN-2 §4): the role each step's model call runs on while the…",
+     "surface": {
+      "crate-vis": 7,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -83599,7 +83901,7 @@
      "surface": {
       "crate-vis": 36,
       "fn": 22,
-      "mod": 2,
+      "mod": 3,
       "re-export": 1,
       "struct": 2
      }
@@ -83645,14 +83947,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ReaderParentClock",
+      "ReaderParentHost"
+     ],
      "path": "src/ai_host/scoped_child.rs",
      "purpose": "Scoped children at the host (FIX 7507 PR2): the door a scoped child runs behind, the binding of its lent…",
      "surface": {
       "crate-vis": 3,
-      "fn": 1
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -86068,13 +86374,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/origin_doors.rs",
      "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
@@ -88857,6 +89163,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/auth/body_credential.rs",
+     "purpose": "A request's credential in the owner's connection-pool pressure check (FIX 7656)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/auth/client_address.rs",
      "purpose": "The address a request's client is charged under: the key booking admission counts per-address quotas by",
      "surface": {
@@ -90059,7 +90375,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LimitsConfig"
@@ -90160,6 +90476,17 @@
       "crate-vis": 4,
       "mod": 15,
       "re-export": 26
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/models/browser_planner.rs",
+     "purpose": "`[models.roles.browser_planner]`: the mid planner a browser subgoal's next code-mode step runs on (CUA E5…",
+     "surface": {
+      "const": 2,
+      "fn": 1
      }
     },
     {
@@ -90266,7 +90593,7 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 2,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 7
      }
     },
@@ -91953,7 +92280,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 23
      }
     },
     {
@@ -93056,7 +93383,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 7,
       "struct": 1
      }
@@ -95246,7 +95573,7 @@
      "path": "src/server/reader_runner.rs",
      "purpose": "The reader runner (ARCH-0079 #reader-forks): runs the reader children a code run's `self.spawn` queues, each…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -95287,6 +95614,16 @@
      "purpose": "The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/resident_pump/browser_workflow.rs",
+     "purpose": "A TASK bound to a library program (CUA E4, FIX 7603; DESIGN-2 §2): its try runs the program its first lease…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -95447,13 +95784,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/slide_render.rs",
      "purpose": "The host's review renderer (ARCH-0077 \"Review images\"): LibreOffice Impress headless exports the deck to…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 15
      }
     },
     {
@@ -95920,11 +96257,21 @@
      "path": "src/wire_telemetry.rs",
      "purpose": "RC42 observation-only wire counters",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 11,
       "re-export": 2,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/wire_telemetry/connection_pressure.rs",
+     "purpose": "The shared connection pool's live pressure check (FIX 7656, OF-520)",
+     "surface": {
+      "crate-vis": 16
      }
     },
     {
@@ -96262,7 +96609,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 71,
+     "files": 72,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96276,7 +96623,7 @@
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -96346,7 +96693,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96647,7 +96994,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 57,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -96663,7 +97010,7 @@
     "slide_render": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The host's review renderer (ARCH-0077 \"Review images\"): LibreOffice Impress headless exports the deck to…"
     },
@@ -96710,16 +97057,16 @@
      "purpose": "The health check past a threshold (OF-520, ARCH-0044 C5)"
     },
     "wire_telemetry": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 52,
+   "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1053,
+   "source_files": 1058,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -97522,8 +97869,22 @@
       "CodeDiffRequest",
       "CodeDiffView",
       "CodeDocumentFrontier",
+      "CodeExportBlockingSource",
+      "CodeExportByteHandle",
+      "CodeExportFileBytes",
+      "CodeExportFileDelta",
+      "CodeExportFileIdentity",
+      "CodeExportFileReadAnswer",
+      "CodeExportFileReadRequest",
+      "CodeExportPreview",
+      "CodeExportPreviewAnswer",
+      "CodeExportPreviewBlockReason",
+      "CodeExportPreviewBlocker",
+      "CodeExportPreviewHold",
+      "CodeExportPreviewRequest",
       "CodeExportRequest",
       "CodeExportResult",
+      "CodeExportSide",
       "CodeFileChange",
       "CodeFileDiffView",
       "CodeFileEdit",
@@ -98440,6 +98801,7 @@
       "HandoverInput",
       "HandoverOutput",
       "HealthBriefPin",
+      "HealthCauseSource",
       "HealthReviewReceipt",
       "HeapDropReport",
       "HeldAttempt",
@@ -100809,8 +101171,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 940,
-      "struct": 2949
+      "enum": 945,
+      "struct": 2959
      }
     },
     {
