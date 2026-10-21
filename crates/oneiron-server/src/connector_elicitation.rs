@@ -515,6 +515,11 @@ pub(crate) fn answer_connector_question(
     let claim = server
         .connector_elicitations
         .claim(&request.handle, memory.actor())?;
+    // The engine binds a round to its call's row before its caller learns
+    // the handle (FIX 9161); a round with no row has nothing to answer on.
+    let Some(call_ref) = claim.call_ref else {
+        return Ok(gone());
+    };
     let frozen = freeze(&claim.keys(), &request.answers)?;
     let authority = claim.binding.authority();
     let verdict = server
@@ -540,7 +545,7 @@ pub(crate) fn answer_connector_question(
                     frozen.replaced(ConnectorAnswerAction::Decline),
                     vec!["connector_answer_owner_declined".to_owned()],
                 ),
-                OwnerRuling::Pending => return Ok(owner_pending(claim)),
+                OwnerRuling::Pending => return Ok(owner_pending(claim, call_ref)),
                 OwnerRuling::Unasked => {
                     return Ok(ConnectorCallReply::Refused {
                         decision_ref: None,
@@ -551,11 +556,10 @@ pub(crate) fn answer_connector_question(
         }
     };
     check_answer(server, &claim, &authority, &responses);
-    let (name, tool, intent, call_ref) = (
+    let (name, tool, intent) = (
         claim.binding.name.clone(),
         claim.binding.tool.clone(),
         claim.binding.parent_intent,
-        claim.call_ref,
     );
     let handle = claim.handle.clone();
     let Some(event) = claim.hand_over(responses) else {
@@ -651,11 +655,11 @@ fn gone() -> ConnectorCallReply {
 /// The reply to an answer still waiting on the owner past the round's live
 /// lease: the round's questions again, with the reason. Nothing was sent;
 /// the claim is released, so the same answer given again reads the ruling.
-fn owner_pending(claim: Claim<'_>) -> ConnectorCallReply {
+fn owner_pending(claim: Claim<'_>, call_ref: EntityId) -> ConnectorCallReply {
     ConnectorCallReply::awaiting_input(
         &claim.binding.name,
         &claim.binding.tool,
-        claim.call_ref,
+        call_ref,
         ConnectorAwaitingInput {
             handle: claim.handle.clone(),
             questions: claim.questions.clone(),

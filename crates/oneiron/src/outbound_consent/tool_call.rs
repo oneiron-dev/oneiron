@@ -317,11 +317,14 @@ pub fn prepare_tool_call(
         destructive_hint,
         replay,
     } = descriptor;
-    reject_unresolved(schema)?;
-    let properties = schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .ok_or_else(invalid_schema)?;
+    super::tool_schema::reject_unresolved(schema)?;
+    // A schema with no root `properties` (`{"type":"object"}`) names none: an
+    // empty map, the arguments still checked against the whole schema (FIX 8811).
+    let none = serde_json::Map::new();
+    let properties = match schema.get("properties") {
+        Some(properties) => properties.as_object().ok_or_else(invalid_schema)?,
+        None => &none,
+    };
     let args = arguments.as_object().ok_or_else(invalid_schema)?;
     let declares_preview = properties
         .get("dry_run")
@@ -353,23 +356,11 @@ pub fn prepare_tool_call(
             Value::Bool(mutation == MutationIntent::Preview),
         );
     }
-    super::tool_schema::validate(
-        schema,
-        &serde_json::to_value(&body).map_err(|_| invalid_schema())?,
-        &call.tool,
-    )?;
+    let checked = serde_json::to_value(&body).map_err(|_| invalid_schema())?;
+    super::tool_schema::validate(schema, &checked, &call.tool)?;
     let mut headers = BTreeMap::new();
     let mut requirements = Vec::new();
-    for (parameter, property) in properties {
-        let Some(annotation) = property.get("x-mcp-header") else {
-            continue;
-        };
-        let name = match annotation {
-            Value::Bool(true) => parameter.as_str(),
-            Value::String(name) => name.as_str(),
-            Value::Bool(false) => continue,
-            _ => return Err(invalid_schema()),
-        };
+    for (parameter, name) in declared_headers(schema, &checked, &call.tool)? {
         let name = canonical_header(name)?;
         if destructive_hint && parameter == "dry_run" {
             return Err(invalid_schema());
@@ -385,7 +376,7 @@ pub fn prepare_tool_call(
             return Err(invalid_schema());
         }
         requirements.push(HeaderGrantRequirement {
-            parameter: parameter.clone(),
+            parameter: parameter.to_owned(),
             header: name,
             data_class: ToolGrantDataClass::XMcpHeader,
         });
@@ -454,24 +445,53 @@ impl crate::Vault {
 pub(super) fn invalid_schema() -> Error {
     Error::InvalidConfig("tool schema or resolved header parameters are invalid".into())
 }
-fn reject_unresolved(value: &Value) -> Result<()> {
-    match value {
-        Value::Object(map) => {
-            if ["$ref", "allOf"].iter().any(|key| map.contains_key(*key)) {
+
+/// Each `x-mcp-header` parameter `schema` declares where `value` meets it,
+/// with the header name it names: its own for `true`, the given one for a
+/// string. A branch's annotation counts as the root's does (FIX 8810);
+/// `false` declares none, and any other annotation or one parameter under two
+/// names refuses.
+fn declared_headers<'a>(
+    schema: &'a Value,
+    value: &Value,
+    tool: &str,
+) -> Result<BTreeMap<&'a str, &'a str>> {
+    let mut declared = BTreeMap::new();
+    for properties in super::tool_schema::applicable_properties(schema, Some((value, tool)))? {
+        for (parameter, property) in properties {
+            let name = match property.get("x-mcp-header") {
+                None | Some(Value::Bool(false)) => continue,
+                Some(Value::Bool(true)) => parameter.as_str(),
+                Some(Value::String(name)) => name.as_str(),
+                Some(_) => return Err(invalid_schema()),
+            };
+            if declared
+                .insert(parameter.as_str(), name)
+                .is_some_and(|before| before != name)
+            {
                 return Err(invalid_schema());
             }
-            for child in map.values() {
-                reject_unresolved(child)?;
-            }
         }
-        Value::Array(items) => {
-            for child in items {
-                reject_unresolved(child)?;
-            }
-        }
-        _ => {}
     }
-    Ok(())
+    Ok(declared)
+}
+
+/// The parameters an `x-mcp-header` annotation in `schema` can send as
+/// headers, sorted: those in the root `properties` and in every branch a
+/// call may meet (FIX 8810), as [`prepare_tool_call`] extracts them.
+pub fn header_parameters(schema: &Value) -> Vec<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for properties in super::tool_schema::applicable_properties(schema, None).unwrap_or_default() {
+        for (parameter, property) in properties {
+            if matches!(
+                property.get("x-mcp-header"),
+                Some(Value::Bool(true) | Value::String(_))
+            ) {
+                names.insert(parameter.clone());
+            }
+        }
+    }
+    names.into_iter().collect()
 }
 fn canonical_header(name: &str) -> Result<String> {
     if name.is_empty()

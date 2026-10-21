@@ -2966,7 +2966,7 @@ declare namespace Sdk {
   type LiveVoiceToolRequest = { session_ref: string; call: ConnectorCallRequest };
   type ConnectorToolResult = { source: string; foreign: boolean; content: unknown; structured_content?: unknown | null; is_error: boolean; rpc_error?: unknown | null };
   type ConnectorQuestion = { key: string; message: string; requested_schema: unknown };
-  type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[]; approval_digest?: string | null } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; call_ref?: string | null; source: string; foreign: boolean; questions: ConnectorQuestion[]; live_until_ms: number; reasons?: string[] };
+  type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[]; approval_digest?: string | null } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; call_ref: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; live_until_ms: number; reasons?: string[] };
   type LiveVoiceToolReply = { processed: LiveVoiceProcessed; reply: ConnectorCallReply };
   type LiveVoiceSessionRequest = { session_ref: string };
   type AnonymousChatRequestTarget = "house_mind" | "plain_model";

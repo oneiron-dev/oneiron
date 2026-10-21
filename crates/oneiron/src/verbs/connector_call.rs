@@ -106,9 +106,9 @@ pub enum ConnectorCallReply {
     /// still, or that a reply read from the row carries no questions.
     AwaitingInput {
         handle: String,
-        /// The call's ref, 32 hex, as `connector.call_status` reads it.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        call_ref: Option<String>,
+        /// The call's ref, 32 hex, as `connector.call_status` reads it: the
+        /// engine keeps every round on its call's row (FIX 9161).
+        call_ref: String,
         /// `connector:<name>.<tool>`.
         source: String,
         /// Always true: the connector wrote every question.
@@ -269,7 +269,7 @@ impl ConnectorCallReply {
             },
             ConnectorCallOutcome::AwaitingInput {
                 call_ref, input, ..
-            } => Self::awaiting_input(name, tool, Some(call_ref), input),
+            } => Self::awaiting_input(name, tool, call_ref, input),
         }
     }
 
@@ -280,7 +280,7 @@ impl ConnectorCallReply {
     pub fn awaiting_input(
         name: &str,
         tool: &str,
-        call_ref: Option<EntityId>,
+        call_ref: EntityId,
         input: ConnectorAwaitingInput,
     ) -> Self {
         // A live round always asks something; none here means a reply read
@@ -292,7 +292,7 @@ impl ConnectorCallReply {
         };
         Self::AwaitingInput {
             handle: input.handle,
-            call_ref: call_ref.map(|call_ref| call_ref.to_hex()),
+            call_ref: call_ref.to_hex(),
             source: source(name, tool),
             foreign: true,
             questions: input.questions,
@@ -529,7 +529,7 @@ pub fn connector_call_status_read(
                 reply: ConnectorCallReply::awaiting_input(
                     &name,
                     &tool,
-                    Some(call_ref),
+                    call_ref,
                     ConnectorAwaitingInput {
                         handle: input.handle,
                         questions: Vec::new(),

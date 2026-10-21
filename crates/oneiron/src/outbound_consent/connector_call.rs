@@ -1373,14 +1373,17 @@ fn step_from_dispatch(
                 result: reply,
             },
         },
+        // An owner's Stop of a send that may have gone out (delivery left
+        // unresolved) is unsettled, never a refusal (FIX 7351).
         (Some(IntentState::Abandoned), Some(intent))
-            if matches!(
-                escalation,
-                Some(
-                    IntentEscalationReason::NonIdempotentAmbiguous
-                        | IntentEscalationReason::NonIdempotentPending
-                )
-            ) =>
+            if dispatch.owner_stopped_unresolved()
+                || matches!(
+                    escalation,
+                    Some(
+                        IntentEscalationReason::NonIdempotentAmbiguous
+                            | IntentEscalationReason::NonIdempotentPending
+                    )
+                ) =>
         {
             Step::Unsettled { intent, reasons }
         }

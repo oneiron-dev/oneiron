@@ -10,7 +10,7 @@ use crate::outbound_chokepoint::OutboundEffectResult;
 use crate::outbound_grant::StandingOutboundGrant;
 use crate::outbound_intent_ledger::{
     BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalationReason,
-    IntentLedgerError, IntentState, OutboundSendOutcome,
+    IntentLedgerError, IntentResolution, IntentState, OutboundSendOutcome, UnconfirmedDelivery,
 };
 
 use super::authority::{OutboundBindingAuthority, observed_freeze_events_since};
@@ -39,6 +39,9 @@ pub struct ScopedMcpDispatchResult {
     /// FIX 6424 part 3: the prepared request a Gate hold of this call named
     /// its approve-once digest for.
     held_ask: Option<super::approval::HeldConnectorAsk>,
+    /// FIX 7351: the owner stopped the intent while its delivery stayed
+    /// unresolved (it may have crossed the wire before the Stop).
+    stop_unresolved: bool,
 }
 
 impl ScopedMcpDispatchResult {
@@ -56,6 +59,12 @@ impl ScopedMcpDispatchResult {
     /// The prepared request a Gate hold of this call asked about.
     pub(super) fn held_ask(&self) -> Option<&super::approval::HeldConnectorAsk> {
         self.held_ask.as_ref()
+    }
+
+    /// Whether the owner stopped the intent with its delivery unresolved: a
+    /// send that may have gone out, never a definite non-delivery (FIX 7351).
+    pub(super) fn owner_stopped_unresolved(&self) -> bool {
+        self.stop_unresolved
     }
 
     /// The gate decision this dispatch recorded (`gate:<hex>`), when the
@@ -97,6 +106,7 @@ impl fmt::Debug for ScopedMcpDispatchResult {
             .field("gate_outcome", &self.gate_outcome)
             .field("gate_reasons", &self.gate_reasons)
             .field("held_ask", &self.held_ask)
+            .field("stop_unresolved", &self.stop_unresolved)
             .finish()
     }
 }
@@ -265,6 +275,13 @@ fn dispatch_result<S>(
         || effect.dispatch.send_outcome.is_some()
         || effect.dispatch.replayed)
         .then_some(effect.dispatch);
+    let stop_unresolved = matches!(
+        effect.resolution,
+        Some(IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::Unresolved,
+            reason: IntentEscalationReason::OwnerStopped,
+        })
+    );
     let gate_reasons = effect
         .gate_receipt_reasons
         .into_iter()
@@ -283,6 +300,7 @@ fn dispatch_result<S>(
         gate_outcome: effect.gate_outcome,
         gate_reasons,
         held_ask: None,
+        stop_unresolved,
     }
 }
 
