@@ -338,14 +338,16 @@ impl DreamerWakeDriver<'_> {
     /// settlement that refuses the receipts settles without them, as before;
     /// one the counter refuses (more than the reservation and the counter's
     /// remaining units) falls back to the zero abort this path always made,
-    /// so the attempt still parks or fails exactly as before.
+    /// so the attempt still parks or fails exactly as before. The static
+    /// code says which of those it did, for the attempt's outcome line
+    /// (FIX 7271).
     pub(super) fn settle_charged_or_abort(
         &self,
         line: &str,
         attempt_id: AttemptId,
         meter: &WakeAttemptMeter,
         now: u64,
-    ) -> Result<()> {
+    ) -> Result<&'static str> {
         let charged = meter.charged_units();
         let settlement = SettleDreamerBudget {
             budget_id: line.to_owned(),
@@ -359,7 +361,7 @@ impl DreamerWakeDriver<'_> {
                 .store
                 .settle_budget_with_step_receipts(settlement.clone(), &receipts)
             {
-                Ok(_) => return Ok(()),
+                Ok(_) => return Ok("charged_with_receipts"),
                 Err(error) => tracing::warn!(
                     kind = ?error.kind(),
                     attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
@@ -379,8 +381,9 @@ impl DreamerWakeDriver<'_> {
                     child_attempt: attempt_id,
                     now,
                 })?;
+            return Ok("aborted_at_zero");
         }
-        Ok(())
+        Ok(if charged == 0 { "refunded" } else { "charged" })
     }
 
     // The Result is only fallible on the sync progress lane.

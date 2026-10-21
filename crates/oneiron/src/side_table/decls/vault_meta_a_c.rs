@@ -427,8 +427,19 @@ side_tables! {
     /// candidate a pass put to its replay host, cleared once a pass reaches the end of the credit
     /// table. Key: ().
     COACH_CONTRIBUTION_CURSOR: VaultMeta b"coach:contribution_cursor:v1" Named;
-    /// The proposed heal the Coach filed for a blocked report or a failure-ladder case, so a
-    /// replay files none twice. Key: id16 of the receipt or the case.
+    /// The Coach's issue for one positive model finding (OF-418 L3): its DIAGNOSTIC, tier,
+    /// family, class and recipe revision, its exact ordered runs with their replay hashes, the
+    /// decision receipts that raised it, the gate decisions its results link, the producer its
+    /// recorded links prove, its recurrence key and its retries. Kept after the Coach files it;
+    /// it waits while no `COACH_ISSUE_SETTLED` row names it. Key: id16 of the issue.
+    COACH_DIAGNOSTIC_ISSUE: VaultMeta b"coach:diagnostic_issue:v1:" Named;
+    /// What was observed of a model finding's issue (OF-418 L3), append-only: an owner's closed
+    /// answer to its proposal, as the claim's gate row records it. Key: id16 of the issue, then
+    /// hash32 of the fact.
+    COACH_ISSUE_EVIDENCE: VaultMeta b"coach:issue_evidence:v1:" Named;
+    /// The proposed heal the Coach filed for a blocked report, a failure-ladder case or a model
+    /// finding's issue, so a replay files none twice. Key: id16 of the receipt, the case or the
+    /// issue.
     COACH_ISSUE_SETTLED: VaultMeta b"coach:issue_settled:v1:" Named;
     /// A blocked report filed while a `coach.issues` attempt held its lease (FIX 1554): the
     /// attempt's lease generation, consumed in the commit that settles it, which queues one

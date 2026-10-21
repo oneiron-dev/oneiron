@@ -170,9 +170,10 @@ impl Vault {
             // The recovery left the rebuilt document equivalent to the
             // artifact; the window's own cut of it must be too.
             let cut = crate::sync::window::prepare_rebootstrap(self, &key, &prepared.window)?;
-            if capture_canonical_window_within(self, window, &cut.doc, budget.max_bytes)?
-                != snapshot
-            {
+            let recaptured =
+                capture_canonical_window_within(self, window, &cut.doc, budget.max_bytes)?;
+            // A pad row reads back by key and pad (KS-5).
+            if super::ladder::pad_equivalent(self, recaptured, &snapshot) != snapshot {
                 return Err(invalid("re-bootstrapped window is not equivalent"));
             }
             let rewritten = cut.rewritten;

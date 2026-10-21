@@ -11,6 +11,7 @@ mod applied;
 pub mod attribution_audits;
 mod calibration_asks;
 pub mod coach;
+pub mod coach_diagnostic;
 pub mod coach_heal;
 pub mod coach_learning;
 mod coach_repair;
