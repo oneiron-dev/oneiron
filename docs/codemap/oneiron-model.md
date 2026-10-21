@@ -11,9 +11,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/extraction_eval.rs` | src | m | 9 fn · 6 const · 2 re-export | — | — |
+| `src/extraction_eval.rs` | src | m | 9 fn · 6 const · 2 re-export | — | Extraction-quality evaluation facade |
 | `src/extraction_eval/qa.rs` | src | s | 2 struct · 1 crate-vis | Of360GoldQa, Of360QaAnswer | Gold-anchored QA lane with exact normalized-answer scoring |
-| `src/extraction_eval/types.rs` | src | m | 17 struct · 6 enum · 4 fn | Of360Ar3MetricTier, Of360CaseEvalReport, Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness, Of360DerivationEnvelope, Of360EvalError, Of360EvalReport +15 | — |
+| `src/extraction_eval/types.rs` | src | m | 17 struct · 6 enum · 4 fn | Of360Ar3MetricTier, Of360CaseEvalReport, Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness, Of360DerivationEnvelope, Of360EvalError, Of360EvalReport +15 | Extraction-quality schemas and validation |
 | `src/lib.rs` | src | s | 2 mod | — | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… |
 | `src/llm/assembly.rs` | src | s | 1 struct · 7 fn | StreamAssembly | Shared typed stream assembly |
 | `src/llm/backend.rs` | src | s | 2 struct · 1 enum · 3 trait · 3 fn · 3 type · 1 crate-vis | BrokerIsolation, BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
@@ -44,7 +44,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/inference.rs` | src | m | 4 struct · 6 enum · 6 fn · 1 const | InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence, WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode +2 | What a model worker is and what one physical call to it reported (FIX 8314, INFERENCE R1): the worker's… |
 | `src/llm/label_read.rs` | src | s | 3 struct · 1 enum · 1 trait · 4 fn | LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet | Label-read seam: a host model scores a closed label set instead of generating text |
 | `src/llm/limit.rs` | src | m | 6 fn | — | How an adapter reads a provider's refusal as a spent quota or a rate limit, and the reset the refusal names… |
-| `src/llm/media.rs` | src | m | 6 struct · 6 enum · 2 trait · 25 fn · 1 type · 1 const · 1 mod | AiMediaDoor, AiOperation, ImageMedia, MediaBackend, MediaCaps, MediaJobState, MediaPart, MediaRequest +6 | The `ai.*` call family past text (runtime "The ai.* call family"): image, video, speech, transcription and… |
+| `src/llm/media/backend.rs` | src | s | 1 struct · 2 trait | AiMediaDoor, ImageMedia, MediaBackend | Media backends and the host's media door |
+| `src/llm/media/caps.rs` | src | s | 1 struct · 3 enum · 10 fn · 1 const | AiOperation, MediaCaps, Modality, NativeUnit | Media call operations, modalities and row capabilities |
+| `src/llm/media/mod.rs` | src | s | 1 struct · 1 fn · 1 type · 1 mod · 4 re-export | NativeRate | The `ai.*` call family past text (runtime "The ai.* call family"): image, video, speech, transcription and… |
+| `src/llm/media/request.rs` | src | s | 1 struct · 2 enum · 10 fn | MediaPart, MediaRequest, MediaVoice | Media call requests and voices |
+| `src/llm/media/response.rs` | src | s | 2 struct · 1 enum · 4 fn | MediaJobState, MediaResponse, MediaUsage | Media call answers, usage and job states |
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
 | `src/llm/mod.rs` | src | s | 4 mod · 25 re-export | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
