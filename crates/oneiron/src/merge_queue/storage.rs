@@ -101,7 +101,7 @@ impl MergeQueue<'_> {
         self.read_queue()?
             .ok_or_else(|| invalid("merge queue is not initialized"))
     }
-    fn read_queue(&self) -> Result<Option<QueueRecord>> {
+    pub(super) fn read_queue(&self) -> Result<Option<QueueRecord>> {
         let record = self.read(QUEUE_STATE, self.queue_key())?;
         if let Some(record) = &record
             && record.schema_version != 1

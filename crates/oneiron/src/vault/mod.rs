@@ -195,6 +195,10 @@ pub struct Vault {
     /// 5609, 6165; [`Vault::set_coach_weave_digest_host_ready`]). In memory
     /// only.
     pub(crate) coach_weave_digest_host: std::sync::atomic::AtomicBool,
+    /// The origin mirror pushes' wake (FIX 6866): a published-ref move or a
+    /// green landing starts a full-auto pass at once. In memory only and
+    /// never shared across vaults; each lifecycle tick repairs a missed one.
+    pub(crate) origin_mirror_wake: crate::origin::OriginMirrorWake,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:

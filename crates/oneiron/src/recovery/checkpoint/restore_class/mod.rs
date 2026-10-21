@@ -223,6 +223,11 @@ const ORIGIN_MIRRORS: Class = refuse("repository mirror targets");
 /// unspends a push (CALLS "FIX 6866 restore class"). A request whose commit
 /// a restore took refuses at dispatch, not here.
 const ORIGIN_PUBLISH_REQUESTS: Class = LIVE;
+/// A mirror's automatic push plans (FIX 6866) record what left the vault and
+/// how far each plan got: they stay as the live vault holds them, so a
+/// restore never revives an unsent batch or resends a settled one. A plan
+/// whose objects a restore took fails its push, and its reconcile settles it.
+const ORIGIN_MIRROR_WORKS: Class = LIVE;
 const ROOMS: Class = Class::Refuse {
     what: "room roles and membership",
     scope: Scope::ImageEntities,

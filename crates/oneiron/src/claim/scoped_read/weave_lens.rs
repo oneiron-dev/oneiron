@@ -246,7 +246,18 @@ fn keyed_sections(sections: &[WeaveSectionView]) -> Result<Vec<serde_json::Value
                     Ok(value)
                 })
                 .collect::<Result<Vec<_>>>()?;
-            Ok(serde_json::json!({ "kind": section.kind, "items": items }))
+            let mut keyed = serde_json::json!({ "kind": section.kind, "items": items });
+            // A SieveScore section's counts, as the reader is served them.
+            if let Some(score) = section.sieve_score {
+                keyed
+                    .as_object_mut()
+                    .ok_or_else(|| invalid("a section is not an object"))?
+                    .insert(
+                        "sieve_score".to_owned(),
+                        serde_json::to_value(score).map_err(|_| invalid("a score is not JSON"))?,
+                    );
+            }
+            Ok(keyed)
         })
         .collect()
 }
@@ -407,15 +418,24 @@ fn cells(item: &WeaveItem, line: &str) -> Result<Vec<LedgerCell>> {
                 cells.push(cell("task_ref", task.to_hex())?);
             }
         }
+        WeaveItem::SieveAudit { attempt, audit } => {
+            for (label, value) in
+                super::weave_report::sieve_score::sieve_audit_cells(*attempt, audit)
+            {
+                cells.push(cell(label, value)?);
+            }
+        }
     }
     Ok(cells)
 }
 
-/// The records an item stands on, which its row binds when the read admits.
+/// The records an item stands on, which its row binds when the read admits:
+/// an audit's, the source its span was read from.
 fn item_sources(item: &WeaveItem) -> Option<EntityId> {
     match item {
         WeaveItem::Claim { id, .. } | WeaveItem::Project { id, .. } => Some(*id),
         WeaveItem::Budget { project, .. } => Some(*project),
+        WeaveItem::SieveAudit { audit, .. } => Some(audit.source),
         WeaveItem::Link { .. }
         | WeaveItem::DreamProgress { .. }
         | WeaveItem::AgentHealth { .. } => None,
@@ -456,12 +476,12 @@ fn wrong_control(
 
 /// Compose a render into the lens under `read`, the opener's own read, as a
 /// card beside the frame that minted its rows' backing refs (OF-181). Every
-/// row binds the source its read admits now; every link, claim, project and
-/// budget row a human opens carries the wrong control over its exact link or
-/// item (an agent files no label, so its rows carry none; the owner lens's
-/// call the owner's own verbs). Each wrong control is declared in the card's
-/// manifest as the deterministic tool it calls, for a host that holds the
-/// frame and takes the card's events.
+/// row binds the source its read admits now; every link, claim, project,
+/// budget and sieve audit row a human opens carries the wrong control over
+/// its exact link or item (an agent files no label, so its rows carry none;
+/// the owner lens's call the owner's own verbs). Each wrong control is
+/// declared in the card's manifest as the deterministic tool it calls, for a
+/// host that holds the frame and takes the card's events.
 pub(super) fn compose_weave_lens_framed(
     read: &ScopedRead<'_>,
     reader: WeaveReader<'_>,
@@ -623,7 +643,7 @@ pub(crate) struct KeptLiveLens {
     rendered_at: u64,
     /// Each link as `(source hex, edge kind byte, target hex)`.
     links: Vec<(String, u8, String)>,
-    /// Each claim, project and budget id, hex.
+    /// Each claim, project, budget and sieve audit item id, hex.
     items: Vec<String>,
     /// Each health card's `health:` handle.
     cards: Vec<String>,
@@ -684,7 +704,8 @@ fn report_links(report: &WeaveReport) -> impl Iterator<Item = EdgeRef> + '_ {
         })
 }
 
-/// The ids of the claim, project and budget rows `report` shows.
+/// The ids of the claim, project, budget and sieve audit rows `report`
+/// shows: the keys their wrong labels file under.
 fn report_items(report: &WeaveReport) -> impl Iterator<Item = EntityId> + '_ {
     report
         .sections

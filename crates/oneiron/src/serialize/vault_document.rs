@@ -11,7 +11,7 @@
 //! holds; so a row nulled alone at its depth from the document root is the row
 //! the whole-document pass leaves.
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{Seek, Write};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -261,13 +261,15 @@ impl<'v> DocumentWriter<'v> {
     }
 
     /// One result body a clean occurrence names, once. It is copied as it
-    /// streams into an owner-only spool, checked to its end against its
-    /// length and digest, and read there by the release door's scan, never
-    /// held whole (FIX 5392); a body the scan passes goes in `files/` as it
-    /// is, never base64-encoded into the text around that scan (Docs Q20),
-    /// and its row carries no content. A row the nulling pass leaves naming
-    /// other bytes than the copy hashes to is withheld as a credential
-    /// rather than shipped under a name it does not hash to.
+    /// streams onto the end of the archive's file spool, unindexed, checked
+    /// to its end against its length and digest, and read there by the
+    /// release door's scan, never held whole (FIX 5392) and on disk once
+    /// (FIX 7213); a body the scan passes is indexed there and goes in
+    /// `files/` as it is, never base64-encoded into the text around that
+    /// scan (Docs Q20), and its row carries no content. Any other staged body
+    /// is cut off again. A row the nulling pass leaves naming other bytes
+    /// than the copy hashes to is withheld as a credential rather than
+    /// shipped under a name it does not hash to.
     pub(crate) fn result_body(
         &mut self,
         digest: [u8; 32],
@@ -278,12 +280,18 @@ impl<'v> DocumentWriter<'v> {
         let withheld = match body.body {
             Err(reason) => Some(reason),
             Ok(reader) => {
-                let mut spool = self.vault.archive_spool_file()?;
-                reader.copy_checked(&mut spool)?;
-                match crate::batch::secret_scan::scan_file_content_from("", &mut spool)? {
-                    Some(_) => Some("credential"),
+                let files = &mut self.files;
+                let staged = files.stage(body.bytes, |out| reader.copy_checked(out))?;
+                let found = files.scan_staged(&staged, |spooled| {
+                    crate::batch::secret_scan::scan_file_content_from("", spooled)
+                })?;
+                match found {
+                    Some(_) => {
+                        files.discard_staged(staged)?;
+                        Some("credential")
+                    }
                     None => {
-                        clean = Some(spool);
+                        clean = Some(staged);
                         None
                     }
                 }
@@ -296,6 +304,7 @@ impl<'v> DocumentWriter<'v> {
             withheld: withheld.map(str::to_owned),
         };
         let mut row = nulled(&row, "", 3)?;
+        let mut keep = None;
         if let Some(fields) = row.as_object_mut() {
             let content = fields.get_mut("content").map(Value::take);
             if !fields
@@ -306,15 +315,20 @@ impl<'v> DocumentWriter<'v> {
                     .get("blake3")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
-                match (content, named, clean.as_mut()) {
-                    (Some(Value::Null) | None, Some(named), Some(spool)) if named == hex => {
-                        spool.seek(SeekFrom::Start(0))?;
-                        self.files.attach_reader_as(named, body.bytes, spool)?;
+                match (content, named, clean.as_ref()) {
+                    (Some(Value::Null) | None, Some(named), Some(_)) if named == hex => {
+                        keep = Some(named);
                     }
                     _ => {
                         fields.insert("withheld".to_owned(), Value::from("credential"));
                     }
                 }
+            }
+        }
+        if let Some(staged) = clean {
+            match keep {
+                Some(named) => self.files.commit_staged(named, staged)?,
+                None => self.files.discard_staged(staged)?,
             }
         }
         self.bodies.insert(hex, row);
