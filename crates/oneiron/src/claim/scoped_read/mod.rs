@@ -67,8 +67,8 @@ pub use weave_report::{
 pub use weave_serve::{
     WeaveDigestFramed, WeaveDigestRequest, WeaveDigestView, WeaveItemCorrectionView, WeaveItemView,
     WeaveLinkCorrectionView, WeaveReaderKind, WeaveReaderRef, WeaveReportRequest, WeaveReportView,
-    WeaveScheduleView, WeaveSectionInput, WeaveSectionView, WeaveWrongItemRequest,
-    WeaveWrongLinkRequest,
+    WeaveScheduleView, WeaveSectionInput, WeaveSectionView, WeaveSieveScoreView,
+    WeaveWrongItemRequest, WeaveWrongLinkRequest,
 };
 pub use weave_trigger::WeaveDigestRendered;
 

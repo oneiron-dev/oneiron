@@ -531,6 +531,30 @@ impl Vault {
     }
 }
 
+/// Every sampled audit with the attempt that wrote it, in attempt order, in
+/// the caller's snapshot (OF-499: a weave report's SieveScore rows). The
+/// whole table, with no caller limit (rule 5); [`Vault::sieve_audits`] keeps
+/// its own. A row that does not decode stays in its place as its error, for
+/// the caller to withhold; it never stops the read of the rest.
+pub(crate) fn sieve_audits_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<Result<(AttemptId, SieveAudit)>>> {
+    Ok(AUDIT
+        .iter_from(&vault.store, txn, &[])?
+        .filter(|row| !matches!(row, Ok((_, audit)) if !audit.sampled))
+        .collect())
+}
+
+/// One attempt's audit as written, in the caller's snapshot.
+pub(crate) fn sieve_audit_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    attempt: &AttemptId,
+) -> Result<Option<SieveAudit>> {
+    AUDIT.get(store, txn, attempt)
+}
+
 pub(crate) fn rung_result_units(vault: &Vault, attempt: AttemptId) -> Result<Option<u64>> {
     let result = {
         let txn = vault.store.env.read_txn()?;

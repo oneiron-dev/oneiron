@@ -14,6 +14,9 @@ use crate::scan_check::{EngineScan, ScanCount};
 use crate::{EdgeKind, EntityId, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
+// The SieveScore section's sampled sieve audits (OF-499).
+pub(super) mod sieve_score;
+
 /// Reader role is a constraint on the projection, never a claim of new read authority.
 #[derive(Clone, Copy)]
 pub enum WeaveReader<'a> {
@@ -85,6 +88,14 @@ pub enum WeaveItem {
     AgentHealth {
         card: AgentHealthCard,
     },
+    /// One sampled sieve audit (OF-499), in a SieveScore section after its
+    /// predicate rows: the attempt that wrote it, and the rule's reading
+    /// beside the expensive path's label. Its turn, source and the entities
+    /// it names each passed the reader's own floor.
+    SieveAudit {
+        attempt: crate::attempt_queue::AttemptId,
+        audit: crate::dreamer_wake::SieveAudit,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,7 +112,8 @@ pub struct WeaveReport {
 impl WeaveReport {
     /// The rows the read that selected this report's items read them from
     /// (DEC-0005): each claim, project, goal, budget and link endpoint, a
-    /// dreaming's resident, and what an agent-health card is built from.
+    /// dreaming's resident, what an agent-health card is built from, and
+    /// the rows a sieve audit stands on.
     #[must_use]
     pub fn source_rows(&self) -> Vec<EntityId> {
         let mut rows = Vec::new();
@@ -122,6 +134,9 @@ impl WeaveReport {
                 WeaveItem::Link { source, target, .. } => rows.extend([*source, *target]),
                 WeaveItem::DreamProgress { resident, .. } => rows.push(*resident),
                 WeaveItem::AgentHealth { card } => rows.extend(card_rows(card)),
+                WeaveItem::SieveAudit { audit, .. } => {
+                    rows.extend(sieve_score::sieve_audit_rows(audit));
+                }
             }
         }
         rows
@@ -342,6 +357,11 @@ impl ScopedRead<'_> {
                         });
                     }
                 }
+            }
+            // A SieveScore section shows the sampled sieve audits after its
+            // predicate rows (OF-499), each one this reader's floor admits.
+            if spec.kind == WeaveSectionKind::SieveScore {
+                items.extend(self.weave_sieve_audits_in(txn, &policy, &filter));
             }
             // Each resident gets its own digest through its dreaming
             // (ARCH-0063 §6): its progress leads its own Digest section.

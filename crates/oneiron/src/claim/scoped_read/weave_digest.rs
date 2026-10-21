@@ -313,6 +313,10 @@ enum WireItem {
     AgentHealth {
         card: crate::dreamer_runner::maintenance::agent_health::AgentHealthCard,
     },
+    SieveAudit {
+        attempt: crate::attempt_queue::AttemptId,
+        audit: crate::dreamer_wake::SieveAudit,
+    },
 }
 
 impl WireDigest {
@@ -367,6 +371,12 @@ impl WireDigest {
                                     },
                                     WeaveItem::AgentHealth { card } => {
                                         WireItem::AgentHealth { card: card.clone() }
+                                    }
+                                    WeaveItem::SieveAudit { attempt, audit } => {
+                                        WireItem::SieveAudit {
+                                            attempt: *attempt,
+                                            audit: audit.clone(),
+                                        }
                                     }
                                 })
                             })
@@ -438,6 +448,9 @@ impl WireDigest {
                                         WireItem::AgentHealth { card } => {
                                             WeaveItem::AgentHealth { card }
                                         }
+                                        WireItem::SieveAudit { attempt, audit } => {
+                                            WeaveItem::SieveAudit { attempt, audit }
+                                        }
                                     })
                                 })
                                 .collect::<Result<Vec<_>>>()?,
@@ -491,6 +504,11 @@ fn report_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
                 // A card is a side-table row, not a record: a saved period
                 // reads the current card again before it serves one.
                 WeaveItem::AgentHealth { .. } => {}
+                // An audit is a side-table row too, read again the same way;
+                // the rows it stands on are records.
+                WeaveItem::SieveAudit { audit, .. } => {
+                    sources.extend(super::weave_report::sieve_score::sieve_audit_rows(audit));
+                }
             }
         }
     }
@@ -1247,6 +1265,18 @@ impl ScopedRead<'_> {
                                 )? => {}
                             _ => return Ok(None),
                         }
+                    }
+                    // A saved audit serves while its own row reads exactly
+                    // as saved: a newer sample moves no older period.
+                    WeaveItem::SieveAudit { attempt, audit }
+                        if !super::weave_report::sieve_score::sieve_audit_unchanged_in(
+                            &self.vault.store,
+                            txn,
+                            attempt,
+                            audit,
+                        ) =>
+                    {
+                        return Ok(None);
                     }
                     _ => {}
                 }
