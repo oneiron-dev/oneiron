@@ -133,3 +133,11 @@ result artifacts.
   Verify PUBLIC reachability and PRIVATE/external unreachability on the booked
   Linux host before collecting results. On an nftables-only Docker backend, this
   iptables recipe needs an equivalent reviewed host-local ruleset before use.
+
+The served-engine path (FIX 8061) needs no guest network: set the engine's
+`[browser] bench_fixture_forward = "172.30.91.1:8765"` and drive
+`http://127.0.0.1:8080` plus reset's `entry`. The engine forwards that virtual
+origin to PUBLIC host-side, while its guest stays `--network none`. Give the
+engine process `ONEIRON_EGRESS_CONFIG` naming a file that holds
+`{"allowed_domains": []}` for external refusal. The recipe above remains the
+standalone guest recipe.

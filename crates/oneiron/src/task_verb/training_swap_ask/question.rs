@@ -26,6 +26,10 @@ fn role_name(role: ModelRole) -> String {
 /// measured yet, so it reads unknown; the question never claims the trained
 /// model is not worse.
 pub(super) fn swap_question_text(run: &TrainingRun, expected: &SwapExpectation) -> Result<String> {
+    let (role, _) =
+        run.plan.target.role_binding().ok_or_else(|| {
+            Error::InvalidConfig("a question head has no role swap question".into())
+        })?;
     let result = run.result.as_ref().ok_or_else(not_scored)?;
     let evaluation = run.evaluation.as_ref().ok_or_else(not_scored)?;
     let start = &run.plan.starting_checkpoint;
@@ -70,7 +74,7 @@ pub(super) fn swap_question_text(run: &TrainingRun, expected: &SwapExpectation) 
          calibration: {calibration}; evaluator verdict: {verdict}. Paired comparison with the \
          current model: unknown (not measured yet). Current model: {current}. Doing nothing \
          keeps it.",
-        role = role_name(run.plan.role),
+        role = role_name(role),
         start_model = start.model,
         start_hash = bytes_to_hex_lower(&start.content_hash()?),
         model = result.exported_checkpoint.model,
@@ -94,18 +98,22 @@ pub(super) fn swap_question_text(run: &TrainingRun, expected: &SwapExpectation) 
 }
 
 /// What a swap of `run` binds against and the digest its question freezes,
-/// when the Coach may ask about it: Scored, its checks allowing a proposal,
-/// not an embedder, and not the run its role last bound.
+/// when the Coach may ask about it: a role run, Scored, its checks allowing a
+/// proposal, not an embedder, and not the run its role last bound. A question
+/// head gets no role question.
 pub(super) fn candidate_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     run: &TrainingRun,
     manifest: Option<&ModelManifest>,
 ) -> Result<Option<(SwapExpectation, String)>> {
+    let Some((role, _)) = run.plan.target.role_binding() else {
+        return Ok(None);
+    };
     if run.state != TrainingState::Scored
         || !run.can_propose_swap()
-        || run.plan.role == ModelRole::RetrievalEmbedder
-        || crate::training_pack::role_swap_receipt_in(vault, txn, run.plan.role)?
+        || role == ModelRole::RetrievalEmbedder
+        || crate::training_pack::role_swap_receipt_in(vault, txn, role)?
             .is_some_and(|receipt| receipt.run == run.id)
     {
         return Ok(None);

@@ -1,8 +1,7 @@
 //! Atomic append, explicit HEAD moves and canonical-index repair.
 
 use super::graph::{
-    self, CANONICAL, HEAD, actor_in_txn, chain, edge_ids, invalid, read_id, require_member,
-    require_type,
+    self, CANONICAL, HEAD, actor_in_txn, chain, invalid, read_id, require_member, require_type,
 };
 use super::migration::migrate_in_txn;
 use super::policy::{self, AppendFailure};
@@ -10,7 +9,7 @@ use super::{AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest};
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::edge::EdgeKind;
-use crate::error::{Error, RecordError, Result};
+use crate::error::{RecordError, Result};
 use crate::memory::{Memory, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
@@ -207,9 +206,6 @@ pub(crate) fn append_at_in_txn(
                 return Err(invalid("thread continuations must use reply_in_thread"));
             }
         }
-        if path.len() >= crate::limits::MAX_ANCESTOR_DEPTH {
-            return Err(Error::IndexOverflow("conversation_dag_walk"));
-        }
         let target_placement = if Some(parent) == spawning_turn {
             None
         } else {
@@ -238,16 +234,13 @@ pub(crate) fn append_at_in_txn(
         if spawning_turn.is_some() {
             return Err(invalid("sub-session root must continue its spawning turn"));
         }
-        if !edge_ids(
+        if graph::has_edge(
             &vault.store,
             txn,
             &input.conversation,
             EdgeKind::ChildOf,
             true,
-            crate::limits::MAX_ANCESTOR_DEPTH,
-        )?
-        .is_empty()
-        {
+        )? {
             return Err(invalid("nonempty conversation requires a Parent"));
         }
     }
@@ -651,14 +644,16 @@ impl Vault {
     pub fn rebuild_conversation_canonical(&self, conversation: &EntityId) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
             migrate_in_txn(self, txn, conversation)?;
-            let records = edge_ids(
+            let mut walk = graph::walk_count(&self.store, txn, conversation)?;
+            let records = graph::all_edge_ids(
                 &self.store,
                 txn,
                 conversation,
                 EdgeKind::ChildOf,
                 true,
-                crate::limits::MAX_ANCESTOR_DEPTH,
+                &mut walk,
             )?;
+            walk.defer(&self.store);
             for id in records {
                 CANONICAL.delete(&self.store, txn, &id)?;
             }
