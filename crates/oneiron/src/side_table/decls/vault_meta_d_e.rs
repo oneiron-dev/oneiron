@@ -263,6 +263,8 @@ side_tables! {
     DREAMER_SIEVE_WITHHELD: VaultMeta b"dreamer:sieve:withheld:v1:" Raw;
     /// Dreamer step index rows, plus the 'i:' sub-index. Key: bytes.
     DREAMER_STEP_INDEX: VaultMeta b"dreamer:step_index:v1:" Raw;
+    /// The exact response versions a terminal step claim holds (FIX 6225). Key: id16(claim).
+    DREAMER_STEP_RESPONSE_PIN: VaultMeta b"dreamer:step_response_pin:v1:" Named Engine;
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:
     /// id16(attempt) + hash32(step).
     DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw Authored;

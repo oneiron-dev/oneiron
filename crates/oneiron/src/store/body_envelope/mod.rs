@@ -58,7 +58,10 @@ pub(crate) use self::response::{
     bind_response_in_txn, carrier_row, erase_response_owner_in_txn, release_response_in_txn,
     response_binding_in_txn, response_carrier,
 };
-pub(crate) use self::retention::{INLINE_ASSETS, erase_bodies_in_txn, release_body_in_txn};
+pub(crate) use self::retention::{
+    INLINE_ASSETS, erase_bodies_for_owner_in_txn, erase_bodies_in_txn, release_body_in_txn,
+    settle_inline_asset_in_txn,
+};
 pub(crate) use self::rows::{
     BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn, retire_body_key_in_txn,
 };
