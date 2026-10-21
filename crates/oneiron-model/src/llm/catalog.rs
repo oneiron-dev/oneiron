@@ -30,6 +30,13 @@ pub enum LlmCapability {
     /// The model hears input audio clips in a chat message
     /// ([`super::ContentPart::Audio`]).
     AudioInput,
+    /// The offer reads an assistant message's reasoning back as the
+    /// OpenAI-chat `reasoning_content` field, apart from its ordinary
+    /// content. It declares how history is sent to this offer, never a
+    /// request to reason; it grants no tools and does not replace
+    /// [`Self::Reasoning`]. On that wire an offer without it gets its
+    /// assistant reasoning as ordinary text content.
+    ReasoningContentHistory,
 }
 
 impl LlmCapability {
@@ -45,6 +52,7 @@ impl LlmCapability {
             Self::Voice => "voice",
             Self::AssistantPrefill => "assistant_prefill",
             Self::AudioInput => "audio_input",
+            Self::ReasoningContentHistory => "reasoning_content_history",
         }
     }
 }

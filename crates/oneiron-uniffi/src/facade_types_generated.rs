@@ -44591,6 +44591,8 @@ pub enum LlmCapability {
     AssistantPrefill,
     #[serde(rename = "audio_input")]
     AudioInput,
+    #[serde(rename = "reasoning_content_history")]
+    ReasoningContentHistory,
 }
 
 /// `oneiron_model::llm::error::UnsupportedCapability`.

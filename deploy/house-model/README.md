@@ -223,3 +223,85 @@ PYTHONPATH=/opt/oneiron/deploy/house-model \
 ```
 
 Then its entry may set `request_compression = "zstd"` too.
+
+## Reasoning history probe
+
+An offer may declare `reasoning_content_history` (FIX 8307) only when its
+server reads an assistant's earlier reasoning back from the chat
+`reasoning_content` field. With it, the engine sends an assistant message's
+reasoning in that field instead of as ordinary content. No house offer
+declares it yet, so `models.toml` sends reasoning as content on both.
+
+`probe_reasoning_history.py` collects the evidence for one offer. It is an
+ops tool, not a test, and it needs only Python's standard library. It runs on
+the GPU host (Linux only) against the server already running there, on its
+loopback port. It never starts, restarts or loads anything, and it never
+retries or repairs a reply. It holds two conversations, one plain and one
+streamed, of three real turns each:
+
+1. With one tool offered, the reply must carry nonempty reasoning, a short
+   ordinary preamble and exactly one tool call with JSON-string arguments.
+2. That assistant goes back unchanged (reasoning, content and the call's id),
+   with a tool result under the same id. Its value is minted only after turn 1,
+   and the answer must be exactly `RESULT=<value>`.
+3. The answer goes back with its reasoning, and the model must repeat the
+   same line with no tool call.
+
+The operator runs it once per offer, with a new evidence path each time:
+
+```sh
+# llama.cpp: save the template the running server renders
+curl -s http://127.0.0.1:18134/props \
+  | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["chat_template"])' \
+  > /tmp/llama-template.jinja
+python3 /opt/oneiron/deploy/house-model/probe_reasoning_history.py \
+  --base-url http://127.0.0.1:18134 --backend llama \
+  --offer 'llama/qwen3.8-27b@qwen3.8-27b-q4km' \
+  --server-revision <llama.cpp commit> --weights-revision <GGUF revision> \
+  --template /tmp/llama-template.jinja \
+  --runtime-file /opt/oneiron-house/llama.cpp/build/bin/llama-server \
+  --booking-ref <fleet booking> --evidence /tmp/reasoning-history-llama-<run>.json
+
+# EXL3: the target's own template and the server's source
+python3 /opt/oneiron/deploy/house-model/probe_reasoning_history.py \
+  --base-url http://127.0.0.1:18091 --backend exl3 \
+  --offer 'exl3/qwen3.8-27b@qwen3.8-27b-exl3-4bpw-dflash2-d7' \
+  --server-revision <oneiron commit> --weights-revision <EXL3 revision> \
+  --template /var/lib/oneiron-house/models/qwen3.8-27b-exl3-4bpw/chat_template.jinja \
+  --runtime-file /opt/oneiron/deploy/house-model/exl3_server.py \
+  --booking-ref <fleet booking> --evidence /tmp/reasoning-history-exl3-<run>.json
+```
+
+`--wire-id` is the offer's configured wire model (default `qwen3.8-27b`);
+every request names it. EXL3 must advertise and answer with exactly that id.
+A llama launch advertises and answers under its launch alias instead
+(`oneiron-llama/<epoch>/<manifest digest>`, "Launch identity" above), which
+stands for the wire id. One run must see one alias: a second one means the
+server restarted mid-run, and the run fails. The evidence keeps the raw ids
+(`advertised_model_ids`, `served_model_ids`, `llama_alias`).
+
+`--offer`, `--server-revision`, `--weights-revision` and `--booking-ref` are
+the operator's own labels, kept as given. Pair the JSON with the booking's log
+and the service's launch recipe. The JSON also keeps every request and raw
+reply, each named check, and the SHA-256 of the probe, template, runtime and
+any `--tokenizer-file`. The file is created exclusively, so it is written even
+when the run fails and is never overwritten. The probe exits 0 only when its
+`declaration_ready` is `true`. Its fixed settings are temperature 0, seed 8307
+and the EXL3 solo marker. `--max-tokens` (2048), `--reasoning-budget` (512),
+`--effort` (`medium`) and `--timeout` (180 s) can be changed.
+
+Today's `exl3_server.py` passes no request tools to its template and returns
+no `tool_calls`, so the EXL3 run fails at turn 1. Keep that JSON too.
+
+**A pass is what allows the declaration.** After the lead accepts a pass for
+that exact server, weights, template and wire id, one line goes inside that
+provider's own block, with a comment pointing at the evidence:
+
+```toml
+model_capabilities."qwen3.8-27b" = ["streaming", "json_response", "reasoning", "reasoning_content_history", "tool_calling", "tool_results"]
+```
+
+The list replaces the provider's default (`streaming`, `json_response`,
+`reasoning`), so it names those three again. A pass on one backend says
+nothing about the other. The installed `oneiron.toml` needs the same line:
+this file is not deployed by itself.
