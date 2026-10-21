@@ -55407,6 +55407,8 @@ pub struct WakeRecipePolicy {
     pub typing_instruction: String,
     #[serde(rename = "narrative_instruction")]
     pub narrative_instruction: String,
+    #[serde(rename = "arc_min_new_statements")]
+    pub arc_min_new_statements: u32,
 }
 
 /// `oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest`.

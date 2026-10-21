@@ -28,6 +28,10 @@ pub struct WakeRecipePolicy {
     pub novelty_instruction: String,
     pub typing_instruction: String,
     pub narrative_instruction: String,
+    /// The new lower-source statements an Arc's changed sittings must carry
+    /// before it is written again ahead of its backstop (FIX 7509 P8). Zero
+    /// writes on any changed source set; an unchanged set never writes.
+    pub arc_min_new_statements: u32,
 }
 
 impl WakeRecipePolicy {
