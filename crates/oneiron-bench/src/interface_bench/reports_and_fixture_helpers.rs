@@ -6,21 +6,27 @@ use super::config_types::{
     FullRunReport, PER_TASK_TOKEN_CEILING, PERSON_COUNT, ParetoPoint, RunSettings, SCORER_VERSION,
     STANCES, SmokeRunRow, TOPIC_COUNT, TaskBundle, TaskClass, TokenBurnExtrapolation,
 };
+use std::borrow::Borrow;
 use std::time::{SystemTime, UNIX_EPOCH};
 fn usage_reason(tokens: Option<u32>) -> Option<String> {
     tokens
         .is_none()
         .then(|| "provider_usage_unknown_or_no_interface_execution".into())
 }
-fn sum_tokens(rows: impl Iterator<Item = &SmokeRunRow>) -> Option<u32> {
+fn sum_tokens<R: Borrow<SmokeRunRow>>(rows: impl Iterator<Item = R>) -> Option<u32> {
     let rows = rows
-        .filter(|row| row.status != "unavailable")
+        .filter(|row| {
+            let row: &SmokeRunRow = row.borrow();
+            row.status != "unavailable"
+        })
         .collect::<Vec<_>>();
     if rows.is_empty() {
         return None;
     }
-    rows.iter()
-        .try_fold(0_u32, |total, row| total.checked_add(row.tokens_total?))
+    rows.iter().try_fold(0_u32, |total, row| {
+        let row: &SmokeRunRow = row.borrow();
+        total.checked_add(row.tokens_total?)
+    })
 }
 fn mean(values: impl Iterator<Item = f64>) -> Option<f64> {
     let values = values.collect::<Vec<_>>();
