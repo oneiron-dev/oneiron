@@ -69,6 +69,7 @@ mod fold_resume;
 mod fold_schedule;
 mod fold_state;
 mod forwarded_caller;
+mod frontier_join;
 mod grant_travel;
 mod grant_travel_door;
 mod guest_revoke;
@@ -326,6 +327,7 @@ pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
 pub(crate) use first_seen_clock::*;
+pub(crate) use frontier_join::FrontierSigner;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
 pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]

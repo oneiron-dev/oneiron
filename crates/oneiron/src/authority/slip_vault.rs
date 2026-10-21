@@ -523,6 +523,11 @@ impl Vault {
             return Err(invalid_authority());
         }
         let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Host(issuer);
+        let fold = self
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .unwrap_or(fold);
         let entry = next_entry(issuer, &fold, AuthorityOp::SlipMint(action), now)?;
         self.put_authority_log_entries_in_txn(
             txn,
@@ -694,6 +699,11 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Host(issuer);
+        let fold = self
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .unwrap_or(fold);
         let entry = next_entry(issuer, &fold, op, now)?;
         let hash = authority_entry_hash(&entry)?;
         self.put_authority_log_entries_in_txn(

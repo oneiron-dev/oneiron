@@ -55,7 +55,9 @@ pub(super) fn skippable_permissive(op: &AuthorityOp) -> bool {
         // closed without it (Wonder #1423 r2 W2, Sol #1423 r9).
         AuthorityOp::SlipMint(_)
         | AuthorityOp::FederationConfirm(_)
-        | AuthorityOp::CriticalWriteConfirm(_) => true,
+        | AuthorityOp::CriticalWriteConfirm(_)
+        // A frontier join grants and withdraws nothing (FIX 7908).
+        | AuthorityOp::FrontierJoin(_) => true,
         // A profile grants standing; a removal withdraws it and never is.
         AuthorityOp::MachineProfile(profile) => profile.role != MachineRole::Removed,
         _ => false,

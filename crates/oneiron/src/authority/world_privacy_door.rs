@@ -187,6 +187,11 @@ impl Vault {
         // names a key record, which rides the world's recipient-filtered side
         // branch. A fenced main-log row beneath it is crossed on refold
         // (`refold_world_edits`), as for a grant travel choice.
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Install(machine, &key);
+        let fold = self
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .unwrap_or(fold);
         let parents = fold.append_heads.clone();
         if parents.len() > MAX_PARENTS {
             return Err(parent_bound(parents.len()));

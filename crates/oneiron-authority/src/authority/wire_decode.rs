@@ -230,6 +230,7 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_HOME_CANDIDACY => super::home_candidacy::decode_home_candidacy(entries),
         OP_KIND_AGENT_GRANT_ACT => super::agent_grant_act::decode_agent_grant_act(entries),
         OP_KIND_OWNER_KEY_ENROLL => super::owner_key_enrollment::decode_owner_key_enroll(entries),
+        OP_KIND_FRONTIER_JOIN => super::frontier_join::decode_frontier_join(entries),
         _ => Err(invalid_authority()),
     }
 }

@@ -55,7 +55,9 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// 10: an enrolled owner key starts its own custody line (FIX 5896). 11: a
 /// custody request names its authority, an install's or the pinned kit's,
 /// and the fold keeps the owner's kit push as a counted request (FIX 6053).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 11;
+/// 12: the fold admits frontier joins, and an image carries their bodies
+/// (FIX 7908).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 12;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.

@@ -107,6 +107,11 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
                 entry.signer_key().clone(),
             )]
         }
+        // A frontier join waits for its carrier's install key, as the act it
+        // leads to does; the host issuer's waits as any admitter's row.
+        AuthorityOp::FrontierJoin(FrontierJoin {
+            carrier: Some(carrier),
+        }) => vec![Grant::InstallKey(*carrier, entry.signer_key().clone())],
         // The owner's kit push (FIX 6053) waits for its signer to be an
         // owner anchor, as an anchored machine revision does.
         AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
