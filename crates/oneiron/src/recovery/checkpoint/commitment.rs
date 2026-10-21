@@ -23,8 +23,8 @@ use getrandom::SysRng;
 pub use oneiron_crypto::backup::CheckpointSigner;
 use oneiron_crypto::backup::{
     CHECKPOINT_SIGNATURE_EPOCH as EPOCH, CHECKPOINT_SIGNATURE_SUITE as SUITE,
-    COMMITMENT_VERSION as VERSION, ED25519_KEY_ID, SLHDSA_KEY_ID, commitment_digest,
-    verify_commitment_signature,
+    COMMITMENT_VERSION as VERSION, CheckpointFact, ED25519_KEY_ID, SLHDSA_KEY_ID,
+    SignedCheckpointFact, commitment_digest, verify_commitment_signature,
 };
 pub(super) use oneiron_crypto::backup::{Commitment, MAX_SIGNED_FRAME};
 use oneiron_crypto::{
@@ -103,6 +103,29 @@ impl SigningKeys {
                 .map_err(|_| codec())?,
             slhdsa: self.slhdsa.verifying_key().to_bytes(),
         })
+    }
+
+    /// Signs `fact`, a complete artifact's checkpoint fact (FIX 7326), as
+    /// the artifact's commitment was: the same dual record, purpose, epoch,
+    /// install and keys, over the fact's own domain-separated subject.
+    pub(super) fn sign_checkpoint_fact(
+        &self,
+        fact: &CheckpointFact,
+    ) -> Result<SignedCheckpointFact> {
+        let record = sign(
+            SUITE,
+            SigPurpose::BatchCheckpoint,
+            EPOCH,
+            &self.install,
+            &fact.subject(),
+            &[
+                (ED25519_KEY_ID, &self.ed25519),
+                (SLHDSA_KEY_ID, &self.slhdsa),
+            ],
+            &mut SysRng,
+        )
+        .map_err(|_| refused("signing the checkpoint fact failed"))?;
+        SignedCheckpointFact::new(*fact, record.to_bytes()).map_err(|_| codec())
     }
 }
 
