@@ -55,6 +55,8 @@ pub(crate) enum RowDb {
     EdgesIn,
     VaultMeta,
     SyncState,
+    /// The sync queue's rows, keyed by raw bytes (KS7-3).
+    SyncQueue,
 }
 
 impl RowDb {

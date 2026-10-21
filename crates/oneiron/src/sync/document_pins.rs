@@ -33,6 +33,8 @@
 //!   with the parts no pin lists. A pin whose actor this vault erased, or
 //!   whose erased twin it holds, rides naming no one.
 
+pub(super) mod checkpoint;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RoTxn;

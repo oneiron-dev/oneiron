@@ -35,6 +35,7 @@
 //! - Every export, and the erase sweep, drops each row of a room this vault
 //!   deleted or of a thread it erased.
 
+pub(super) mod checkpoint;
 mod erased;
 mod turn_marks;
 pub(crate) use erased::erase_carried_actors;

@@ -34,6 +34,8 @@
 //!   vault erased or the window does not carry, with every part no head
 //!   lists.
 
+pub(super) mod checkpoint;
+
 use std::collections::BTreeSet;
 
 use loro::event::MapDelta;

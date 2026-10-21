@@ -3,6 +3,7 @@
 //! Proposal carriers contain text values, never nested CRDT history or active
 //! document authority. Canonical live NOTE sync uses the authenticated socket.
 
+pub(super) mod checkpoint;
 mod codec;
 mod materialize;
 mod mirror;
