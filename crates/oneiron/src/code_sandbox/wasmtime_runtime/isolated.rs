@@ -31,6 +31,7 @@ pub(super) fn run(
         &runtime.component_bytes,
         backend,
         relay,
+        runtime.proposal_spool.clone(),
         runtime.budget.foreign_budget,
         cancel,
     )?;
