@@ -389,6 +389,12 @@ impl Dispatcher {
         self.shared.publish_rank(worker.0, rank);
     }
 
+    /// The window `input` builds, counted with the slot's tokenizer, `0`
+    /// for a slot that counts none: a blocking encode (FIX 7331).
+    pub(crate) fn count(&self, input: &EncoderInput) -> oneiron::Result<usize> {
+        self.shared.count(input)
+    }
+
     /// One call in `work`'s class: claims room, queues the call, and waits
     /// for the answer of the worker that ran it.
     pub(crate) fn call(&self, input: &EncoderInput, work: ExtractionWork) -> EncoderAttempt {

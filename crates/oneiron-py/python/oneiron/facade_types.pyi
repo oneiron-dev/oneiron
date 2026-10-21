@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1120 facade rows, 3844 declarations.
-Inputs: 1055 of 1120 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1007 of 1120 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1121 facade rows, 3851 declarations.
+Inputs: 1056 of 1121 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1008 of 1121 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -10453,6 +10453,50 @@ class CodeExportResult(TypedDict):
     ref_was_already_applied: bool
     wire_replayed: bool
     wire_rejected: bool
+class CodeImportAcceptance(TypedDict):
+    manifest_digest: str
+    baseline_revision: EntityId
+    catalog: LensCatalog
+    review_verdict: NotRequired[EntityId | None]
+class CodeRepoImportRequest(TypedDict):
+    repo: str
+    project: EntityId
+    source_ref: str
+    source_commit: str
+    admission_receipt: EntityId
+    accept: NotRequired[CodeImportAcceptance | None]
+class CodeImportAnchor(TypedDict):
+    repo: EntityId
+    project: EntityId
+    served_repo: str
+    object_store: str
+    source_ref: str
+    source_commit: str
+    source_tree: str
+    admission_receipt: EntityId
+    receive_provenance: EntityId
+    snapshot: EntityId
+    snapshot_fork_hash: str
+class CodeSnapshotFile(TypedDict):
+    path: str
+    content_hash_blake3: str
+    size_bytes: int
+    mode: int
+class CodeImportManifestFile(TypedDict):
+    git_oid: str
+    file: CodeSnapshotFile
+class CodeImportManifestView(TypedDict):
+    manifest_ref: EntityId
+    digest: str
+    anchor: CodeImportAnchor
+    inventory_digest: str
+    files: list[CodeImportManifestFile]
+CodeRepoImportState = Literal["manifest_ready", "held_baseline", "held_review", "promoted"]
+class CodeRepoImportView(TypedDict):
+    manifest: CodeImportManifestView
+    state: CodeRepoImportState
+    baseline_revision: NotRequired[EntityId | None]
+    promotion_receipt: NotRequired[EntityId | None]
 class OriginRegisterRequest(TypedDict):
     repo: str
     default_branch: str
@@ -10829,10 +10873,6 @@ class CodeRepoPointer(TypedDict):
 class CodeSnapshotIngestRequest(TypedDict):
     project_id: str
     pointer: CodeRepoPointer
-class CodeSnapshotFile(TypedDict):
-    path: str
-    content_hash_blake3: str
-    size_bytes: int
 class CodeSnapshotView(TypedDict):
     repo: EntityId
     repo_ref: str
@@ -17122,7 +17162,7 @@ class ConsolidationEnqueueRequest(TypedDict):
     now: NotRequired[int | None]
 class ConsolidationStatusRequest(TypedDict):
     job_ref: str
-DreamerParkCauseView = Literal["provider_unavailable", "executor_error", "checkpoint", "retry", "cancelled", "signal", "other"]
+DreamerParkCauseView = Literal["provider_unavailable", "executor_error", "checkpoint", "retry", "paused", "cancelled", "signal", "other"]
 class DreamerParkedAttemptView(TypedDict):
     job_ref: str
     cause: DreamerParkCauseView

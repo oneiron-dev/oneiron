@@ -302,13 +302,22 @@ impl Coordinator {
         };
         self.resident[lane(work)] += 1;
         let reconciler = Arc::clone(&self.reconciler);
+        let tagger = Arc::clone(&self.tagger);
         let control = self.control.clone();
         let unit = tokio::task::spawn_blocking(move || {
             let prepared = (!control.paused()).then(|| reconciler.prepare_next(work));
-            (prepared, admission)
+            // A ready call's window is counted here, on the blocking unit, so
+            // its tokenizer encode never runs on this task (FIX 7331).
+            let window = match &prepared {
+                Some(Ok(TaggingPreparation::Ready(ready))) => {
+                    Some(tagger.count_window(ready.input()))
+                }
+                _ => None,
+            };
+            (prepared, window, admission)
         })
         .await;
-        let (prepared, admission) = match unit {
+        let (prepared, window, admission) = match unit {
             Ok(unit) => unit,
             Err(error) => {
                 tracing::error!(
@@ -320,9 +329,9 @@ impl Coordinator {
                 return;
             }
         };
-        let prepared = match prepared {
-            Some(Ok(TaggingPreparation::Ready(prepared))) => prepared,
-            outcome => {
+        let (prepared, window) = match (prepared, window) {
+            (Some(Ok(TaggingPreparation::Ready(prepared))), Some(window)) => (prepared, window),
+            (outcome, _) => {
                 self.unprepared(outcome);
                 drop(admission);
                 drop(claim);
@@ -337,7 +346,7 @@ impl Coordinator {
         // Refilled at once, without waiting for older calls.
         self.dirty = true;
         let started = Instant::now();
-        let completion = self.tagger.submit(claim, prepared.input().clone());
+        let completion = self.tagger.submit(claim, prepared.input().clone(), window);
         self.calls.push(Box::pin(async move {
             let attempt = completion.answer().await;
             Box::new(Called {

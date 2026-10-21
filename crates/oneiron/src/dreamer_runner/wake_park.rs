@@ -57,7 +57,7 @@ impl DreamerRunnerStore<'_> {
         Ok(due)
     }
 
-    /// Every Checkpoint and Retry park at `txn`'s revision.
+    /// Every Checkpoint, Retry and Paused park at `txn`'s revision.
     fn checkpoint_parks_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

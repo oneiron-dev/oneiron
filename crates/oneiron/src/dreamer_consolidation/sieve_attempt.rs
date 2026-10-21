@@ -93,7 +93,13 @@ impl ConsolidationExecutor<'_> {
             };
             let locality = match call.inference.selected_locality() {
                 Some(locality) => locality,
-                None => return Ok(charges.park("sieve host binding needs locality")),
+                // A missing locality, a request that did not hash and an
+                // unreadable reading wait on no owner act: each resumes
+                // after its retry delay (OF-193a).
+                None => {
+                    return Ok(charges
+                        .park_for("sieve host binding needs locality", DreamerParkCause::Retry));
+                }
             };
             let data = serde_json::json!({
                 "span": input.span, "context": evidence.text,
@@ -137,15 +143,19 @@ impl ConsolidationExecutor<'_> {
                 .authorize_model_role(role, request, &call.inference)
             {
                 Ok(request) => request.into_request(),
-                Err(error) => return Ok(charges.park(&error.to_string())),
+                Err(error) => return Ok(charges.park_on_error(&error)),
             };
             if let Err(error) = super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)
             {
-                return Ok(charges.park(&error.to_string()));
+                return Ok(charges.park_on_error(&error));
             }
             let step_hash = match request.canonical_hash() {
                 Ok(hash) => hash,
-                Err(_) => return Ok(charges.park("sieve request did not hash")),
+                Err(_) => {
+                    return Ok(
+                        charges.park_for("sieve request did not hash", DreamerParkCause::Retry)
+                    );
+                }
             };
             let step = DurableStepContext {
                 vault: ctx.vault,
@@ -219,7 +229,7 @@ impl ConsolidationExecutor<'_> {
             }
             reading = match decode_reading(&response, &evidence.entities) {
                 Ok(reading) => reading,
-                Err(reason) => return Ok(charges.park(&reason)),
+                Err(reason) => return Ok(charges.park_for(&reason, DreamerParkCause::Retry)),
             };
             // Novelty can move a sure rule reading into the uncertain band.
             // Such a reading owes typing even if the rule did not owe it.
@@ -229,7 +239,7 @@ impl ConsolidationExecutor<'_> {
             {
                 let policy = match ctx.vault.dreamer_sieve_policy() {
                     Ok(policy) => policy,
-                    Err(error) => return Ok(charges.park(&error.to_string())),
+                    Err(error) => return Ok(charges.park_on_error(&error)),
                 };
                 if reading.confidence >= policy.uncertain_low
                     && reading.confidence < policy.uncertain_high
@@ -279,7 +289,7 @@ impl ConsolidationExecutor<'_> {
                     .div_ceil(1_000)
                     .saturating_add(input.policy.rung_retry_secs),
             }),
-            Err(error) => Ok(charges.park(&error.to_string())),
+            Err(error) => Ok(charges.park_on_error(&error)),
         }
     }
 }
