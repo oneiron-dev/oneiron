@@ -47,7 +47,8 @@ impl QueryDoor {
 }
 
 /// OF-520 question one caller's query raised at one door: it carried more
-/// bytes than `[limits].retrieval_query_bytes`, and the door refused it.
+/// bytes than `[limits].retrieval_query_bytes`, and the door refused it, or
+/// served it whole where the door asks instead (FIX 6923).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RetrievalQueryCheck {
     /// The caller: its principal ref, else its principal.
@@ -138,6 +139,47 @@ impl SyncServer {
             bound,
             bytes,
         })
+    }
+
+    /// [`Self::check_retrieval_query`] for a door that reads past the row
+    /// (Rule 5, FIX 6923): the crossing raises the same question, and the
+    /// query runs whole. Only the embedder's own input window cuts it.
+    pub(crate) fn ask_retrieval_query(
+        &self,
+        caller: &str,
+        door: QueryDoor,
+        field: &'static str,
+        query: &str,
+    ) {
+        let bound = self.config.limits.retrieval_query_bytes;
+        let bytes = query.len();
+        if bytes <= bound {
+            return;
+        }
+        let check = RetrievalQueryCheck {
+            principal: caller.to_owned(),
+            door: door.code(),
+            field,
+            bound,
+            bytes,
+        };
+        let first = self
+            .query_checks
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert((caller.to_owned(), door, field, bound), check)
+            .is_none();
+        if first {
+            tracing::warn!(
+                kind = RetrievalQueryCheck::KIND,
+                door = door.code(),
+                field,
+                bound,
+                bytes,
+                "a retrieval query passed its row; it runs whole"
+            );
+        }
     }
 
     /// Every OF-520 question a retrieval query raised since this server

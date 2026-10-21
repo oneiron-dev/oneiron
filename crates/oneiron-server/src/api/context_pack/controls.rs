@@ -488,6 +488,20 @@ impl CoreContextPackRequest {
         }
     }
 
+    /// [`Self::check_query_bytes`] for a door that reads past the row: the
+    /// crossing raises its question and the query runs whole (FIX 6923).
+    pub(crate) fn ask_query_bytes(
+        &self,
+        server: &crate::server::SyncServer,
+        auth: &crate::auth::CoreAuth,
+        door: crate::server::QueryDoor,
+        field: &'static str,
+    ) {
+        if let Some(query) = self.query.as_deref() {
+            server.ask_retrieval_query(crate::server::query_caller(auth), door, field, query);
+        }
+    }
+
     /// The Context Board reserves standing context before this retrieval runs.
     pub(crate) fn cap_serialized_tokens(&mut self, remaining: usize) {
         let budget = self
