@@ -94,6 +94,23 @@ pub enum GitImportPushOutcome {
     Unknown(String),
 }
 
+/// `init --bare --quiet --template= <name>` under the private directory
+/// `root`, through the one process constructor under `env`: a fresh bare
+/// store with no template, hook, alternate or shared object directory. The
+/// import's scratch store and a masked copy's store (FIX 7608 slice 2b-i)
+/// are both made here.
+pub(super) fn init_private_bare_store(
+    env: &super::GitWireProcessEnv,
+    root: &Path,
+    name: &str,
+) -> Result<GitWireProcessOutput> {
+    let init = FrozenGitArgv::frozen(
+        GitWireOperation::ImportScratchInit,
+        os_args(&["init", "--bare", "--quiet", "--template=", name]),
+    );
+    spawn_git(env, &GitCommandSpec::wire(root, &init))
+}
+
 impl GitWire<'_> {
     /// Fetches exactly `source_ref` from the https repository `url` into a
     /// fresh private bare scratch store, then proves it: the ref names
@@ -120,17 +137,7 @@ impl GitWire<'_> {
         let root = scratch.path().canonicalize()?;
         let mut env = self.process_env.clone();
         env.import_profile = Some(ImportProcessProfile::source(&root, authorization)?);
-        let init = FrozenGitArgv::frozen(
-            GitWireOperation::ImportScratchInit,
-            os_args(&[
-                "init",
-                "--bare",
-                "--quiet",
-                "--template=",
-                IMPORT_SCRATCH_REPO,
-            ]),
-        );
-        let output = spawn_git(&env, &GitCommandSpec::wire(&root, &init))?;
+        let output = init_private_bare_store(&env, &root, IMPORT_SCRATCH_REPO)?;
         if !output.success {
             return Ok(refused(&output, GitWireOperation::ImportScratchInit));
         }

@@ -747,6 +747,7 @@ pub(crate) fn route_custody(
     let opener = CustodyOpener {
         root: source.root,
         data_key: Some(data_key),
+        machine: None,
     };
     let admitted = admit_recovery(required, &target, &opener, source.anchor)?;
     let landing = |error: Error| {

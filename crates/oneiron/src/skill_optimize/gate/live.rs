@@ -6,11 +6,12 @@
 //! the skill's effective goal implies and keeps the report bound to the two
 //! bodies, the reserved evidence and the plan it measured. For a goal joined
 //! to a project's goal record, the gate takes every axis that report measured
-//! instead of judging it again: each primary axis from its online interval
-//! (an inconclusive interval is a tie on that axis, never a gain, so
-//! overlapping bounds cannot reach admission), each offline floor and cost
-//! from the held-out pass, and human minutes from the live runs' person-time.
-//! A report that no longer binds the scored basis is no report at all.
+//! instead of judging it again: each primary axis from its online interval,
+//! each offline floor and cost from the held-out pass, and human minutes from
+//! the live runs' person-time. An inconclusive interval stays unknown (FIX
+//! 8845, OF-495): the gate defers any admission it would let through, and the
+//! next pass measures the proposal again. A report that no longer binds the
+//! scored basis, or the judge and rubric scoring now, is no report at all.
 use super::*;
 use crate::error::ArtifactError;
 use crate::learning::honesty::HONESTY_AXIS;
@@ -40,7 +41,19 @@ struct LiveAxesRow {
     proposal_digest: String,
     target_digest: String,
     evidence_digest: String,
+    /// The judge and rubric the report was measured by (FIX 8846).
+    judge: JudgeBinding,
     report: GoalAxisReport,
+}
+
+/// The axes a bound live report measured, and the primary axes it left
+/// unknown.
+#[derive(Default)]
+pub(super) struct LiveAxes {
+    pub(super) measured: BTreeMap<String, GoalAxisScore>,
+    /// Primary axes whose online interval was inconclusive. The vector
+    /// carries each as a tie, and the gate defers on it, never admits.
+    pub(super) inconclusive: BTreeSet<String>,
 }
 
 fn key(proposal: &EntityId) -> Vec<u8> {
@@ -149,12 +162,13 @@ fn measure_with_owner(
     let current = vault
         .get_skill_record(&target)?
         .ok_or(Error::EntityNotFound)?;
-    let (plan, goal_revision) = {
+    let (plan, goal_revision, judge) = {
         let txn = vault.store.env.read_txn()?;
         let definition = goal_definition_in_txn(vault, &txn, &target)?;
         (
             goal_axis_plan(&definition, pulls_per_axis),
             definition.revision,
+            JudgeBinding::in_txn(vault, &txn, scorer.judge_revision())?,
         )
     };
     let report = measure_goal_axes(vault, target, &current, &staged, &plan, scorer, bandit)?;
@@ -185,12 +199,18 @@ fn measure_with_owner(
         {
             return Err(retry("the goal moved while its axes were measured"));
         }
+        if JudgeBinding::in_txn(vault, txn, scorer.judge_revision())? != judge {
+            return Err(retry(
+                "the judge or its rubric moved while the goal axes were measured",
+            ));
+        }
         let row = LiveAxesRow {
             plan_digest: plan_digest(&plan),
             goal_revision,
             proposal_digest,
             target_digest,
             evidence_digest: evidence_identity(&held_out).1,
+            judge,
             report: report.clone(),
         };
         let bytes = rmp_serde::to_vec_named(&row)
@@ -209,12 +229,17 @@ fn measure_with_owner(
 
 /// Whether the gate waits on a live measurement of `proposal`: its goal is
 /// joined to a project's goal record with primary axes, and no kept report
-/// binds both current bodies, the reserved evidence and the goal's plan and
-/// revision.
+/// binds both current bodies, the reserved evidence, the goal's plan and
+/// revision, and the judge and rubric `scorer` scores with now. A bound
+/// report that left a primary axis inconclusive is measured again.
 /// # Errors
-/// A proposal that is not an open optimizer proposal, an unreadable target or
-/// goal, or storage errors.
-pub fn skill_edit_needs_goal_axis_report(vault: &Vault, proposal: &EntityId) -> Result<bool> {
+/// A proposal that is not an open optimizer proposal, an unreadable target,
+/// goal or rubric, or storage errors.
+pub fn skill_edit_needs_goal_axis_report(
+    vault: &Vault,
+    proposal: &EntityId,
+    scorer: &dyn HeldOutReplayNotes,
+) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     let staged = vault.read_skill_record_in_txn(&txn, proposal)?;
     require_open_optimizer_proposal(&staged)?;
@@ -228,6 +253,7 @@ pub fn skill_edit_needs_goal_axis_report(vault: &Vault, proposal: &EntityId) -> 
     let proposal_digest = skill_body_binding_digest(&staged)?;
     let target_digest = skill_body_binding_digest(&current)?;
     let evidence_digest = evidence_identity(&held_out_receipts_in_txn(vault, &txn, &target)?).1;
+    let judge = JudgeBinding::in_txn(vault, &txn, scorer.judge_revision())?;
     Ok(!load(vault, &txn, proposal)?.is_some_and(|row| {
         binds(
             &row,
@@ -236,12 +262,13 @@ pub fn skill_edit_needs_goal_axis_report(vault: &Vault, proposal: &EntityId) -> 
             &proposal_digest,
             &target_digest,
             &evidence_digest,
-        )
+            &judge,
+        ) && inconclusive(&row).is_empty()
     }))
 }
 
 /// Whether `row` measured this exact basis on `plan`, under goal revision
-/// `goal_revision`.
+/// `goal_revision`, by `judge`.
 fn binds(
     row: &LiveAxesRow,
     plan: &GoalAxisPlan,
@@ -249,12 +276,24 @@ fn binds(
     proposal: &str,
     target: &str,
     evidence: &str,
+    judge: &JudgeBinding,
 ) -> bool {
     row.plan_digest == plan_digest(plan)
         && row.goal_revision == goal_revision
         && row.proposal_digest == proposal
         && row.target_digest == target
         && row.evidence_digest == evidence
+        && row.judge == *judge
+}
+
+/// The primary axes `row` measured online with no conclusive interval.
+fn inconclusive(row: &LiveAxesRow) -> BTreeSet<String> {
+    row.report
+        .online
+        .iter()
+        .filter(|axis| axis.outcome == OnlineAxisOutcome::Inconclusive)
+        .map(|axis| axis.axis.clone())
+        .collect()
 }
 
 /// The live report kept for `proposal`, if one was measured.
@@ -302,10 +341,11 @@ fn cost_scores(minutes: AxisScores) -> (f32, f32) {
 }
 
 /// The measured axes of a project-bound goal's vector, from the live report
-/// bound to this exact basis. The gate judges only the axes this leaves out,
-/// so nothing measured is judged again as a 0..1 score. Other goals measure
-/// nothing here and keep the replay. A failed offline preflight bound to the
-/// basis stands in for the report: its floors and costs are the measured axes.
+/// bound to this exact basis and to the judge `judge_revision` with the
+/// rubric in force. The gate judges only the axes this leaves out, so nothing
+/// measured is judged again as a 0..1 score. Other goals measure nothing here
+/// and keep the replay. A failed offline preflight bound to the basis stands
+/// in for the report: its floors and costs are the measured axes.
 /// # Errors
 /// The retryable outcome while neither a bound report nor a bound failed
 /// preflight exists, or a row naming an axis the goal lacks.
@@ -314,17 +354,18 @@ pub(super) fn live_axes(
     proposal: &EntityId,
     basis: &ScoredBasis,
     definition: &GoalDefinition,
-) -> Result<BTreeMap<String, GoalAxisScore>> {
-    let mut measured = BTreeMap::new();
+    judge_revision: &str,
+) -> Result<LiveAxes> {
     if definition.project.is_none() {
-        return Ok(measured);
+        return Ok(LiveAxes::default());
     }
     let plan = goal_axis_plan(definition, 0);
     if plan.online.is_empty() {
-        return Ok(measured);
+        return Ok(LiveAxes::default());
     }
     let txn = vault.store.env.read_txn()?;
     let row = load(vault, &txn, proposal)?;
+    let judge = JudgeBinding::in_txn(vault, &txn, judge_revision)?;
     drop(txn);
     let Some(row) = row.filter(|row| {
         binds(
@@ -334,13 +375,26 @@ pub(super) fn live_axes(
             &basis.proposal_digest,
             &basis.target_digest,
             &basis.evidence_digest,
+            &judge,
         )
     }) else {
         // A floor that regressed offline on this basis opened no trial: the
         // failed preflight is the evidence, and the floor rejects.
-        return super::preflight::failed_preflight_axes(vault, proposal, basis, definition)?.ok_or(
-            retry("a project goal's primary axes need a live measurement of this proposal first"),
-        );
+        let failed = super::preflight::failed_preflight_axes(
+            vault,
+            proposal,
+            basis,
+            definition,
+            judge_revision,
+        )?;
+        return failed
+            .map(|measured| LiveAxes {
+                measured,
+                inconclusive: BTreeSet::new(),
+            })
+            .ok_or(retry(
+                "a project goal's primary axes need a live measurement of this proposal first",
+            ));
     };
     let kind = |name: &str| {
         definition
@@ -349,9 +403,12 @@ pub(super) fn live_axes(
             .find(|axis| axis.name == name)
             .map(|axis| axis.kind)
     };
+    let mut measured = BTreeMap::new();
+    let unknown = inconclusive(&row);
     for axis in &row.report.online {
         let before = midpoint(axis.before);
         let after = match axis.outcome {
+            // Unknown, carried as a tie: the gate defers on it.
             OnlineAxisOutcome::Inconclusive => before,
             OnlineAxisOutcome::CandidateBetter | OnlineAxisOutcome::IncumbentBetter => {
                 midpoint(axis.after)
@@ -390,5 +447,8 @@ pub(super) fn live_axes(
             },
         );
     }
-    Ok(measured)
+    Ok(LiveAxes {
+        measured,
+        inconclusive: unknown,
+    })
 }
