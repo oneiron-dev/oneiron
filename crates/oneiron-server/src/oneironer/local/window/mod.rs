@@ -12,7 +12,9 @@
 //! and the current turn's byte range ([`Window::turn_range`]), and its
 //! spans come back through Candle's own containment and offset formula
 //! ([`Window::map_window_spans`]), so no runtime builds a window of its own
-//! ([`platform`]).
+//! ([`platform`]). A runtime that decodes in this process, as the Core ML
+//! worker does, reads the window's token ids ([`Window::ids`]) and decodes
+//! its own logits with this module's decode.
 
 use oneiron::memory::extraction::{EncoderInput, EncoderMessage, SpeakerRole};
 use tokenizers::{Encoding, Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
@@ -20,7 +22,9 @@ use tokenizers::{Encoding, Tokenizer, TruncationDirection, TruncationParams, Tru
 mod ner;
 mod platform;
 
-pub(super) use ner::{CharacterFeatures, Characters, DecodeLayers, Named, decode_ner};
+pub(in crate::oneironer) use ner::{
+    CharacterFeatures, Characters, DecodeLayers, Named, decode_ner,
+};
 
 pub(in crate::oneironer) use ner::{CHAR_REFINE_K, CHAR_REFINE_TAU, ONEIRONER_DECODE_REVISION};
 

@@ -44,11 +44,16 @@ pub(super) struct OutSet {
 
 impl Carrier {
     /// Every set this end has to send now, kind by kind. A set the other end
-    /// deferred waits out its pacing first.
+    /// deferred waits out its pacing first. A backup kind waiting on a
+    /// backup label the session did not keep is not scanned, so its records
+    /// stay as they are until it goes.
     pub(super) fn outgoing(&mut self) -> anyhow::Result<Vec<OutSet>> {
         let mut sets = Vec::new();
         let now = Instant::now();
         for kind in VmOutboxKind::ALL {
+            if self.backup_waits(kind).is_some() {
+                continue;
+            }
             let root = match self.roots.open(kind) {
                 Ok(Some(root)) => root,
                 Ok(None) => continue,

@@ -13,6 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,
 };
@@ -20,6 +21,7 @@ use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_
 use crate::checkout::CheckoutLeaseAct;
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::error::Error;
 use crate::temporal::TimeRange;
 
 use super::connector::{BYOA_ATTEMPT_KIND, ByoaConnectorSpec, CliSandboxSpec};
@@ -103,6 +105,39 @@ pub(super) fn carry_staged_input(
         spec.staged_input = pin.cloned();
     }
     connector
+}
+
+/// The task a CLI seat is handed for a bound work whose task first landed
+/// as its staged job (FIX 7449): a pointer to the file the job is staged
+/// as, never the job's text.
+pub(super) fn staged_job_pointer(pin: &StagedInputPin) -> String {
+    format!(
+        "Your task is the JSON job in `{}` in the working directory. Read it first.",
+        pin.name
+    )
+}
+
+/// Whether `pin`'s job still reads back whole in `rtxn`, as a run would
+/// stage it: `false` for a pin that names no version of its own job, and
+/// for a version that is gone, erased, or not the bytes the pin names.
+///
+/// # Errors
+/// A store failure.
+pub(super) fn staged_input_readable_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    pin: &StagedInputPin,
+) -> ByoaResult<bool> {
+    let Ok((artifact_id, version)) = pinned_version(pin) else {
+        return Ok(false);
+    };
+    match vault.read_blob_artifact_version_in_txn(rtxn, &artifact_id, version) {
+        Ok(Some(job)) => {
+            Ok(job.len() as u64 == pin.len && *blake3::hash(&job).as_bytes() == pin.blake3)
+        }
+        Ok(None) | Err(Error::EntityNotFound) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn staged_input_artifact_id(digest: &[u8; 32]) -> ByoaResult<EntityId> {
