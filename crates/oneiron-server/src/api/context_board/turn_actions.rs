@@ -21,15 +21,16 @@ use crate::server::{SyncServer, blocking};
 const BOARD_MODEL_LOCALITY: ModelLocality = ModelLocality::ThirdParty;
 
 /// The board `action`'s reply reads for `query`, the user turn it answers,
-/// with `agent`, the answering agent's definition, shaping its recall. It
-/// is read as an off-device read is, and its rows meet the hold of a prompt
-/// that leaves the device. `None` when the action reads none.
+/// with `agent`, the answering agent's definition, shaping its recall, and
+/// what its context records keep of it (FIX 7145). It is read as an
+/// off-device read is, and its rows meet the hold of a prompt that leaves
+/// the device. `None` when the action reads none.
 pub(crate) async fn action_board(
     server: &Arc<SyncServer>,
     action: &TurnActionAttempt,
     agent: EntityId,
     query: &str,
-) -> Option<String> {
+) -> Option<(String, Option<super::ChatContextCapture>)> {
     let auth = blocking(|| requester_auth(server, action))?.at(CallerLocality::OffDevice);
     let prompt_for =
         crate::device_local::prompt_destination(auth.destination(), BOARD_MODEL_LOCALITY);
@@ -51,7 +52,7 @@ pub(crate) async fn action_board(
         &board.rows,
         board.block.as_bytes(),
     ) {
-        Ok(None) => Some(board.block),
+        Ok(None) => Some((board.block, board.context)),
         Ok(Some(hold)) => {
             tracing::info!(
                 reason = hold.reason(),

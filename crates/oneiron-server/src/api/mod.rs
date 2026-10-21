@@ -173,7 +173,7 @@ mod params;
 // `protocol::close_codes` posture.
 pub(crate) mod call_receipt;
 mod context_board;
-pub(crate) use context_board::action_board;
+pub(crate) use context_board::{action_board, freeze_chat_context, record_action_answer};
 #[allow(dead_code)]
 mod reactive;
 mod report;

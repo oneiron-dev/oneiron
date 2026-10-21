@@ -16,7 +16,9 @@
 //! On a host bound to its server, a slip-backed action also reads the
 //! vault's memory through a fresh context board, as a live chat turn does
 //! (FIX 6920): one request-only message right before the user turn the
-//! reply answers. Reading it never fails the action.
+//! reply answers. Reading it never fails the action. An answer that stood on
+//! it keeps its context records as a live turn's does (FIX 7145), after the
+//! answer is handed on.
 //!
 //! It wakes on the vault's post-commit attempt signal and once at start. An
 //! attempt claimed a second time was cut off when the process stopped under
@@ -37,12 +39,12 @@ use tokio::sync::{broadcast, watch};
 use super::payer_funding::room_launch_funding;
 use super::resident_craft::{join_craft, snapshot_craft_scoped};
 use super::{AiHandle, CHAT_ROLE};
-use crate::api::action_board;
 use crate::api::ai::chat::{
     Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, ChatReuse, TurnCredential, after_turn,
     begin_answer, chat_request, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint,
     text_message, turn_generate_pre, witness_turn,
 };
+use crate::api::{action_board, freeze_chat_context, record_action_answer};
 use crate::server::{SyncServer, blocking};
 
 const LEASE_OWNER: &str = "oneiron-server-turn-actions";
@@ -252,19 +254,27 @@ async fn act(
     };
     // A call its role does not admit with the board, first or with its
     // suffix, is admitted exactly as it always was.
-    let admitted = match board {
-        Some(board) => {
+    let (admitted, board_context) = match board {
+        Some((board, capture)) => {
             let mut framed = messages.clone();
             framed.insert(answers, text_message(LlmMessageRole::User, board));
-            request(framed).or_else(|_| {
-                tracing::info!(
-                    "a turn action's call was not admitted with its context board; it goes without it"
-                );
-                request(messages)
-            })?
+            match request(framed) {
+                Ok(admitted) => (admitted, capture),
+                Err(_) => {
+                    tracing::info!(
+                        "a turn action's call was not admitted with its context board; it goes without it"
+                    );
+                    (request(messages)?, None)
+                }
+            }
         }
-        None => request(messages)?,
+        None => (request(messages)?, None),
     };
+    // FIX 7145: what the admitted board showed, frozen against the call it
+    // rides in.
+    let board_context =
+        board_context.map(|capture| freeze_chat_context(capture, &admitted.request));
+    let prefix_reused = matches!(reuse, ChatReuse::Reused(_));
     // A missing, stale or refused breakpoint leaves the action as it always
     // ran; a kept one is sent first, with this call behind it.
     let (admitted, today, breakpoint) = match reuse {
@@ -349,6 +359,18 @@ async fn act(
         | AnswerRefused::NotAdmitted(reason) => reason,
     })?;
     let answering = after_turn(Arc::clone(vault), generating, answering);
+    // FIX 7145: the answer's context records, kept once it is handed on.
+    let answering = match server.and_then(Weak::upgrade) {
+        Some(server) => record_action_answer(
+            server,
+            board_context,
+            context.agent,
+            WriteActor::new(actor, class),
+            prefix_reused,
+            answering,
+        ),
+        None => answering,
+    };
     drop(answering.subscription);
     let outcome = answering
         .outcome

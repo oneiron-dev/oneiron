@@ -1,8 +1,9 @@
-//! What a live chat answer's context leaves on record (FIX 6921): the emit
-//! receipt `ai.reply` keeps, and the answering agent's board history for the
-//! answer's TURN. Both are taken from the board the turn's call was admitted
-//! with, captured from the same render that produced its frame, and frozen
-//! once the call is admitted. Neither gates the answer: the saved outcome is
+//! What a chat answer's context leaves on record (FIX 6921), a live turn's
+//! or a queued Continue or Retry's (FIX 7145): the emit receipt `ai.reply`
+//! keeps, and the answering agent's board history for the answer's TURN.
+//! Both are taken from the board the turn's call was admitted with,
+//! captured from the same render that produced its frame, and frozen once
+//! the call is admitted. Neither gates the answer: the saved outcome is
 //! handed on first, as it ended, and the two records are written after it,
 //! off the runtime, each on its own. A record that cannot be kept is logged
 //! and the answer stands as saved. A turn that keeps no durable record keeps
@@ -16,10 +17,12 @@ use oneiron::memory::ReadMode;
 use oneiron::pipeline::ResolvedWorldAuthority;
 use oneiron::prompt::{PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, PromptRecompileStamp};
 use oneiron::receipt::ContextReceiptFields;
+use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::session_lifecycle::SessionKey;
 use oneiron::task_verb::verb_hook_boundary;
 use oneiron::{
-    EdgeActorClass, EntityId, LlmMessageRole, LlmRequest, MemoriesSection, Vault, WriteActor,
+    EdgeActorClass, EdgeKind, EntityId, LlmMessageRole, LlmRequest, MemoriesSection, Vault,
+    WriteActor,
 };
 
 use crate::api::ai::chat::Answering;
@@ -68,7 +71,21 @@ struct Answered {
     agent: EntityId,
     /// The requester the turn was written for.
     caller: WriteActor,
-    session_key: SessionKey,
+    /// `None` for a queued turn action's, which answers in no sitting.
+    session_key: Option<SessionKey>,
+}
+
+/// The answer the records wait for, before its TURN may be known.
+#[derive(Clone, Copy)]
+struct Awaited {
+    /// `None` for a queued action's: its saved MESSAGE names it.
+    turn: Option<EntityId>,
+    agent: EntityId,
+    caller: WriteActor,
+    session_key: Option<SessionKey>,
+    /// Whether the board rode only in the call a reused prefix falls back
+    /// to, so only that call's answer stood on it.
+    fallback_only: bool,
 }
 
 /// The capture of one rendered board, read as `auth` read it. Pure: it
@@ -230,6 +247,47 @@ pub(crate) fn record_chat_answer(
     session_key: SessionKey,
     answering: Answering,
 ) -> Answering {
+    let awaited = Awaited {
+        turn: Some(turn),
+        agent,
+        caller,
+        session_key: Some(session_key),
+        fallback_only: false,
+    };
+    keep_once_answered(server, context, awaited, answering)
+}
+
+/// A queued Continue or Retry's answer (FIX 7145), handed on as it ends;
+/// then, when it saved text as `agent`'s message, its context records are
+/// kept as a live turn's are, for the TURN that MESSAGE lies in. Beside a
+/// `reused` prefix the board rode only in the call it falls back to, so
+/// only that call's answer keeps them.
+pub(crate) fn record_action_answer(
+    server: Arc<SyncServer>,
+    context: Option<FrozenChatContext>,
+    agent: EntityId,
+    caller: WriteActor,
+    reused: bool,
+    answering: Answering,
+) -> Answering {
+    let awaited = Awaited {
+        turn: None,
+        agent,
+        caller,
+        session_key: None,
+        fallback_only: reused,
+    };
+    keep_once_answered(server, context, awaited, answering)
+}
+
+/// Hands `answering`'s outcome on as it ends, then keeps the records of an
+/// answer `awaited` saved, off the runtime.
+fn keep_once_answered(
+    server: Arc<SyncServer>,
+    context: Option<FrozenChatContext>,
+    awaited: Awaited,
+    answering: Answering,
+) -> Answering {
     let Some(context) = context else {
         return answering;
     };
@@ -238,12 +296,7 @@ pub(crate) fn record_chat_answer(
         subscription,
         outcome,
     } = answering;
-    let answered = Answered {
-        turn,
-        agent,
-        caller,
-        session_key,
-    };
+    let message = handle.message_id();
     let (finished, forwarded) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         let Ok(ended) = outcome.await else {
@@ -252,8 +305,9 @@ pub(crate) fn record_chat_answer(
         let saved = ended
             .saved
             .as_ref()
-            .is_some_and(|saved| saved.actor == agent && saved.message_id == handle.message_id());
-        let text = (saved && !ended.text.is_empty()).then(|| ended.text.clone());
+            .is_some_and(|saved| saved.actor == awaited.agent && saved.message_id == message);
+        let stood = !awaited.fallback_only || ended.fell_back;
+        let text = (saved && stood && !ended.text.is_empty()).then(|| ended.text.clone());
         // The outcome goes on as it ended, before any record is read or
         // written; a caller that went away stops neither.
         let _ = finished.send(ended);
@@ -261,7 +315,9 @@ pub(crate) fn record_chat_answer(
             return;
         };
         let kept = tokio::task::spawn_blocking(move || {
-            keep_chat_answer(&server, &context, answered, &text);
+            if let Some(answered) = answered_turn(server.vault(), awaited, message) {
+                keep_chat_answer(&server, &context, answered, &text);
+            }
         })
         .await;
         if let Err(error) = kept {
@@ -272,6 +328,42 @@ pub(crate) fn record_chat_answer(
         handle,
         subscription,
         outcome: forwarded,
+    }
+}
+
+/// The answer `awaited` names: the TURN it opened, or else the one its saved
+/// `message` is part of, in a short read of its own. `None`, logged, when
+/// that MESSAGE is part of no one TURN.
+fn answered_turn(vault: &Vault, awaited: Awaited, message: EntityId) -> Option<Answered> {
+    let turn = match awaited.turn {
+        Some(turn) => turn,
+        None => match vault
+            .targets(&message, EdgeKind::PartOf, Some(ENTITY_TYPE_TURN))
+            .as_deref()
+        {
+            Ok([turn]) => *turn,
+            _ => {
+                tracing::warn!(
+                    "a turn action's answer lies in no one TURN; it keeps no context records"
+                );
+                return None;
+            }
+        },
+    };
+    Some(Answered {
+        turn,
+        agent: awaited.agent,
+        caller: awaited.caller,
+        session_key: awaited.session_key,
+    })
+}
+
+/// The answering agent's own memory, in the answer's sitting when it has one.
+fn agent_memory(vault: &Vault, answered: Answered) -> oneiron::memory::Memory<'_> {
+    let memory = vault.memory(answered.agent, EdgeActorClass::Agent);
+    match answered.session_key {
+        Some(key) => memory.with_session(key),
+        None => memory,
     }
 }
 
@@ -364,9 +456,7 @@ fn keep_chat_emit(
         .record_container(answered.turn)
         .map_err(|_| "the answer's conversation was not read")?
         .ok_or("the answer lies in no conversation")?;
-    vault
-        .memory(answered.agent, EdgeActorClass::Agent)
-        .with_session(answered.session_key)
+    agent_memory(vault, answered)
         .record_context_reply(
             conversation,
             fields,
@@ -397,8 +487,9 @@ fn keep_chat_history(
         return Ok(());
     }
     let requester = requester_read(vault, capture, answered.caller)?;
-    // Each persisted row at the exact revision the board served it at; a
-    // revision this capture does not know is never read LIVE in its place.
+    // Each persisted row at the exact revision the board served it at. One
+    // the board read LIVE names none, and the history records its live
+    // revision, so it is checked LIVE, as it will be read (FIX 7144).
     let mut points = Vec::new();
     for row in capture.memories.iter().flat_map(|memories| &memories.rows) {
         if row.tier == MemoryTier::IndexOnly {
@@ -407,10 +498,10 @@ fn keep_chat_history(
         let Ok(id) = EntityId::from_hex(&row.id) else {
             continue;
         };
-        let revision = row
-            .source_revision
-            .ok_or("a captured row's served revision is unknown")?;
-        points.push(PointRead::id(id).at(ReadMode::Pinned(revision)));
+        points.push(match row.source_revision {
+            Some(revision) => PointRead::id(id).at(ReadMode::Pinned(revision)),
+            None => PointRead::id(id),
+        });
     }
     // The world authority is recorded whole or not at all.
     let worlds: BTreeSet<EntityId> = [
@@ -430,9 +521,7 @@ fn keep_chat_history(
         }
         points.push(PointRead::id(*world));
     }
-    let key = vault
-        .memory(answered.agent, EdgeActorClass::Agent)
-        .with_session(answered.session_key)
+    let key = agent_memory(vault, answered)
         .read_key()
         .map_err(|_| "the answering agent's read was not resolved")?;
     let author = vault.scoped_read(key);
