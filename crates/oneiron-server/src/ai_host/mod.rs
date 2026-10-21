@@ -52,6 +52,7 @@ pub(crate) mod payer_funding;
 mod policy;
 mod question_timer;
 pub(crate) mod resident_craft;
+pub mod scoped_child;
 pub(crate) mod self_heal_detectors;
 pub mod shadow_runner;
 mod skill_author;

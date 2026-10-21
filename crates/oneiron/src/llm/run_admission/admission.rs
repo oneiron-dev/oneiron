@@ -295,6 +295,26 @@ impl RunAdmission {
         reason
     }
 
+    /// Records that a call of planned child `child` was answered by `ran`,
+    /// not by `planned`, the model its plan picked (FIX 2310): the host could
+    /// not route the pick, and its own model ran. Written once that answer
+    /// came back; a call no model answered keeps its own rows as evidence.
+    pub fn record_plan_model_substituted(
+        &self,
+        child: crate::EntityId,
+        planned: ModelId,
+        ran: ModelId,
+    ) {
+        self.inner.record(
+            self.revision(),
+            RunEvent::PlanModelSubstituted {
+                child,
+                planned,
+                ran,
+            },
+        );
+    }
+
     /// Admits one model call: the declared teachers, the host's offer, the
     /// key's rung, then the run's line and, for a host-paid offer, the
     /// vault's allocation.
