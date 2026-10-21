@@ -487,8 +487,9 @@ fn keep_chat_history(
         return Ok(());
     }
     let requester = requester_read(vault, capture, answered.caller)?;
-    // Each persisted row at the exact revision the board served it at; a
-    // revision this capture does not know is never read LIVE in its place.
+    // Each persisted row at the exact revision the board served it at. One
+    // the board read LIVE names none, and the history records its live
+    // revision, so it is checked LIVE, as it will be read (FIX 7144).
     let mut points = Vec::new();
     for row in capture.memories.iter().flat_map(|memories| &memories.rows) {
         if row.tier == MemoryTier::IndexOnly {
@@ -497,10 +498,10 @@ fn keep_chat_history(
         let Ok(id) = EntityId::from_hex(&row.id) else {
             continue;
         };
-        let revision = row
-            .source_revision
-            .ok_or("a captured row's served revision is unknown")?;
-        points.push(PointRead::id(id).at(ReadMode::Pinned(revision)));
+        points.push(match row.source_revision {
+            Some(revision) => PointRead::id(id).at(ReadMode::Pinned(revision)),
+            None => PointRead::id(id),
+        });
     }
     // The world authority is recorded whole or not at all.
     let worlds: BTreeSet<EntityId> = [
