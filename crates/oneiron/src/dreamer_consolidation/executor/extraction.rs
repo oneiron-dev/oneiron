@@ -1,18 +1,18 @@
-//! Extraction request/response projection for one admitted branch, and the
-//! typed pack that decides which listed claim each candidate corrects.
+//! Extraction request/response projection for one admitted branch; the
+//! typed pack that decides which listed claim each candidate corrects is
+//! its `corrections` child.
 
-use super::decisions::{id_options, named_id};
 use super::*;
 use crate::dreamer_consolidation::call_labels::CallLabelMap;
 use crate::dreamer_consolidation::extracted_people::MintNamespace;
 use crate::dreamer_consolidation::provenance::KeptDecision;
-use crate::llm::decision::AnswerContract;
-use crate::llm::decision::catalogue::CORRECTION;
 
 mod cited;
+mod corrections;
 mod quote_binding;
 mod wire;
 pub(in crate::dreamer_consolidation) use cited::CitationCheck;
+use corrections::Correction;
 pub(in crate::dreamer_consolidation) use wire::{
     CallPins, ExtractedPerson, ExtractionReply, ReplyContext, check_extraction_reply,
     contract_reply, decode_ref, disagreeing_child_hashes, extraction_reply, reply_json,
@@ -136,97 +136,6 @@ impl ConsolidationExecutor<'_> {
         Ok((parsed, skipped))
     }
 
-    /// Which listed claim each parsed candidate corrects, in order. A
-    /// candidate whose subject the listing shows claims about, that its child
-    /// may read and write, gets one question over `none` and those claims'
-    /// ids, all candidates in one pack; one with no such claim, or no answer,
-    /// corrects none. The pack's ask goes to its candidates' project's route,
-    /// or to the owners when they span projects. None when the step trapped.
-    pub(in crate::dreamer_consolidation) async fn decide_corrections(
-        &self,
-        step_ctx: &DurableStepContext<'_>,
-        pass: &crate::dreamer_wake::WakePassDeadline,
-        parsed: &[ParsedCandidate<'_>],
-        resources: &BranchResources<'_>,
-        charges: &mut StepChargeTally,
-    ) -> DurableStepResult<Option<Vec<Correction>>> {
-        let mut questions = Vec::new();
-        // Each candidate's question indexes, and every listed claim asked about.
-        let mut asks: Vec<Vec<usize>> = vec![Vec::new(); parsed.len()];
-        let mut listed: Vec<(EntityId, EntityId, &str, &str)> = Vec::new();
-        let pins = resources.pins();
-        for (position, candidate) in parsed.iter().enumerate() {
-            let shown: Vec<_> = pins
-                .correctable(candidate.subject, candidate.scope)
-                .collect();
-            let ids: Vec<EntityId> = shown.iter().map(|(claim, ..)| *claim).collect();
-            for (group, options) in id_options(&ids, true).into_iter().enumerate() {
-                let (position_key, group_key) = (position.to_string(), group.to_string());
-                asks[position].push(questions.len());
-                questions.push(CORRECTION.question(
-                    &[position_key.as_bytes(), group_key.as_bytes()],
-                    self.decisions.correction_wording.clone(),
-                    AnswerContract::Choice { options },
-                )?);
-            }
-            for (claim, predicate, value) in shown {
-                if !listed.iter().any(|row| row.0 == claim) {
-                    listed.push((claim, candidate.subject, predicate, value));
-                }
-            }
-        }
-        if questions.is_empty() {
-            return Ok(Some(parsed.iter().map(|_| Correction::none()).collect()));
-        }
-        let state = correction_state(parsed, &asks, &questions, &listed);
-        let asked: Vec<&ParsedCandidate<'_>> = parsed
-            .iter()
-            .zip(&asks)
-            .filter(|(_, asked)| !asked.is_empty())
-            .map(|(candidate, _)| candidate)
-            .collect();
-        // The pack reads the listed claims and candidates drawn from these
-        // turns. The turns also keep one extraction's asks apart from
-        // another's over the same listing.
-        let mut evidence: Vec<EntityId> = listed.iter().map(|row| row.0).collect();
-        let mut turns: Vec<EntityId> = asked
-            .iter()
-            .flat_map(|candidate| candidate.evidence_turn_refs.iter().copied())
-            .filter(|turn| !evidence.contains(turn))
-            .collect();
-        turns.sort_unstable();
-        turns.dedup();
-        evidence.extend(turns);
-        let project = asked
-            .first()
-            .map(|candidate| candidate.project)
-            .filter(|project| asked.iter().all(|candidate| candidate.project == *project));
-        let to = self.ask_route(step_ctx.vault, project)?;
-        // The pack is the attempt's one correction read: the attempt names it.
-        let key =
-            EntityId::from_bytes(*step_ctx.attempt_id.as_bytes()).map_err(crate::Error::from)?;
-        let Some(decided) = self
-            .decide(
-                step_ctx, pass, resources, &to, key, &questions, &evidence, &state, charges,
-            )
-            .await?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(
-            asks.iter()
-                .map(|asked| {
-                    let decisions: Vec<KeptDecision> =
-                        asked.iter().map(|&at| decided[at].clone()).collect();
-                    Correction {
-                        corrects: named_id(decisions.iter().collect()),
-                        decisions,
-                    }
-                })
-                .collect(),
-        ))
-    }
-
     /// The candidates the branch takes, each bound to the claim it corrects
     /// and keeping its correction's decisions, and whether any candidate waits
     /// on a role's answer: that one is not taken this pass.
@@ -273,28 +182,6 @@ impl ConsolidationExecutor<'_> {
     }
 }
 
-/// What the correction pack decided for one parsed candidate: the listed
-/// claim it corrects, if any, and its questions' decisions.
-pub(in crate::dreamer_consolidation) struct Correction {
-    corrects: Option<EntityId>,
-    decisions: Vec<KeptDecision>,
-}
-
-impl Correction {
-    /// A candidate the pack asked nothing about: it corrects none.
-    fn none() -> Self {
-        Self {
-            corrects: None,
-            decisions: Vec::new(),
-        }
-    }
-
-    /// Whether one of its questions waits on a role's answer.
-    fn waiting(&self) -> bool {
-        self.decisions.iter().any(KeptDecision::waiting)
-    }
-}
-
 /// One extracted candidate as the reply states it, its evidence checked
 /// against its child's scope.
 pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
@@ -310,60 +197,6 @@ pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
     evidence_turn_refs: Vec<EntityId>,
     project: EntityId,
     prospective_queries: Vec<String>,
-}
-
-/// The candidates and the listed claims as the correction pack reads them:
-/// each candidate with its questions, subject, predicate and value, each
-/// value as its JSON text, cut shorter (halving) until the whole fits.
-fn correction_state(
-    parsed: &[ParsedCandidate<'_>],
-    asks: &[Vec<usize>],
-    questions: &[crate::llm::decision::DecisionQuestion],
-    listed: &[(EntityId, EntityId, &str, &str)],
-) -> serde_json::Value {
-    let values: Vec<String> = parsed
-        .iter()
-        .map(|candidate| candidate.value.to_string())
-        .collect();
-    let longest = values
-        .iter()
-        .map(String::len)
-        .chain(listed.iter().map(|row| row.3.len()))
-        .max()
-        .unwrap_or(0);
-    crate::llm::decision::fit_state(longest, |cut| {
-        let candidates: Vec<serde_json::Value> = parsed
-            .iter()
-            .zip(asks)
-            .zip(&values)
-            .filter(|((_, asked), _)| !asked.is_empty())
-            .map(|((candidate, asked), value)| {
-                let ids: Vec<String> = asked.iter().map(|&at| questions[at].id.to_hex()).collect();
-                serde_json::json!({
-                    "questions": ids,
-                    "subject": candidate.subject.to_hex(),
-                    "predicate": candidate.predicate,
-                    "value": crate::llm::decision::cut_text(value, cut),
-                })
-            })
-            .collect();
-        let listed: Vec<serde_json::Value> = listed
-            .iter()
-            .map(|(claim, subject, predicate, value)| {
-                serde_json::json!({
-                    "claim": claim.to_hex(),
-                    "subject": subject.to_hex(),
-                    "predicate": predicate,
-                    "value": crate::llm::decision::cut_text(value, cut),
-                })
-            })
-            .collect();
-        serde_json::json!({
-            "candidates": candidates,
-            "listed": listed,
-            "cut_at_bytes": cut,
-        })
-    })
 }
 
 /// One parsed candidate as the branch takes it, or why it is not written.
