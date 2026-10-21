@@ -45,11 +45,50 @@ pub(crate) struct CoreRejectWidenResponse {
 }
 
 /// The holder a widen answer runs as, and the verified slip it answers on.
-type WidenHolder = (
+type SlipHolder = (
     oneiron::EntityId,
     String,
     Option<oneiron::authority::VerifiedSlip>,
 );
+
+/// Who answers a widen: a holder by its own slip or attestation, or a
+/// self-hosted root or the dev mode acting as the owner its host action
+/// names (FIX 8156), whose guard every acting transaction rechecks.
+enum WidenHolder {
+    Person(SlipHolder),
+    Host(Box<oneiron::authority::HostActionAuthority>),
+}
+
+impl WidenHolder {
+    /// The owner proof this holder answers with, and the slip it answers on.
+    fn owner(
+        &self,
+        server: &SyncServer,
+    ) -> Result<
+        (
+            oneiron::consent::AuthenticatedOwner,
+            Option<&oneiron::authority::VerifiedSlip>,
+        ),
+        ApiError,
+    > {
+        let refused = |_| ApiError::forbidden_scope("consent:widen:holder");
+        let vault = server.vault();
+        match self {
+            Self::Person((actor, principal, credential)) => Ok((
+                vault
+                    .authenticate_owner(*actor, principal, true, GateDecisionId::now())
+                    .map_err(refused)?,
+                credential.as_ref(),
+            )),
+            Self::Host(action) => Ok((
+                vault
+                    .authenticate_host_action_owner(action, GateDecisionId::now())
+                    .map_err(refused)?,
+                None,
+            )),
+        }
+    }
+}
 
 /// The holder a widen answer runs as. The caller's own human slip comes
 /// first, on every vault: the same logged slip door unmanaged HTTP and local
@@ -57,8 +96,11 @@ type WidenHolder = (
 /// its supervisor attested for it (`ManagedOwnerAction`), as himself while he
 /// is the vault's live owner, else the holder a supervisor-MACed account
 /// action names (`ManagedWidenHolder`), with no other caller built: a host
-/// root by itself is never a holder. A dedicated action beside a caller
-/// naming another person is refused.
+/// root by itself is never a holder there. A caller with no holder slip of
+/// its own that is a self-hosted root or the dev mode answers as the owner
+/// its host action names (FIX 8156); a hosted operator's root stays
+/// refused. A dedicated action beside a caller naming another person is
+/// refused.
 async fn widen_holder(
     parts: &Parts,
     server: &SyncServer,
@@ -71,23 +113,33 @@ async fn widen_holder(
         && crate::auth::attested_owner(&parts.extensions, server).is_none()
     {
         let actor = managed_holder.ok_or_else(refused)?;
-        return Ok((actor, actor.to_hex(), None));
+        return Ok(WidenHolder::Person((actor, actor.to_hex(), None)));
     }
     let auth = CoreAuth::for_request(parts, server).await?;
     auth.require(CoreScope::Auth)?;
-    let (actor, principal, credential) = if let Some(owner) = auth.managed_owner() {
-        (owner, owner.to_hex(), None)
+    let holder = if let Some(owner) = auth.managed_owner() {
+        WidenHolder::Person((owner, owner.to_hex(), None))
     } else {
-        slip_holder(&auth)?
+        match slip_holder(&auth) {
+            Ok(holder) => WidenHolder::Person(holder),
+            Err(no_slip) => match crate::api::host_action::host_action_of(server.vault(), &auth) {
+                Some(Ok(action)) => WidenHolder::Host(Box::new(action)),
+                _ => return Err(no_slip),
+            },
+        }
+    };
+    let actor = match &holder {
+        WidenHolder::Person((actor, ..)) => *actor,
+        WidenHolder::Host(action) => action.actor().entity_ref(),
     };
     if managed_holder.is_some_and(|holder| holder != actor) {
         return Err(refused().into());
     }
-    Ok((actor, principal, credential))
+    Ok(holder)
 }
 
 /// The human holder a caller's own logged slip names, with that slip.
-fn slip_holder(auth: &CoreAuth) -> Result<WidenHolder, EnvelopedApiError> {
+fn slip_holder(auth: &CoreAuth) -> Result<SlipHolder, EnvelopedApiError> {
     let credential = auth
         .verified_slip()
         .filter(|_| auth.actor_class() == Some("human"))
@@ -125,7 +177,7 @@ pub(crate) async fn core_accept_widen(
     managed_holder: Option<Extension<ManagedWidenHolder>>,
     payload: Result<Json<CoreAcceptWidenRequest>, JsonRejection>,
 ) -> Result<Json<CoreAcceptWidenResponse>, EnvelopedApiError> {
-    let (actor, principal, credential) = widen_holder(&parts, &server, managed_holder).await?;
+    let holder = widen_holder(&parts, &server, managed_holder).await?;
     let req = json_payload(payload)?;
     let delta = req.expected_delta.as_bytes().chunks_exact(2);
     if !delta.remainder().is_empty() {
@@ -143,11 +195,8 @@ pub(crate) async fn core_accept_widen(
         })
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| ApiError::bad_request("invalid expected_delta", Some("expected_delta")))?;
-    let owner = server
-        .vault()
-        .authenticate_owner(actor, &principal, true, GateDecisionId::now())
-        .map_err(|_| ApiError::forbidden_scope("consent:widen:holder"))?;
-    let result = match &credential {
+    let (owner, credential) = holder.owner(&server)?;
+    let result = match credential {
         Some(credential) => {
             server
                 .vault()
@@ -178,13 +227,10 @@ pub(crate) async fn core_reject_widen(
     managed_holder: Option<Extension<ManagedWidenHolder>>,
     payload: Result<Json<CoreRejectWidenRequest>, JsonRejection>,
 ) -> Result<Json<CoreRejectWidenResponse>, EnvelopedApiError> {
-    let (actor, principal, credential) = widen_holder(&parts, &server, managed_holder).await?;
+    let holder = widen_holder(&parts, &server, managed_holder).await?;
     let req = json_payload(payload)?;
-    let owner = server
-        .vault()
-        .authenticate_owner(actor, &principal, true, GateDecisionId::now())
-        .map_err(|_| ApiError::forbidden_scope("consent:widen:holder"))?;
-    let result = match &credential {
+    let (owner, credential) = holder.owner(&server)?;
+    let result = match credential {
         Some(credential) => {
             server
                 .vault()

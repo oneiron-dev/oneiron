@@ -701,6 +701,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT {
             return self.run_sieve_rungs(attempt, ctx).await;
         }
+        if attempt.status.payload.attempt_type == crate::dreamer_wake::follower::FOLLOWER_ATTEMPT {
+            return self.run_follower(attempt, ctx).await;
+        }
         // The session-end miner carries its own pinned `{session}` payload,
         // not a partition map. Reject a supplied branch scope explicitly,
         // then let the miner's codec validate the exact session ref below.

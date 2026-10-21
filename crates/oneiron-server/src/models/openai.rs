@@ -78,9 +78,12 @@ impl OpenAiCompatTransport for OpenAiHttp {
                 }
                 _ => None,
             };
-            carry_served_model(reply.status, &mut reply.body, target.as_deref());
-            carry_timings(&mut reply.body);
-            carry_chat_evidence(&mut reply.body, answering.as_ref());
+            carry_reply_evidence(
+                reply.status,
+                &mut reply.body,
+                target.as_deref(),
+                answering.as_ref(),
+            );
             Ok(OpenAiCompatHttpResponse {
                 status: reply.status,
                 headers: reply.headers,
@@ -169,6 +172,21 @@ pub(super) fn carry_served_model(status: u16, body: &mut JsonValue, target: Opti
     record_served_model(body.get_mut("usage"), served);
 }
 
+/// A whole chat reply as the adapter reads it, plain or brokered: the model
+/// it names as a label of the configured `target`, the engine's timings and
+/// the llama.cpp receipt `answering`, its own alias's identity, names (FIX
+/// 7895, 8314), all in its usage.
+pub(super) fn carry_reply_evidence(
+    status: u16,
+    body: &mut JsonValue,
+    target: Option<&str>,
+    answering: Option<&AnsweringIdentity>,
+) {
+    carry_served_model(status, body, target);
+    carry_timings(body);
+    carry_chat_evidence(body, answering);
+}
+
 /// Copies an engine's own timings into its usage.
 ///
 /// llama-server and the house EXL3 server report their prefill and decode
@@ -194,8 +212,11 @@ fn carry_timings(body: &mut JsonValue) {
 /// stream, with the counts it would read as zero anyway. A stream cut before
 /// any finish gets nothing, so it still ends as a cut.
 ///
-/// The cache record's identity is what this stream's own last `model` names
-/// (FIX 7895), never another stream's or a discovered one.
+/// The receipt's identity is what this stream's own last `model` names
+/// (FIX 7895), never another stream's or a discovered one. Each chunk with a
+/// usage object, a usage-only last chunk included, gets the llama.cpp
+/// receipt its timings or that alias give (FIX 8314); the adapter keeps the
+/// last usage it reads, so a request's receipt is read once.
 struct Frames<'a, S> {
     transport: &'a OpenAiHttp,
     /// The configured wire id the call sent.
@@ -225,8 +246,13 @@ where
         };
         let Some(item) = item else {
             self.closed = true;
-            let carrier = self.carrier()?;
-            return Some((Ok(carrier), self));
+            let mut carrier = self.carrier()?;
+            let answering = self
+                .transport
+                .answering(self.answering.as_deref(), self.target.as_deref())
+                .await;
+            carry_chat_evidence(&mut carrier, answering.as_ref());
+            return Some((Ok(OpenAiCompatStreamFrame::Chunk(carrier)), self));
         };
         let frame = self.frame(item).await;
         Some((frame, self))
@@ -258,10 +284,8 @@ where
                             .any(|choice| !choice["finish_reason"].is_null())
                     });
                 carry_timings(&mut chunk);
-                // Only a chunk with timings and usage gets a cache record.
-                let answering = if chunk.get("timings").is_some()
-                    && chunk.get("usage").is_some_and(JsonValue::is_object)
-                {
+                // Only a chunk with usage gets a receipt.
+                let answering = if chunk.get("usage").is_some_and(JsonValue::is_object) {
                     self.transport
                         .answering(self.answering.as_deref(), self.target.as_deref())
                         .await
@@ -275,14 +299,14 @@ where
         }
     }
 
-    fn carrier(&self) -> Option<OpenAiCompatStreamFrame> {
+    /// A finished stream's usage chunk when it sent none, carrying the
+    /// served model; its caller adds the receipt its launch alias gives.
+    fn carrier(&self) -> Option<JsonValue> {
         if !self.finished || self.saw_usage {
             return None;
         }
         let mut usage = JsonValue::Object(serde_json::Map::new());
         record_served_model(Some(&mut usage), Some(self.served.clone()?));
-        Some(OpenAiCompatStreamFrame::Chunk(
-            serde_json::json!({"choices": [], "usage": usage}),
-        ))
+        Some(serde_json::json!({"choices": [], "usage": usage}))
     }
 }
