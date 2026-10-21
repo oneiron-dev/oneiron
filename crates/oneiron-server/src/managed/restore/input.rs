@@ -20,7 +20,7 @@ const SLHDSA_PUBLIC_LEN: usize = 64;
 /// Whether `fd` is the read end (`write` false) or the write end of a pipe,
 /// told from its type and access mode before it is taken over; why not
 /// otherwise. A file, socket or tty never carries the restore.
-pub(super) fn pipe_end(fd: RawFd, write: bool) -> Result<(), &'static str> {
+pub(in crate::managed) fn pipe_end(fd: RawFd, write: bool) -> Result<(), &'static str> {
     use rustix::fs::{FileType, OFlags};
     if fd < 0 {
         return Err("it is not a file descriptor");
@@ -43,7 +43,7 @@ pub(super) fn pipe_end(fd: RawFd, write: bool) -> Result<(), &'static str> {
 }
 
 /// Takes `fd` over, once, after [`pipe_end`] proved it.
-pub(super) fn adopt(fd: RawFd) -> std::fs::File {
+pub(in crate::managed) fn adopt(fd: RawFd) -> std::fs::File {
     // SAFETY: `fd` arrives on argv from the supervisor and is this process's
     // to own; [`pipe_end`] proved it open, and nothing else takes it over.
     // The `File` closes it on drop, which is the EOF its reader waits for.

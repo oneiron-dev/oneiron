@@ -9,15 +9,17 @@
 //! The credential frame and the ready byte ride the vsock boot channel.
 //! The outbox carrier is the root companion's, beside the engine
 //! (`vm_outbox`); the engine only asks it its revision at boot and parks it
-//! around an idle report.
+//! around an idle report. A cold restore's start (FIX 6584) dials only its
+//! boot channel at first: its vsock ports and bridges are bound once the
+//! restore is kept, as a node's child binds its sockets only then.
 
-use super::args::ManagedArgs;
+use super::args::{ManagedArgs, ManagedStartMode};
 use super::listener::{ServeListener, bind_unix_socket};
 use super::state_serve::{ManagedShutdown, ManagedState};
 use crate::server::SyncServer;
 use oneiron_vault_contract::host::{Host, HostFuture, HostLimits};
 use oneiron_vault_contract::host_adapters::{
-    FirecrackerGuest, GuestLink, MicroVmHost, VsockListener, VsockStream,
+    EdgeBackend, FirecrackerGuest, GuestLink, MicroVmHost, VsockListener, VsockStream,
 };
 use oneiron_vault_contract::vm::{
     VM_ARTIFACT_PORT, VM_CTL_PORT, VM_HOST_CID, VM_LEDGER_PORT, VM_VOICE_PORT,
@@ -43,6 +45,8 @@ pub(super) struct VmGuestHost {
     shutdown: ManagedShutdown,
     /// The outbox carrier's revision its companion reported at boot.
     vm_outbox_revision: Option<u32>,
+    /// A cold restore's start whose bridges wait for the keep.
+    restoring: bool,
 }
 impl VmGuestHost {
     pub(super) fn new(args: &ManagedArgs, shutdown: ManagedShutdown) -> Self {
@@ -54,6 +58,7 @@ impl VmGuestHost {
             artifact_socket: args.artifact_socket.clone(),
             shutdown,
             vm_outbox_revision: super::vm_outbox::companion_revision(),
+            restoring: matches!(args.start_mode, ManagedStartMode::Restore { .. }),
         }
     }
     /// The outbox carrier's revision, when the image's companion answered at
@@ -72,14 +77,18 @@ impl VmGuestHost {
         spawn_inbound(VsockListener::bind(VM_VOICE_PORT)?, socket);
         Ok(())
     }
-}
-
-impl Host for VmGuestHost {
-    type Listener = ServeListener;
-    /// Boots the boot channel, binds the vsock ports and starts the bridges.
-    /// The unix sockets they reach are bound later in the managed order; the
-    /// host routes nothing before the ready byte, so no bridge dials early.
-    fn listener(&mut self) -> anyhow::Result<ServeListener> {
+    /// A cold restore's bridges, once its vault is kept; nothing for a
+    /// start that opened, whose bridges are bound already.
+    pub(super) fn activate_service_bridges_after_keep(&mut self) -> anyhow::Result<()> {
+        if std::mem::take(&mut self.restoring) {
+            self.bind_bridges()?;
+        }
+        Ok(())
+    }
+    /// Binds the vsock ports and starts the bridges. The unix sockets they
+    /// reach are bound later in the managed order; the host routes nothing
+    /// before the ready byte, so no bridge dials early.
+    fn bind_bridges(&mut self) -> anyhow::Result<()> {
         let http = self.inner.listener()?;
         spawn_inbound(http, self.http_socket.clone());
         spawn_inbound(VsockListener::bind(VM_CTL_PORT)?, self.ctl_socket.clone());
@@ -88,6 +97,20 @@ impl Host for VmGuestHost {
         }
         let ledger = bind_unix_socket(&self.hypnos_socket)?;
         spawn_outbound(ledger, VM_LEDGER_PORT);
+        Ok(())
+    }
+}
+
+impl Host for VmGuestHost {
+    type Listener = ServeListener;
+    /// Boots the boot channel, then binds the vsock ports and starts the
+    /// bridges, or for a cold restore's start leaves them for the keep.
+    fn listener(&mut self) -> anyhow::Result<ServeListener> {
+        if self.restoring {
+            self.inner.0.boot()?;
+        } else {
+            self.bind_bridges()?;
+        }
         Ok(ServeListener::UnixPath(self.http_socket.clone()))
     }
     fn ready(&mut self) -> anyhow::Result<()> {
