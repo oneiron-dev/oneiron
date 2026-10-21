@@ -12,6 +12,7 @@ mod program_step;
 mod read_worlds;
 mod reader_spawn;
 mod repo;
+mod repo_sources;
 mod session_verbs;
 mod summarize;
 mod team_submit;
@@ -153,6 +154,11 @@ pub struct HostSelfDispatcher<'a> {
     /// [`Self::with_caller_task`] sets it, as the host binds the run. No
     /// guest call reaches it.
     caller_task: bool,
+    /// The host's review policy for the run's repo proposals (FIX 6867):
+    /// only [`Self::with_repo_review_policy`] binds it. No guest call
+    /// reaches it.
+    pub(super) repo_review_policy:
+        Option<std::sync::Arc<dyn crate::memory::repo_doors::RepoReviewPolicy>>,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -281,6 +287,7 @@ impl<'a> HostSelfDispatcher<'a> {
             program: None,
             read_worlds: Cell::default(),
             caller_task: false,
+            repo_review_policy: None,
         })
     }
 

@@ -9,21 +9,25 @@
 //! A free-time try is the attempt an item binding is keyed by or names, or a
 //! cycle's item names; a try queued under a cycle's own run, the exact run
 //! its items queue under (`store::free_time_item_run_id`), never a guess at a
-//! run's name; or a retry whose lineage, walked through `retry_of` as a
-//! binding is looked up, reaches one of those. The live rows and the image's
-//! name them alike. Only keys come back from here: nothing is queued. The
-//! same keys carry each try's resident stamp and run-tree row, which go with
-//! the try (`recovery::checkpoint::restore_class`).
+//! run's name; or a retry whose lineage, walked whole through `retry_of`
+//! (a visited set stops a cycle, never a count: FIX 7006), reaches one of
+//! those. The live rows and the image's name them alike. Only keys come
+//! back from here: nothing is queued. The same keys carry each try's
+//! resident stamp and run-tree row, which go with the try
+//! (`recovery::checkpoint::restore_class`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::items::MAX_RETRY_DEPTH;
 use super::{CYCLE, FreeTimeCycle, ITEM};
 use crate::attempt_queue::{AttemptId, AttemptRecord, decode_record};
 use crate::{Result, Vault};
 
 /// One attempt row's run, and the try it retries.
 type Link = (Option<String>, Option<[u8; 16]>);
+
+/// A retry lineage of more tries than this is logged, once per restore
+/// (FIX 7006). It is walked whole all the same: this bounds nothing.
+const LONG_RETRY_LINEAGE: usize = 64;
 
 /// What the free-time tries are found by, over the live vault and the image.
 #[derive(Default)]
@@ -69,35 +73,67 @@ impl Found {
                 .filter(|(_, link)| link.0.as_ref().is_some_and(|run| runs.contains(run)))
                 .map(|(id, _)| *id),
         );
-        let retries: Vec<[u8; 16]> = links
-            .keys()
-            .copied()
-            .filter(|id| retries_a_try(&links, &bound, *id))
-            .collect();
+        let (retries, longest) = retries_of_tries(&links, &bound);
+        if longest > LONG_RETRY_LINEAGE {
+            tracing::warn!(
+                kind = "retry_lineage_long",
+                length = longest,
+                "retry lineage unusually long"
+            );
+        }
         bound.extend(retries);
         bound.into_iter().map(|id| id.to_vec()).collect()
     }
 }
 
-/// Whether the lineage of the try `id`, walked through `retry_of` within the
-/// bound a binding is looked up along, reaches one of `tries`. A chain past
-/// the bound reaches none.
-fn retries_a_try(
+/// Each try of `links` whose lineage, walked through `retry_of` to its end,
+/// reaches one of `tries`, and the most tries one lineage walked. A visited
+/// set stops a cycle, never a count (FIX 7006): a lineage of any length
+/// reaches what it reaches. Each try's walk is kept, so a long chain is
+/// walked once, not once per try on it.
+fn retries_of_tries(
     links: &BTreeMap<[u8; 16], Link>,
     tries: &BTreeSet<[u8; 16]>,
-    id: [u8; 16],
-) -> bool {
-    let mut cursor = id;
-    for _ in 0..MAX_RETRY_DEPTH {
-        if tries.contains(&cursor) {
-            return true;
-        }
-        match links.get(&cursor).and_then(|link| link.1) {
-            Some(previous) => cursor = previous,
-            None => return false,
+) -> (Vec<[u8; 16]>, usize) {
+    // Per try walked: whether its lineage reaches one of `tries`, and how
+    // many tries that lineage holds from it.
+    let mut walked: BTreeMap<[u8; 16], (bool, usize)> = BTreeMap::new();
+    for &start in links.keys() {
+        let mut path = Vec::new();
+        let mut visited = BTreeSet::new();
+        let mut cursor = start;
+        let (reaches, tail) = loop {
+            if let Some(&known) = walked.get(&cursor) {
+                break known;
+            }
+            // Back on its own path: a cycle, which reaches nothing more.
+            if !visited.insert(cursor) {
+                break (false, 0);
+            }
+            path.push(cursor);
+            if tries.contains(&cursor) {
+                break (true, 0);
+            }
+            match links.get(&cursor).and_then(|link| link.1) {
+                Some(previous) => cursor = previous,
+                None => break (false, 0),
+            }
+        };
+        for (hops, id) in path.into_iter().rev().enumerate() {
+            walked.insert(id, (reaches, tail + hops + 1));
         }
     }
-    false
+    let longest = walked
+        .values()
+        .map(|(_, length)| *length)
+        .max()
+        .unwrap_or(0);
+    let retries = links
+        .keys()
+        .copied()
+        .filter(|id| walked.get(id).is_some_and(|(reaches, _)| *reaches))
+        .collect();
+    (retries, longest)
 }
 
 /// The `job_records` keys a restore over `vault` keeps as `vault` holds them

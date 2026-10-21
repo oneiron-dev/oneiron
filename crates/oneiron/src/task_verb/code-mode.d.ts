@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1130 code-mode rows (1097 host rows, 33 run rows), 3819 declarations.
-// Replies: 1010 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1142 code-mode rows (1104 host rows, 38 run rows), 3851 declarations.
+// Replies: 1022 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2181,10 +2181,30 @@ declare namespace Sdk {
   type OriginMirrorLfsObject = { oid: string; size: number };
   type OriginMirrorReadiness = { state: "ready" } | { state: "not_ready"; reason: OriginMirrorNotReadyReason; objects: OriginMirrorLfsObject[]; omitted_objects: number };
   type OriginMirrorRun = { at: number; refs: number; deleted: number; failure?: string | null; readiness?: OriginMirrorReadiness | null };
-  type OriginMirrorTarget = { repo: string; url: string; secret_ref: string; user: string; every_secs: number; last?: OriginMirrorRun | null; pushed: string[] };
+  type OriginMirrorSyncStrategy = "ask_me" | "schedule";
+  type OriginMirrorTarget = { repo: string; url: string; secret_ref: string; user: string; every_secs: number; last?: OriginMirrorRun | null; pushed: string[]; sync_strategy?: OriginMirrorSyncStrategy; strategy_revision?: number; target_generation?: EntityId | null };
   type OriginMirrorView = { repo: string; mirror?: OriginMirrorTarget | null };
-  type OriginMirrorSetRequest = { repo: string; url: string; secret_ref: string; user?: string | null; every_secs: number };
+  type OriginMirrorSetRequest = { repo: string; url: string; secret_ref: string; user?: string | null; every_secs: number; sync_strategy?: OriginMirrorSyncStrategy | null };
+  type OriginMirrorStrategyRequest = { repo: string; sync_strategy: OriginMirrorSyncStrategy };
   type OriginMirrorCleared = { repo: string; cleared: boolean };
+  type OriginPublishForce = "fast_forward" | "rewrite";
+  type OriginPublishRequestInput = { repo: string; ref_name: string; commit: string; force?: OriginPublishForce; idempotency_key?: string | null; expires_at?: number | null; code_repo?: EntityId | null };
+  type OriginPublishDestination = { url: string; user: string; secret_ref: string; target_generation?: EntityId | null };
+  type OriginPublishRemote = { state: "absent" } | { state: "at"; commit: string };
+  type OriginPublishLfsBytes = "not_sent";
+  type OriginPublishReview = { digest: string; subtracted?: string | null; commits: number; entries: number; paths: number; pages: number; lfs_bytes: OriginPublishLfsBytes };
+  type OriginPublishState = "pending" | "approved" | "dispatching" | "published" | "observed_published" | "refused" | "cancelled" | "expired";
+  type OriginPublishActorClass = "human" | "agent" | "system";
+  type OriginPublishAuthority = { kind: "owner" } | { kind: "grant"; grant: EntityId };
+  type OriginPublishAct = { actor?: EntityId | null; class: OriginPublishActorClass; authority: OriginPublishAuthority; at: number };
+  type OriginPublishRefusalReason = "destination_changed" | "remote_moved" | "rejected" | "outcome_unknown" | "authority_changed" | "objects_missing";
+  type OriginPublishRefusal = { reason: OriginPublishRefusalReason; observed?: OriginPublishRemote | null; changed_fields: string[]; detail?: string | null };
+  type OriginPublishRequestView = { request_id: EntityId; repo: string; repo_id: EntityId; destination: OriginPublishDestination; ref_name: string; commit: string; expected_remote: OriginPublishRemote; force: OriginPublishForce; code_repo?: EntityId | null; idempotency_key?: string | null; expires_at?: number | null; review: OriginPublishReview; state: OriginPublishState; requested: OriginPublishAct; approved?: OriginPublishAct | null; dispatched?: OriginPublishAct | null; refusal?: OriginPublishRefusal | null; created_at: number; finished_at?: number | null };
+  type OriginPublishReviewRequest = { repo: string; request_id: EntityId; page: number; code_repo?: EntityId | null };
+  type OriginPublishReviewItem = { kind: "commit"; commit: string; parents: string[] } | { kind: "path"; status: string; mode: string; object?: string | null; path: string };
+  type OriginPublishReviewView = { request_id: EntityId; digest: string; page: number; pages: number; items: OriginPublishReviewItem[] };
+  type OriginPublishIdRequest = { repo: string; request_id: EntityId; code_repo?: EntityId | null };
+  type OriginPublishApproveRequest = { repo: string; request_id: EntityId; review_digest: string; code_repo?: EntityId | null };
   type OriginResidence = "local-vault" | "cloud-vault";
   type OriginAuthority = { epoch: number; residence: OriginResidence; writer: string; mirror: boolean };
   type OriginAuthorityView = { repo: string; host?: string | null; authority?: OriginAuthority | null };
@@ -2506,7 +2526,7 @@ declare namespace Sdk {
   type TaskAskLaunchHold = { launch_ref: EntityId; plan_digest: string; surface_ref: string; denied: boolean };
   type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[]; launch?: TaskAskLaunchHold | null };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
-  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch" | "RepoSnapshotsGet" | "RepoSnapshotsRead" | "RepoSymbolsDefinitions" | "RepoViewsGet" | "RepoViewsRead" | "RepoMergeQueueObserve" | "RepoSnapshotsIngest" | "RepoWorkOpen";
+  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch" | "RepoSnapshotsGet" | "RepoSnapshotsRead" | "RepoSymbolsDefinitions" | "RepoViewsGet" | "RepoViewsRead" | "RepoMergeQueueObserve" | "RepoSnapshotsIngest" | "RepoWorkOpen" | "RepoSymbolsDeclare" | "RepoSymbolsRenew" | "RepoSymbolsRelease" | "RepoProposalSubmit" | "RepoMergeQueueEnqueue";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait } | { WorldPrivacyReady: WorldPrivacyWaitResult };
@@ -3378,7 +3398,7 @@ declare namespace Sdk {
   type TurnProgramAdmissionRequest = { turn_ref: string; registration?: string | null; cursor?: string | null; limit?: number | null };
   type ProgramAdmissionOutcomeView = { kind: "queued"; root: string; code_run: string } | { kind: "refused"; reason: string };
   type TurnProgramAdmissionItem = { admission: string; registration: EntityId; actor: EntityId; actor_class: string; conversation?: EntityId | null; landed_at?: number | null; revision: string; definition?: ProgramRecipePin | null; sealed_scope?: string | null; gate_receipt: string; outcome: ProgramAdmissionOutcomeView; decided_at: number; withheld: string[] };
-  type TurnProgramAdmissionView = { turn_ref: string; admissions: TurnProgramAdmissionItem[]; next_cursor?: string | null };
+  type TurnProgramAdmissionView = { turn_ref: string; admissions: TurnProgramAdmissionItem[]; next_cursor?: string | null; undecodable_admission_rows_examined: number };
   type ProgramRunRequest = { root: string; cursor?: string | null; limit?: number | null };
   type ProgramTryView = { attempt: string; status: string; result_ref?: string | null; created_at: number; updated_at: number };
   type ProgramQueueView = { attempt: string; state: string; lease_generation: number; result_ref?: string | null; updated_at: number };
@@ -3389,7 +3409,7 @@ declare namespace Sdk {
   type ProgramStepIssueView = { kind: "model"; occurrence: number; request_hash: string } | { kind: "write"; step_start: number; ordinal: number; receipt: string; call_digest: string } | { kind: "outbound"; intent: string; call_seq: number };
   type ProgramStepState = "issued" | "settled" | "uncertain";
   type ProgramStepView = { step_ref: string; attempt: string; issue: ProgramStepIssueView; state: ProgramStepState; result_digest?: string | null; uncertain?: string | null; at: number };
-  type ProgramRunView = { root: string; admission: string; actor: EntityId; actor_class: string; code_run: string; definition?: ProgramRecipePin | null; root_created_at?: number | null; tries: ProgramTryView[]; queue?: ProgramQueueView | null; held?: ProgramHeldView | null; run?: ProgramRunStateView | null; steps: ProgramStepView[]; undecodable_steps: number; next_cursor?: string | null; withheld: string[] };
+  type ProgramRunView = { root: string; admission: string; actor: EntityId; actor_class: string; code_run: string; definition?: ProgramRecipePin | null; root_created_at?: number | null; tries: ProgramTryView[]; queue?: ProgramQueueView | null; held?: ProgramHeldView | null; held_by_try: ProgramHeldView[]; run?: ProgramRunStateView | null; steps: ProgramStepView[]; undecodable_steps: number; next_cursor?: string | null; withheld: string[] };
   type SettledProgramStepRequest = { root: string; step_ref: string };
   type ProgramResultAvailability = "readable" | "withheld" | "absent";
   type SettledProgramStepView = { root: string; attempt: string; actor: EntityId; code_run: string; step_ref: string; issue: ProgramStepIssueView; settled_at: number; result_digest: string; result_ref?: string | null; availability: ProgramResultAvailability; model_step?: SettledStepView | null; body_base64?: string | null };
@@ -3803,11 +3823,23 @@ declare namespace Sdk {
   type RepoViewsReadInput = { work: EntityId; path: string };
   type RepoViewsReadOutput = { work: EntityId; path: string; bytes: number[]; sha256: string };
   type RepoMergeQueueObserveInput = { work: EntityId };
-  type RepoMergeQueueObserveOutput = { work: EntityId; repo: EntityId; ref: string; base_green: string; head_commit: string; green_commit: string; green_moved: boolean };
+  type RepoQueueEntryView = { batch: string; work: EntityId; proposals: EntityId[]; declaration?: EntityId | null; state: BatchState; base_green: string; expected_head: string; landed_head?: string | null; blockers: EntityId[] };
+  type RepoMergeQueueObserveOutput = { work: EntityId; repo: EntityId; ref: string; base_green: string; head_commit: string; green_commit: string; green_moved: boolean; entries: RepoQueueEntryView[] };
   type RepoSnapshotsIngestInput = { repo: EntityId; ref: string };
   type RepoSnapshotsIngestOutput = RepoSnapshotView;
   type RepoWorkOpenInput = { repo: EntityId; ref: string };
   type RepoWorkOpenOutput = RepoWorkView;
+  type RepoSymbolsDeclareInput = { work: EntityId; symbols: EntityId[]; ttl_seconds: number };
+  type RepoSymbolDeclarationView = { work: EntityId; declaration: EntityId; task: EntityId; symbols: EntityId[]; expires_at: number; held: boolean; blockers: EntityId[] };
+  type RepoSymbolsDeclareOutput = RepoSymbolDeclarationView;
+  type RepoSymbolsRenewInput = { work: EntityId; declaration: EntityId };
+  type RepoSymbolsRenewOutput = RepoSymbolDeclarationView;
+  type RepoSymbolsReleaseInput = { work: EntityId; declaration: EntityId };
+  type RepoSymbolsReleaseOutput = { work: EntityId; declaration: EntityId; task: EntityId };
+  type RepoProposalSubmitInput = { work: EntityId; path: string; content: number[]; message: string; declaration?: EntityId | null };
+  type RepoProposalSubmitOutput = { proposal: EntityId; work: EntityId; path: string; base_green: string; base_snapshot: string; session: EntityId; provenance_claim: EntityId; declaration?: EntityId | null; status: RepoProposalStatus };
+  type RepoMergeQueueEnqueueInput = { work: EntityId; proposals: EntityId[]; declaration?: EntityId | null };
+  type RepoMergeQueueEnqueueOutput = RepoQueueEntryView;
   type LeaderAdviceInput = { top?: number | null };
   type LeaderPatternInput = { skill: string };
   type LeaderPatternFile = { path: string; text: string };
@@ -4088,15 +4120,20 @@ declare namespace self {
   };
   const code: {
     merge_queue: {
+      enqueue(input: Sdk.RepoMergeQueueEnqueueInput): Promise<Sdk.RepoMergeQueueEnqueueOutput | StoredResult>;
       observe(input: Sdk.RepoMergeQueueObserveInput): Promise<Sdk.RepoMergeQueueObserveOutput | StoredResult>;
     };
+    proposal_submit(input: Sdk.RepoProposalSubmitInput): Promise<Sdk.RepoProposalSubmitOutput | StoredResult>;
     snapshots: {
       get(input: Sdk.RepoSnapshotsGetInput): Promise<Sdk.RepoSnapshotsGetOutput | StoredResult>;
       ingest(input: Sdk.RepoSnapshotsIngestInput): Promise<Sdk.RepoSnapshotsIngestOutput | StoredResult>;
       read(input: Sdk.RepoSnapshotsReadInput): Promise<Sdk.RepoSnapshotsReadOutput | StoredResult>;
     };
     symbols: {
+      declare(input: Sdk.RepoSymbolsDeclareInput): Promise<Sdk.RepoSymbolsDeclareOutput | StoredResult>;
       definitions(input: Sdk.RepoSymbolsDefinitionsInput): Promise<Sdk.RepoSymbolsDefinitionsOutput | StoredResult>;
+      release(input: Sdk.RepoSymbolsReleaseInput): Promise<Sdk.RepoSymbolsReleaseOutput | StoredResult>;
+      renew(input: Sdk.RepoSymbolsRenewInput): Promise<Sdk.RepoSymbolsRenewOutput | StoredResult>;
     };
     views: {
       get(input: Sdk.RepoViewsGetInput): Promise<Sdk.RepoViewsGetOutput | StoredResult>;
@@ -4852,13 +4889,29 @@ declare const vault: Sdk.VaultHost & {
         clear(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorCleared | StoredResult>;
         /** Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential. */
         get(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorView | StoredResult>;
-        /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them. */
+        /** Push one origin's published Git refs to its schedule mirror now, recording the real outcome (ask_me refuses publish_request_required); refs pushed are not readiness, which names the LFS objects the history needs. */
         push(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorRun | StoredResult>;
-        /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write. */
+        /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me unless named; the same URL keeps its own); the token binding is checked in the setup write. */
         set(input: Sdk.OriginMirrorSetRequest): Promise<Sdk.OriginMirrorTarget | StoredResult>;
+        /** Set one served origin mirror's sync strategy: ask_me sends nothing until an exact publish request is approved, schedule pushes every published ref on its cadence; it changes only the strategy and its revision. */
+        strategy(input: Sdk.OriginMirrorStrategyRequest): Promise<Sdk.OriginMirrorTarget | StoredResult>;
       };
       /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
       publications(input: Sdk.OriginPublicationsRequest): Promise<Sdk.OriginPublicationsView | StoredResult>;
+      publish: {
+        /** Approve one pending exact publish request by naming its review digest, as the owner or under one Grant covering the branch and every reviewed path; no second approval is asked. */
+        approve(input: Sdk.OriginPublishApproveRequest): Promise<Sdk.OriginPublishRequestView | StoredResult>;
+        /** Cancel one pending or approved exact publish request; a request whose push is in flight or that already settled stays as it is. */
+        cancel(input: Sdk.OriginPublishIdRequest): Promise<Sdk.OriginPublishRequestView | StoredResult>;
+        /** Push one approved exact publish request's commit to its branch once, leased on the recorded tip; an unproven outcome settles from the mirror and is never sent again. */
+        execute(input: Sdk.OriginPublishIdRequest): Promise<Sdk.OriginPublishRequestView | StoredResult>;
+        /** Read one exact publish request: its tuple, review digest, state, acts and the typed refusal that ended it, if one did. */
+        get(input: Sdk.OriginPublishIdRequest): Promise<Sdk.OriginPublishRequestView | StoredResult>;
+        /** Ask to publish one exact commit to one branch of a served origin's mirror, once: the request leases the push on the branch tip an authenticated read saw and records a full-ancestry review of what it would expose. */
+        request(input: Sdk.OriginPublishRequestInput): Promise<Sdk.OriginPublishRequestView | StoredResult>;
+        /** Read one page of an exact publish request's full-ancestry review: each commit the push would expose, with its parents, and every path, mode and object those commits introduce. */
+        review(input: Sdk.OriginPublishReviewRequest): Promise<Sdk.OriginPublishReviewView | StoredResult>;
+      };
       /** Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused. */
       register(input: Sdk.OriginRegisterRequest): Promise<Sdk.OriginRegistered | StoredResult>;
     };

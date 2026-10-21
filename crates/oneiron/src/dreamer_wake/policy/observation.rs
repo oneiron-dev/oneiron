@@ -148,75 +148,94 @@ fn idle_curator_slot_in_txn(
     Ok(Some((slot, state_in_txn(vault, txn)?)))
 }
 
-/// Whether this check asks for the idle curator pass (OF-191): the host is
-/// idle as the policy's own checks read it (compute available, no turn or
-/// background work running, the idle floor passed) and the curator's cadence
-/// slot is one the idle trigger has not asked for yet; the slot is taken in
-/// this commit. A future idle timer armed alone asks for nothing. A read that
-/// fails asks for nothing and never fails the check.
+/// The curator cadence slot this check asks the idle curator pass for
+/// (OF-191), if any: the host is idle as the policy's own checks read it
+/// (compute available, no turn or background work running, the idle floor
+/// passed) and the slot is one the idle trigger has not asked for yet. The
+/// slot is taken only once the pass is queued ([`take_idle_curator_slot`]),
+/// so a queue that fails leaves the ask for the next check (FIX 5909). A
+/// future idle timer armed alone asks for nothing. A read that fails asks
+/// for nothing and never fails the check.
 fn idle_curator_due_in_txn(
     vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     idle: WakeIdleState,
     now: u64,
-) -> Result<bool> {
+) -> Option<u64> {
     if !idle.compute_available || idle.running_turns || idle.live_background_work {
-        return Ok(false);
+        return None;
     }
-    let (slot, mut state) = match idle_curator_slot_in_txn(vault, txn, idle, now) {
+    let (slot, state) = match idle_curator_slot_in_txn(vault, txn, idle, now) {
         Ok(Some(read)) => read,
-        Ok(None) => return Ok(false),
+        Ok(None) => return None,
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), "the idle curator check did not read");
-            return Ok(false);
+            return None;
         }
     };
-    if state.idle_curator_slot == Some(slot) {
-        return Ok(false);
-    }
-    state.idle_curator_slot = Some(slot);
-    STATE
-        .put(&vault.store, txn, &(), &state)
-        .map_err(|e| row_error(e, invalid()))?;
-    Ok(true)
+    (state.idle_curator_slot != Some(slot)).then_some(slot)
+}
+
+/// Takes `slot` for the idle trigger once its curator pass is queued, or
+/// already was (FIX 5909); a slot past it, taken meanwhile, stands.
+fn take_idle_curator_slot(vault: &Vault, slot: u64) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        let mut state = state_in_txn(vault, txn)?;
+        if state.idle_curator_slot.is_some_and(|taken| taken >= slot) {
+            return Ok(());
+        }
+        state.idle_curator_slot = Some(slot);
+        STATE
+            .put(&vault.store, txn, &(), &state)
+            .map_err(|e| row_error(e, invalid()))
+    })
 }
 
 impl Vault {
     /// Re-evaluate against the writer snapshot and co-commit wake + cursor.
     /// A competing check cannot enqueue again for the same rows. Once that
     /// commit lands, an idle host asks for the curator pass (OF-191), once
-    /// per rubric cadence; a pass that does not queue is logged and never
-    /// fails the check.
+    /// per rubric cadence: its slot is taken once the pass is queued, so a
+    /// pass that does not queue is logged, never fails the check, and is
+    /// asked again by the next (FIX 5909).
     pub fn enqueue_due_dreamer_wake(
         &self,
         idle: WakeIdleState,
         now: u64,
     ) -> Result<WakePolicyOutcome> {
         let (outcome, curator) = self.enqueue_due_dreamer_wake_once(idle, now)?;
-        if curator {
-            match self.schedule_curator(
+        if let Some(slot) = curator {
+            let queued = self.schedule_curator(
                 crate::dreamer_runner::maintenance::CuratorTrigger::Idle,
                 now,
-            ) {
+            );
+            match queued {
                 Ok(EnqueueDreamerAttemptOutcome::Enqueued(_)) => {
                     self.store.notify_attempt_observers();
                 }
                 Ok(EnqueueDreamerAttemptOutcome::Existing(_)) => {}
                 Err(error) => {
                     tracing::warn!(kind = ?error.kind(), "the idle curator pass was not queued");
+                    return Ok(outcome);
                 }
+            }
+            if let Err(error) = take_idle_curator_slot(self, slot) {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "the idle curator slot was not taken; the next check asks again"
+                );
             }
         }
         Ok(outcome)
     }
 
-    /// One check's commit: the wake and its cursor, and whether it took an
-    /// idle curator slot.
+    /// One check's commit: the wake and its cursor, and the idle curator
+    /// slot it asks for, if any.
     fn enqueue_due_dreamer_wake_once(
         &self,
         idle: WakeIdleState,
         now: u64,
-    ) -> Result<(WakePolicyOutcome, bool)> {
+    ) -> Result<(WakePolicyOutcome, Option<u64>)> {
         self.with_write_txn_grouped(|txn| {
             let outcome = (|| -> Result<WakePolicyOutcome> {
                 if !idle.compute_available || idle.running_turns || idle.live_background_work {
@@ -347,7 +366,7 @@ impl Vault {
                 })
             })()?;
             record_in_txn(self, txn, idle, now, &outcome)?;
-            let curator = idle_curator_due_in_txn(self, txn, idle, now)?;
+            let curator = idle_curator_due_in_txn(self, txn, idle, now);
             Ok((outcome, curator))
         })
     }

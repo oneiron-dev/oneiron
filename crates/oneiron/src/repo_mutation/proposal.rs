@@ -33,9 +33,12 @@ use serde::{Deserialize, Serialize};
 pub(super) mod actor_erase;
 mod guards;
 mod review;
+mod run;
 pub mod settlement;
+mod submit;
 pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
+use submit::ProposalBase;
 
 /// Durable per-operation code proposal. Key: id16.
 pub(super) const PROPOSAL: SideTable<EntityId, RepoProposal, crate::side_table::Named> =
@@ -116,6 +119,12 @@ pub struct RepoProposal {
     pub settlement: Option<settlement::RepoProposalSettlement>,
     pub operation_seq: Option<u64>,
     pub created_at: u64,
+    /// The leased run it came from, bound before its first write (FIX
+    /// 6867); `None` for a trusted or owner proposal.
+    pub run: Option<crate::memory::repo_doors::RepoRunStamp>,
+    /// The class a host stamped beside the actor (FIX 6867); `None` keeps
+    /// the trusted and owner ingress as it is.
+    pub actor_class: Option<u8>,
 }
 
 /// The complete reviewed operation identity. File bytes remain on `RepoProposal`.
@@ -203,6 +212,7 @@ impl RepoProposal {
             },
         )
         .with_recorded_actor(self.actor.id())
+        .with_recorded_class(self.recorded_class()?)
         .with_session_id(self.session)
         .with_provenance_claim_id(self.provenance_claim)
         .with_op_provenance(self.op_provenance.clone()))
@@ -249,7 +259,14 @@ impl Vault {
         request: RepoMutationRequest,
         catalog: LensCatalog,
     ) -> Result<RepoProposal> {
-        self.propose_repo_mutation_checked(request, catalog, |_| Ok(()))
+        let proposed = self.propose_repo_mutation_checked::<std::convert::Infallible>(
+            request,
+            catalog,
+            ProposalBase::CurrentCheckout,
+            None,
+            |_| Ok(Ok(())),
+        )?;
+        Ok(proposed.unwrap_or_else(|never| match never {}))
     }
 
     /// Owner doors revalidate their proof in the proposal's writer, not in a
@@ -270,212 +287,33 @@ impl Vault {
             request.op_provenance.intent,
             request.op_provenance.substrate_ref,
         ];
-        self.propose_repo_mutation_checked(request, catalog, |txn| {
-            guards::require_repo_artifact_in_txn(self, txn, repository, &repository_ref)?;
-            if let Some(session) = session {
-                guards::require_entity_kind(
-                    self,
-                    txn,
-                    session,
-                    crate::registry::ENTITY_TYPE_SESSION,
-                )?;
-            }
-            for id in sources.into_iter().flatten() {
-                if !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &id)? {
-                    return Err(Error::EntityNotFound);
-                }
-            }
-            if Some(owner.revalidate_in_txn(self, txn)?) != actor {
-                return Err(invalid("proposal actor is not the authenticated owner"));
-            }
-            Ok(())
-        })
-    }
-
-    fn propose_repo_mutation_checked(
-        &self,
-        request: RepoMutationRequest,
-        catalog: LensCatalog,
-        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
-    ) -> Result<RepoProposal> {
-        validate_operation(&request.operation)?;
-        super::trailer::validate_repo_provenance_request(self, &request)?;
-        let (Some(actor), Some(session), Some(provenance_claim)) = (
-            request.actor_id,
-            request.session_id,
-            request.provenance_claim_id,
-        ) else {
-            return Err(invalid(
-                "code proposal requires actor, session and provenance",
-            ));
-        };
-        request.op_provenance.validate()?;
-        let op_provenance = request.op_provenance.clone();
-        let (path, content, message, operation) = match request.operation {
-            RepoMutationOperation::CommitFile {
-                path,
-                content,
-                message,
-            } => (path, content, message, RepoProposalOperation::CommitFile),
-            RepoMutationOperation::ResolveConflictFile {
-                branch_subject,
-                open_conflict_claim_id,
-                branch_name,
-                path,
-                content,
-                message,
-            } => (
-                path,
-                content,
-                message,
-                RepoProposalOperation::ResolveConflictFile {
-                    branch_subject,
-                    open_conflict_claim_id,
-                    branch_name,
-                },
-            ),
-            _ => return Err(invalid("code proposal supports one file operation")),
-        };
-        if content.len() > 32 * 1024 * 1024 || catalog.lenses.is_empty() {
-            return Err(invalid(
-                "proposal requires bounded content and review lenses",
-            ));
-        }
-        // Empty triage validates the host's catalog without inventing a verdict.
-        triage_critiques(&catalog, &[], &[])?;
-        let repo_root = resolve_mutable_repo_root(&request.repo_ref)?;
-        let repo = admitted_repo_ref(&request.repo_ref, &repo_root)?;
-        let _guard = lock_repository(&git_common_dir(&repo_root)?)?;
-        self.recover_prepared_repo_mutations_locked(&repo, &repo_root)?;
-        let (fork, snapshot) = capture_repo_snapshot(self, &repo_root)?;
-        let pre_action = super::snapshot::decode_snapshot(&snapshot)?;
-        require_pinned_head(&repo, pre_action.head.as_deref())?;
-        admit_custody(
-            &SnapshotCustody::of(self, &repo_root)?,
-            &pre_action,
-            &path,
-            &content,
-            &message,
-        )?;
-        let row = RepoProposal {
-            id: EntityId::now(),
-            repo: repo.canonical(),
-            actor: actor_erase::ProposalActor::Actor(actor),
-            session,
-            provenance_claim,
-            op_provenance,
-            path,
-            content,
-            message,
-            operation,
-            merge_stack: None,
-            pre_action_fork_hash: fork,
+        let proposed = self.propose_repo_mutation_checked::<std::convert::Infallible>(
+            request,
             catalog,
-            critiques: Vec::new(),
-            status: RepoProposalStatus::Proposed,
-            settlement: None,
-            operation_seq: None,
-            created_at: now_millis() / 1000,
-        };
-        validate_conflict(self, &row, &repo_root)?;
-        let mut body = ClaimBody::new(
-            "repo.proposed_diff",
-            ClaimSubject::Entity(session),
-            Value::Map(vec![
-                (Value::from("actor"), Value::from(actor.to_hex())),
-                (Value::from("path"), Value::from(row.path.clone())),
-                (
-                    Value::from("operation"),
-                    Value::from(row.request()?.operation.kind()),
-                ),
-                (
-                    Value::from("operation_hash"),
-                    Value::Binary(
-                        blake3::hash(
-                            &rmp_serde::to_vec_named(&(
-                                &row.operation,
-                                &row.path,
-                                &row.content,
-                                &row.message,
-                            ))
-                            .map_err(|_| invalid("proposal operation encoding failed"))?,
-                        )
-                        .as_bytes()
-                        .to_vec(),
-                    ),
-                ),
-                (
-                    Value::from("content_hash"),
-                    Value::Binary(blake3::hash(&row.content).as_bytes().to_vec()),
-                ),
-                (
-                    Value::from("pre_action_fork_hash"),
-                    Value::Binary(fork.to_vec()),
-                ),
-            ]),
-            1.0,
-            ClaimApprovalStatus::Proposed,
-            ClaimLifecycleStatus::Active,
+            ProposalBase::CurrentCheckout,
+            None,
+            |txn| {
+                guards::require_repo_artifact_in_txn(self, txn, repository, &repository_ref)?;
+                if let Some(session) = session {
+                    guards::require_entity_kind(
+                        self,
+                        txn,
+                        session,
+                        crate::registry::ENTITY_TYPE_SESSION,
+                    )?;
+                }
+                for id in sources.into_iter().flatten() {
+                    if !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &id)? {
+                        return Err(Error::EntityNotFound);
+                    }
+                }
+                if Some(owner.revalidate_in_txn(self, txn)?) != actor {
+                    return Err(invalid("proposal actor is not the authenticated owner"));
+                }
+                Ok(Ok(()))
+            },
         )?;
-        body.source = Some(ClaimSource::Generated);
-        body.evidence = Some(Value::Map(vec![(
-            Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
-            Value::Binary(actor.as_bytes().to_vec()),
-        )]));
-        let session_claim_id = actor_erase::session_claim_id(session, row.id)?;
-        let mut session_claim = ClaimBody::new(
-            "repo.session",
-            ClaimSubject::Entity(session),
-            Value::Map(vec![
-                (Value::from("actor"), Value::from(actor.to_hex())),
-                (Value::from("session"), Value::from(session.to_hex())),
-                (
-                    Value::from("provenance_claim_id"),
-                    Value::from(provenance_claim.to_hex()),
-                ),
-            ]),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )?;
-        session_claim.source = Some(ClaimSource::Observed);
-        session_claim.scope = Some(Value::Map(vec![(
-            Value::from("sensitivity"),
-            Value::from("public"),
-        )]));
-        session_claim.evidence = body.evidence.clone();
-        let mut txn = self.store.env.write_txn()?;
-        check(&txn)?;
-        super::trailer::validate_repo_provenance_request_in_txn(self, &txn, &row.request()?)?;
-        validate_conflict_in_txn(self, &txn, &row)?;
-        if !crate::ports::EntityStoreRead::port_entity_present(
-            &self.store,
-            &txn,
-            &session_claim_id,
-        )? {
-            put_journal_claim(
-                self,
-                &mut txn,
-                session_claim_id,
-                Some(actor),
-                &session_claim,
-                row.created_at,
-            )?;
-        }
-        if !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &actor)? {
-            return Err(Error::EntityNotFound);
-        }
-        put_journal_claim(self, &mut txn, row.id, Some(actor), &body, row.created_at)?;
-        let snapshot_row = SNAPSHOT.decode_value(&snapshot)?;
-        SNAPSHOT.put(
-            &self.store,
-            &mut txn,
-            &repo_mutation_snapshot_key(fork),
-            &snapshot_row,
-        )?;
-        store(self, &mut txn, &row)?;
-        txn.commit()?;
-        Ok(row)
+        Ok(proposed.unwrap_or_else(|never| match never {}))
     }
     pub fn repo_proposal(&self, id: EntityId) -> Result<Option<RepoProposal>> {
         let txn = self.store.env.read_txn()?;
