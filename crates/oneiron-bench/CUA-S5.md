@@ -1,14 +1,14 @@
 # CUA S5: frozen drift and repair protocol
 
-This is an unavailable-transport implementation, not a collected benchmark.
-The CLI, frozen matrix, provenance checks, terminal rows, lifecycle handling,
-repair state machine and reports are implemented. The only shipped `Engine`
-adapter is `FixtureTransport`, which cannot dispatch on this head. It returns
-`fixture_transport_unavailable` without starting a server, guest or model.
-**It is not a working live replay/recovery backend.** FIX 8061 must supply the
-served dynamic-fixture integration and bind the protocol operations to PR1's
-served/fixture/checker/provider-gate lifecycle. Merely accepting a config key
-or removing the readiness check is not sufficient.
+This is harness source, not a collected benchmark. The frozen matrix,
+provenance checks, terminal rows, lifecycle handling and repair state machine
+are implemented. FIX 8061's engine forward now exists, and PR1 writes it with
+an empty egress allowlist. S5 checks the same frozen PUBLIC bind and validates
+reset entries through the shared virtual-origin helper. Its live adapter still
+needs the original admitted workflows' vault and attached-run continuity;
+`s5_original_workflow_vault_unavailable` names that separate gap. It never
+refiles an original under a replacement ID in a new scratch vault or substitutes
+a fresh solve for strict replay.
 
 ## Commands (Linux build/run hosts only)
 
@@ -155,10 +155,11 @@ invented. `cua report` understands S5 archives and preserves missing assignments
 
 Remaining engine/integration facts:
 
-- FIX 8061: `[browser] bench_fixture_forward = "172.30.91.1:8765"` is still absent.
-  Guests must navigate `http://127.0.0.1:8080` plus reset's relative entry.
-  PR1's isolated process launcher sets `ONEIRON_EGRESS_CONFIG` to
-  `{"allowed_domains": []}`. No boolean readiness bypass is provided.
+- FIX 8061: freeze `fixture_public_bind` with `taskgen --fixture-forward` and
+  match it in `browser.bench_fixture_forward`. Served vaults write the forward
+  and set `ONEIRON_EGRESS_CONFIG` to a private file holding
+  `{"allowed_domains": []}`. Reset entries use `http://127.0.0.1:8080` only;
+  S5's parameterized first Open keeps that authority. No boolean bypass exists.
 - E3 remains `unavailable_e3`; E6 remains `unavailable_e6`.
 - E1, E2, E4 and E5 are present. B/C/C+/D now require `browser_planner` bindings;
   generative/chat recovery stays a separate engine role. Binding does not prove
