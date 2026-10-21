@@ -22,8 +22,10 @@ pub(super) struct Scaling {
     plan: Plan,
     samples: Vec<Sample>,
     node_growth: f64,
-    residual_miss_cost_growth: f64,
-    observed_sublinear: bool,
+    residual_miss_cost_growth: Option<f64>,
+    measurement_status: &'static str,
+    measurement_reason: Option<&'static str>,
+    observed_sublinear: Option<bool>,
 }
 
 pub(super) fn measure(plan: &Plan) -> Result<Scaling> {
@@ -44,9 +46,12 @@ pub(super) fn measure(plan: &Plan) -> Result<Scaling> {
         });
     }
     let node_growth = samples[2].nodes as f64 / samples[0].nodes as f64;
-    let residual_miss_cost_growth = samples[2].metrics["ppr_resume"].elapsed_seconds
-        / samples[0].metrics["ppr_resume"].elapsed_seconds;
-    let observed_sublinear = observed_sublinear(&samples);
+    let measured = samples.iter().all(|sample| sample.nodes >= 1_000);
+    let residual_miss_cost_growth = samples[2].metrics["ppr_resume"]
+        .elapsed_seconds
+        .zip(samples[0].metrics["ppr_resume"].elapsed_seconds)
+        .map(|(after, before)| after / before);
+    let observed_sublinear = measured.then(|| observed_sublinear(&samples));
     Ok(Scaling {
         schema: "oneiron-ppr-scaling-v1",
         host: Host::capture()?,
@@ -55,6 +60,8 @@ pub(super) fn measure(plan: &Plan) -> Result<Scaling> {
         samples,
         node_growth,
         residual_miss_cost_growth,
+        measurement_status: if measured { "measured" } else { "not_measured" },
+        measurement_reason: (!measured).then_some("corpus_below_1000_documents"),
         observed_sublinear,
     })
 }
@@ -64,7 +71,9 @@ fn observed_sublinear(samples: &[Sample]) -> bool {
         && samples.windows(2).all(|pair| {
             let before = pair[0].metrics["ppr_resume"].elapsed_seconds;
             let after = pair[1].metrics["ppr_resume"].elapsed_seconds;
-            sublinear_interval(pair[0].nodes, pair[1].nodes, before, after)
+            before.zip(after).is_some_and(|(before, after)| {
+                sublinear_interval(pair[0].nodes, pair[1].nodes, before, after)
+            })
         })
 }
 

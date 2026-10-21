@@ -398,7 +398,8 @@ pub(super) struct FullRunReport {
     pub(super) class_arm_table: Vec<ClassArmSummary>,
     pub(super) pareto_frontier: Vec<ParetoPoint>,
     pub(super) arm_verdict_claims: Vec<ArmVerdictClaim>,
-    pub(super) falsification_verdict: FalsificationVerdict,
+    pub(super) falsification_verdict: Option<FalsificationVerdict>,
+    pub(super) falsification_unavailable_reason: Option<String>,
     pub(super) budget: BudgetSummary,
 }
 
@@ -435,8 +436,15 @@ pub(super) struct SmokeRunRow {
     pub(super) pinned: Option<PinnedAttestation>,
     pub(super) generation_id: Option<String>,
     pub(super) judge_generation_id: Option<String>,
-    pub(super) accuracy: f64,
-    pub(super) tokens_total: u32,
+    pub(super) judge_relationship: Option<String>,
+    pub(super) status: String,
+    pub(super) reason: Option<String>,
+    pub(super) accuracy: Option<f64>,
+    /// Measured answer/interface usage only, never judge overhead or a reservation estimate.
+    pub(super) tokens_total: Option<u32>,
+    pub(super) answer_cost: Option<CallAccounting>,
+    pub(super) judge_overhead: Option<CallAccounting>,
+    pub(super) rate_limit_wait_s: f64,
     pub(super) tool_calls: u32,
     pub(super) wall_clock_s: f64,
     pub(super) answer: String,
@@ -447,25 +455,28 @@ pub(super) struct SmokeRunRow {
 #[serde(rename_all = "camelCase")]
 pub(super) struct ArmAggregate {
     pub(super) arm: ArmId,
+    pub(super) status: String,
+    pub(super) usage_reason: Option<String>,
     pub(super) runs: usize,
-    pub(super) mean_accuracy: f64,
-    pub(super) tokens_total: u32,
+    pub(super) mean_accuracy: Option<f64>,
+    pub(super) tokens_total: Option<u32>,
     pub(super) mean_tool_calls: f64,
     pub(super) mean_wall_clock_s: f64,
-    pub(super) accuracy_per_class: BTreeMap<String, f64>,
+    pub(super) accuracy_per_class: BTreeMap<String, Option<f64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ClassArmSummary {
     pub(super) class: String,
+    pub(super) usage_reason: Option<String>,
     pub(super) arm: ArmId,
     pub(super) runs: usize,
     pub(super) reps: u32,
     pub(super) accuracy_mean: f64,
     pub(super) accuracy_range: f64,
-    pub(super) tokens_mean: f64,
-    pub(super) tokens_range: u32,
+    pub(super) tokens_mean: Option<f64>,
+    pub(super) tokens_range: Option<u32>,
     pub(super) tool_calls_mean: f64,
     pub(super) wall_clock_mean_s: f64,
 }
@@ -474,8 +485,8 @@ pub(super) struct ClassArmSummary {
 #[serde(rename_all = "camelCase")]
 pub(super) struct ParetoPoint {
     pub(super) arm: ArmId,
-    pub(super) mean_accuracy: f64,
-    pub(super) tokens_total: u32,
+    pub(super) mean_accuracy: Option<f64>,
+    pub(super) tokens_total: Option<u32>,
     pub(super) dominated: bool,
 }
 
@@ -486,8 +497,8 @@ pub(super) struct ArmVerdictClaim {
     pub(super) arm: ArmId,
     pub(super) claim_id: String,
     pub(super) claim: String,
-    pub(super) mean_accuracy: f64,
-    pub(super) tokens_total: u32,
+    pub(super) mean_accuracy: Option<f64>,
+    pub(super) tokens_total: Option<u32>,
     pub(super) pareto_dominated: bool,
     pub(super) evidence: Vec<String>,
 }
@@ -510,25 +521,42 @@ pub(super) struct FalsificationVerdict {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct BudgetSummary {
+    pub(super) charged_tokens: u64,
+    pub(super) judge_overhead_tokens: Option<u32>,
+    pub(super) judge_reservation_charges: u64,
+    pub(super) usage_reason: Option<String>,
     pub(super) per_task_token_ceiling: u32,
     pub(super) run_token_ceiling: u32,
-    pub(super) tokens_total: u32,
-    pub(super) max_row_tokens: u32,
+    pub(super) tokens_total: Option<u32>,
+    pub(super) max_row_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct TokenBurnExtrapolation {
-    pub(super) smoke_tokens: u32,
+    pub(super) usage_reason: Option<String>,
+    pub(super) smoke_tokens: Option<u32>,
     pub(super) full_run_equivalent_runs: usize,
     pub(super) observed_runs: usize,
-    pub(super) extrapolated_full_tokens: u32,
+    pub(super) extrapolated_full_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct CallAccounting {
+    pub(super) provider_tokens: Option<u32>,
+    pub(super) usage_reason: Option<String>,
+    pub(super) reserved_tokens: u64,
+    pub(super) charged_tokens: u64,
+    pub(super) rate_limit_wait_s: f64,
+    pub(super) rate_limit_count: u64,
+    pub(super) failure_cause: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct ChatResponse {
     pub(super) content: String,
-    pub(super) tokens_total: u32,
+    pub(super) accounting: CallAccounting,
     pub(super) generation_id: Option<String>,
 }
 
@@ -537,6 +565,8 @@ pub(super) struct RunSettings {
     pub(super) model: String,
     pub(super) provider: String,
     pub(super) full_reps: u32,
+    pub(super) campaign_budget: oneiron::BudgetGuard,
+    pub(super) accounted_rows: std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
     /// Opt-in pinned-model admission policy (ONE-1344), populated only by an
     /// explicit `--pinned-config`. None means the run is unpinned, exactly as
     /// before the flag existed. When present it carries the resolved pinned
@@ -552,6 +582,12 @@ impl Default for RunSettings {
             model: MODEL.to_owned(),
             provider: DEFAULT_PROVIDER.to_owned(),
             full_reps: FULL_REP_COUNT,
+            campaign_budget: oneiron::BudgetGuard::new(
+                CAMPAIGN_ID,
+                u64::from(FULL_TOKEN_CEILING),
+                oneiron::BudgetExhaustionPolicy::Suspend,
+            ),
+            accounted_rows: Default::default(),
             pinned: None,
         }
     }

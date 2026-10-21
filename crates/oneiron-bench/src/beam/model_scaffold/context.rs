@@ -100,3 +100,24 @@ pub(super) fn bounded_context(text: &str, budget: usize) -> String {
     }
     text[..boundaries[lo]].to_owned()
 }
+
+/// The pack dropped or cut items to fit its budget.
+pub(super) fn pack_cut(pack: &crate::beam::arms::BudgetedContextPack) -> bool {
+    pack.serialized_stats.items_truncated.count + pack.serialized_stats.items_dropped.count > 0
+}
+
+pub(super) fn measured_pack(
+    vault: &oneiron::Vault,
+    case: &crate::beam::model::FixtureCase,
+    query_vector: Option<&[f32]>,
+    now: u64,
+) -> BeamResult<crate::beam::arms::BudgetedContextPack> {
+    crate::beam::arms::run_budgeted_context_pack(
+        || {
+            crate::beam::arms::configured_context_pack_builder(vault, case, query_vector)
+                .with_temporal_now(now)
+        },
+        vault,
+        case,
+    )
+}

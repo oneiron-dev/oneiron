@@ -113,16 +113,10 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
         })));
     }
     let timeout = Duration::from_secs(plan.timeout_secs);
-    let http = reqwest::Client::builder()
-        .timeout(timeout)
-        .no_proxy()
-        .pool_max_idle_per_host(plan.concurrency)
-        .build()?;
     let urls = addresses
         .iter()
         .map(|address| format!("ws://{address}/ws"))
         .collect::<Vec<_>>();
-    let endpoint = format!("http://{}/v1/core/facade/vault.witness", addresses[0]);
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
     let root = vault.ensure_host_root_slip(&issuer)?;
     let credentials = (0..plan.agents)
@@ -163,7 +157,7 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
     let mut verified_writes = 0;
     let mut verified_recalls = 0;
     for round in 0..plan.rounds {
-        write_phase(&mut agents, plan, &http, &endpoint, round, &mut metrics).await?;
+        write_phase(&mut agents, plan, round, &mut metrics).await?;
         verify_writes(&vault, &mut agents, round)?;
         verified_writes += plan.agents;
         progress(
@@ -205,8 +199,6 @@ fn needle(index: usize, round: usize) -> String {
 async fn write_phase(
     agents: &mut [Agent],
     plan: &Plan,
-    http: &reqwest::Client,
-    endpoint: &str,
     round: usize,
     metrics: &mut BTreeMap<String, Metric>,
 ) -> Result<()> {
@@ -222,26 +214,7 @@ async fn write_phase(
                 "content":needle(agent.index, round),
                 "metadata":{"rel":id(0x35, agent.index)?.to_hex()},
                 "is_visible":true,"order":0}]});
-            let binding = agent.binding()?.to_string();
-            let response = http
-                .post(endpoint)
-                .bearer_auth(&agent.token)
-                .header("x-oneiron-binding", binding)
-                .json(&body)
-                .send()
-                .await?;
-            let status = response.status();
-            let bytes = response.bytes().await?;
-            if !status.is_success() {
-                return Err(format!(
-                    "witness for agent {} returned {}: {}",
-                    agent.index,
-                    status,
-                    String::from_utf8_lossy(&bytes)
-                )
-                .into());
-            }
-            let receipt: oneiron::memory::WitnessReceipt = serde_json::from_slice(&bytes)?;
+            let receipt = agent.witness(round, body).await?;
             if receipt.message_short_ids.len() != 1 || !receipt.receipt_ref.starts_with("witness:")
             {
                 return Err("witness returned incomplete receipt".into());

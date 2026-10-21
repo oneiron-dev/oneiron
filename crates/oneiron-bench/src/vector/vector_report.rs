@@ -38,11 +38,12 @@ pub(super) fn print_report(report: &VectorBenchReport) {
         "insert new-node",
         &report.insert_new,
         Some(TARGET_INSERT_P50_MS),
+        s.n,
     );
     println!("  {}", format_ram(&report.ram, s.n, s.dim));
 
     println!("\n[baseline]");
-    print_search_measure(&report.baseline);
+    print_search_measure(&report.baseline, s.n);
 
     if let Some(refresh) = &report.refresh {
         println!(
@@ -53,8 +54,9 @@ pub(super) fn print_report(report: &VectorBenchReport) {
             "insert refresh ",
             &refresh.op_latency,
             Some(TARGET_INSERT_P50_MS),
+            refresh.live_after,
         );
-        print_search_measure(&refresh.search);
+        print_search_measure(&refresh.search, refresh.live_after);
     }
 
     if let Some(delete) = &report.delete {
@@ -62,13 +64,17 @@ pub(super) fn print_report(report: &VectorBenchReport) {
             "\n[delete-churn: delete {} nodes, live={}]",
             delete.churned, delete.live_after
         );
-        print_latency("delete         ", &delete.op_latency, None);
-        print_search_measure(&delete.search);
+        print_latency("delete         ", &delete.op_latency, None, delete.live_after);
+        print_search_measure(&delete.search, delete.live_after);
     }
     println!();
 }
 
-fn print_latency(label: &str, stats: &LatencyStats, target_p50_ms: Option<f64>) {
+fn print_latency(label: &str, stats: &LatencyStats, target_p50_ms: Option<f64>, documents: usize) {
+    if documents < 1_000 {
+        println!("  {label}: not_measured — cause: corpus_below_1000_documents");
+        return;
+    }
     let target = match target_p50_ms {
         Some(t) => {
             let verdict = if stats.p50_ms < t { "ok" } else { "MISS" };
@@ -82,12 +88,21 @@ fn print_latency(label: &str, stats: &LatencyStats, target_p50_ms: Option<f64>) 
     );
 }
 
-fn print_search_measure(measure: &SearchMeasure) {
+fn print_search_measure(measure: &SearchMeasure, documents: usize) {
     print_latency(
         "search top-10  ",
         &measure.latency,
         Some(TARGET_SEARCH_TOP10_P50_MS),
+        documents,
     );
+    if !measure.recall.is_finite() {
+        let cause = if measure.recall_k == 0 { "empty_live_set" } else { "no_queries" };
+        println!("  recall@{}: undefined — cause: {cause}; gate FAIL", measure.recall_k);
+        for violation in &measure.violations {
+            println!("  [violation] {violation}");
+        }
+        return;
+    }
     let verdict = if measure.recall > TARGET_RECALL_AT_10 {
         "ok"
     } else {

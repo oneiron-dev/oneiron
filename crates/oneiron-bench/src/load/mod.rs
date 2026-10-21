@@ -322,6 +322,8 @@ fn one_run(plan: &Plan, records: usize, vectors: bool) -> Result<Run, String> {
     let corpus = Corpus::new(plan.seed, plan.hot_subject);
     let mut run = Run {
         records,
+        documents: 0,
+        secret_scan: vault.secret_scan(&plan.server)?,
         vectors,
         rows: rows(&corpus, records),
         ..Run::default()
@@ -361,8 +363,11 @@ fn one_run(plan: &Plan, records: usize, vectors: bool) -> Result<Run, String> {
         .map(|c| Agent::new(&http, &server.base, c, run.clock_skew_secs))
         .collect::<Result<Vec<_>, _>>()?;
     let queries = corpus.queries(records, plan.queries);
-    let ctx = Ctx {
+    let secret_scan = run.secret_scan.clone();
+    let mut ctx = Ctx {
         corpus: &corpus,
+        documents: run.documents,
+        secret_scan: &secret_scan,
         owner: &vault.owner,
         server: &server,
         agents: &agents,
@@ -372,7 +377,7 @@ fn one_run(plan: &Plan, records: usize, vectors: bool) -> Result<Run, String> {
         cell_seconds: plan.cell_seconds,
         signal_cells: plan.signal_cells.clone(),
     };
-    measure(plan, &ctx, &mut run, records, stub.as_ref(), &vault)?;
+    measure(plan, &mut ctx, &mut run, records, stub.as_ref(), &vault)?;
     let exit = server.stop();
     run.notes.push(format!("serve exit: {exit}"));
     if !plan.skip.iter().any(|s| s == "restart") {
@@ -392,7 +397,7 @@ fn one_run(plan: &Plan, records: usize, vectors: bool) -> Result<Run, String> {
 
 fn measure(
     plan: &Plan,
-    ctx: &Ctx<'_>,
+    ctx: &mut Ctx<'_>,
     run: &mut Run,
     records: usize,
     stub: Option<&StubEmbedder>,
@@ -411,6 +416,8 @@ fn measure(
     say("ingest: one caller on the full vault");
     run.ingest
         .push(ctx.ingest_single("ingest_single_full", records..records + plan.single_writes));
+    ctx.documents = run.ingest.iter().map(|cell| cell.summary.completed).sum();
+    run.documents = ctx.documents;
     if let Some(stub) = stub {
         say("drain: waiting for the embedding worker");
         let expected = records + plan.single_writes;

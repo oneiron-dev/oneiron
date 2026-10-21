@@ -109,6 +109,8 @@ struct Replay {
 #[derive(Serialize)]
 pub(super) struct ProofResult {
     commit: String,
+    producing_source_clean: bool,
+    binary_blake3: String,
     dataset: String,
     score: ScoreReport,
     result_path: PathBuf,
@@ -138,30 +140,30 @@ pub(super) fn run(path: &Path) -> BeamResult<ProofResult> {
             reason: "proof number must cover all four wedge buckets".into(),
         });
     }
-    let status = std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .output()?;
-    if !status.status.success() || !status.stdout.is_empty() {
+    let commit = env!("ONEIRON_BENCH_SOURCE_REVISION").to_owned();
+    if env!("ONEIRON_BENCH_SOURCE_CLEAN") != "true" || commit == "unknown" {
         return Err(BeamError::Comparability {
-            reason: "proof publication requires a clean source checkout".into(),
+            reason: "proof requires a verified clean producing-source build stamp".into(),
         });
     }
-    let head = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()?;
-    let commit = String::from_utf8_lossy(&head.stdout).trim().to_owned();
-    if !head.status.success()
-        || commit.len() != 40
-        || !commit.bytes().all(|b| b.is_ascii_hexdigit())
-    {
-        return Err(BeamError::Comparability {
-            reason: "proof requires a source commit".into(),
-        });
+    use std::io::Read;
+    let mut executable = std::fs::File::open(std::env::current_exe()?)?;
+    let mut digest = blake3::Hasher::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let n = executable.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        digest.update(&buffer[..n]);
     }
+    let binary_blake3 = digest.finalize().to_hex().to_string();
     let result_dir = replay.output_dir.join(&commit).join(&replay.dataset);
     let result_path = result_dir.join("score.json");
     let report = ProofResult {
         commit,
+        producing_source_clean: true,
+        binary_blake3,
         dataset: replay.dataset,
         score,
         result_path,

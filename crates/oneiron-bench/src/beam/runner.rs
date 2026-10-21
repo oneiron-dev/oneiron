@@ -326,7 +326,9 @@ fn partition_competitors(
     for row in rows {
         match row.citation_disposition {
             CitationDisposition::Cite | CitationDisposition::CiteWithCaveat => main.push(row),
-            CitationDisposition::WalledAppendix => appendix.push(row),
+            CitationDisposition::WalledAppendix | CitationDisposition::NonComparable => {
+                appendix.push(row)
+            }
             CitationDisposition::Dropped => dropped.push(row),
         }
     }

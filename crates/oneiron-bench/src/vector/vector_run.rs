@@ -161,6 +161,12 @@ fn evaluate_gates(report: &VectorBenchReport) -> ExitCode {
 
     if report.settings.assert_recall {
         for (label, measure) in report.search_measures() {
+            if !measure.recall.is_finite() {
+                let cause = if measure.recall_k == 0 { "empty_live_set" } else { "no_queries" };
+                eprintln!("[recall gate] {label}: undefined recall; cause={cause}");
+                failed = true;
+                continue;
+            }
             if measure.recall <= TARGET_RECALL_AT_10 {
                 eprintln!(
                     "[recall gate] {label}: recall@{} = {:.4} <= {TARGET_RECALL_AT_10} \
@@ -432,12 +438,18 @@ fn measure_search(
 
         let brute = brute_force_top_k(live, query, k);
         let overlap = brute.iter().filter(|id| ann.contains(id)).count();
-        recall_sum += overlap as f64 / k as f64;
+        if k > 0 {
+            recall_sum += overlap as f64 / k as f64;
+        }
     }
 
     Ok(SearchMeasure {
         latency: LatencyStats::from_samples(samples),
-        recall: recall_sum / queries.len() as f64,
+        recall: if k == 0 || queries.is_empty() {
+            f64::NAN
+        } else {
+            recall_sum / queries.len() as f64
+        },
         recall_k: k,
         violations,
     })

@@ -48,6 +48,9 @@ pub(super) struct ModelRunPlan {
     pub routing_prompt: AnswerPromptPin,
     pub trajectory_prompt: AnswerPromptPin,
     pub answerers: Vec<AnswererArm>,
+    /// Family disclosures keyed by the fully resolved model pin, not arm labels.
+    #[serde(default)]
+    pub model_families: BTreeMap<ModelId, String>,
     pub efforts: Vec<Effort>,
     pub amortized_question_count: usize,
     pub chroma: Option<super::chroma::ChromaConfig>,
@@ -90,7 +93,8 @@ pub(super) struct AblationUnavailable {
 mod context;
 mod offline;
 mod paired;
-use context::{bounded_context, chat_history};
+mod provenance;
+use context::{bounded_context, chat_history, measured_pack, pack_cut};
 use offline::{OfflineStages, elapsed_cost, offline_provider_cost, offline_totals};
 
 #[derive(Debug, Serialize)]
@@ -108,6 +112,9 @@ pub(super) struct MeasuredReport {
     pub temporal_now: u64,
     pub access_factor_observations: Vec<super::ablations::FactorObservation>,
     pub rows: Vec<ModelRow>,
+    pub judge_relationships: Vec<provenance::JudgeRelationship>,
+    pub in_family_points: Vec<AccuracyCostPoint>,
+    pub non_comparable_points: Vec<AccuracyCostPoint>,
     pub frontier: Vec<AccuracyCostPoint>,
     pub points: Vec<AccuracyCostPoint>,
     pub chat_cost_accuracy_points: Vec<AccuracyCostPoint>,
@@ -200,11 +207,6 @@ impl ModelRunPlan {
             }
         }
         for row in &self.answerers {
-            if row.model.model_id == self.judge.model.model_id {
-                return Err(refusal(
-                    "self-judged answerer rows cannot enter a measured comparison",
-                ));
-            }
             if row.cheap_chat != (row.arm == ArmKind::Chat) {
                 return Err(refusal("only chat is a separate cheap-model cost point"));
             }
@@ -366,6 +368,7 @@ pub(super) fn run_with_session(
             .iter()
             .map(|c| oneiron::count_context_pack_tokens(&c.text) as u64)
             .sum::<u64>();
+        let query_vector = loaded.query_vector_by_case_id.get(id).map(Vec::as_slice);
         let case = loaded
             .cases
             .first()
@@ -441,6 +444,7 @@ pub(super) fn run_with_session(
                                         super::arms::configured_context_pack_builder(
                                             &vault,
                                             &request_case,
+                                            query_vector,
                                         )
                                         .with_temporal_now(plan.temporal_now)
                                         .with_access_factor_overrides(&factor_overrides)
@@ -449,7 +453,12 @@ pub(super) fn run_with_session(
                                     &request_case,
                                 )?
                             } else {
-                                measured_pack(&vault, &request_case, plan.temporal_now)?
+                                measured_pack(
+                                    &vault,
+                                    &request_case,
+                                    query_vector,
+                                    plan.temporal_now,
+                                )?
                             };
                             context_truncated = pack_cut(&pack);
                             String::from_utf8(pack.serialized)
@@ -467,7 +476,14 @@ pub(super) fn run_with_session(
                                 )?;
                                 costs.push(cost);
                                 request_case.query = query;
-                                let pack = measured_pack(&vault, &request_case, plan.temporal_now)?;
+                                let pack = measured_pack(
+                                    &vault,
+                                    &request_case,
+                                    (request_case.query == case.query)
+                                        .then_some(query_vector)
+                                        .flatten(),
+                                    plan.temporal_now,
+                                )?;
                                 context_truncated = pack_cut(&pack);
                                 context = String::from_utf8(pack.serialized)
                                     .map_err(|_| refusal("invalid pack text"))?;
@@ -663,7 +679,27 @@ pub(super) fn run_with_session(
         .iter()
         .map(|r| r.judge_overhead.cost_usd)
         .sum::<f64>();
+    let relationships = provenance::relationships(plan);
+    let comparable = |arm| {
+        relationships
+            .iter()
+            .any(|r| r.arm == arm && r.is_independent())
+    };
     Ok(MeasuredReport {
+        in_family_points: points
+            .iter()
+            .filter(|p| {
+                relationships
+                    .iter()
+                    .any(|r| r.arm == p.arm && r.is_in_family())
+            })
+            .cloned()
+            .collect(),
+        non_comparable_points: points
+            .iter()
+            .filter(|p| !comparable(p.arm))
+            .cloned()
+            .collect(),
         retrieval_cards: manifest
             .competitors
             .iter()
@@ -691,7 +727,9 @@ pub(super) fn run_with_session(
             &points
                 .iter()
                 .filter(|p| {
-                    p.arm != ArmKind::Chat && (p.arm != ArmKind::VanillaRag || chroma_comparable)
+                    comparable(p.arm)
+                        && p.arm != ArmKind::Chat
+                        && (p.arm != ArmKind::VanillaRag || chroma_comparable)
                 })
                 .cloned()
                 .collect::<Vec<_>>(),
@@ -723,6 +761,7 @@ pub(super) fn run_with_session(
         routing_prompt: plan.routing_prompt.clone(),
         trajectory_prompt: plan.trajectory_prompt.clone(),
         judge: plan.judge.clone(),
+        judge_relationships: relationships,
     })
 }
 fn refusal(reason: &str) -> BeamError {
@@ -736,21 +775,4 @@ mod tests;
 fn model_params_hash(pin: &ModelPin) -> BeamResult<String> {
     use sha2::{Digest, Sha256};
     Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(pin)?)))
-}
-
-/// The pack dropped or cut items to fit its budget.
-fn pack_cut(pack: &super::arms::BudgetedContextPack) -> bool {
-    pack.serialized_stats.items_truncated.count + pack.serialized_stats.items_dropped.count > 0
-}
-
-fn measured_pack(
-    vault: &Vault,
-    case: &super::model::FixtureCase,
-    now: u64,
-) -> BeamResult<super::arms::BudgetedContextPack> {
-    super::arms::run_budgeted_context_pack(
-        || super::arms::configured_context_pack_builder(vault, case).with_temporal_now(now),
-        vault,
-        case,
-    )
 }

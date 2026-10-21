@@ -121,16 +121,29 @@ pub(super) fn measure(plan: &Plan, metrics: &mut BTreeMap<String, Metric>) -> Re
     let cold_s = cold_ms.iter().sum::<f64>() / 1000.0;
     let resume_s = resume_ms.iter().sum::<f64>() / 1000.0;
     let prep_s = prep_ms.iter().sum::<f64>() / 1000.0;
-    metrics.insert("ppr_full".into(), Metric::new(cold_ms, cold_s)?);
-    metrics.insert("ppr_resume".into(), Metric::new(resume_ms, resume_s)?);
-    metrics.insert("ppr_prepare".into(), Metric::new(prep_ms, prep_s)?);
+    let measured = plan.ppr_nodes >= 1_000;
+    let reason = "corpus_below_1000_documents";
+    for (name, samples, seconds) in [
+        ("ppr_full", cold_ms, cold_s),
+        ("ppr_resume", resume_ms, resume_s),
+        ("ppr_prepare", prep_ms, prep_s),
+    ] {
+        let metric = if measured {
+            Metric::new(samples, seconds)?
+        } else {
+            Metric::not_measured(samples.len(), reason)
+        };
+        metrics.insert(name.into(), metric);
+    }
     Ok(Optimization {
         route: "full-depth10-vs-depth5-resume-to10-v1".into(),
         equivalent_pairs: plan.ppr_samples,
         result_blake3: digest.finalize().to_hex().to_string(),
-        incremental_speedup: cold_s / resume_s,
-        preparation_seconds: prep_s,
-        preparation_included_speedup: cold_s / (resume_s + prep_s),
+        measurement_status: if measured { "measured" } else { "not_measured" }.into(),
+        measurement_reason: (!measured).then(|| reason.into()),
+        incremental_speedup: measured.then_some(cold_s / resume_s),
+        preparation_seconds: measured.then_some(prep_s),
+        preparation_included_speedup: measured.then_some(cold_s / (resume_s + prep_s)),
     })
 }
 

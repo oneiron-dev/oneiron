@@ -55,6 +55,7 @@ pub(super) struct Startup {
 pub(super) struct Cell {
     pub(super) name: String,
     pub(super) grade: String,
+    pub(super) secret_scan: String,
     pub(super) agents: usize,
     pub(super) summary: Summary,
     /// Per verb, for ingest cells.
@@ -92,6 +93,8 @@ pub(super) struct Fairness {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct Run {
     pub(super) records: usize,
+    pub(super) documents: usize,
+    pub(super) secret_scan: String,
     pub(super) vectors: bool,
     pub(super) rows: Rows,
     pub(super) mint_seconds: f64,
@@ -217,10 +220,19 @@ fn compare_run(out: &mut String, a: &Run, b: &Run) {
         &format!("{:.0}", a.steady.rss_mib),
         &format!("{:.0}", b.steady.rss_mib),
     );
+    line(out, "secrets setting", &a.secret_scan, &b.secret_scan);
     let (ca, cb) = (cells(a), cells(b));
     for (name, cell) in &ca {
         let Some(other) = cb.get(name) else { continue };
         let fmt = |c: &Cell| {
+            if c.summary.latency_status == "not_measured" {
+                return format!(
+                    "latency not_measured ({}), fail {}; {}",
+                    c.summary.latency_reason.as_deref().unwrap_or("no timing"),
+                    c.summary.failed,
+                    c.secret_scan
+                );
+            }
             format!(
                 "p50 {} p95 {} ms, {:.1}/s, fail {}{}",
                 ms(c.summary.p50_ms),

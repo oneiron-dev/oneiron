@@ -11,6 +11,7 @@ use super::server::{Embedding, Memory, Running, Vault};
 
 #[derive(Debug, Serialize)]
 struct Load {
+    secret_scan: String,
     health_ms: f64,
     model_ready_ms: Option<f64>,
     at_ready: Memory,
@@ -85,6 +86,7 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
     let vault = Vault::init(&args.server, &dir, &Embedding::Local, &args.env)?;
     let mut loads = Vec::new();
     for round in 0..args.repeat {
+        let secret_scan = vault.secret_scan(&args.server)?;
         let log = format!("serve-startup-{round}.log");
         let started = Instant::now();
         let server = Running::start(&args.server, &vault, &args.env, &log, "info")?;
@@ -94,6 +96,7 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         std::thread::sleep(Duration::from_secs(5));
         let (idle, sampled) = server.memory();
         loads.push(Load {
+            secret_scan,
             health_ms,
             model_ready_ms,
             at_ready,

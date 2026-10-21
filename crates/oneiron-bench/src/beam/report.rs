@@ -610,12 +610,50 @@ pub(super) fn budgeted_text_by_entity_id(
 }
 pub(super) fn generated_yaml_scalar(raw: &str) -> String {
     let trimmed = raw.trim();
-    trimmed
-        .strip_prefix('"')
-        .and_then(|quoted| quoted.strip_suffix('"'))
-        .unwrap_or(trimmed)
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
+    let Some(quoted) = trimmed.strip_prefix('"').and_then(|s| s.strip_suffix('"')) else {
+        return trimmed.to_owned();
+    };
+    let mut chars = quoted.chars();
+    let mut decoded = String::with_capacity(quoted.len());
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            decoded.push(ch);
+            continue;
+        }
+        let escaped = match chars.next() {
+            Some('0') => '\0',
+            Some('a') => '\x07',
+            Some('b') => '\x08',
+            Some('t') => '\t',
+            Some('n') => '\n',
+            Some('v') => '\x0B',
+            Some('f') => '\x0C',
+            Some('r') => '\r',
+            Some('e') => '\x1B',
+            Some('"') => '"',
+            Some('\\') => '\\',
+            Some(kind @ ('x' | 'u' | 'U')) => {
+                let count = match kind {
+                    'x' => 2,
+                    'u' => 4,
+                    _ => 8,
+                };
+                let digits: String = chars.by_ref().take(count).collect();
+                let value = (digits.len() == count)
+                    .then(|| u32::from_str_radix(&digits, 16).ok())
+                    .flatten()
+                    .and_then(char::from_u32);
+                let Some(value) = value else {
+                    return trimmed.to_owned();
+                };
+                value
+            }
+            // This parser only consumes scalars emitted by the engine serializer.
+            _ => return trimmed.to_owned(),
+        };
+        decoded.push(escaped);
+    }
+    decoded
 }
 pub(super) fn serialized_context_entity_id(entity: &oneiron::ContextEntity) -> String {
     let short_id = if entity.short_id.is_empty() {

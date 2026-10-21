@@ -173,7 +173,7 @@ fn evaluate(task: &EditTask, attempt: &EditAttempt) -> BeamResult<EditOracleResu
         tests_pass,
         contracts_pass,
         success: tests_pass && contracts_pass,
-        regression: !contracts_pass,
+        regression: tests_pass && !contracts_pass,
     })
 }
 
