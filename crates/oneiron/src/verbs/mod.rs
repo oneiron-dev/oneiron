@@ -77,7 +77,9 @@ mod workflows;
 mod workspace;
 
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, MemoryResult};
-use crate::task_verb::{TaskAskDefault, TaskAskHandle, TaskAskQuestion, TaskAskSpec, TaskAskTarget};
+use crate::task_verb::{
+    TaskAskDefault, TaskAskHandle, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
+};
 use serde::{Deserialize, Serialize};
 
 // FIX 8907: the files moved here from task_verb still name their siblings
@@ -549,11 +551,6 @@ impl QueryAffect {
     }
 }
 
-pub use crate::task_verb::fanout_batch::*;
-pub use crate::task_verb::recall_door::{
-    RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
-    recall_with_vector,
-};
 pub use self::act_answer::*;
 pub use self::agent_grant::*;
 pub use self::agents::*;
@@ -630,6 +627,11 @@ pub use self::weave::*;
 pub use self::wire_health::*;
 pub use self::workflows::*;
 pub use self::workspace::*;
+pub use crate::task_verb::fanout_batch::*;
+pub use crate::task_verb::recall_door::{
+    RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
+    recall_with_vector,
+};
 
 /// `vault.writes.pending`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

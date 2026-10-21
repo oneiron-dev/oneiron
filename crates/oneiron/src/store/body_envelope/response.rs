@@ -23,7 +23,11 @@
 //!   instance they name, the older images' included.
 //! - The erase cause comes from the provenance door alone
 //!   (`erase_row_provenance_in_txn` with `erase`); no actor scrub, which a
-//!   delete runs too, retires anything.
+//!   delete runs too, retires anything. A wait's settled reply is shared by
+//!   its holders: one holder's erase owes its retirement to the final
+//!   holder's release ([`shared_wait`], FIX 6588).
+
+mod shared_wait;
 
 use std::collections::BTreeMap;
 
@@ -35,6 +39,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideKey, SideTable, SideTableDbs};
 use crate::store::{ManifestDbs, MediaKey, Store};
+pub(crate) use shared_wait::{response_owed_to_all_in_txn, settle_shared_response_in_txn};
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -49,12 +54,14 @@ const RESPONSE_OWNERS: SideTable<(EntityId, [u8; 16]), Vec<u8>, Raw> =
     SideTable::new(&side_table::PROVENANCE_BODY_RESPONSE_OWNER);
 
 /// Where a row-held response rests: KS-2B2's HTTP idempotency entries and
-/// media jobs rest in `sync_state`.
+/// media jobs rest in `sync_state`; an agent dispatch's payload text in
+/// `job_records` (FIX 7115).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResponseDb {
     VaultMeta,
     Entities,
     SyncState,
+    Attempts,
 }
 
 impl ResponseDb {
@@ -63,6 +70,7 @@ impl ResponseDb {
             Self::VaultMeta => 0,
             Self::Entities => 1,
             Self::SyncState => 2,
+            Self::Attempts => 3,
         }
     }
 
@@ -71,6 +79,7 @@ impl ResponseDb {
             0 => Some(Self::VaultMeta),
             1 => Some(Self::Entities),
             2 => Some(Self::SyncState),
+            3 => Some(Self::Attempts),
             _ => None,
         }
     }
@@ -81,6 +90,7 @@ impl ResponseDb {
             "vault_meta" => Some(Self::VaultMeta),
             "entities" => Some(Self::Entities),
             "sync_state" => Some(Self::SyncState),
+            "job_records" => Some(Self::Attempts),
             _ => None,
         }
     }
@@ -91,6 +101,7 @@ impl ResponseDb {
             Self::VaultMeta => "vault_meta",
             Self::Entities => "entities",
             Self::SyncState => "sync_state",
+            Self::Attempts => "job_records",
         }
     }
 }
@@ -174,20 +185,35 @@ pub(crate) enum ResponseFamily {
     MediaJob,
     /// One of a media job's clips, in a row of its own beside the job's.
     MediaPart,
+    /// A blocked report's captured request: a receipt row or a durable
+    /// step's row of the replay-source table (FIX 6708), carried whole.
+    BlockedCapture,
+    /// The reply a parked run was delivered (FIX 6588).
+    WaitDelivery,
+    /// A wait's settled reply, shared by every holder of the wait (FIX
+    /// 6588): only the index's settled rows, never its waiters.
+    WaitSettled,
+    /// A Dreamer agent dispatch's attempt row: its target's instructions,
+    /// briefing and direct spawn receipt (FIX 7115).
+    AttemptPayload,
 }
 
 impl ResponseFamily {
     /// The family of the canonical row `key` of `db`, holding `value`.
     pub(crate) fn of_row(db: ResponseDb, key: &[u8], value: &[u8]) -> Option<Self> {
         match db {
+            // Recognized by key, so a retired stub is too.
             ResponseDb::VaultMeta => [
                 (&side_table::DREAMER_TURN_PROGRAM_STEP, Self::ProgramStep),
                 (&side_table::DREAMER_STEP_STATE, Self::StepState),
                 (&side_table::CODE_RUN_REPLAY, Self::Replay),
+                (&side_table::COACH_BLOCKED_SOURCE, Self::BlockedCapture),
+                (&side_table::CODE_RUN_WAIT_DELIVERY, Self::WaitDelivery),
             ]
             .into_iter()
             .find(|(decl, _)| key.starts_with(decl.prefix))
-            .map(|(_, family)| family),
+            .map(|(_, family)| family)
+            .or_else(|| crate::code_run::settled_wait_key(key).then_some(Self::WaitSettled)),
             ResponseDb::Entities => EntityMetadataHeader::parse(value)
                 .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
                 .map(|_| Self::StepClaim),
@@ -200,13 +226,23 @@ impl ResponseFamily {
                     MediaKey::Part { .. } => Self::MediaPart,
                 })
             }
+            ResponseDb::Attempts => crate::attempt_queue::attempt_payload_family(key, value)
+                .then_some(Self::AttemptPayload),
         }
     }
 
-    /// What a checkpoint carries of the row: `None` when it holds no
+    /// Whether the family's response is shared by every holder its
+    /// obligations name, so one holder's erase owes its retirement to the
+    /// final holder's release (FIX 6588).
+    pub(crate) fn shared(self) -> bool {
+        self == Self::WaitSettled
+    }
+
+    /// What a checkpoint carries of the row `key`: `None` when it holds no
     /// response (a bodyless step, a state with no payload, a claim whose
-    /// response rests in an artifact, a row that does not decode).
-    pub(crate) fn carriage(self, value: &[u8]) -> Option<ResponseCarriage> {
+    /// response rests in an artifact, an erased reply, a dispatch with no
+    /// text, a row that does not decode).
+    pub(crate) fn carriage(self, key: &[u8], value: &[u8]) -> Option<ResponseCarriage> {
         let whole = |stub: Vec<u8>| ResponseCarriage {
             keep: 0,
             retired: stub.len(),
@@ -220,6 +256,16 @@ impl ResponseFamily {
             Self::Http => crate::store::http_carriage(value).map(whole),
             Self::MediaJob => crate::store::media_job_carriage(value).map(whole),
             Self::MediaPart => crate::store::media_part_carriage(value).map(whole),
+            // The whole row; nothing stays once retired: the row goes.
+            Self::BlockedCapture => {
+                crate::self_heal::blocked_reports::blocked_capture_stub(key, value).map(whole)
+            }
+            Self::WaitDelivery | Self::WaitSettled => {
+                crate::code_run::wait_reply_stub(value).map(whole)
+            }
+            Self::AttemptPayload => {
+                crate::attempt_queue::attempt_payload_stub(key, value).map(whole)
+            }
         }
     }
 
@@ -245,6 +291,12 @@ impl ResponseFamily {
             Self::Replay => crate::code_run::replay_owners(store, txn, value),
             Self::Http => Ok(crate::store::http_owners(value)),
             Self::MediaJob => Ok(crate::store::media_job_owners(value)),
+            Self::BlockedCapture => Ok(crate::self_heal::blocked_reports::blocked_capture_owners(
+                key, value,
+            )),
+            Self::WaitDelivery => crate::code_run::wait_delivery_owners(store, txn, key),
+            Self::WaitSettled => crate::code_run::wait_settled_owners(store, txn, key),
+            Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
             // A clip's owners are its job's, as the job's row stamps them.
             Self::MediaPart => {
                 let Some(MediaKey::Part { job }) = crate::store::media_key(key) else {
@@ -262,7 +314,8 @@ impl ResponseFamily {
     /// What the erased disposition of the retired row `key` takes beside the
     /// row itself, in raw image rows: a claim's step-index rows and its
     /// projection rows go, and its soft-delete marker and fence are left, as
-    /// an erase leaves them (FIX 6661); a retired clip's row goes.
+    /// an erase leaves them (FIX 6661); a retired clip's row goes, and so
+    /// does a retired captured request's (FIX 6708).
     ///
     /// # Errors
     ///
@@ -276,14 +329,21 @@ impl ResponseFamily {
             Self::StepClaim => crate::llm::retire_step_claim_in_rows(databases, key),
             // A retired clip's row goes: its job keeps its erased form.
             Self::MediaPart => {
-                if let Some(rows) = databases.get_mut(ResponseDb::SyncState.name()) {
-                    rows.retain(|(row, _)| row.as_slice() != key);
-                }
+                drop_row(databases, ResponseDb::SyncState, key);
                 Ok(())
             }
-            Self::ProgramStep | Self::StepState | Self::Replay | Self::Http | Self::MediaJob => {
+            Self::BlockedCapture => {
+                drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
+            Self::ProgramStep
+            | Self::StepState
+            | Self::Replay
+            | Self::Http
+            | Self::MediaJob
+            | Self::WaitDelivery
+            | Self::WaitSettled
+            | Self::AttemptPayload => Ok(()),
         }
     }
 
@@ -312,8 +372,17 @@ impl ResponseFamily {
         };
         match self {
             Self::StepClaim => crate::llm::retire_step_claim_in_txn(store, wtxn, key),
-            Self::ProgramStep | Self::StepState | Self::Replay => {
-                store.side_vault_meta().put(wtxn, key, kept()?)
+            Self::ProgramStep
+            | Self::StepState
+            | Self::Replay
+            | Self::WaitDelivery
+            | Self::WaitSettled => store.side_vault_meta().put(wtxn, key, kept()?),
+            Self::BlockedCapture => {
+                store.side_vault_meta().delete(wtxn, key)?;
+                Ok(())
+            }
+            Self::AttemptPayload => {
+                crate::attempt_queue::retire_attempt_payload_in_txn(store, wtxn, key, kept()?)
             }
             Self::Http | Self::MediaJob => {
                 store
@@ -327,6 +396,13 @@ impl ResponseFamily {
                 Ok(())
             }
         }
+    }
+}
+
+/// Takes the row `key` out of `db`'s raw image rows.
+fn drop_row(databases: &mut BTreeMap<String, Rows>, db: ResponseDb, key: &[u8]) {
+    if let Some(rows) = databases.get_mut(db.name()) {
+        rows.retain(|(row, _)| row.as_slice() != key);
     }
 }
 
@@ -400,7 +476,8 @@ pub(crate) fn release_response_in_txn<D: SideTableDbs>(
 /// name retires, noted for its receipt, so each image it was carried in
 /// reads as its row's erased disposition from then on; a row still bound
 /// to one is unbound, and the next checkpoint carries what the erase left
-/// of it under a fresh instance.
+/// of it under a fresh instance. A shared reply another holder still keeps
+/// is owed instead, until the final holder's release (FIX 6588).
 ///
 /// # Errors
 ///
@@ -420,8 +497,13 @@ pub(crate) fn erase_response_owner_in_txn<D: ManifestDbs + SideTableDbs>(
     }
     let mut notes = ErasedNotes::default();
     for (instance, carrier) in owed {
-        stage_erase(dbs, wtxn, (Some(owner), &mut notes), &instance)?;
         RESPONSE_OWNERS.delete(dbs, wtxn, &(*owner, instance))?;
+        if shared_wait::still_held(dbs, wtxn, &carrier, &instance)? {
+            shared_wait::owe(dbs, wtxn, (owner, &mut notes), &carrier, &instance)?;
+            continue;
+        }
+        shared_wait::discharge(dbs, wtxn, &instance)?;
+        stage_erase(dbs, wtxn, (Some(owner), &mut notes), &instance)?;
         if response_binding_in_txn(dbs, wtxn, &carrier)
             .ok()
             .flatten()

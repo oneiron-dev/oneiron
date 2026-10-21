@@ -5,6 +5,11 @@
 //! The choice changes what is projected only: never the actor, authorship,
 //! admission or what is read.
 //!
+//! A handle the host bound to an MCP tool call (FIX 8961) reads repo bytes
+//! masked too, the owner's own credential included: the tool, not the
+//! owner, receives them. The marker only masks; it admits nothing, and the
+//! owner's HTTP, CLI and SDK doors never carry it.
+//!
 //! A hydrated row is a repo file only when it is a snapshot ASSET holding
 //! its bytes inline: its id is derived from their BLAKE3, which is the hash
 //! a repo mark keeps. Every other row, and every row no mark covers, reads
@@ -123,10 +128,25 @@ impl RepoReadMasks {
 }
 
 impl Memory<'_> {
-    /// Whether this handle reads repo bytes masked: a credential other than
-    /// the owner's, or a call a code run's host origin rides.
+    /// Binds this handle to an MCP tool call (FIX 8961, GAP-A): its repo
+    /// reads are masked whatever credential rides it, the owner's included.
+    /// Mask-only and off by default; the host sets it once where it builds
+    /// the MCP handle, and room or turn handles built from this one keep it.
+    /// It never turns a recipient into a reveal, and never changes the
+    /// actor, admission or anything but which repo bytes are returned.
+    #[must_use]
+    pub fn for_repo_tool_recipient(mut self) -> Self {
+        self.repo_tool_recipient = true;
+        self
+    }
+
+    /// Whether this handle reads repo bytes masked: an MCP tool call, a
+    /// credential other than the owner's, or a call a code run's host
+    /// origin rides.
     pub(crate) fn repo_reads_masked(&self) -> MemoryResult<bool> {
-        Ok(self.host_origin.is_some() || self.reads_lifted_keys_masked()?)
+        Ok(self.repo_tool_recipient
+            || self.host_origin.is_some()
+            || self.reads_lifted_keys_masked()?)
     }
 
     /// The marks this handle's view reads file texts under: found in one
@@ -151,7 +171,9 @@ impl Memory<'_> {
         body: Vec<u8>,
     ) -> MemoryResult<Vec<u8>> {
         if entity_type != ENTITY_TYPE_ASSET
-            || !(self.host_origin.is_some() || self.reads_lifted_keys_masked_in_txn(txn)?)
+            || !(self.repo_tool_recipient
+                || self.host_origin.is_some()
+                || self.reads_lifted_keys_masked_in_txn(txn)?)
         {
             return Ok(body);
         }

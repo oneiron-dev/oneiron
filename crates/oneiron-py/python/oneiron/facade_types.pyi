@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1139 facade rows, 3972 declarations.
+Census: 1139 facade rows, 3977 declarations.
 Inputs: 1073 of 1139 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1025 of 1139 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
@@ -7129,6 +7129,8 @@ class RecordEraseSweep(TypedDict):
     sweep_queued_at: NotRequired[int | None]
     deadline_at: NotRequired[int | None]
     sweep_complete_at: NotRequired[int | None]
+    erase_complete_at: NotRequired[int | None]
+    final_ref: NotRequired[str | None]
     custody: NotRequired[RecordEraseCustody | None]
 class ResearchChildWire(TypedDict):
     root: EntityId
@@ -8452,7 +8454,7 @@ class LegalHoldEvent(TypedDict):
     request_id: NotRequired[str | None]
 class LegalHoldLiftAndEraseRequest(TypedDict):
     records: list[EntityId]
-ErasePendingReason = Literal["historical_sweep"]
+ErasePendingReason = Literal["historical_sweep", "custody_retirement"]
 LegalHoldBoundKind = Literal["law"]
 class LegalHoldBound(TypedDict):
     kind: LegalHoldBoundKind
@@ -17010,12 +17012,19 @@ class TableBody(TypedDict):
     cells: NotRequired[dict[str, dict[str, str]]]
     merges: NotRequired[list[TableMerge]]
 ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar"]
+class ChartCategory(TypedDict):
+    id: NotRequired[NodeId | None]
+    levels: NotRequired[list[str | None]]
+class ChartCategories(TypedDict):
+    level_count: NotRequired[int]
+    points: NotRequired[list[ChartCategory]]
 class ChartSeries(TypedDict):
     id: NotRequired[NodeId | None]
     name: str
     values: list[float | None]
     family: NotRequired[ChartKind | None]
     x: NotRequired[list[float | None] | None]
+    categories: NotRequired[ChartCategories | None]
 ChartSource = Literal["workbook", "literal", "cached"]
 ConnectorPreset = Literal["straight", "elbow", "curved"]
 class ConnectorEnd(TypedDict):
@@ -17076,7 +17085,7 @@ class NodePayloadTable(TypedDict):
     table: TableBody
 class NodePayloadChartBody(TypedDict):
     family: ChartKind
-    categories: list[str]
+    categories: ChartCategories
     series: list[ChartSeries]
     source: NotRequired[ChartSource]
 class NodePayloadChart(TypedDict):
@@ -17313,6 +17322,7 @@ class ChartEditInsertSeriesBody(TypedDict):
     values: NotRequired[list[float | None]]
     family: NotRequired[ChartKind | None]
     x: NotRequired[list[float | None] | None]
+    categories: NotRequired[ChartCategories | None]
 class ChartEditInsertSeries(TypedDict):
     insert_series: ChartEditInsertSeriesBody
 class ChartEditDeleteSeriesBody(TypedDict):
@@ -17349,14 +17359,47 @@ class ChartEditSetFamilyBody(TypedDict):
 class ChartEditSetFamily(TypedDict):
     set_family: ChartEditSetFamilyBody
 class ChartEditSetCategoriesBody(TypedDict):
-    categories: list[str]
+    categories: ChartCategories
 class ChartEditSetCategories(TypedDict):
     set_categories: ChartEditSetCategoriesBody
+class ChartEditSetSeriesCategoriesBody(TypedDict):
+    series: NodeId
+    categories: NotRequired[ChartCategories | None]
+class ChartEditSetSeriesCategories(TypedDict):
+    set_series_categories: ChartEditSetSeriesCategoriesBody
+class ChartEditInsertCategoryBody(TypedDict):
+    owner: NotRequired[NodeId | None]
+    id: NotRequired[NodeId | None]
+    after: NotRequired[NodeId | None]
+    levels: NotRequired[list[str | None]]
+class ChartEditInsertCategory(TypedDict):
+    insert_category: ChartEditInsertCategoryBody
+class ChartEditDeleteCategoryBody(TypedDict):
+    owner: NotRequired[NodeId | None]
+    category: NodeId
+class ChartEditDeleteCategory(TypedDict):
+    delete_category: ChartEditDeleteCategoryBody
+class ChartEditMoveCategoryBody(TypedDict):
+    owner: NotRequired[NodeId | None]
+    category: NodeId
+    after: NotRequired[NodeId | None]
+class ChartEditMoveCategory(TypedDict):
+    move_category: ChartEditMoveCategoryBody
+class ChartEditSetCategoryLevelsBody(TypedDict):
+    owner: NotRequired[NodeId | None]
+    category: NodeId
+    levels: list[str | None]
+class ChartEditSetCategoryLevels(TypedDict):
+    set_category_levels: ChartEditSetCategoryLevelsBody
+class ChartEditReserveCategoriesBody(TypedDict):
+    ids: list[NodeId]
+class ChartEditReserveCategories(TypedDict):
+    reserve_categories: ChartEditReserveCategoriesBody
 class ChartEditSetSourceBody(TypedDict):
     source: ChartSource
 class ChartEditSetSource(TypedDict):
     set_source: ChartEditSetSourceBody
-ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSource
+ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSeriesCategories | ChartEditInsertCategory | ChartEditDeleteCategory | ChartEditMoveCategory | ChartEditSetCategoryLevels | ChartEditReserveCategories | ChartEditSetSource
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):
@@ -17632,7 +17675,8 @@ class OpaqueChange(TypedDict):
     part: str
     base: NotRequired[list[int] | None]
     proposal: NotRequired[list[int] | None]
-SeriesField = Literal["name", "values", "family", "x", "order", "existence"]
+SeriesField = Literal["name", "values", "family", "x", "categories", "order", "existence"]
+CategoryField = Literal["levels", "order", "existence"]
 class ConflictBothMovedBody(TypedDict):
     node: NodeId
 class ConflictBothMoved(TypedDict):
@@ -17670,7 +17714,14 @@ class ConflictSeriesVsSeriesBody(TypedDict):
     field: SeriesField
 class ConflictSeriesVsSeries(TypedDict):
     series_vs_series: ConflictSeriesVsSeriesBody
-Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload | ConflictCellVsCell | ConflictSeriesVsSeries
+class ConflictCategoryVsCategoryBody(TypedDict):
+    node: NodeId
+    owner: NotRequired[NodeId | None]
+    category: NodeId
+    field: CategoryField
+class ConflictCategoryVsCategory(TypedDict):
+    category_vs_category: ConflictCategoryVsCategoryBody
+Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload | ConflictCellVsCell | ConflictSeriesVsSeries | ConflictCategoryVsCategory
 class RelationshipChange(TypedDict):
     source: str
     id: str
@@ -19034,6 +19085,25 @@ class ScopeSummaryResult(TypedDict):
     summary: str
     claim: NotRequired[str | None]
     record: NotRequired[str | None]
+class ArcPendingStatusArcLowerPending(TypedDict):
+    cause: Literal["arc_lower_pending"]
+    session: str
+class ArcPendingStatusArcSourceUnavailable(TypedDict):
+    cause: Literal["arc_source_unavailable"]
+    handle: str
+class ArcPendingStatusArcCompositionPending(TypedDict):
+    cause: Literal["arc_composition_pending"]
+    work_id: str
+    parts_done: int
+    parts_owed: int
+class ArcPendingStatusArcWindowTooSmall(TypedDict):
+    cause: Literal["arc_window_too_small"]
+    window: int
+    frame_tokens: int
+ArcPendingStatus = ArcPendingStatusArcLowerPending | ArcPendingStatusArcSourceUnavailable | ArcPendingStatusArcCompositionPending | ArcPendingStatusArcWindowTooSmall
+class SummaryStale(TypedDict):
+    reason: Literal["note_source_edited"]
+    notes: list[str]
 class ScopeSummaryStatus(TypedDict):
     attempt: str
     requester: str
@@ -19043,6 +19113,8 @@ class ScopeSummaryStatus(TypedDict):
     failure: NotRequired[str | None]
     retry_at: NotRequired[int | None]
     updated_at: int
+    arc_pending: NotRequired[ArcPendingStatus | None]
+    stale: NotRequired[SummaryStale | None]
 class SummaryKeepRequest(TypedDict):
     summary_ref: str
     frontier: list[int]

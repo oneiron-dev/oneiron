@@ -117,18 +117,19 @@ async fn resume(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<HeldRun>, JsonRejection>,
 ) -> OwnerReply<HeldRunView> {
-    owner(&auth, &server)?;
+    // The owner's proof rides into the resume's own transaction and is
+    // revalidated there; the resume records the person it names (FIX 8197).
+    let proof = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let root = parse_attempt_id_param(&request.run, "run")?;
-    let actor = auth.principal().to_owned();
     let view = blocking(move || -> OwnerResult<HeldRunView> {
         let dispatcher = AgentDispatcher::new(server.vault());
         if dispatcher.plan_hold(root)?.is_none() {
             return Err(OwnerError::NotFound("budget_hold", request.run));
         }
-        HeldRunView::of(dispatcher.resume_budget_hold(
+        HeldRunView::of(dispatcher.resume_budget_hold_as_owner(
             root,
-            &actor,
+            &proof,
             oneiron_vault_contract::now_ts(),
         )?)
     })

@@ -76,6 +76,7 @@ mod training;
 mod voice;
 mod voxcpm2_speech;
 mod walk;
+mod worker_host;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
 pub(crate) use broker_context::BrokerContext;
@@ -103,6 +104,7 @@ pub use status::{
     DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus,
 };
 pub use token_ratio::TokenRatios;
+pub(crate) use worker_host::permit_worker_launch;
 
 use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
 use ladder::{LadderRung, SeatScope, Wire};
@@ -306,7 +308,11 @@ impl ModelRuntime {
                 ..Self::unconfigured()
             };
         };
-        let mut status = ModelsStatus::default();
+        let mut status = ModelsStatus {
+            // The process's supervisors for `[models.workers]` (FIX 8315).
+            workers: worker_host::configure(&config.workers, &config.providers),
+            ..ModelsStatus::default()
+        };
         let mut built = BTreeMap::new();
         // Every `key_secret` provider, chat or media, sends through the
         // context's one broker and reads its key at the context's door.
@@ -625,6 +631,7 @@ impl ModelRuntime {
                 })
             })
             .collect();
+        worker_host::refresh(&mut status.workers);
         status
     }
 }

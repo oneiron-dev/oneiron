@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1190 code-mode rows (1150 host rows, 40 run rows), 4027 declarations.
+// Census: 1190 code-mode rows (1150 host rows, 40 run rows), 4032 declarations.
 // Replies: 1070 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -1446,7 +1446,7 @@ declare namespace Sdk {
   type RecordEraseOutcome = { first: DeleteReceipt; first_act?: string | null; same_bytes: EraseSameBytesRow[] };
   type RecordEraseSweepRequest = { receipt_ref: string };
   type RecordEraseCustody = { state: string; pending: string[]; recall: string; note?: string | null };
-  type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null; custody?: RecordEraseCustody | null };
+  type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null; erase_complete_at?: number | null; final_ref?: string | null; custody?: RecordEraseCustody | null };
   type ResearchChildWire = { root: EntityId; parent: EntityId; agent: EntityId; intent_key: string; briefing: string };
   type ResearchChildReceipt = { root: EntityId; parent: EntityId; child: EntityId };
   type ResearchArchiveWire = { root: EntityId };
@@ -1708,7 +1708,7 @@ declare namespace Sdk {
   type LegalHoldReason = "owner_placed" | "host_placed" | "legal_order" | "scope_widened" | "scope_narrowed_by_erase" | "end_date_changed" | "held_record" | "privacy_erase_kept" | "owner_confirmed" | "completion_pending" | "receipt_completed" | "authority_released" | "order_ended" | "host_released" | "secrecy_ended";
   type LegalHoldEvent = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; actor_ref?: string | null; actor_kind: LegalHoldActorKind; at: number; event: LegalHoldEventKind; reason: LegalHoldReason; matter_ref?: string | null; request_id?: string | null };
   type LegalHoldLiftAndEraseRequest = { records: EntityId[] };
-  type ErasePendingReason = "historical_sweep";
+  type ErasePendingReason = "historical_sweep" | "custody_retirement";
   type LegalHoldBoundKind = "law";
   type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
   type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "retained_for_law"; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string } | { state: "failed"; message: string };
@@ -3472,7 +3472,9 @@ declare namespace Sdk {
   type TableMerge = { first_row: NodeId; first_column: NodeId; last_row: NodeId; last_column: NodeId };
   type TableBody = { rows: NodeId[]; columns: NodeId[]; cells?: Record<string, Record<string, string>>; merges?: TableMerge[] };
   type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar";
-  type ChartSeries = { id?: NodeId | null; name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null };
+  type ChartCategory = { id?: NodeId | null; levels?: (string | null)[] };
+  type ChartCategories = { level_count?: number; points?: ChartCategory[] };
+  type ChartSeries = { id?: NodeId | null; name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null };
   type ChartSource = "workbook" | "literal" | "cached";
   type ConnectorPreset = "straight" | "elbow" | "curved";
   type ConnectorEnd = { node: NodeId; site: number };
@@ -3482,7 +3484,7 @@ declare namespace Sdk {
   type PathPoint = { x: Coord; y: Coord };
   type PathCommand = { move_to: { to: PathPoint } } | { line_to: { to: PathPoint } } | { arc_to: { w_r: Coord; h_r: Coord; st_ang: Coord; sw_ang: Coord } } | { quad_bez_to: { control: PathPoint; to: PathPoint } } | { cubic_bez_to: { control1: PathPoint; control2: PathPoint; to: PathPoint } } | "close";
   type GeomPath = { w?: number | null; h?: number | null; fill?: PathFill | null; stroke?: boolean | null; extrusion_ok?: boolean | null; commands: PathCommand[] };
-  type NodePayload = { picture: { image: AssetRef } } | { held_picture: { media: HeldMedia } } | { table: TableBody } | { chart: { family: ChartKind; categories: string[]; series: ChartSeries[]; source?: ChartSource } } | { connector: { preset?: ConnectorPreset | null; start?: ConnectorEnd | null; end?: ConnectorEnd | null } } | { smart_art: { nodes: SmartArtNode[] } } | { ole: { prog_id?: string | null; preview?: HeldMedia | null } } | { custom_geometry: { paths: GeomPath[] } };
+  type NodePayload = { picture: { image: AssetRef } } | { held_picture: { media: HeldMedia } } | { table: TableBody } | { chart: { family: ChartKind; categories: ChartCategories; series: ChartSeries[]; source?: ChartSource } } | { connector: { preset?: ConnectorPreset | null; start?: ConnectorEnd | null; end?: ConnectorEnd | null } } | { smart_art: { nodes: SmartArtNode[] } } | { ole: { prog_id?: string | null; preview?: HeldMedia | null } } | { custom_geometry: { paths: GeomPath[] } };
   type Run = { text: string; bold?: boolean | null; italic?: boolean | null; size?: number | null; latin?: string | null };
   type Paragraph = { id: NodeId; level: number; runs: Run[] };
   type TextBody = { paragraphs: Paragraph[] };
@@ -3496,7 +3498,7 @@ declare namespace Sdk {
   type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null } | { op: "mark"; block: string; at: number; len: number; mark: DocxMark; on: boolean };
   type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "define_format"; id: string; format: XlsxFormat } | { op: "set_format"; sheet: string; cell: string; format: string } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null } | { op: "add_sheet"; sheet: string; at?: number | null } | { op: "rename_sheet"; sheet: string; name: string } | { op: "move_sheet"; sheet: string; at: number } | { op: "delete_sheet"; sheet: string } | { op: "set_sheet_visibility"; sheet: string; visibility: XlsxSheetVisibility } | { op: "insert_rows"; sheet: string; at: number; count: number } | { op: "delete_rows"; sheet: string; at: number; count: number } | { op: "insert_columns"; sheet: string; at: number; count: number } | { op: "delete_columns"; sheet: string; at: number; count: number };
   type TableEdit = { insert_row: { id?: NodeId | null; after?: NodeId | null } } | { insert_column: { id?: NodeId | null; after?: NodeId | null } } | { delete_row: { row: NodeId } } | { delete_column: { column: NodeId } } | { move_row: { row: NodeId; after?: NodeId | null } } | { move_column: { column: NodeId; after?: NodeId | null } } | { set_cell: { row: NodeId; column: NodeId; text: string } } | { merge: TableMerge } | { unmerge: TableMerge };
-  type ChartEdit = { insert_series: { id?: NodeId | null; after?: NodeId | null; name?: string; values?: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null } } | { delete_series: { series: NodeId } } | { move_series: { series: NodeId; after?: NodeId | null } } | { set_series_name: { series: NodeId; name: string } } | { set_series_values: { series: NodeId; values: (number | null)[] } } | { set_series_family: { series: NodeId; family?: ChartKind | null } } | { set_series_x: { series: NodeId; x?: (number | null)[] | null } } | { set_family: { family: ChartKind } } | { set_categories: { categories: string[] } } | { set_source: { source: ChartSource } };
+  type ChartEdit = { insert_series: { id?: NodeId | null; after?: NodeId | null; name?: string; values?: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null } } | { delete_series: { series: NodeId } } | { move_series: { series: NodeId; after?: NodeId | null } } | { set_series_name: { series: NodeId; name: string } } | { set_series_values: { series: NodeId; values: (number | null)[] } } | { set_series_family: { series: NodeId; family?: ChartKind | null } } | { set_series_x: { series: NodeId; x?: (number | null)[] | null } } | { set_family: { family: ChartKind } } | { set_categories: { categories: ChartCategories } } | { set_series_categories: { series: NodeId; categories?: ChartCategories | null } } | { insert_category: { owner?: NodeId | null; id?: NodeId | null; after?: NodeId | null; levels?: (string | null)[] } } | { delete_category: { owner?: NodeId | null; category: NodeId } } | { move_category: { owner?: NodeId | null; category: NodeId; after?: NodeId | null } } | { set_category_levels: { owner?: NodeId | null; category: NodeId; levels: (string | null)[] } } | { reserve_categories: { ids: NodeId[] } } | { set_source: { source: ChartSource } };
   type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { set_preset: { node: NodeId; preset: Preset } } | { set_payload: { node: NodeId; payload: NodePayload } } | { edit_table: { node: NodeId; edits: TableEdit[] } } | { edit_chart: { node: NodeId; edits: ChartEdit[] } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } };
   type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] } | { format: "pptx"; ops: DeckOp[] };
   type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
@@ -3539,8 +3541,9 @@ declare namespace Sdk {
   type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
   type NodeMove = { node: NodeId; old_parent?: NodeId | null; new_parent?: NodeId | null; old_index?: number | null; new_index?: number | null; cross_slide: boolean };
   type OpaqueChange = { part: string; base?: number[] | null; proposal?: number[] | null };
-  type SeriesField = "name" | "values" | "family" | "x" | "order" | "existence";
-  type Conflict = { both_moved: { node: NodeId } } | { deleted_vs_edited: { node: NodeId; deleted_by_head: boolean } } | { text_vs_text: { node: NodeId } } | { geometry_vs_reparent: { node: NodeId } } | { both_replaced_opaque: { part: string } } | { payload_vs_payload: { node: NodeId } } | { cell_vs_cell: { node: NodeId; row: NodeId; column: NodeId } } | { series_vs_series: { node: NodeId; series: NodeId; field: SeriesField } };
+  type SeriesField = "name" | "values" | "family" | "x" | "categories" | "order" | "existence";
+  type CategoryField = "levels" | "order" | "existence";
+  type Conflict = { both_moved: { node: NodeId } } | { deleted_vs_edited: { node: NodeId; deleted_by_head: boolean } } | { text_vs_text: { node: NodeId } } | { geometry_vs_reparent: { node: NodeId } } | { both_replaced_opaque: { part: string } } | { payload_vs_payload: { node: NodeId } } | { cell_vs_cell: { node: NodeId; row: NodeId; column: NodeId } } | { series_vs_series: { node: NodeId; series: NodeId; field: SeriesField } } | { category_vs_category: { node: NodeId; owner?: NodeId | null; category: NodeId; field: CategoryField } };
   type RelationshipChange = { source: string; id: string; kind: string; before?: string | null; after?: string | null };
   type SlideRender = { slide: NodeId; part: string; fingerprint: number[] };
   type RenderSide = { version: number; state_hash: number[]; export_key: number[]; slides: SlideRender[] };
@@ -3791,7 +3794,9 @@ declare namespace Sdk {
   type SummaryReadView = { summary_ref: string; document: string; frontier: number[]; text: string; metadata: ScopeSummaryMetadata; covers: string[]; read_refs: string[]; anchors: TextAnchor[]; birth: Birth };
   type SummaryStatusRequest = { attempt?: string | null; session_ref?: string | null };
   type ScopeSummaryResult = { summary: string; claim?: string | null; record?: string | null };
-  type ScopeSummaryStatus = { attempt: string; requester: string; current_attempt: string; state: string; result?: ScopeSummaryResult | null; failure?: string | null; retry_at?: number | null; updated_at: number };
+  type ArcPendingStatus = { cause: "arc_lower_pending"; session: string } | { cause: "arc_source_unavailable"; handle: string } | { cause: "arc_composition_pending"; work_id: string; parts_done: number; parts_owed: number } | { cause: "arc_window_too_small"; window: number; frame_tokens: number };
+  type SummaryStale = { reason: "note_source_edited"; notes: string[] };
+  type ScopeSummaryStatus = { attempt: string; requester: string; current_attempt: string; state: string; result?: ScopeSummaryResult | null; failure?: string | null; retry_at?: number | null; updated_at: number; arc_pending?: ArcPendingStatus | null; stale?: SummaryStale | null };
   type SummaryKeepRequest = { summary_ref: string; frontier: number[]; keep: string };
   type SummaryKeepResult = { summary_ref: string; frontier: number[]; keep: string };
   type SummaryEdit = { kind: "append_to_section"; section: TextAnchor; text: string } | { kind: "replace_quoted_span"; span: TextAnchor; text: string } | { kind: "insert_after_anchor"; anchor: TextAnchor; text: string };

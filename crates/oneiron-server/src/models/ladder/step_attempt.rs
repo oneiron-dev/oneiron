@@ -16,6 +16,9 @@ impl OfferLadder {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         let rung = &self.rungs[0];
+        // A managed worker's lease, held through settlement (FIX 8315); a
+        // parked worker fails the attempt as an unreachable one would.
+        let _lease = self.hold_worker(0).await?;
         let (bound, permit) = self.admit(run, rung, &request, None, false)?;
         let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
         let warmth = super::cache_warmth::Sending::of(rung, &bound);

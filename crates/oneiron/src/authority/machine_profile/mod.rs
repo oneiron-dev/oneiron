@@ -49,7 +49,8 @@ pub enum SignerClass {
     /// A key the owner holds.
     OwnerHeld,
     /// A cloud root, or a key in the host's custody on a hosted vault: it
-    /// registers, demotes or removes, and never answers for the owner.
+    /// registers a bootstrap node and carries it under a successor root, and
+    /// never demotes, removes or answers for the owner (FIX 7920).
     Custodial,
     /// A linked machine's install key carrying the owner's act (mesh PR1b):
     /// the act answers for the owner, never the key, and the label says

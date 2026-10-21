@@ -178,6 +178,43 @@ impl ServeCommand {
         Ok(Self { argv, env })
     }
 
+    /// The read-only invocation over a masked copy's bare store (FIX 7608
+    /// slice 2b-i): the same pinned git and pinned-off maintenance, fsmonitor
+    /// and signers as [`Self::http_backend`], but `http.receivepack=false`
+    /// and no door hook, so only `git-upload-pack` answers and nothing is
+    /// ever received into a copy. `GIT_NO_REPLACE_OBJECTS` keeps every byte
+    /// served the copy's own. No caller yet; the canonical command is
+    /// unchanged.
+    ///
+    /// # Errors
+    /// A git executable that cannot be pinned, or a non-UTF-8 path.
+    pub(crate) fn http_backend_read_only(copy_dir: &Path, project_root: &Path) -> Result<Self> {
+        let process_env = GitWireProcessEnv::capture()?;
+        let mut argv = vec![path_arg(process_env.git_binary())?];
+        for pinned in [
+            "http.receivepack=false",
+            "http.uploadpack=true",
+            "core.hooksPath=/dev/null",
+            "receive.autogc=false",
+            "gc.auto=0",
+            "maintenance.auto=false",
+            "core.fsmonitor=false",
+            "gpg.program=false",
+            "gpg.ssh.program=false",
+            "gpg.x509.program=false",
+        ] {
+            argv.extend(["-c".to_owned(), pinned.to_owned()]);
+        }
+        argv.push("http-backend".to_owned());
+        let mut env = BTreeMap::new();
+        env.insert("GIT_DIR".to_owned(), path_arg(copy_dir)?);
+        env.insert("GIT_PROJECT_ROOT".to_owned(), path_arg(project_root)?);
+        env.insert("GIT_HTTP_EXPORT_ALL".to_owned(), "1".to_owned());
+        env.insert("GIT_NO_REPLACE_OBJECTS".to_owned(), "1".to_owned());
+        env.insert("PATH".to_owned(), inherited_path());
+        Ok(Self { argv, env })
+    }
+
     /// The frozen argv.
     #[must_use]
     pub fn argv(&self) -> &[String] {
