@@ -3631,6 +3631,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.merge_queue.review_policy.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.code.merge_queue.review_policy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::QueueReviewPolicySetRequest,
+                >(),
+            ),
+            (
                 "vault.code.merge_queue.export_green",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::merge_queue_doors::MergeQueueGreenExportRequest,
@@ -6968,6 +6978,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.snapshots.get",
     "vault.code.snapshots.read",
     "vault.code.symbols.definitions",
+    "vault.code.merge_queue.review_policy.get",
+    "vault.code.merge_queue.review_policy.set",
     "vault.code.merge_queue.export_green",
     "vault.agents.create",
     "vault.agents.get",
@@ -8680,6 +8692,16 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.symbols.definitions" => crate::code_run::vault_read::request_schema::<
             crate::memory::codebase_doors::CodeSnapshotDefinitionsView,
         >(),
+        "vault.code.merge_queue.review_policy.get" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::memory::merge_queue_doors::QueueReviewPolicyView,
+            >()
+        }
+        "vault.code.merge_queue.review_policy.set" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::memory::merge_queue_doors::QueueReviewPolicyView,
+            >()
+        }
         "vault.code.merge_queue.export_green" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CodeExportResult,
         >(),
@@ -14245,6 +14267,14 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.merge_queue.review_policy.get" => &[],
+        "vault.code.merge_queue.review_policy.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.merge_queue.export_green" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19777,6 +19807,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::merge_queue_doors::CodeCheckReceiptRequest =
                 decode(value.clone())?;
         }
+        "vault.code.merge_queue.review_policy.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.code.merge_queue.review_policy.set" => {
+            let _input: crate::memory::merge_queue_doors::QueueReviewPolicySetRequest =
+                decode(value.clone())?;
+        }
         "vault.code.merge_queue.export_green" => {
             let _input: crate::memory::merge_queue_doors::MergeQueueGreenExportRequest =
                 decode(value.clone())?;
@@ -22821,6 +22858,12 @@ pub fn invoke(
             encode(vault_code_merge_queue_check_status(memory, decode(value)?)?)
         }
         "vault.code.checks.get" => encode(vault_code_checks_get(memory, decode(value)?)?),
+        "vault.code.merge_queue.review_policy.get" => encode(
+            vault_code_merge_queue_review_policy_get(memory, decode(value)?)?,
+        ),
+        "vault.code.merge_queue.review_policy.set" => encode(
+            vault_code_merge_queue_review_policy_set(memory, decode(value)?)?,
+        ),
         "vault.code.merge_queue.export_green" => {
             encode(vault_code_merge_queue_export_green(memory, decode(value)?)?)
         }
@@ -29325,6 +29368,23 @@ pub fn vault_code_checks_get(
     input: crate::memory::merge_queue_doors::CodeCheckReceiptRequest,
 ) -> MemoryResult<Option<crate::memory::merge_queue_doors::CodeCheckReceiptView>> {
     memory.merge_queue_check_receipt_as(&memory.embedded_owner("vault.code.checks.get")?, input)
+}
+pub fn vault_code_merge_queue_review_policy_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::QueueReviewPolicyView> {
+    memory.merge_queue_review_policy_get_as(
+        &memory.merge_queue_review_policy_proof("vault.code.merge_queue.review_policy.get"),
+    )
+}
+pub fn vault_code_merge_queue_review_policy_set(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::QueueReviewPolicySetRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::QueueReviewPolicyView> {
+    memory.merge_queue_review_policy_set_as(
+        &memory.merge_queue_review_policy_proof("vault.code.merge_queue.review_policy.set"),
+        input,
+    )
 }
 pub fn vault_code_merge_queue_export_green(
     memory: &Memory<'_>,

@@ -540,7 +540,7 @@ pub(crate) fn authority_door(
 /// by this install's own machine key, which only its own doors hold and sign
 /// with after they revalidate the owner or an agent's Grant, and carrying
 /// that will (an owner or delegated act, or owner work's request, result or
-/// cancel). Such a row leaves the lifetime signer bound, which still raises
+/// cancel), or the frontier join such an act rides on (FIX 7908). Such a row leaves the lifetime signer bound, which still raises
 /// its typed check; strangers, other installs' rows and a replica's retries
 /// keep their treatment. No local or replicated flag is read. An install
 /// whose key is not known yet keeps today's path
@@ -571,7 +571,8 @@ fn carries_own_will(
         | AuthorityOp::HomeNodePick(_)
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
-        | AuthorityOp::AgentGrantAct(_) => true,
+        | AuthorityOp::AgentGrantAct(_)
+        | AuthorityOp::FrontierJoin(_) => true,
         AuthorityOp::MachineProfile(profile) => profile.act.is_some(),
         _ => false,
     })

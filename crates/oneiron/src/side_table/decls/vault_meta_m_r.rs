@@ -18,6 +18,9 @@ side_tables! {
     /// One requested queue init, check or diagnosis: its attempt, generation, status and
     /// receipts (FIX 6868). Key: hex(repo identity) ":" hex64(request digest).
     MERGE_QUEUE_CHECK_WORK: VaultMeta b"merge_queue:check_work:v1:" Named Authored;
+    /// The vault's one opt-in review policy for merge queue work; no row lands on green (FIX
+    /// 8268). Key: ().
+    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored;
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;
