@@ -47,10 +47,9 @@ pub use self::stale::{
     SkillStaleNote, rebuild_skill_source_index, skill_stale_note, skills_dependent_on_message,
 };
 pub use self::types::{
-    CONVERT_HINT_MAX_BYTES, CONVERT_MAX_NEIGHBORS, CONVERT_MAX_SOURCE_MESSAGES,
-    CONVERT_RATIONALE_MAX_BYTES, ConvertOutcome, ConvertRequest, ConvertUtterance, RefineVerdict,
-    RefinedSkill, SKILL_CONVERT_CALL_PURPOSE_NAME, SkillNeighbor, SkillRefineBrief, SkillRefiner,
-    skill_convert_call_purpose,
+    CONVERT_HINT_MAX_BYTES, CONVERT_MAX_NEIGHBORS, CONVERT_RATIONALE_MAX_BYTES, ConvertOutcome,
+    ConvertRequest, ConvertUtterance, RefineVerdict, RefinedSkill, SKILL_CONVERT_CALL_PURPOSE_NAME,
+    SkillNeighbor, SkillRefineBrief, SkillRefiner, skill_convert_call_purpose,
 };
 
 pub(crate) use self::stale::maintain_skill_source_index_for_put;

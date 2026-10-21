@@ -34,10 +34,6 @@ pub const ACTOR_DISTILL_CALL_PURPOSE_NAME: &str = "actor_session_distill";
 /// Maximum UTF-8 length of a note. Notes are craft memory, not transcripts —
 /// a row that needs more than this is citing, not distilling.
 pub const ACTOR_NOTE_MAX_BYTES: usize = 1024;
-/// Upper bound on the evidence refs one row cites. The trace is a citation
-/// list, and a citation list that grows without bound turns a claim body into
-/// a ledger (the `skill.reliability` bound, same reasoning).
-pub const ACTOR_CLAIM_MAX_CITED_EVIDENCE: usize = 64;
 /// The failure mode `ExecutionLapse` names.
 ///
 /// SK-04 routes `ExecutionLapse` on exactly one fact pattern: a FAILED attempt

@@ -58,6 +58,10 @@ pub fn skill_library_fork_by_caller(
     let writer = WriteActor::new(memory.actor(), memory.actor_class());
     let entity = input.entity.unwrap_or_else(EntityId::now);
     let at = vault.now_recorded_at();
+    // OF-063 (FIX 1230): the forked text's links are read for the caller
+    // before the writer opens and receipted once the fork lands.
+    let unlinked =
+        crate::skill::forked_skill_prose_links(memory, vault, &input.parent, "vault.skills.fork")?;
     vault.with_write_txn_grouped(|txn| {
         let claims = slip.claims();
         let granted = claims.invitation_ref.is_none()
@@ -82,5 +86,6 @@ pub fn skill_library_fork_by_caller(
             at,
         )
     })?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked);
     skill_library_view(vault, &HubSkillRequest { entity })
 }

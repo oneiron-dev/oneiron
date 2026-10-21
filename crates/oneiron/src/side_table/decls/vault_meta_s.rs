@@ -339,10 +339,10 @@ side_tables! {
     SKILL_ATTRIBUTION_AUDIT: VaultMeta b"skill_attribution:audit:v1:" Raw;
     /// One label the attribution judge settled on a terminal attempt's outcome evidence, kept
     /// whatever its subject routing (OF-568 L10): source id, evidence sequence, receipt, actor
-    /// (nil once erased), skill, label, share, judge revision, time. Key: hash32 (blake3 of the
-    /// terminal pack receipt id) + u64be (evidence sequence).
+    /// and skill (each nil once erased), label, share, judge revision, time. Key: hash32 (blake3
+    /// of the terminal pack receipt id) + u64be (evidence sequence).
     SKILL_ATTRIBUTION_CAUSE: VaultMeta b"skill_attribution:cause:v1:" Named Engine
-        => crate::skill_attribution::erase_attribution_cause_actor_in_txn;
+        => crate::skill_attribution::erase_attribution_cause_entity_in_txn;
     /// One matched-fork contribution check: the verdict and the pair it was read from (both fork
     /// receipts and results, the anchor, the axis). Key: string (attempt receipt "\0" skill hex
     /// "\0" axis).
@@ -358,15 +358,18 @@ side_tables! {
     /// One minted skill-edit proposal awaiting gated apply, keyed by judgment sequence. Key: u64be.
     SKILL_ATTRIBUTION_EDIT_PROPOSAL: VaultMeta b"skill_attribution:edit_proposal:v1:" Raw;
     /// One recorded outcome-evidence row (hand-rolled MessagePack map) awaiting attribution routing,
-    /// keyed by sequence. Key: u64be.
-    SKILL_ATTRIBUTION_EVIDENCE: VaultMeta b"skill_attribution:evidence:v1:" Raw;
+    /// keyed by sequence; its skill is nil once erased. Key: u64be.
+    SKILL_ATTRIBUTION_EVIDENCE: VaultMeta b"skill_attribution:evidence:v1:" Raw
+        => crate::skill_attribution::erase_attribution_evidence_skill_in_txn;
     /// Monotonic counter (u64be) minting the next evidence sequence number. Key: ().
     SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE: VaultMeta b"skill_attribution:evidence_sequence:v1" Raw;
     /// Judge revision (UTF-8) that routed one judgment, stamped once. Key: u64be (evidence
     /// sequence).
     SKILL_ATTRIBUTION_JUDGE_REVISION: VaultMeta b"skill_attribution:judge_revision:v1:" Raw;
-    /// One durable attribution verdict routed from evidence, keyed by evidence sequence. Key: u64be.
-    SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw;
+    /// One durable attribution verdict routed from evidence, keyed by evidence sequence; one that
+    /// charges an erased skill goes, with the edit proposals naming it. Key: u64be.
+    SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw
+        => crate::skill_attribution::erase_attribution_judgment_skill_in_txn;
     /// Frozen anchored pack outcome, eligible used lineage chains and shares. Key: credit receipt id.
     SKILL_ATTRIBUTION_LATE_CREDIT: VaultMeta b"skill_attribution:late_credit:v1:" Named;
     /// The highest attribution evidence sequence the positive lane has read. Key: ().

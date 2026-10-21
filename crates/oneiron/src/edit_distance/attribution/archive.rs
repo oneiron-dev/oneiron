@@ -1,5 +1,5 @@
 //! Inert restoration of skill amendment-cost history; never a judged local cost.
-use super::stored::{MAX_CITED_RECEIPTS, invalid, normalized_scope};
+use super::stored::{invalid, normalized_scope};
 use crate::{
     Vault,
     claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, PREDICATE_SKILL_EDIT_COST},
@@ -43,10 +43,7 @@ pub(crate) fn imported_skill_cost_body(body: &ClaimBody) -> Result<ClaimBody> {
     let Some(Value::Array(refs)) = body.evidence.as_ref() else {
         return Err(invalid("skill cost citations missing"));
     };
-    if refs.is_empty()
-        || refs.len() > MAX_CITED_RECEIPTS
-        || refs.iter().any(|r| r.as_str().is_none_or(str::is_empty))
-    {
+    if refs.is_empty() || refs.iter().any(|r| r.as_str().is_none_or(str::is_empty)) {
         return Err(invalid("invalid archived skill cost citations"));
     }
     let mut out = body.clone();

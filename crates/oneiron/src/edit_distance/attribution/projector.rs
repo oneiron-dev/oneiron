@@ -5,8 +5,8 @@ use super::evidence_judge::{
     amendment_judgment_in_txn, amendment_judgments, amendment_judgments_in_txn,
 };
 use super::stored::{
-    MAX_CITED_RECEIPTS, ROW_VERSION, StoredTarget, TARGET, TARGET_ROW_LABEL, TargetKey, hex_entity,
-    invalid, normalized_scope,
+    ROW_VERSION, StoredTarget, TARGET, TARGET_ROW_LABEL, TargetKey, hex_entity, invalid,
+    normalized_scope,
 };
 use super::taxonomy::{AmendmentClass, AmendmentJudgment, cost_predicate};
 use crate::Vault;
@@ -482,7 +482,7 @@ fn known_target_predicate(token: &str) -> Option<&'static str> {
 /// One `(subject, scope)` pair's folded cost.
 struct CostAggregate {
     cost: f32,
-    /// The newest cited receipts, oldest-first, bounded.
+    /// Every cited receipt, oldest-first.
     receipts: Vec<String>,
     /// The newest judged amendment's stamp — the row's event time.
     at: u64,
@@ -535,13 +535,11 @@ fn aggregate_for(
     )]
     let mean = (total / rows.len() as f64).clamp(0.0, 1.0) as f32;
     let at = rows.last().map_or(0, |(row, _)| row.at);
-    // The NEWEST citations survive the bound: a row's trace should point at the
-    // evidence nearest the estimate it carries.
-    let first = rows.len().saturating_sub(MAX_CITED_RECEIPTS);
-    let receipts = rows[first..]
+    // Every judgment the mean folds is cited, however many (Engine 10-21,
+    // Rule 5): the trace names all the evidence the estimate rests on.
+    let receipts = rows
         .iter()
         .flat_map(|(row, _)| row.evidence_receipts.iter().cloned())
-        .take(MAX_CITED_RECEIPTS)
         .collect();
     Some(CostAggregate {
         cost: mean,

@@ -11,11 +11,6 @@ use crate::skill_hub::HubFile;
 /// totals (the `actor_session_distill` precedent).
 pub const SKILL_CONVERT_CALL_PURPOSE_NAME: &str = "skill_convert_refine";
 
-/// Upper bound on the turns/messages one conversion may select. A selection is
-/// a user's gesture at a passage, not a transcript export; the same bound the
-/// `actor.*` citation lists carry.
-pub const CONVERT_MAX_SOURCE_MESSAGES: usize = 64;
-
 /// Upper bound on the existing skills a refine brief is shown for its near-dup
 /// diff. A shortlist the tier can actually read beats a catalogue it skims.
 pub const CONVERT_MAX_NEIGHBORS: usize = 8;
