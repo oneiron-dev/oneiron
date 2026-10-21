@@ -1775,18 +1775,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/roles.rs` | src | s | 3 struct · 7 fn · 4 const · 4 crate-vis | RoleBackend, RoleBackends, RoleCall | The Dreamer's model roles, and the backend each one calls out on |
 | `src/dreamer_consolidation/root_evidence.rs` | src | m | 6 crate-vis | — | Root-owned reference pins |
 | `src/dreamer_consolidation/routing.rs` | src | s | 2 struct · 5 fn · 1 type · 1 crate-vis | CandidateKeys, PredicateKeyRule | Three consolidation lanes: free keyed equality, scoped conflicts, cosine nominations |
-| `src/dreamer_consolidation/scope_summary_attempt.rs` | src | m | 1 struct · 2 fn · 4 crate-vis | ScopeSummaryExecutor | The Dreamer writes a declared scope summary's body (ARCH-0006a) |
+| `src/dreamer_consolidation/scope_summary_attempt.rs` | src | m | 1 struct · 2 fn · 5 crate-vis | ScopeSummaryExecutor | The Dreamer writes a declared scope summary's body (ARCH-0006a) |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_children.rs` | src | m | 3 crate-vis | — | An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): its input does not fit one call on its model… |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_chunks.rs` | src | m | 14 crate-vis | — | An Arc's sources as members and parts (FIX 7509 PR3, Rule 5): each member's words as its calls show them… |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_claims.rs` | src | s | 3 crate-vis | — | The claims an Arc's call reads (FIX 7509 P8): for every subject the Arc's TURNs name (their `mentions` and… |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_compose.rs` | src | s | 2 crate-vis | — | An Arc's composition (FIX 7509 P8, SUMMARY-SOURCE = A) |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_evidence.rs` | src | s | 3 crate-vis | — | An Arc's evidence (FIX 7509 P8, SUMMARY-SOURCE = A), read in one snapshot: its sittings' summary lines, each… |
-| `src/dreamer_consolidation/scope_summary_attempt/arc_output.rs` | src | s | 13 crate-vis | — | An Arc call's reply (FIX 7509 P8, its parts in PR3): `{lines: [{text, turn_refs}], keep, open_turns}`, each… |
-| `src/dreamer_consolidation/scope_summary_attempt/arc_reduce.rs` | src | s | 4 crate-vis | — | The Arc assembled from its parts (FIX 7509 PR3): no model call, an ordered and lossless assembly |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_output.rs` | src | m | 15 crate-vis | — | An Arc call's reply (FIX 7509 P8, its parts in PR3): `{lines: [{text, turn_refs}], keep, open_turns}`, each… |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_part_merge.rs` | src | s | 2 crate-vis | — | One Arc part's pieces, merged before the Arc is assembled (FIX 8285) |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_reduce.rs` | src | s | 6 crate-vis | — | The Arc assembled from its parts (FIX 7509 PR3): no model call, an ordered and lossless assembly |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_review.rs` | src | m | 18 crate-vis | — | The calls of an Arc composed in parts (FIX 7509 PR3): one input shape for all of them, so one frame counts… |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_turns.rs` | src | s | 4 crate-vis | — | The turns an Arc's reply names to open (FIX 7509 P8): when a line and the claims disagree, the model names… |
 | `src/dreamer_consolidation/scope_summary_attempt/chunks.rs` | src | m | 1 crate-vis | — | A sitting too big for one call on its model (FIX 7509 P7b, Rule 5) |
-| `src/dreamer_consolidation/scope_summary_attempt/output.rs` | src | s | 10 crate-vis | — | A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came from by the labels the engine… |
+| `src/dreamer_consolidation/scope_summary_attempt/output.rs` | src | s | 8 crate-vis | — | A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came from by the call-local `T` labels… |
 | `src/dreamer_consolidation/scope_summary_attempt/window.rs` | src | s | 5 crate-vis | — | What one summary call may hold on its model (FIX 7509 P7b, shared with the Arc's parts in PR3): the window… |
 | `src/dreamer_consolidation/selection.rs` | src | s | 5 struct · 1 enum · 7 fn · 1 crate-vis | SelectionCandidate, SelectionConfig, SelectionHold, SelectionPlan, StrengthSignals, StrengthWeights | Mechanical candidate selection |
 | `src/dreamer_consolidation/settle.rs` | src | L | 8 struct · 2 enum · 4 fn · 1 const · 12 crate-vis | ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions, ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass, RevertedSettlement +2 | Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`) |
@@ -4047,14 +4048,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scan_check/table_tests.rs` | test | m | — | — | The code's own list of engine scans: none refuses for how many rows it reads (rule 5) |
 | `src/scope_summary/arc.rs` | src | s | 6 crate-vis | — | A conversation's Arc (FIX 7509 P8, ARCH-0026 Dreamer row 4): one stable summary per conversation path… |
 | `src/scope_summary/arc_completion.rs` | src | s | 2 crate-vis | — | An Arc never lands in part (FIX 7509 PR3) |
-| `src/scope_summary/arc_gate.rs` | src | m | 12 crate-vis | — | An Arc's surprise gate and owed state (FIX 7509 P8, ARCH-0026 #gate): "It compares the new material against… |
+| `src/scope_summary/arc_gate.rs` | src | m | 13 crate-vis | — | An Arc's surprise gate and owed state (FIX 7509 P8, ARCH-0026 #gate): "It compares the new material against… |
 | `src/scope_summary/arc_sources.rs` | src | m | 5 crate-vis | — | What an Arc is written from (FIX 7509 P8, SUMMARY-SOURCE = A): the current summary of each closed sitting… |
 | `src/scope_summary/arc_validation.rs` | src | s | 1 crate-vis | — | An Arc's landing check (FIX 7509 P8), read in the landing writer before its body is minted: no Arc lands… |
 | `src/scope_summary/arc_work.rs` | src | m | 24 crate-vis | — | An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): an Arc whose input does not fit one call on its… |
 | `src/scope_summary/arc_work_store.rs` | src | s | 9 crate-vis | — | The rows of an Arc's work generations (FIX 7509 PR3): one typed side table, keyed by the generation's id and… |
-| `src/scope_summary/codec.rs` | src | m | 2 struct · 2 fn · 5 crate-vis | ScopeSummaryBody, SummarySourceMessage | Strict, versioned scope-summary MessagePack codec (distinct from epochs) |
+| `src/scope_summary/codec.rs` | src | m | 3 struct · 2 fn · 5 crate-vis | ScopeSummaryBody, SummarySourceMessage, SummarySourceNote | Strict, versioned scope-summary MessagePack codec (distinct from epochs) |
 | `src/scope_summary/derivation.rs` | src | m | 5 struct · 1 fn · 11 crate-vis | ScopeSummaryMetadata, SummaryDerivation, SummaryLineSources, SummaryLineSpan, SummarySourceVersion | Scope-summary derivation envelopes and change-driven re-derivation |
-| `src/scope_summary/doors.rs` | src | L | 1 struct · 5 fn · 20 crate-vis | LandedHeader | Transactional spawn, summary mint, merge-header and drill doors |
+| `src/scope_summary/doors.rs` | src | L | 1 struct · 5 fn · 21 crate-vis | LandedHeader | Transactional spawn, summary mint, merge-header and drill doors |
+| `src/scope_summary/doors/note_versions.rs` | src | s | 2 crate-vis | — | A NOTE set's summary at serve and admission (FIX 6321, SCAN C028 parity for NOTEs): its body pins each NOTE… |
 | `src/scope_summary/mod.rs` | src | s | 7 re-export · 8 crate-vis | — | Retained spawned sub-sessions and Dreamer-composed scope summaries |
 | `src/scope_summary/producer.rs` | src | s | 3 crate-vis | — | Private admission for locally minted scope-summary bodies |
 | `src/scope_summary/public.rs` | src | m | 9 fn | — | Credential-bound adapters |
@@ -4062,7 +4064,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scope_summary/purpose.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | SummaryPurpose | Open, owner-approved summary-purpose descriptors, not a closed enum |
 | `src/scope_summary/request.rs` | src | m | 2 struct · 1 enum · 2 fn · 18 crate-vis | ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget | Scope-only declarations, exact-source fences and atomic Dreamer landings |
 | `src/scope_summary/session.rs` | src | s | 7 crate-vis | — | A sitting's summary (FIX 7509, ARCH-0026 Dreamer row 4): queued by the sitting's close, written from the… |
-| `src/scope_summary/status.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | ScopeSummaryResult, ScopeSummaryStatus | Caller-visible queued completion and failure, without exposing runner payloads |
+| `src/scope_summary/status.rs` | src | s | 2 struct · 2 enum · 2 fn · 2 crate-vis | ArcPendingStatus, ScopeSummaryResult, ScopeSummaryStatus, SummaryStale | Caller-visible queued completion and failure, without exposing runner payloads |
+| `src/scope_summary/status/arc_status.rs` | src | s | 1 crate-vis | — | An Arc declaration's owed state on its public status (FIX 8060, 8291): the typed cause its row records, and… |
 | `src/scope_summary/tests.rs` | test | m | — | — | Exact covers, gated merge atomicity and revision-bound late results |
 | `src/scope_summary/word_sources.rs` | src | s | 3 crate-vis | — | Where the words of one stored revision came from |
 | `src/secret_custody/carrier_custody.rs` | src | s | 7 crate-vis | — | A retained carrier's own erasable key (KS-6, FIX-LIST 5687 part 1): one per custody transition instance and… |
