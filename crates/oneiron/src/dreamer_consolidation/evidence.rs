@@ -178,7 +178,9 @@ impl VerifiedEvidenceSet {
     /// read again. The meet folds onto `inherited_meet`, so it never rises.
     /// A TURN range the TURN as read now no longer binds is bound once more
     /// against the exact projection its branch read, when `projections`
-    /// keeps it (FIX 5755): the same MESSAGEs, rebuilt as they stand now.
+    /// keeps it (FIX 5755): over the MESSAGEs it cites alone, at the
+    /// revisions and slices it named, so a MESSAGE it does not cite moving
+    /// no longer refuses it (FIX 6150).
     pub(super) fn reverify_in_txn(
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
@@ -191,7 +193,8 @@ impl VerifiedEvidenceSet {
         }
         let read = super::turn_text::dreamer_read(vault)?;
         let mut rows = Vec::with_capacity(stored.len());
-        for (reference, hash, messages) in stored {
+        for citation in stored {
+            let (reference, hash, messages) = citation;
             let locator = match (reference.claim_id, reference.byte_range) {
                 (Some(claim), None) => EvidenceLocator::claim(reference.source_id, claim)?,
                 (None, Some((start, end))) => {
@@ -228,13 +231,25 @@ impl VerifiedEvidenceSet {
                     {
                         text
                     }
-                    (_, Some(projection)) => super::turn_text::projection::rebuild_in(
-                        &read,
-                        txn,
-                        &reference.source_id,
-                        &body,
-                        projection,
-                    )?,
+                    (_, Some(projection)) => {
+                        if kind != crate::registry::ENTITY_TYPE_TURN {
+                            return Err(invalid_consolidation(
+                                "evidence locator does not match its source",
+                            ));
+                        }
+                        super::turn_text::projection::rebind_cited_in(
+                            &read, txn, &body, projection, citation,
+                        )?;
+                        rows.push(VerifiedCitation {
+                            locator,
+                            hash: *hash,
+                            version: super::resources::document_version(reference.source_id, &body),
+                            trust,
+                            messages: messages.clone(),
+                            projection: projection.to_vec(),
+                        });
+                        continue;
+                    }
                     (live, None) => live?,
                 };
                 (trust, Some(text))

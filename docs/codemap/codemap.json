@@ -12261,7 +12261,7 @@
      "path": "src/claim/scoped_read/search.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 7
      }
     },
@@ -13549,6 +13549,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/read_worlds.rs",
+     "purpose": "A run's read-world capture as its host serves it (FIX 6130)",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -13751,7 +13762,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 7,
       "re-export": 21
      }
@@ -14243,7 +14254,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "re-export": 4
      }
     },
@@ -14255,6 +14266,16 @@
      "purpose": "A turn program's resume checkpoint (DOOR-141 PR3b, FIX 4382): the compact head and keyed pages its pinned…",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/read_worlds.rs",
+     "purpose": "The worlds of the rows one code run is served (FIX 6130): its ledger in `CODE_RUN_READ_WORLD`, on the run's…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -21527,7 +21548,7 @@
      "path": "src/dreamer_consolidation/retained_keep.rs",
      "purpose": "Keeping a conflict's retained alternative (OF-023, FIX 496): where the Keep lands it, and what a Keep of…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1,
       "struct": 1
      }
@@ -21885,7 +21906,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/turn_text/projection.rs",
-     "purpose": "The exact projection a consolidation branch read of one witnessed TURN (FIX 5755)",
+     "purpose": "The exact projection a consolidation branch read of one witnessed TURN (FIX 5755), and a retained citation…",
      "surface": {
       "crate-vis": 2
      }
@@ -22097,7 +22118,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4,
       "re-export": 5,
       "struct": 3
@@ -22150,7 +22171,7 @@
      "path": "src/dreamer_promotion/imported_keep.rs",
      "purpose": "A kept alternative from imported words (FIX 5754): the selected landing's review route",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -61958,7 +61979,7 @@
      "path": "src/vault/search_retrieval.rs",
      "purpose": "Vault text and vector search, batch and query builders, and retrieval telemetry",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 29
      }
     },
@@ -66298,7 +66319,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 125,
+     "files": 127,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67581,7 +67602,7 @@
    },
    "over_bar": 186,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4243,
+   "source_files": 4245,
    "test_files": 902
   },
   "oneiron-android": {
@@ -87059,6 +87080,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/serve_args/debug.rs",
+     "purpose": "`ServeArgs`'s redacting `Debug`",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -88533,7 +88562,6 @@
      "notable": [
       "ManagedArgs",
       "ManagedError",
-      "ManagedStartMode",
       "SettingsRefusal"
      ],
      "path": "src/managed/args.rs",
@@ -88541,8 +88569,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "enum": 3,
+      "enum": 2,
       "fn": 3,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -88554,6 +88583,29 @@
      "purpose": "The managed argv allowlist: what managed mode does with each `ServeArgs` field, and the refusal of every…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ManagedStartMode"
+     ],
+     "path": "src/managed/args/start_mode.rs",
+     "purpose": "How a managed process starts: an ordinary open or a cold restore",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/args/vm_transport.rs",
+     "purpose": "A vault VM's cold restore handoff (FIX 6584): `--vm-restore-revision`, which only the image's…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -88601,7 +88653,7 @@
      "path": "src/managed/host.rs",
      "purpose": "Managed process entry behind the shared six-verb Host contract",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -88852,7 +88904,7 @@
      "path": "src/managed/restore.rs",
      "purpose": "The cold managed restore start mode (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md, its…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -89019,6 +89071,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/state_serve/refusal.rs",
+     "purpose": "The body a frozen engine's refusal is served with",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/state_serve/relay_delete.rs",
      "purpose": "The relay delete ctl requests a managed vault answers (FIX 6826): `relay_delete_execute`…",
      "surface": {
@@ -89044,7 +89106,7 @@
      "path": "src/managed/vm_guest.rs",
      "purpose": "Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -89053,15 +89115,15 @@
      "notable": [
       "SleepOutcome",
       "VaultVm",
-      "VaultVmConfig",
-      "VaultVmRun"
+      "VaultVmConfig"
      ],
      "path": "src/managed/vm_host.rs",
      "purpose": "The microVM adapter's host half: one Firecracker VM per vault",
      "surface": {
       "enum": 1,
-      "fn": 15,
-      "struct": 3
+      "fn": 14,
+      "re-export": 2,
+      "struct": 2
      }
     },
     {
@@ -89072,6 +89134,35 @@
      "purpose": "The host's half of a vault VM's provision connection (FIX 6308): on a cold boot, before the credential…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VaultVmInspect",
+      "VmRestoreFds",
+      "VmRestoreHostIo"
+     ],
+     "path": "src/managed/vm_host/restore.rs",
+     "purpose": "The host's half of a vault VM's restore channel (FIX 6584, [`oneiron_vault_contract::vm_restore`]): every…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VaultVmRun"
+     ],
+     "path": "src/managed/vm_host/runner.rs",
+     "purpose": "`oneiron-server host vm`'s runner: one vault VM behind one unix socket",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -89101,7 +89192,7 @@
      "path": "src/managed/vm_init/layout.rs",
      "purpose": "The vault VM's disk layout, provision record, UID table and socket directories, as the root bootstrap sets…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 13
      }
     },
     {
@@ -89112,6 +89203,16 @@
      "purpose": "The outbox companion beside the engine (FIX 5235, FIX 5467): the bootstrap starts `oneiron-vm-outbox` as its…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init/restore.rs",
+     "purpose": "The bootstrap's half of the restore channel (FIX 6584, [`oneiron_vault_contract::vm_restore`]): the boot's…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -92307,7 +92408,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 47,
+     "files": 48,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92524,7 +92625,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 61,
+     "files": 67,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92680,7 +92781,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 971,
+   "source_files": 978,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -97164,7 +97265,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 19,
+      "mod": 20,
       "re-export": 9
      }
     },
@@ -97472,7 +97573,7 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 15,
+      "const": 16,
       "enum": 2,
       "fn": 4
      }
@@ -97537,6 +97638,27 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "VmRestoreBoot",
+      "VmRestoreHello",
+      "VmRestoreMarkerObservation",
+      "VmRestoreMarkerReply",
+      "VmRestoreMarkerUnreadable",
+      "VmRestoreRecord",
+      "VmRestoreSourceDevice"
+     ],
+     "path": "src/lib/vm_restore.rs",
+     "purpose": "A vault VM's restore channel (FIX 6584): the cold restore start mode (`crate::restore`) carried into a…",
+     "surface": {
+      "const": 5,
+      "enum": 5,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Schedule",
       "WakeEntry"
      ],
@@ -97553,7 +97675,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -97562,7 +97684,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 44,
+   "source_files": 45,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {

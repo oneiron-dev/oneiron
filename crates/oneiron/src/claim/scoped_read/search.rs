@@ -407,6 +407,18 @@ impl ScopedRead<'_> {
         results: Vec<ScoredEntity>,
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        self.filter_scored_entities_observed(results, requested, |_, _| {})
+    }
+
+    /// [`Self::filter_scored_entities_requested`], with `observe` run over
+    /// each hit it admits in the read that admits it, before that read
+    /// closes (FIX 6130).
+    pub(crate) fn filter_scored_entities_observed(
+        &self,
+        results: Vec<ScoredEntity>,
+        requested: Option<&RetrievalFilter>,
+        mut observe: impl FnMut(&heed::RoTxn<'_>, EntityId),
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let before = results.len();
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
@@ -419,6 +431,7 @@ impl ScopedRead<'_> {
             })?;
             suppressed += admitted.suppression();
             if let Some(row) = admitted.into_option() {
+                observe(&txn, row.id);
                 value.push(row);
             }
         }
