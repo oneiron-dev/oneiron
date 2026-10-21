@@ -31330,7 +31330,7 @@
      "path": "src/identity.rs",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -65909,7 +65909,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/world_keys/doors/frontier.rs",
@@ -86824,7 +86824,7 @@
      "path": "src/auth/left_notices.rs",
      "purpose": "`POST /v1/shared/left-notices` (OF-158 client leave): a device whose person left or was removed from this…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -89466,6 +89466,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/idempotency/caller.rs",
+     "purpose": "The partition a keyed non-core route keeps its caller's replays in on a vault no supervisor manages (FIX…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -94209,7 +94219,7 @@
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through"
     },
     "idempotency": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -94421,7 +94431,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1019,
+   "source_files": 1020,
    "test_files": 182
   },
   "oneiron-spawn": {
