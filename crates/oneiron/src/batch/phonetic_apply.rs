@@ -42,7 +42,8 @@ pub(crate) fn apply_phonetic(
             continue;
         }
 
-        let existing = store.phonetic_index().get(wtxn, code.as_bytes())?;
+        let key = phonetic_posting_key(code);
+        let existing = store.phonetic_index().get(wtxn, &key)?;
         let mut posting =
             existing.map_or_else(|| Vec::with_capacity(ENTITY_ID_LEN), |bytes| bytes.to_vec());
         if !posting.len().is_multiple_of(ENTITY_ID_LEN) {
@@ -61,9 +62,7 @@ pub(crate) fn apply_phonetic(
         }
 
         posting.extend_from_slice(id.as_bytes());
-        store
-            .phonetic_index()
-            .put(wtxn, code.as_bytes(), &posting)?;
+        store.phonetic_index().put(wtxn, &key, &posting)?;
 
         if !forward_codes.iter().any(|known| known == code) {
             forward_codes.push(code.clone());
@@ -176,23 +175,33 @@ pub(super) fn delete_from_known_phonetic_codes(
     codes: &[String],
 ) -> Result<()> {
     for code in codes {
+        let key = phonetic_posting_key(code);
         let posting = store
             .phonetic_index()
-            .get(wtxn, code.as_bytes())?
+            .get(wtxn, &key)?
             .ok_or(Error::Store(StoreError::MissingPostingEntry))?;
         let updated = posting_without_entity(&posting, id)?
             .ok_or(Error::Store(StoreError::MissingPostingEntry))?;
 
         if updated.is_empty() {
-            store.phonetic_index().delete(wtxn, code.as_bytes())?;
+            store.phonetic_index().delete(wtxn, &key)?;
         } else {
-            store
-                .phonetic_index()
-                .put(wtxn, code.as_bytes(), &updated)?;
+            store.phonetic_index().put(wtxn, &key, &updated)?;
         }
     }
 
     Ok(())
+}
+
+/// The length of every physical `phonetic_index` key ([`phonetic_posting_key`]).
+pub(crate) const PHONETIC_POSTING_KEY_LEN: usize = blake3::OUT_LEN;
+
+/// The physical `phonetic_index` key of `code` (FIX 5340): a BLAKE3 digest
+/// of the whole code. Every put, get and delete of a code's posting keys by
+/// it, so a code of any length fits LMDB's key bound and still matches only
+/// itself; the forward and source rows keep the code itself, uncut.
+pub(crate) fn phonetic_posting_key(code: &str) -> [u8; PHONETIC_POSTING_KEY_LEN] {
+    *blake3::hash(code.as_bytes()).as_bytes()
 }
 
 pub(super) fn validate_phonetic_code(code: &str) -> Result<()> {

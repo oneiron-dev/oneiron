@@ -51,10 +51,6 @@ mod custody;
 pub(crate) mod finalize;
 mod handoff;
 mod rehearse;
-#[allow(
-    dead_code,
-    reason = "L14 wires the relay locker delete through it (FIX 1488)"
-)]
 mod relay_hold;
 mod restore;
 mod scratch;
@@ -292,7 +288,7 @@ pub(crate) fn prune(
     let excess = records.len().saturating_sub(keep);
     let excess: Vec<_> = records.into_iter().take(excess).collect();
     let Some(handoff) = handoff::pinned(&plan.dir, &plan.label) else {
-        return vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<Vec<String>> {
+        let gone = vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<Vec<String>> {
             let mut pruned = Vec::new();
             if holds.keeps_backups() {
                 return Ok(pruned);
@@ -311,7 +307,19 @@ pub(crate) fn prune(
                 sync_dir(&plan.dir)?;
             }
             Ok(pruned)
-        })?;
+        })??;
+        // Each unlink is synced: only now does its local holder go, the one
+        // copy this host kept (FIX 6022, 7060). A handed-off copy's
+        // supervisor holds its own, which no ack here releases.
+        for file in &gone {
+            if let Err(error) = vault.release_backup_copy(&plan.dir.join(file)) {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a pruned backup's body holder was not released; its bodies stay kept"
+                );
+            }
+        }
+        return Ok(gone);
     };
     let (released, mut pending) = handoff::released(&handoff, &plan.label, excess);
     let pruned = vault.with_backup_hold_exclusion(|holds| {
@@ -372,6 +380,8 @@ fn create_private_dir(dir: &Path) -> anyhow::Result<()> {
     })
 }
 
+/// Syncs `dir` through the engine's one portable flush (FIX 7060), on every
+/// platform, before anything an unlink released is let go.
 fn sync_dir(dir: &Path) -> anyhow::Result<()> {
     // `Path::parent` of a one-component relative path is the empty path.
     let dir = if dir.as_os_str().is_empty() {
@@ -379,10 +389,7 @@ fn sync_dir(dir: &Path) -> anyhow::Result<()> {
     } else {
         dir
     };
-    #[cfg(unix)]
-    std::fs::File::open(dir)?.sync_all()?;
-    #[cfg(not(unix))]
-    let _ = dir;
+    oneiron::store::sync_dir(dir)?;
     Ok(())
 }
 
