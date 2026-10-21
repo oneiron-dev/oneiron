@@ -24,7 +24,7 @@ use crate::EntityId;
 use crate::error::Result;
 use crate::scope_summary::{
     ArcManifest, ArcMember, ArcPins, ArcRange, ArcWorkState, MemberKind, ScopeSummaryPlan,
-    check_manifest, owned_by_parts,
+    SummaryLineSpan, check_manifest, owned_by_parts,
 };
 use std::collections::BTreeMap;
 
@@ -40,6 +40,9 @@ pub(super) struct MemberText {
     pub(super) text: String,
     /// The TURN it is the words of, or the TURNs a line cites.
     pub(super) turns: Vec<EntityId>,
+    /// A line's recorded slices of the TURNs it cites (FIX 8289), which a
+    /// part's reply citing them inherits; none for any other member.
+    pub(super) spans: Vec<SummaryLineSpan>,
 }
 
 impl MemberText {
@@ -134,13 +137,10 @@ pub(super) fn member_texts(
         .arc
         .as_ref()
         .ok_or_else(|| invalid_consolidation("an arc composes from its sittings"))?;
-    let mut lines: BTreeMap<(String, u32), (&str, &[EntityId])> = BTreeMap::new();
+    let mut lines = BTreeMap::new();
     for lower in &arc.lower {
         for line in &lower.lines {
-            lines.insert(
-                (lower.summary.to_hex(), line.index as u32),
-                (line.words.as_str(), line.turns.as_slice()),
-            );
+            lines.insert((lower.summary.to_hex(), line.index as u32), line);
         }
     }
     let mut members = Vec::with_capacity(kinds.len());
@@ -148,23 +148,24 @@ pub(super) fn member_texts(
     for kind in kinds {
         let shown = match &kind {
             MemberKind::Line { summary, line } => {
-                let (words, turns) =
-                    lines
-                        .get(&(summary.clone(), *line))
-                        .copied()
-                        .ok_or_else(|| {
-                            invalid_consolidation("an arc's line is not among its sources")
-                        })?;
+                let lower = lines
+                    .get(&(summary.clone(), *line))
+                    .copied()
+                    .ok_or_else(|| {
+                        invalid_consolidation("an arc's line is not among its sources")
+                    })?;
                 numbered += 1;
-                let refs = turns
+                let refs = lower
+                    .turns
                     .iter()
                     .map(|turn| turn_label(view, *turn))
                     .collect::<Result<Vec<_>>>()?;
                 Shown {
                     head: format!("[L{numbered}]"),
                     tail: format!(" [{}]", refs.join(", ")),
-                    words: words.to_owned(),
-                    turns: turns.to_vec(),
+                    words: lower.words.clone(),
+                    turns: lower.turns.clone(),
+                    spans: lower.source_spans.clone(),
                 }
             }
             MemberKind::ReplacedBy { .. } => Shown {
@@ -172,6 +173,7 @@ pub(super) fn member_texts(
                 tail: String::new(),
                 words: String::new(),
                 turns: Vec::new(),
+                spans: Vec::new(),
             },
             MemberKind::Fallback { turn } | MemberKind::Opened { turn } => {
                 turn_shown(view, EntityId::from_hex(turn)?)?
@@ -189,6 +191,7 @@ pub(super) fn member_texts(
                     tail: String::new(),
                     words: entry.body.clone(),
                     turns: Vec::new(),
+                    spans: Vec::new(),
                 }
             }
         };
@@ -210,6 +213,7 @@ struct Shown {
     tail: String,
     words: String,
     turns: Vec<EntityId>,
+    spans: Vec<SummaryLineSpan>,
 }
 
 impl Shown {
@@ -224,6 +228,7 @@ impl Shown {
             tail: self.tail,
             text: self.words,
             turns: self.turns,
+            spans: self.spans,
         }
     }
 }
@@ -241,6 +246,7 @@ fn turn_shown(view: &ArcView, turn: EntityId) -> Result<Shown> {
         tail: String::new(),
         words,
         turns: vec![turn],
+        spans: Vec::new(),
     })
 }
 

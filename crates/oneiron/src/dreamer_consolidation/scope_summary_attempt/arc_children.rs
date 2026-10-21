@@ -24,12 +24,13 @@ use super::arc_chunks::{
 use super::arc_compose::owe;
 use super::arc_evidence::ArcView;
 use super::arc_output::arc_schema;
-use super::arc_reduce::observations;
+use super::arc_reduce::{Landing, Observed, observations};
 use super::arc_review::{
     CallBuilder, CallShape, Called, KIND_COMPOSE, KIND_REVIEW, call_input, frame_tokens,
     show_observation, store_exit,
 };
 use super::arc_turns::{Opened, open_turns};
+use super::window::framed_tokens;
 use super::{ScopeSummaryEvidence, ScopeSummaryExecutor};
 use crate::EntityId;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
@@ -63,6 +64,9 @@ pub(super) struct ArcRun<'a> {
     /// New model calls this wake, and the pace that checkpoints the rest.
     pub(super) calls: u32,
     pub(super) limit: u32,
+    /// The parts reset this wake because a settled step of theirs did not
+    /// read back (FIX 8288): a second miss parks as before.
+    pub(super) reset: BTreeSet<u32>,
 }
 
 /// Where one part stands after a run.
@@ -120,6 +124,38 @@ impl ArcRun<'_> {
             .filter(|(_, member)| matches!(member.kind, MemberKind::Claim { .. }))
             .map(|(index, _)| index)
             .collect()
+    }
+
+    /// Resets part `id`'s `row` once this wake (FIX 8288): its compose
+    /// steps from `composed`, and with `reviewed` its reviews from there,
+    /// are dropped, so the part composes again from them; every other part
+    /// and every earlier step stand. `Some` exit when it was reset already,
+    /// which parks Retry as an unread step did, or the write did not hold.
+    fn reset_part(
+        &mut self,
+        ctx: &WakeAttemptContext<'_>,
+        id: u32,
+        row: &mut ArcChildRow,
+        (composed, reviewed): (usize, Option<usize>),
+    ) -> Option<DreamerAttemptExecution> {
+        if !self.reset.insert(id) {
+            return Some(
+                self.charges
+                    .park_for("an arc part's step did not read", DreamerParkCause::Retry),
+            );
+        }
+        tracing::info!(
+            part = id,
+            code = "arc_part_step_unread",
+            "an arc part composes again from a step that did not read"
+        );
+        if let Some(reviewed) = reviewed {
+            row.reviewed.truncate(reviewed);
+            row.parts = 0;
+        }
+        row.composed.truncate(composed);
+        row.done = false;
+        self.save(ctx, id, row, false)
     }
 
     /// The Arc's window, and why it is too small.
@@ -296,26 +332,48 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             charges,
             calls: 0,
             limit,
+            reset: BTreeSet::new(),
         };
         let mut position = 0;
-        while let Some(child) = run.manifest.children.get(position) {
-            let id = child.id;
-            let mut row = rows
-                .remove(&id)
-                .unwrap_or_else(|| ArcChildRow::fresh(Vec::new()));
-            match self
-                .run_child(&mut run, ctx, &step_ctx, position, &mut row)
-                .await?
-            {
-                ChildStep::Done => {
-                    rows.insert(id, row);
-                    position += 1;
+        loop {
+            while let Some(child) = run.manifest.children.get(position) {
+                let id = child.id;
+                let mut row = rows
+                    .remove(&id)
+                    .unwrap_or_else(|| ArcChildRow::fresh(Vec::new()));
+                match self
+                    .run_child(&mut run, ctx, &step_ctx, position, &mut row)
+                    .await?
+                {
+                    ChildStep::Done => {
+                        rows.insert(id, row);
+                        position += 1;
+                    }
+                    ChildStep::Split(parts) => rows.extend(parts),
+                    ChildStep::Exit(execution) => return Ok(execution),
                 }
-                ChildStep::Split(parts) => rows.extend(parts),
-                ChildStep::Exit(execution) => return Ok(execution),
             }
+            let (part, step) =
+                match self.land_arc_work(ctx, attempt_id, &run, &rows, (params_hash, memo))? {
+                    Landing::Exit(execution) => return Ok(execution),
+                    Landing::Recompose { part, step } => (part, step),
+                };
+            // A settled step that no longer reads back (FIX 8288): only that
+            // part composes again, from that step; the rest stand.
+            let (Some(at), Some(row)) = (
+                run.manifest
+                    .children
+                    .iter()
+                    .position(|child| child.id == part),
+                rows.get_mut(&part),
+            ) else {
+                return Err(invalid_consolidation("an arc's part has no record"));
+            };
+            if let Some(exit) = run.reset_part(ctx, part, row, (step, None)) {
+                return Ok(exit);
+            }
+            position = at;
         }
-        self.land_arc_work(ctx, attempt_id, run, &rows, (params_hash, memo))
     }
 
     /// Runs the part at `position` from where its `row` stands until it is
@@ -401,12 +459,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         observations(&memory, &row.reviewed)
                     };
                     let observed = match read {
-                        Ok(Some(observed)) => observed,
-                        Ok(None) => {
-                            return Ok(ChildStep::Exit(run.charges.park_for(
-                                "an arc part's step did not read",
-                                DreamerParkCause::Retry,
-                            )));
+                        Ok(Observed::All(observed)) => observed,
+                        // A review that no longer reads back (FIX 8288) is
+                        // asked again, with every compose step after it.
+                        Ok(Observed::Unread(index)) => {
+                            if let Some(exit) = run.reset_part(ctx, id, row, (0, Some(index))) {
+                                return Ok(ChildStep::Exit(exit));
+                            }
+                            continue;
                         }
                         Err(error) => {
                             return Ok(ChildStep::Exit(run.charges.park_on_error(&error)));
@@ -452,6 +512,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 opened.extend(member.turns.iter().copied());
             }
             let user = call_input(run.plan, &shape, &fields)?;
+            // The call's whole request is counted once against the window
+            // (FIX 8286): one the summed estimate let past it splits.
+            if framed_tokens(run.instruction, &user, &run.schema)? > run.manifest.pins.window {
+                return self.split(run, ctx, position, row);
+            }
             let (reply, step) = match self
                 .child_call(run, ctx, step_ctx, user, context, opened)
                 .await?

@@ -12,6 +12,7 @@
 //! between two parts is not sent again. No source, byte or page count bounds
 //! it: the one park on size names a window that holds no character.
 
+use super::super::call_labels::LabelKind;
 use super::output::{self, PageRef};
 use super::window::{escaped_cost, framed_tokens, message_ranges, tile};
 use super::{ScopeSummaryEvidence, ScopeSummaryExecutor, compose_again};
@@ -87,8 +88,12 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             &page_input(plan, "", u64::MAX, u64::MAX, &session, sources.as_str())?,
             &schema,
         )?;
+        let framed = |records: &str, index: u64, count: u64| {
+            let user = page_input(plan, records, index, count, &session, sources.as_str())?;
+            framed_tokens(instruction, &user, &schema)
+        };
         let pages = match window.checked_sub(frame) {
-            Some(room) => pages(evidence, room)?,
+            Some(room) => fitting_pages(evidence, room, window, framed)?,
             None => None,
         };
         let Some(pages) = pages else {
@@ -272,17 +277,54 @@ struct Unit {
     cites: PageRef,
 }
 
+/// The sitting's pages on `room` tokens of records, each page's whole
+/// request (`framed`, its records at its place of its count) counted once
+/// against `window` (FIX 8286): when one comes in over it, the records'
+/// summed estimate being short of the whole, the sitting pages again on a
+/// room smaller by that overage, so every call fits as sent. `None` when no
+/// room is left for one character.
+fn fitting_pages(
+    evidence: &ScopeSummaryEvidence,
+    mut room: u64,
+    window: u64,
+    framed: impl Fn(&str, u64, u64) -> Result<u64>,
+) -> Result<Option<Vec<Page>>> {
+    loop {
+        let Some(pages) = pages(evidence, room)? else {
+            return Ok(None);
+        };
+        let count = pages.len() as u64;
+        let mut over = 0_u64;
+        for (index, page) in (1_u64..).zip(&pages) {
+            over = over.max(framed(&page.records, index, count)?.saturating_sub(window));
+        }
+        if over == 0 {
+            return Ok(Some(pages));
+        }
+        room = match room.checked_sub(over).filter(|room| *room > 0) {
+            Some(room) => room,
+            None => return Ok(None),
+        };
+    }
+}
+
 /// The sitting's pages in order, each holding `room` tokens of records at
 /// most, or `None` when a part of one character fits no page. A unit that
 /// does not fit closes a page that holds any and goes on an empty one.
 fn pages(evidence: &ScopeSummaryEvidence, room: u64) -> Result<Option<Vec<Page>>> {
     let mut pages = Vec::new();
     let mut page = Page::default();
-    for (index, (turn, text)) in evidence.turns.iter().enumerate() {
+    for (turn, text) in &evidence.turns {
         let Some(words) = text.text() else {
             continue;
         };
-        let label = output::turn_label(index);
+        // The TURN's call-local label, as the sitting's one call shows it
+        // (FIX 7574); a part of it adds its own suffix.
+        let label = evidence
+            .labels
+            .label(LabelKind::Turn, *turn)
+            .ok_or_else(|| invalid_consolidation("a sitting's turn has no label"))?
+            .to_string();
         let rendered = render(&label, words);
         let cost = escaped_cost(&rendered)?;
         let units = if cost <= room {

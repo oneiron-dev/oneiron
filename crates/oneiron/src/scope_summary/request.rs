@@ -538,6 +538,7 @@ impl Vault {
                     covers: composed.covers.clone(),
                     messages: composed.messages.clone(),
                     memo: Some(composed.memo),
+                    notes: evidence.notes.clone(),
                 },
             )?;
             let metadata = ScopeSummaryMetadata {

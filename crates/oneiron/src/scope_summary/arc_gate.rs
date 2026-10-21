@@ -403,15 +403,15 @@ pub(super) fn on_commit_in_txn(
 
 /// The backstop (ARCH-0026: "The nightly sweep is the backstop only"): each
 /// Arc due by now, and each whose queued attempt ended with it still owed,
-/// runs its gate under `lineage`. With `reconcile`, each conversation a
-/// sitting's standing summary covers turns in gets its Arc when it has none,
-/// so a lost landing event is recovered.
+/// runs its gate under `lineage`, and each conversation a sitting's standing
+/// summary covers turns in gets its Arc when it has none, so a lost landing
+/// event is recovered. The Nightly commit and the home's Timer pass both run
+/// this one sweep (FIX 8058).
 pub(crate) fn sweep_due_arcs_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     lineage: (Option<AttemptId>, Option<&str>),
     now: u64,
-    reconcile: bool,
 ) -> Result<()> {
     let gate = Gate::in_txn(vault, txn, now)?;
     let rows = PROJECTION
@@ -421,7 +421,7 @@ pub(crate) fn sweep_due_arcs_in_txn(
     for (_, row) in rows {
         let input = decode(&row.request)?;
         let Some(state) = row.arc else {
-            if reconcile && super::session::is_session_declaration(&input) {
+            if super::session::is_session_declaration(&input) {
                 sittings.extend(row.current);
             }
             continue;
@@ -470,16 +470,57 @@ fn covered_conversations_in_txn(
 }
 
 /// The earliest instant an Arc is due at (Unix seconds), from the rows'
-/// own due times: one whose attempt is queued is that queue's to wake.
+/// own due times: one whose attempt is queued is that queue's to wake. An
+/// owed Arc whose queued attempt ended (failed or cancelled) is due when the
+/// sweep re-arms it, at once when stale, else a nightly cadence after its
+/// first dirty mark, so the Timer wakes for it too (FIX 8058).
 pub(crate) fn next_arc_due_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<Option<u64>> {
     let mut next: Option<u64> = None;
+    let mut nightly_secs = None;
     for row in PROJECTION.iter_from(&vault.store, txn, b"")? {
         let (_, projection) = row?;
-        if let Some(at) = projection.arc.and_then(|state| state.due_at) {
-            next = Some(next.map_or(at, |next| next.min(at)));
-        }
+        let Some(state) = projection.arc else {
+            continue;
+        };
+        let at = match state.due_at {
+            Some(at) => at,
+            None if (state.dirty_since.is_some() || state.stale)
+                && !state.queued_open(vault, txn)? =>
+            {
+                let since = state.dirty_since.unwrap_or(0);
+                if state.stale {
+                    since
+                } else {
+                    let secs = match nightly_secs {
+                        Some(secs) => secs,
+                        None => {
+                            let secs = Gate::in_txn(vault, txn, 0)?.nightly_secs;
+                            nightly_secs = Some(secs);
+                            secs
+                        }
+                    };
+                    since.saturating_add(secs)
+                }
+            }
+            None => continue,
+        };
+        next = Some(next.map_or(at, |next| next.min(at)));
     }
     Ok(next)
+}
+
+/// The typed cause the Arc `input` declares is still owed for, as its row
+/// holds it (FIX 8060): `None` when its row owes nothing, or it has none.
+pub(super) fn pending_cause_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    input: &[u8],
+) -> Result<Option<ArcPendingCause>> {
+    let (key, _, _) = row_in_txn(vault, txn, input)?;
+    Ok(PROJECTION
+        .get(&vault.store, txn, &key)?
+        .and_then(|row| row.arc)
+        .and_then(|state| state.cause))
 }
 
 impl Vault {

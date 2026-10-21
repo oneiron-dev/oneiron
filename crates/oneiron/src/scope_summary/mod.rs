@@ -34,11 +34,12 @@ pub use derivation::{
 };
 pub(crate) use derivation::{rederive_changed_in_txn, roll_back_summary_in_txn};
 pub use purpose::SummaryPurpose;
-pub use status::{ScopeSummaryResult, ScopeSummaryStatus};
+pub use status::{ArcPendingStatus, ScopeSummaryResult, ScopeSummaryStatus, SummaryStale};
 mod word_sources;
 
 pub use codec::{
-    ScopeSummaryBody, SummarySourceMessage, decode_scope_summary_body, encode_scope_summary_body,
+    ScopeSummaryBody, SummarySourceMessage, SummarySourceNote, decode_scope_summary_body,
+    encode_scope_summary_body,
 };
 pub use doors::LandedHeader;
 pub(crate) use doors::{

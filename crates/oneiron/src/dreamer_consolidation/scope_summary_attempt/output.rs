@@ -1,27 +1,14 @@
 //! A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came
-//! from by the labels the engine minted for the call, never by an id the
-//! model wrote.
+//! from by the call-local `T` labels the engine minted for the call (FIX
+//! 7574, [`CallLabelMap`]), read back to their durable ids after the call,
+//! never by an id the model wrote.
 
+use super::super::call_labels::{CallLabelMap, LabelKind};
 use crate::EntityId;
 use crate::llm::{ContentPart, LlmResponse};
 use crate::scope_summary::{SummaryLineSources, SummaryLineSpan};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
-
-/// The label the `index`th TURN a sitting's call reads goes by: `T1`, `T2`,
-/// and on, 1-based in the order its evidence renders them.
-pub(super) fn turn_label(index: usize) -> String {
-    format!("T{}", index.saturating_add(1))
-}
-
-/// Each label a call showed, to the TURN it stands for.
-pub(super) fn turn_labels(turns: &[EntityId]) -> BTreeMap<String, EntityId> {
-    turns
-        .iter()
-        .enumerate()
-        .map(|(index, turn)| (turn_label(index), *turn))
-        .collect()
-}
 
 /// The typed output contract of a sitting's summary call.
 pub(super) fn session_schema() -> serde_json::Value {
@@ -84,7 +71,7 @@ pub(super) struct SessionComposition {
 /// check and the landing both read the reply through this one parse.
 pub(super) fn session_output(
     response: &LlmResponse,
-    labels: &BTreeMap<String, EntityId>,
+    labels: &CallLabelMap,
 ) -> Result<SessionComposition, &'static str> {
     let reply: SessionReply = serde_json::from_str(reply_text(response).trim())
         .map_err(|_| "the model wrote an invalid session summary/keep result")?;
@@ -125,11 +112,8 @@ pub(super) fn session_output(
 }
 
 /// The full ids of the TURNs one line cites: at least one, each once, and
-/// each by a label its call showed.
-fn cited_turns(
-    cited: &[String],
-    labels: &BTreeMap<String, EntityId>,
-) -> Result<Vec<String>, &'static str> {
+/// each by a `T` label its call showed.
+fn cited_turns(cited: &[String], labels: &CallLabelMap) -> Result<Vec<String>, &'static str> {
     if cited.is_empty() {
         return Err("a session summary line cites no turn");
     }
@@ -137,9 +121,9 @@ fn cited_turns(
     let mut turns = Vec::with_capacity(cited.len());
     for label in cited {
         let turn = labels
-            .get(label)
+            .resolve_as(LabelKind::Turn, label)
             .ok_or("a session summary line cites a turn its call did not show")?;
-        if !seen.insert(*turn) {
+        if !seen.insert(turn) {
             return Err("a session summary line cites a turn twice");
         }
         turns.push(turn.to_hex());

@@ -10,6 +10,10 @@
 //! skipped. The part then composes over its lines and every observation,
 //! in `compose` calls over an exhaustive partition of them. Every call
 //! keeps the editor text null: no part is written from an earlier Arc.
+//!
+//! A TURN a call shows only by a sitting's line, or an observation, is cited
+//! as that line or observation came from it (FIX 8289): whole, or by the
+//! slices it recorded, which a reply's line citing the TURN inherits.
 
 use super::super::call_labels::LabelKind;
 use super::super::residency::{residency_deferral, waits_on_residency};
@@ -18,7 +22,9 @@ use super::super::support::invalid_consolidation;
 use super::arc_children::ArcRun;
 use super::arc_chunks::{MemberText, member};
 use super::arc_evidence::ArcView;
-use super::arc_output::{ArcCitationContext, ChildReply, child_output};
+use super::arc_output::{
+    ArcCitation, ArcCitationContext, ChildReply, Inherited, child_output, inherit,
+};
 use super::output::reply_text;
 use super::window::framed_tokens;
 use super::{ScopeSummaryExecutor, compose_again};
@@ -109,10 +115,12 @@ pub(super) fn frame_tokens(
     Ok(frame)
 }
 
-/// One observation a review wrote: its words and the TURNs it cites.
+/// One observation a review wrote: its words, the TURNs it cites and the
+/// slices of those it cites in part (FIX 8289).
 pub(super) struct Observation {
     pub(super) text: String,
     pub(super) turn_refs: Vec<String>,
+    pub(super) source_spans: Vec<SummaryLineSpan>,
 }
 
 /// How a call shows `observation`: a line with its `T` refs.
@@ -135,8 +143,9 @@ pub(super) struct CallBuilder<'m> {
     fields: CallFields,
     /// The ranges of each TURN member the call shows the words of.
     shown: BTreeMap<u32, Vec<(u64, u64)>>,
-    /// Each TURN the call shows only by a line's or an observation's refs.
-    cited: BTreeSet<EntityId>,
+    /// Each TURN the call shows by a line's or an observation's refs, as
+    /// those cite it (FIX 8289).
+    cited: BTreeMap<EntityId, Inherited>,
 }
 
 impl<'m> CallBuilder<'m> {
@@ -146,7 +155,7 @@ impl<'m> CallBuilder<'m> {
             view,
             fields: CallFields::default(),
             shown: BTreeMap::new(),
-            cited: BTreeSet::new(),
+            cited: BTreeMap::new(),
         }
     }
 }
@@ -161,7 +170,9 @@ impl CallBuilder<'_> {
             match member.member.kind {
                 MemberKind::Line { .. } => {
                     self.fields.lines.push_str(&shown);
-                    self.cited.extend(member.turns.iter().copied());
+                    for turn in &member.turns {
+                        inherit(&mut self.cited, *turn, &member.spans);
+                    }
                 }
                 MemberKind::Fallback { .. } => {
                     self.fields.turns.push_str(&shown);
@@ -210,7 +221,11 @@ impl CallBuilder<'_> {
                 .observations
                 .push_str(&show_observation(self.view, observation)?);
             for turn in &observation.turn_refs {
-                self.cited.insert(EntityId::from_hex(turn)?);
+                inherit(
+                    &mut self.cited,
+                    EntityId::from_hex(turn)?,
+                    &observation.source_spans,
+                );
             }
         }
         Ok(())
@@ -224,15 +239,10 @@ impl CallBuilder<'_> {
     }
 
     /// What the call shows: its fields, what its labels may name, and the
-    /// TURNs whose every word it shows.
+    /// TURNs whose every word it shows. A TURN cited whole, or shown whole,
+    /// is cited whole; one shown or cited in part, by every slice so shown.
     pub(super) fn finish(self) -> Result<(CallFields, ArcCitationContext, BTreeSet<EntityId>)> {
-        let mut context = ArcCitationContext {
-            labels: self.view.labels.clone(),
-            shown: BTreeMap::new(),
-        };
-        for turn in self.cited {
-            context.shown.entry(turn).or_default();
-        }
+        let mut cited = self.cited;
         let mut whole = BTreeSet::new();
         for (index, mut ranges) in self.shown {
             let member = member(self.members, index)?;
@@ -240,20 +250,33 @@ impl CallBuilder<'_> {
                 return Err(invalid_consolidation("an arc's turn member names no turn"));
             };
             ranges.sort_unstable();
-            let citation = context.shown.entry(*turn).or_default();
             if covers(&ranges, member.member.len) {
-                citation.source_spans.clear();
+                cited.insert(*turn, None);
                 whole.insert(*turn);
                 continue;
             }
+            let held = cited.entry(*turn).or_insert_with(|| Some(Vec::new()));
+            let Some(held) = held else {
+                continue;
+            };
             for (start, end) in ranges {
                 for span in spans(self.view, *turn, start, end) {
-                    if !citation.source_spans.contains(&span) {
-                        citation.source_spans.push(span);
+                    if !held.contains(&span) {
+                        held.push(span);
                     }
                 }
             }
         }
+        let context = ArcCitationContext {
+            labels: self.view.labels.clone(),
+            shown: cited
+                .into_iter()
+                .map(|(turn, held)| {
+                    let source_spans = held.unwrap_or_default();
+                    (turn, ArcCitation { source_spans })
+                })
+                .collect(),
+        };
         Ok((self.fields, context, whole))
     }
 }

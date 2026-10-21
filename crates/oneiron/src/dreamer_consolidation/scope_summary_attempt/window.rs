@@ -1,6 +1,7 @@
 //! What one summary call may hold on its model (FIX 7509 P7b, shared with
 //! the Arc's parts in PR3): the window the host counts, how a framed call
-//! is counted, and the deterministic tiling of a text too big for a call.
+//! is counted (its whole serialized request, once: FIX 8286), and the
+//! deterministic tiling of a text too big for a call.
 //! A sitting's pages and an Arc's children each frame their own calls on
 //! these; neither changes the other.
 
@@ -44,8 +45,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
     }
 }
 
-/// The tokens a call costs as framed: its instruction, its input as sent
-/// and its output contract, each counted as a resident's window counts.
+/// The tokens a call costs as framed (FIX 8286): its complete request as
+/// the model reads it, the instruction, the input as sent and the output
+/// contract as serialized, joined in that order into one text and counted
+/// once as a resident's window counts, never as separately counted pieces
+/// summed.
 pub(super) fn framed_tokens(
     instruction: &str,
     user: &str,
@@ -53,10 +57,7 @@ pub(super) fn framed_tokens(
 ) -> Result<u64> {
     let schema = serde_json::to_string(schema)
         .map_err(|_| invalid_consolidation("summary policy did not encode"))?;
-    Ok([instruction, user, schema.as_str()]
-        .into_iter()
-        .map(tokens)
-        .sum())
+    Ok(tokens(&[instruction, user, schema.as_str()].join("\n")))
 }
 
 /// The ranges `words` is cut into, in order, each one `fits` admits: runs

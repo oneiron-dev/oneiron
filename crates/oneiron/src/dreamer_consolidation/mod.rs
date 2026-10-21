@@ -133,7 +133,8 @@ pub use roles::{
 };
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub(crate) use scope_summary_attempt::{
-    ScopeSummaryEvidence, arc_evidence_in_txn, scope_summary_evidence_in_txn,
+    ScopeSummaryEvidence, arc_evidence_in_txn, note_source_pins_in_txn,
+    scope_summary_evidence_in_txn,
 };
 pub(crate) use settle::keep_approval::{KeepApproval, KeepAs};
 pub use settle::{
