@@ -1,8 +1,10 @@
 //! Persisted-head convergence through the existing promotion, claim Gate,
 //! semantic-edge and provenance doors. A head is never re-authored to attach
 //! evidence: its value, approval, source and original attribution stay intact.
-use super::corrections;
+use std::collections::BTreeMap;
+
 use super::*;
+use super::{corrections, resolved_outputs};
 use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
 use crate::dreamer_consolidation::resources::{ConsolidationFence, ScopedConsolidationWrite};
 use crate::edge::EdgeKind;
@@ -22,6 +24,10 @@ pub fn promote_scoped_consolidation(
         return Err(Error::InvalidClaimBody("scoped promotion actor mismatch"));
     }
     let mut outcome = PromotionOutcome::default();
+    // The open markers this write's outputs answer (FIX 7325), and each head
+    // the write landed or met again with the evidence its candidate cited.
+    let mut answers = write.answers;
+    let mut stood: BTreeMap<EntityId, Vec<EntityId>> = BTreeMap::new();
     for (index, (head, candidate, evidence)) in write.attachments.into_iter().enumerate() {
         // This attempt's own output, met again by a replay after it landed (a
         // kill before the attempt completed): it already carries these words.
@@ -37,6 +43,9 @@ pub fn promote_scoped_consolidation(
                     &candidate.evidence_turn_refs,
                 )?;
             }
+            // What it answered still closes, from its own provenance.
+            answers.extend(resolved_outputs::stored_answers(vault, head));
+            stood.insert(head, candidate.evidence_turn_refs);
             outcome.landed.push(head);
             continue;
         }
@@ -56,7 +65,10 @@ pub fn promote_scoped_consolidation(
             &evidence,
             checker,
         ) {
-            Ok(()) => outcome.landed.push(head),
+            Ok(()) => {
+                stood.insert(head, candidate.evidence_turn_refs);
+                outcome.landed.push(head);
+            }
             Err(error) => {
                 log_rejected(run, index, "attach_evidence", Some(error.kind()));
                 outcome.rejected.push((head, error.to_string()));
@@ -90,18 +102,28 @@ pub fn promote_scoped_consolidation(
                 prior,
                 &evidence_refs,
             )?;
+            answers.extend(resolved_outputs::stored_answers(vault, id));
+            stood.insert(id, evidence_refs);
             outcome.landed.push(id);
             continue;
         }
-        match promote_one(
+        let bound: Vec<_> = answers
+            .iter()
+            .filter(|answer| answer.outputs.contains(&id))
+            .collect();
+        match super::writer::promote_one_answering(
             vault,
             run,
             candidate,
             checker,
             Some(&write.fence),
             Some(&evidence),
+            &bound,
         ) {
-            Ok(ClaimApprovalStatus::Auto) => outcome.landed.push(id),
+            Ok(ClaimApprovalStatus::Auto) => {
+                stood.insert(id, evidence_refs);
+                outcome.landed.push(id);
+            }
             Ok(ClaimApprovalStatus::Proposed) => {
                 match corrections::grant_allowed_replacement(vault, run, &write.fence, id, checker)
                 {
@@ -114,6 +136,7 @@ pub fn promote_scoped_consolidation(
                             prior,
                             &evidence_refs,
                         )?;
+                        stood.insert(id, evidence_refs);
                         outcome.landed.push(id);
                     }
                     None => outcome.pended.push(id),
@@ -125,14 +148,19 @@ pub fn promote_scoped_consolidation(
                     .rejected
                     .push((id, "scoped promotion was not Auto".into()));
             }
-            // The promotion door reports its refusal as text; the stage and
-            // the candidate say where to look.
-            Err(reason) => {
-                log_rejected(run, index, "promote", None);
-                outcome.rejected.push((id, reason));
+            // The promotion door's refusal keeps its text for the outcome;
+            // the log takes the kind of the engine error behind it, when one
+            // refused it (FIX 7271), and never the text.
+            Err(rejection) => {
+                log_rejected(run, index, "promote", rejection.kind);
+                outcome.rejected.push((id, rejection.reason));
             }
         }
     }
+    // Once every output an answer needs stands, its marker closes.
+    answers.sort();
+    answers.dedup();
+    resolved_outputs::close_resolved_outputs(vault, run, &write.fence, &answers, &stood);
     Ok(outcome)
 }
 
