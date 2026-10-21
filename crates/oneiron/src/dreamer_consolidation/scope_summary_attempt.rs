@@ -255,7 +255,8 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let mut charges = StepChargeTally::default();
         // The reply answers to the summary contract inside the step (FIX
         // 7272): the schema's door first, then the parse the landing uses.
-        let check = |response: &LlmResponse| match &labels {
+        let check_labels = labels.clone();
+        let check = move |response: &LlmResponse| match &check_labels {
             Some(labels) => output::session_output(response, labels)
                 .map(drop)
                 .map_err(str::to_owned),
