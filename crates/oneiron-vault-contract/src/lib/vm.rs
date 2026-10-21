@@ -8,8 +8,10 @@
 //! adapter and the host's VMM driver both build against the names here.
 //!
 //! The boot port carries what a node's process child gets from inherited
-//! descriptors. On a cold boot the guest's first connection is the provision
-//! connection ([`crate::vm_provision`]): the guest's root bootstrap takes the
+//! descriptors. On a cold boot the guest's root bootstrap first dials the
+//! restore channel ([`VM_RESTORE_PORT`], [`crate::vm_restore`]), where the
+//! host names the boot's mode, then the boot port's provision connection
+//! ([`crate::vm_provision`]): it takes the
 //! vault's binding and its fscrypt key there, lays out the encrypted storage
 //! and the UID table, and only then starts the engine as the vault's own
 //! non-root UID (FIX 6308). The engine's first connection is the credential
@@ -53,6 +55,9 @@ pub const VM_VOICE_PORT: u32 = 1029;
 /// Guest to host: the outbox carrier, one persistent duplex stream that
 /// carries every outbox kind both ways (FIX 5235, `crate::vm_outbox`).
 pub const VM_OUTBOX_PORT: u32 = 1030;
+/// Guest to host: the restore channel (FIX 6584, [`crate::vm_restore`]),
+/// dialled once on every cold boot before the provision connection.
+pub const VM_RESTORE_PORT: u32 = 1032;
 /// The owner-only directory a vault VM's `[models.voice]` socket lies in.
 pub const VM_VOICE_DIR: &str = "/run/oneiron/voice";
 /// Where the guest mounts the vault's read-only config drive: its settings

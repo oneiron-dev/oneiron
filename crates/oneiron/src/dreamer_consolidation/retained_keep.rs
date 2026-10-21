@@ -13,15 +13,22 @@
 //! Keep stages it in the review of the import its words came from, as a
 //! promotion of those words is, and settles nothing: no answer is written,
 //! no member is superseded, and the marker stays open (FIX 5754). Once the
-//! owner approves it there it stands as a member the conflict names.
+//! owner approves it there it stands as a member the conflict names. After a
+//! revert it is staged at a fresh id like any landing, and its provenance
+//! links it to the marker and its selector, so it is a member all the same
+//! and stands for that alternative (FIX 6152). The owner may approve such a
+//! staged member and keep it in one step, beside the plain Approve and Keep
+//! (FIX 6151).
 
-use super::retained_conflict::RetainedAlternative;
+use super::retained_conflict::{RetainedAlternative, retained_alternatives};
 use super::settle::{
-    ConflictSettleReceipt, MATERIALIZED_KEY, SettledConflict, marker_ids, string_at,
+    ConflictSettleReceipt, MATERIALIZED_KEY, OpenConflict, SettledConflict, marker_ids, string_at,
 };
 use super::support::invalid_consolidation;
-use crate::claim::{ClaimLifecycleStatus, PREDICATE_CONFLICT_RESOLVED, claim_surfaceable};
-use crate::dreamer_promotion::KeptLanding;
+use crate::claim::{
+    ClaimApprovalStatus, ClaimLifecycleStatus, PREDICATE_CONFLICT_RESOLVED, claim_surfaceable,
+};
+use crate::dreamer_promotion::{KeptConflictLink, KeptLanding};
 use crate::{EntityId, Result, Vault};
 
 /// The resolution key naming the retained alternative a landing was made
@@ -68,27 +75,47 @@ pub(super) enum KeptAlternative {
     ImportReview(StagedKeep),
 }
 
-/// The landings reverted settlements of `marker`, on `subject`, made of its
-/// retained alternatives, as (selector, landing): each answer the owner
-/// retracted that names one, while that landing no longer stands.
-pub(super) fn reverted_landings_in_txn(
+/// What the reverted settlements of a conflict left of its retained
+/// alternatives, each as (selector, claim).
+#[derive(Debug, Default)]
+pub(super) struct RevertedKeeps {
+    /// The landings those settlements made, each retracted with its answer
+    /// and no longer standing: a Keep after them lands afresh (FIX 5752).
+    pub(super) landings: Vec<(EntityId, EntityId)>,
+    /// The Keeps staged since in their import's review, each linked to the
+    /// marker by its provenance (FIX 6152): a member standing for its
+    /// alternative.
+    pub(super) staged: Vec<(EntityId, EntityId)>,
+}
+
+/// What the reverted settlements of `marker`, on `subject`, left of its
+/// retained alternatives: each landing they made while it no longer stands,
+/// by the answers the owner retracted that name one, and each Keep staged
+/// since that names the marker.
+pub(super) fn reverted_keeps_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     marker: EntityId,
     subject: EntityId,
-) -> Result<Vec<(EntityId, EntityId)>> {
-    let mut landings = Vec::new();
+) -> Result<RevertedKeeps> {
+    let mut kept = RevertedKeeps::default();
     for id in vault.claims_for_subject_in_txn(txn, &subject)? {
-        let Some(answer) = vault.get_claim_in_txn(txn, &id)? else {
+        let Some(claim) = vault.get_claim_in_txn(txn, &id)? else {
             continue;
         };
-        if answer.predicate != PREDICATE_CONFLICT_RESOLVED
-            || answer.lifecycle != ClaimLifecycleStatus::Retracted
-            || !marker_ids(&answer.value, "open_marker").any(|named| named == marker)
+        if let Some(link) = KeptConflictLink::of_claim(&claim) {
+            if link.marker == marker {
+                kept.staged.push((link.selector, id));
+            }
+            continue;
+        }
+        if claim.predicate != PREDICATE_CONFLICT_RESOLVED
+            || claim.lifecycle != ClaimLifecycleStatus::Retracted
+            || !marker_ids(&claim.value, "open_marker").any(|named| named == marker)
         {
             continue;
         }
-        let Some(resolution) = string_at(&answer.value, "resolution") else {
+        let Some(resolution) = string_at(&claim.value, "resolution") else {
             continue;
         };
         let Some(landed) = marker_ids(resolution, MATERIALIZED_KEY).next() else {
@@ -103,23 +130,31 @@ pub(super) fn reverted_landings_in_txn(
         let selector = marker_ids(resolution, SELECTOR_KEY)
             .next()
             .unwrap_or(landed);
-        landings.push((selector, landed));
+        kept.landings.push((selector, landed));
     }
-    Ok(landings)
+    Ok(kept)
 }
 
 /// The retained alternatives a responder may keep: each one no member
-/// stands in for, with the reverted landings made of it.
+/// stands in for, by its own id or as a staged Keep of it, with the
+/// reverted landings made of it.
 pub(super) fn keepable(
     alternatives: Vec<RetainedAlternative>,
     members: &[EntityId],
-    landings: &[(EntityId, EntityId)],
+    kept: &RevertedKeeps,
 ) -> Vec<RetainedAlternative> {
     alternatives
         .into_iter()
-        .filter(|alternative| !members.contains(&alternative.id))
+        .filter(|alternative| {
+            !members.contains(&alternative.id)
+                && !kept
+                    .staged
+                    .iter()
+                    .any(|(selector, _)| *selector == alternative.id)
+        })
         .map(|mut alternative| {
-            alternative.landings = landings
+            alternative.landings = kept
+                .landings
                 .iter()
                 .filter(|(selector, _)| *selector == alternative.id)
                 .map(|(_, landed)| *landed)
@@ -131,9 +166,9 @@ pub(super) fn keepable(
 
 /// Keeps `alternative` of the conflict `marker` in the settlement's
 /// transaction: lands it at its own id the first time, at a fresh id after
-/// a revert took a landing of it back, or stages it in its import's review.
-/// Words from an import a revert already landed refuse as before: a staged
-/// copy at a fresh id would stand apart from the conflict.
+/// a revert took a landing of it back, or stages it in its import's review
+/// at that same id, linked to `marker` and the alternative so it stays a
+/// member of the conflict (FIX 6152).
 pub(super) fn keep_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -146,18 +181,51 @@ pub(super) fn keep_in_txn(
     } else {
         EntityId::now()
     };
-    match super::retained_conflict::land_in_txn(vault, txn, alternative, landing, now)? {
+    let link = KeptConflictLink {
+        marker,
+        selector: alternative.id,
+    };
+    match super::retained_conflict::land_in_txn(vault, txn, alternative, landing, link, now)? {
         KeptLanding::Landed => Ok(KeptAlternative::Landed(landing)),
-        KeptLanding::ImportReview(review) if landing == alternative.id => {
-            Ok(KeptAlternative::ImportReview(StagedKeep {
-                marker,
-                alternative: alternative.id,
-                staged: landing,
-                review,
-            }))
+        KeptLanding::ImportReview(review) => Ok(KeptAlternative::ImportReview(StagedKeep {
+            marker,
+            alternative: alternative.id,
+            staged: landing,
+            review,
+        })),
+    }
+}
+
+impl OpenConflict {
+    /// Refuses unless `staged` is a Keep of this conflict still waiting in
+    /// its import's review (FIX 6151): a member, active and Proposed, staged
+    /// at a retained alternative's own id or linked to this marker by its
+    /// provenance. An ApproveAndKeep approves and keeps only such a claim.
+    pub(crate) fn staged_keep_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        staged: EntityId,
+    ) -> Result<()> {
+        let body = vault
+            .get_claim_in_txn(txn, &staged)?
+            .filter(|_| self.members.contains(&staged))
+            .ok_or_else(|| {
+                invalid_consolidation("the staged claim is not a member of the conflict")
+            })?;
+        let kept_here = KeptConflictLink::of_claim(&body)
+            .is_some_and(|link| link.marker == self.marker)
+            || retained_alternatives(&self.body.value)
+                .iter()
+                .any(|alternative| alternative.id == staged);
+        if !kept_here
+            || body.approval != ClaimApprovalStatus::Proposed
+            || body.lifecycle != ClaimLifecycleStatus::Active
+        {
+            return Err(invalid_consolidation(
+                "no Keep of this conflict waits in its review there",
+            ));
         }
-        KeptLanding::ImportReview(_) => Err(invalid_consolidation(
-            "an alternative from imported words lands only through its import's review",
-        )),
+        Ok(())
     }
 }
