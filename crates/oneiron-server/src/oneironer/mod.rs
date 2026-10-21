@@ -30,6 +30,7 @@ use dispatcher::{Completion, Dispatcher, WorkerSpec};
 
 pub(crate) use dispatcher::DispatchClaim;
 
+pub(crate) mod bundle;
 mod dispatcher;
 pub(crate) mod endpoint;
 pub(crate) mod engines;
@@ -282,9 +283,13 @@ impl TaggerSlot {
 /// listener binds.
 ///
 /// `None` and an absent section build nothing. Native artifacts are verified
-/// and loaded before the listener binds. A reachable endpoint that is not
-/// the configured tagger stops `serve`; an unreachable one is probed again.
-/// The engine rows sit at their XDG/HOME default ([`build_slot_with_rows`]).
+/// and loaded before the listener binds. A local bundle whose manifest is
+/// not format 2 builds nothing either: its typed refusal is logged once, and
+/// the server serves without a tagger, its markers waiting for a bundle that
+/// loads (FIX 6755). Any other load failure stops `serve`, as does a
+/// reachable endpoint that is not the configured tagger; an unreachable one
+/// is probed again. The engine rows sit at their XDG/HOME default
+/// ([`build_slot_with_rows`]).
 pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Option<TaggerSlot>> {
     build_slot_with_rows(config, None)
 }
@@ -303,7 +308,22 @@ pub(crate) fn build_slot_with_rows(
     let mut serving = None;
     let tagger = match config.provider {
         OneironerProvider::Local => {
-            let (tagger, engine) = engines::load(config, rows_location)?;
+            let (tagger, engine) = match engines::load(config, rows_location) {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    let format = error
+                        .chain()
+                        .find_map(|cause| cause.downcast_ref::<bundle::BundleFormat>());
+                    if let Some(format) = format {
+                        tracing::error!(
+                            error = %format,
+                            "oneironer bundle refused; serving without the tagger"
+                        );
+                        return Ok(None);
+                    }
+                    return Err(error);
+                }
+            };
             tracing::info!(
                 engine = %engine.engine.id(),
                 pick = engine.pick.as_str(),

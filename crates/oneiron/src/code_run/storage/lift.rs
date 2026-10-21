@@ -93,11 +93,11 @@ impl Vault {
         let _pin = self.pin_result_body(digest);
         let mut meter = BodyMeter::new();
         let len = match body {
-            StoredBody::Inline(bytes) => {
+            StoredBody::Inline { bytes, .. } => {
                 meter.feed(&bytes);
                 bytes.len() as u64
             }
-            StoredBody::File { len } => {
+            StoredBody::File { len, .. } => {
                 let output = CodeRunRawOutput::of_ref(OutputRef {
                     hash: digest,
                     byte_len: len,
