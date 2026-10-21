@@ -13,9 +13,9 @@ use sha2::{Digest, Sha256};
 use super::{
     BodyBlockKind, BodyCell, BodyFormat, BodyName, DeckBodyView, DocxBody, DocxBodyOp,
     OfficeBodyDiff, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest,
-    OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, OfficeBodyProposal, OfficeRecalcZone,
-    ProposalSettleRequest, ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp,
-    XlsxPreview, XlsxSheetVisibility, XlsxStyle, XlsxTable,
+    OfficeBodyFork, OfficeBodyHead, OfficeBodyProposal, OfficeRecalcZone, ProposalSettleRequest,
+    ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxSheetVisibility,
+    XlsxStyle, XlsxTable,
 };
 use crate::batch::secret_scan::LiftedKeys;
 use crate::edge::EdgeActorClass;
@@ -24,6 +24,7 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
 use crate::provenance::text_commit::TextCommitReceipt;
 use crate::secret_custody::SecretSight;
+use crate::typed_body::LiftedSources;
 use crate::write_envelope::WriteActor;
 use oneiron_docedit::docx_body::DocxRun;
 use oneiron_docedit::live::{ApproveScope, DeckOp};
@@ -430,58 +431,46 @@ impl Memory<'_> {
 
     /// `vault.artifacts.body.read`: the body in its format. An agent that
     /// says `why` reads its lifted secrets whole once a grant covers their
-    /// keys (FIX 2941); every other reader but the owner reads their handles.
+    /// keys (FIX 2941); every other reader but the owner reads their handles,
+    /// at an earlier frontier `at` too: the keys are those of the texts the
+    /// read projects, read with its view (FIX 2939).
     pub fn artifacts_body_read(
         &self,
         input: &OfficeBodyReadRequest,
     ) -> MemoryResult<OfficeBodyView> {
         let artifact = self.body_ref(&input.artifact_ref)?;
-        let head = self
+        let read = self
             .vault()
-            .office_body_head(&artifact)?
+            .office_body_read(&artifact, input.at.as_deref())?
             .ok_or_else(|| MemoryError::not_found("the artifact has no live body"))?;
-        let at = input.at.as_deref();
-        let view = match head.kind {
-            OfficeBodyKind::Docx => OfficeBodyView::Docx {
-                body: self.vault().read_docx_body(&artifact, at)?.into(),
-            },
-            OfficeBodyKind::Xlsx => OfficeBodyView::Xlsx {
-                body: self.vault().read_xlsx_body(&artifact, at)?.into(),
-            },
-            OfficeBodyKind::Pptx => OfficeBodyView::Pptx {
-                body: self.vault().read_pptx_body(&artifact, at)?.into(),
-            },
-        };
         if let Some(why) = input.why.as_deref()
-            && self.body_read_granted(&artifact, &view, why)?
+            && self.body_read_granted(&artifact, &read.view, &read.lifted, why)?
         {
-            return Ok(view);
+            return Ok(read.view);
         }
-        self.lifted_body_view(&artifact, view)
+        let keys = read.keys;
+        self.lifted_view(read.view, || Ok(keys))
     }
 
     /// Whether this read of `artifact`'s body `view` reads it whole: a reader
     /// masked from lifted keys, an agent that says `why`, once a grant covers
-    /// the keys the body's lifted texts hold and this read's receipts are
-    /// written; its ask is filed otherwise (OF-067, FIX 2941). The sight is
-    /// this read's alone.
+    /// `lifted`, the keys the lifted texts the view was read with hold, and
+    /// this read's receipts are written; its ask is filed otherwise (OF-067,
+    /// FIX 2941, FIX 2939). The sight is this read's alone.
     fn body_read_granted(
         &self,
         artifact: &EntityId,
         view: &OfficeBodyView,
+        lifted: &LiftedSources,
         why: &str,
     ) -> MemoryResult<bool> {
         if !self.reads_lifted_keys_masked()? {
             return Ok(false);
         }
-        let vault = self.vault();
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let lifted = vault.typed_body_lifted_sources_in_txn(&txn, artifact)?;
-        drop(txn);
         let shown = serde_json::to_vec(view)
             .map_err(|_| crate::Error::InvariantViolation("an office body view did not encode"))?;
         let fingerprint = blake3::derive_key("oneiron office body read view v1", &shown);
-        let sight = self.typed_body_read_sight(artifact, &fingerprint, &lifted, Some(why))?;
+        let sight = self.typed_body_read_sight(artifact, &fingerprint, lifted, Some(why))?;
         Ok(sight == SecretSight::Granted)
     }
 

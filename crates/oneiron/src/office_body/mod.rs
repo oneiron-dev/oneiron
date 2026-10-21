@@ -52,12 +52,12 @@ pub use oneiron_docedit::live::LandingReceipt;
 pub use oneiron_docedit::xlsx_body::{
     XlsxArea, XlsxBook, XlsxLock, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue,
 };
-pub(crate) use pptx::live_refused;
 pub use pptx::{
     DeckBodyView, DeckExportRequest, DeckExportView, DeckForkMergeRequest, DeckGateRequest,
     DeckGateView, DeckNodeView, DeckOracleRequest, DeckPreview, DeckPreviewRequest,
     DeckPreviewSlide, DeckReviewView, PptxBody, PptxExport, PptxReview,
 };
+pub(crate) use pptx::{deck_log_ops, live_refused};
 pub use verbs::{
     DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitGap,
     OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest,
@@ -70,6 +70,7 @@ pub use verbs::{
 pub use xlsx::{BodyCell, BodyFormat, BodyName, BodySheet, XlsxBody, XlsxBodyOp};
 
 use crate::Vault;
+use crate::batch::secret_scan::LiftedKeys;
 use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance, CalcEngineStamp};
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::OfficeFormat;
@@ -81,7 +82,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::typed_body::{
-    BodyActor, TypedBodyFork, TypedBodyHead, TypedBodyWriter, TypedForkState,
+    BodyActor, LiftedSources, TypedBodyFork, TypedBodyHead, TypedBodyWriter, TypedForkState,
     birth_typed_body_in_txn, discard_typed_body_fork_in_txn, edit_typed_body_fork_in_txn,
     edit_typed_body_in_txn, open_typed_body_fork_in_txn, typed_body_fork_in_txn, typed_body_in_txn,
 };
@@ -290,6 +291,15 @@ pub struct XlsxPreview {
     pub recalc: Option<String>,
 }
 
+/// One `vault.artifacts.body.read` projection (OF-067, FIX 2939): the view,
+/// with the keys the lifted texts it may show hold and their custody
+/// records, read in the one snapshot the view was read in.
+struct OfficeBodyRead {
+    view: OfficeBodyView,
+    keys: LiftedKeys,
+    lifted: LiftedSources,
+}
+
 impl Vault {
     /// Import one DOCX, XLSX or PPTX version of `artifact` (the head when
     /// `version` is `None`) as its live body. One artifact has one body.
@@ -392,6 +402,69 @@ impl Vault {
     pub fn read_xlsx_body(&self, artifact: &EntityId, at: Option<&[u8]>) -> Result<XlsxBody> {
         let txn = self.store.env.read_txn()?;
         xlsx::read(&self.loro_body(&txn, artifact, OfficeBodyKind::Xlsx, at)?.1)
+    }
+
+    /// The body `vault.artifacts.body.read` shows, at its head or at an
+    /// earlier frontier `at`, read in one snapshot with the keys and custody
+    /// records of the lifted texts it may show: the live body's and each
+    /// open fork's, and the document read at `at` (FIX 2939). A value only
+    /// that version held is marked first ([`Self::mark_body_at`]), so it
+    /// reads as its handle. `None` when the artifact has no live body.
+    fn office_body_read(
+        &self,
+        artifact: &EntityId,
+        at: Option<&[u8]>,
+    ) -> Result<Option<OfficeBodyRead>> {
+        if let Some(at) = at {
+            self.mark_body_at(artifact, at)?;
+        }
+        let txn = self.store.env.read_txn()?;
+        let Some(source) = SOURCES.get(&self.store, &txn, artifact)? else {
+            return Ok(None);
+        };
+        let (head, doc) = self.loro_body(&txn, artifact, source.kind, at)?;
+        let view = match source.kind {
+            OfficeBodyKind::Docx => OfficeBodyView::Docx {
+                body: docx::read(&doc)?.into(),
+            },
+            OfficeBodyKind::Xlsx => OfficeBodyView::Xlsx {
+                body: xlsx::read(&doc)?.into(),
+            },
+            OfficeBodyKind::Pptx => {
+                let frontier = at.map_or(head.frontier, <[u8]>::to_vec);
+                OfficeBodyView::Pptx {
+                    body: pptx::body_in_txn(&self.store, &txn, artifact, &doc, frontier)?.into(),
+                }
+            }
+        };
+        let (keys, lifted) =
+            self.typed_body_read_lifted_in_txn(&txn, artifact, at.map(|_| &doc))?;
+        Ok(Some(OfficeBodyRead { view, keys, lifted }))
+    }
+
+    /// Marks the keys `artifact`'s body holds at the earlier frontier `at`
+    /// that no mark covers yet, as the lift sweep marks the live body's, in
+    /// a write of its own that completes before the read that shows them
+    /// (FIX 2939). Only custody and span rows are written; the body, its
+    /// operations, receipts and frontiers stay as they are. A body whose
+    /// texts at `at` are all marked or clean writes nothing.
+    fn mark_body_at(&self, artifact: &EntityId, at: &[u8]) -> Result<()> {
+        let unmarked = {
+            let txn = self.store.env.read_txn()?;
+            let Some(source) = SOURCES.get(&self.store, &txn, artifact)? else {
+                return Ok(());
+            };
+            let (_, doc) = self.loro_body(&txn, artifact, source.kind, Some(at))?;
+            self.typed_body_unmarked_in_txn(&txn, &doc)?
+        };
+        if !unmarked {
+            return Ok(());
+        }
+        self.with_write_txn_grouped(|wtxn| {
+            let kind = source(&self.store, wtxn, artifact)?.kind;
+            let (_, doc) = self.loro_body(wtxn, artifact, kind, Some(at))?;
+            self.mark_typed_body_at_in_txn(wtxn, artifact, &doc)
+        })
     }
 
     /// Every commit of the body in commit order, a landed fork's included,
