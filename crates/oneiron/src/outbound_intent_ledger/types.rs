@@ -180,6 +180,9 @@ pub enum IntentEscalationReason {
     CorruptLedgerRow,
     DedupeReservationReplaced,
     DedupeSuppressed,
+    /// The owner stopped the try that admitted the send (FIX 7188): the row
+    /// keeps what it knew of its delivery.
+    OwnerStopped,
 }
 
 impl IntentEscalationReason {
@@ -193,6 +196,7 @@ impl IntentEscalationReason {
             Self::CorruptLedgerRow => "corrupt_ledger_row",
             Self::DedupeReservationReplaced => "dedupe_reservation_replaced",
             Self::DedupeSuppressed => "dedupe_suppressed",
+            Self::OwnerStopped => "owner_stopped",
         }
     }
 
@@ -206,6 +210,7 @@ impl IntentEscalationReason {
             "corrupt_ledger_row" => Some(Self::CorruptLedgerRow),
             "dedupe_reservation_replaced" => Some(Self::DedupeReservationReplaced),
             "dedupe_suppressed" => Some(Self::DedupeSuppressed),
+            "owner_stopped" => Some(Self::OwnerStopped),
             _ => None,
         }
     }

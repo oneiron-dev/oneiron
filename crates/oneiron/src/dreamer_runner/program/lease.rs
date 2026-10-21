@@ -9,6 +9,7 @@ use crate::dreamer_runner::{
 use crate::error::Result;
 
 use super::super::store::PARKED;
+use super::stop_sends::retry_owed_stop_abandons_in_txn;
 use super::{PR1_PARK_REASON, PROGRAM_PARK_OWNER};
 
 impl DreamerRunnerStore<'_> {
@@ -38,12 +39,14 @@ impl DreamerRunnerStore<'_> {
     /// writer, each as the same try under its own kind's lease, and so is
     /// each hold of the program runtime's own whose condition is met
     /// (DOOR-141 PR3b, FIX 5711); every other park (a trapped step's signal
-    /// park, a pass's Checkpoint park) holds.
+    /// park, a pass's Checkpoint park) holds. Before them the abandon an
+    /// owner's Stop still owes its try's sends is retried (FIX 7188).
     pub(in crate::dreamer_runner) fn ready_unparked_program_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         now: u64,
     ) -> Result<Option<AttemptId>> {
+        retry_owed_stop_abandons_in_txn(self.vault, txn, now);
         let held: Vec<(AttemptId, DreamerParkCause, String)> = PARKED
             .scan(&self.vault.store, &*txn)?
             .into_iter()

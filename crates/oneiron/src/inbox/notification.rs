@@ -487,47 +487,61 @@ impl Vault {
     /// # Errors
     /// Storage errors.
     pub fn notify_attempt_budget_hold(&self, attempt: AttemptId, now: u64) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            let Some(record) = AttemptQueue::new(self).get_in_txn(&*txn, attempt)? else {
-                return Ok(());
-            };
-            if !record.budget_hold() {
-                return Ok(());
-            }
-            let Some(pause) = record.events.iter().rev().find(|event| {
-                event.kind == AttemptInterventionKind::Pause && event.actor == BUDGET_HOLD_ACTOR
-            }) else {
-                return Ok(());
-            };
-            let reference = bytes_to_hex_lower(attempt.as_bytes());
-            let subject_refs: Vec<EntityId> = record
-                .task_ref
-                .as_deref()
-                .and_then(|task| EntityId::from_hex(task).ok())
-                .into_iter()
-                .collect();
-            for owner in crate::policy_model::owners_in_txn(self, &*txn)? {
-                self.record_notification_in_txn(
-                    txn,
-                    &NotificationEvent {
-                        kind: NotificationKind::Ask,
-                        source: NotificationSource {
-                            producer: NOTIFICATION_PRODUCER_BUDGET_HOLD.to_owned(),
-                            event: format!("{reference}:{}:{}", pause.sequence, owner.to_hex()),
-                            job_kind: Some(record.kind.clone()),
-                            attempt: Some(reference.clone()),
-                            run: record.run_id.clone(),
-                            result: Some(reference.clone()),
-                            detail: Some(BUDGET_HOLD_NOTICE_DETAIL.to_owned()),
-                        },
-                        subject_refs: subject_refs.clone(),
-                        recipient: Some(owner),
-                        created_at: now,
-                        origin_conversation: None,
+        self.with_write_txn_grouped(|txn| self.notify_attempt_budget_hold_in_txn(txn, attempt, now))
+    }
+
+    /// Transaction-composable [`Self::notify_attempt_budget_hold`] (FIX
+    /// 7210): the same notices, keyed and addressed alike, written in `txn`,
+    /// which reads the row as `txn` holds it, so a hold in the same writer is
+    /// told with its own commit.
+    ///
+    /// # Errors
+    /// Storage errors.
+    pub(crate) fn notify_attempt_budget_hold_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt: AttemptId,
+        now: u64,
+    ) -> Result<()> {
+        let Some(record) = AttemptQueue::new(self).get_in_txn(&*txn, attempt)? else {
+            return Ok(());
+        };
+        if !record.budget_hold() {
+            return Ok(());
+        }
+        let Some(pause) = record.events.iter().rev().find(|event| {
+            event.kind == AttemptInterventionKind::Pause && event.actor == BUDGET_HOLD_ACTOR
+        }) else {
+            return Ok(());
+        };
+        let reference = bytes_to_hex_lower(attempt.as_bytes());
+        let subject_refs: Vec<EntityId> = record
+            .task_ref
+            .as_deref()
+            .and_then(|task| EntityId::from_hex(task).ok())
+            .into_iter()
+            .collect();
+        for owner in crate::policy_model::owners_in_txn(self, &*txn)? {
+            self.record_notification_in_txn(
+                txn,
+                &NotificationEvent {
+                    kind: NotificationKind::Ask,
+                    source: NotificationSource {
+                        producer: NOTIFICATION_PRODUCER_BUDGET_HOLD.to_owned(),
+                        event: format!("{reference}:{}:{}", pause.sequence, owner.to_hex()),
+                        job_kind: Some(record.kind.clone()),
+                        attempt: Some(reference.clone()),
+                        run: record.run_id.clone(),
+                        result: Some(reference.clone()),
+                        detail: Some(BUDGET_HOLD_NOTICE_DETAIL.to_owned()),
                     },
-                )?;
-            }
-            Ok(())
-        })
+                    subject_refs: subject_refs.clone(),
+                    recipient: Some(owner),
+                    created_at: now,
+                    origin_conversation: None,
+                },
+            )?;
+        }
+        Ok(())
     }
 }

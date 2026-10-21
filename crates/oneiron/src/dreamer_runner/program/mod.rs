@@ -33,6 +33,7 @@ mod read;
 mod release;
 mod resume;
 mod run;
+mod stop_sends;
 mod types;
 mod wake;
 

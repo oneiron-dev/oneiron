@@ -299,6 +299,10 @@ side_tables! {
     /// own part and the ARM entry's scrub clears it, so this entry names no class or scrub.
     /// Key: id16(code run) + id16(step).
     DREAMER_TURN_PROGRAM_STEP: VaultMeta b"dreamer:turn_program:step:v1:" Named;
+    /// FIX 7188: a try the owner stopped whose Pending sends its Stop's own write did not mark
+    /// Abandoned: the abandon it still owes, retried by the program kind's admission chain and
+    /// cleared once it lands. Key: id16(attempt).
+    DREAMER_TURN_PROGRAM_STOP_OWED: VaultMeta b"dreamer:turn_program:stop_owed:v1:" Named;
     /// DOOR-141: a wake a landed turn owes an armed program, recorded in that turn's own commit and
     /// consumed by its admission. Key: id16(turn) + id16(registration).
     DREAMER_TURN_PROGRAM_WAKE: VaultMeta b"dreamer:turn_program:wake:v1:" Named;

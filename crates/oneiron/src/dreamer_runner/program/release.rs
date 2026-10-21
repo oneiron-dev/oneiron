@@ -8,14 +8,15 @@
 //! hold that changed since refuses and nothing moves.
 //!
 //! Stop ends the try through the queue's owner force-cancel, whose receipt
-//! names the owner, and clears the program's own park; the run, its
-//! checkpoint and its steps stay as they are, and a settled try is never
-//! reopened. Resume queues the same try again, only once its checkpoint
-//! lines up with its run's record, its authority and pin bind again and
-//! nothing it did is unsettled, with the owner's intervention on its queue
-//! row. It repairs nothing: a head behind its record stays held until its
-//! repair (FIX 5881) lands. Nothing here runs on its own, and no other park
-//! is touched.
+//! names the owner, clears the program's own park and marks the try's own
+//! Pending sends Abandoned (FIX 7188, `stop_sends`), a ledger that refuses
+//! that never refusing the Stop; the run, its checkpoint and its steps stay
+//! as they are, and a settled try is never reopened. Resume queues the same
+//! try again, only once its checkpoint lines up with its run's record, its
+//! authority and pin bind again and nothing it did is unsettled, with the
+//! owner's intervention on its queue row. It repairs nothing: a head behind
+//! its record stays held until its repair (FIX 5881) lands. Nothing here runs
+//! on its own, and no other park is touched.
 
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +33,7 @@ use crate::error::{Error, Result};
 use super::super::store::PARKED;
 use super::authority::TurnProgramBound;
 use super::resume::{ProgramHold, resume_preflight_in_txn};
+use super::stop_sends::abandon_stopped_sends_in_txn;
 use super::{ATTEMPT, PROGRAM_PARK_OWNER};
 
 /// The note a validated resume's intervention carries when the owner gave
@@ -196,8 +198,10 @@ fn release_in_txn(
     })
 }
 
-/// Ends `attempt` on the owner's grounds, unless it already settled, and
-/// clears the program's own park. `true` when this stop ended it.
+/// Ends `attempt` on the owner's grounds, unless it already settled, clears
+/// the program's own park and abandons the try's Pending sends, an abandon
+/// the ledger refuses being owed rather than refusing the Stop (FIX 7188).
+/// `true` when this stop ended it.
 fn stop_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -222,6 +226,7 @@ fn stop_in_txn(
         | ForceCancelOutcome::AlreadySettled(record) => (record, false),
     };
     PARKED.delete(&vault.store, wtxn, &attempt)?;
+    abandon_stopped_sends_in_txn(vault, wtxn, attempt, now);
     Ok((record, stopped))
 }
 

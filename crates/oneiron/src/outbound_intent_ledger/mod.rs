@@ -44,8 +44,11 @@ pub(crate) use self::store::{
     reconcile_connector_intent_in_txn, record_definite_non_delivery, record_possible_delivery,
     renew_admission_in_txn,
 };
-// DOOR-141 PR3b: whether an attempt's sends are settled, for a held program's resume.
-pub(crate) use self::store::pending::attempt_has_pending_intent_in_txn;
+// DOOR-141 PR3b: whether an attempt's sends are settled, for a held program's resume;
+// FIX 7188: their abandon in the owner's Stop of that try.
+pub(crate) use self::store::pending::{
+    abandon_attempt_pending_intents_in_txn, attempt_has_pending_intent_in_txn,
+};
 #[cfg(test)]
 pub(crate) use self::store::{read_intent_record, replace_intent_record_for_test};
 pub(crate) use self::types::AdmittedApproval;
