@@ -2064,7 +2064,7 @@
      "path": "src/attempt_queue/engine/enqueue_claim.rs",
      "purpose": "Enqueue doors plus kind-scoped claim machinery and read-repair scans",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "fn": 5
      }
     },
@@ -2101,6 +2101,16 @@
      "surface": {
       "crate-vis": 7,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/engine/owner_retained_payload.rs",
+     "purpose": "An owner-retained row's payload rewritten in place (FIX 6755): the one door through which an owner-retained…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -57461,7 +57471,7 @@
      "purpose": "The marker row: its kind, payload, dedupe key, derived id and the in-transaction doors that commit it",
      "surface": {
       "const": 6,
-      "crate-vis": 10,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -66283,7 +66293,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67748,7 +67758,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4257,
+   "source_files": 4258,
    "test_files": 902
   },
   "oneiron-android": {
