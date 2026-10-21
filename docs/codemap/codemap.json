@@ -21648,7 +21648,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 4,
       "re-export": 21
      }
@@ -22115,10 +22115,20 @@
      "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 2,
       "fn": 3,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/settle/keep_approval.rs",
+     "purpose": "A Keep the Gate holds (FIX 5753): the responder's approval of the exact retained alternative its Keep…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -29117,6 +29127,7 @@
       "FeedbackTriageFinding",
       "FeedbackTriageHandoff",
       "FeedbackTriageInput",
+      "FeedbackTriageItem",
       "FeedbackTriageJob",
       "FeedbackTriageOutput",
       "FeedbackTriageResult",
@@ -29128,10 +29139,29 @@
      "surface": {
       "const": 4,
       "crate-vis": 3,
-      "enum": 1,
+      "enum": 2,
       "fn": 2,
-      "re-export": 1,
+      "re-export": 3,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GithubIssueKind",
+      "GithubIssuePage",
+      "GithubIssueRevision",
+      "GithubSweepContinuation"
+     ],
+     "path": "src/feedback/triage/github.rs",
+     "purpose": "The feedback triage's GitHub issue sources (OF-420 T1; ARCH-0056: \"GitHub issues still work",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -29152,6 +29182,22 @@
       "enum": 1,
       "fn": 4,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FeedbackTriageSourceError",
+      "FeedbackTriageSourceErrorKind",
+      "FeedbackTriageSourceFault"
+     ],
+     "path": "src/feedback/triage/source.rs",
+     "purpose": "Each triage source's state beside its continuation: what stopped its last walk, and the retry time the…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "struct": 2
      }
     },
     {
@@ -55820,7 +55866,7 @@
      "path": "src/store/pending_gate_consent/tray.rs",
      "purpose": "Pending gate-consent tray lifecycle: put/get/delete, resolution into the decision ledger, and ordered reads",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 2
      }
     },
@@ -68557,7 +68603,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 85,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68704,7 +68750,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 34,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69602,7 +69648,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4409,
+   "source_files": 4412,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82437,9 +82483,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/feedback_triage.rs",
-     "purpose": "The Coach's feedback triage on the host (OF-420 T1; ARCH-0056: \"We sweep both on a schedule with the triage…",
+     "purpose": "The Coach's feedback triage on the host (OF-420 T1; ARCH-0056: \"GitHub issues still work",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/feedback_triage/github.rs",
+     "purpose": "The feedback sweep's GitHub issue sources (OF-420 T1; ARCH-0056: \"GitHub issues still work",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -88867,15 +88923,16 @@
      "kind": "src",
      "notable": [
       "FeedbackConfig",
-      "FeedbackInboxConfig"
+      "FeedbackInboxConfig",
+      "FeedbackTriageConfig"
      ],
      "path": "src/config/feedback.rs",
      "purpose": "The `[feedback]` section: where the owner's feedback goes (OF-420)",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 2,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -89010,7 +89067,7 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 15,
       "re-export": 26
      }
@@ -93770,7 +93827,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 16,
       "re-export": 1,
       "struct": 1
@@ -95094,7 +95151,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 68,
+     "files": 69,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95551,7 +95608,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1043,
+   "source_files": 1044,
    "test_files": 182
   },
   "oneiron-spawn": {
