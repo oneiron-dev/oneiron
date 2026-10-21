@@ -525,6 +525,7 @@
       "output": "crate::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome",
       "call": "memory.concern_move(&input)?",
       "scope": "Write",
+      "lands_turn": true,
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -9014,7 +9015,7 @@
     },
     {
       "name": "vault.code.proposal_submit",
-      "description": "Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed.",
+      "description": "Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed.",
       "input": "crate::memory::code_doors::CodeProposalSubmitRequest",
       "output": "crate::memory::code_doors::CodeProposalSubmitted",
       "call": "memory.code_proposal_submit_as(&memory.embedded_owner(\"vault.code.proposal_submit\")?, input)?",
@@ -9089,7 +9090,7 @@
     },
     {
       "name": "vault.code.proposal_settle",
-      "description": "Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it.",
+      "description": "Approve or reject one code proposal as an independent owner, keeping a receipt. Its own catalog still needs unanimous critics; Approve satisfies the vault's review policy. Only the tested merge queue lands it.",
       "input": "crate::memory::code_doors::CodeProposalSettleRequest",
       "output": "crate::memory::code_doors::CodeProposalSettlementView",
       "call": "memory.code_proposal_settle_as(&memory.embedded_owner(\"vault.code.proposal_settle\")?, input)?",
@@ -9996,7 +9997,7 @@
     },
     {
       "name": "vault.code.merge_queue.land_reviewed",
-      "description": "Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing.",
+      "description": "Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs the review it is held to and exact bytes and base; the owner proof approves nothing.",
       "input": "crate::memory::merge_queue_doors::MergeQueueBatchRequest",
       "output": "crate::memory::merge_queue_doors::MergeQueueBatchView",
       "call": "memory.merge_queue_land_reviewed_as(&memory.embedded_owner(\"vault.code.merge_queue.land_reviewed\")?, input)?",
@@ -10105,6 +10106,41 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.review_policy.get",
+      "description": "Read the vault's opt-in review policy for merge queue work and the mode inherited work is in: none set lands on green through the same checks; an unreadable row holds. A live Owner, or one covering Grant.",
+      "input": "EmptyRequest",
+      "output": "crate::memory::merge_queue_doors::QueueReviewPolicyView",
+      "call": "memory.merge_queue_review_policy_get_as(&memory.merge_queue_review_policy_proof(\"vault.code.merge_queue.review_policy.get\"))?",
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.merge_queue.review_policy.set",
+      "description": "Set the vault's opt-in review policy for merge queue work, a lens catalog with overridable limits, or clear it with null. While set, work naming no catalog waits for critics or Approve. Owner, or one covering Grant.",
+      "input": "crate::memory::merge_queue_doors::QueueReviewPolicySetRequest",
+      "output": "crate::memory::merge_queue_doors::QueueReviewPolicyView",
+      "call": "memory.merge_queue_review_policy_set_as(&memory.merge_queue_review_policy_proof(\"vault.code.merge_queue.review_policy.set\"), input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "openapi": true
     },
     {
       "name": "vault.code.merge_queue.export_green",
@@ -10506,7 +10542,7 @@
     },
     {
       "name": "vault.repo.proposal_submit",
-      "description": "Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept.",
+      "description": "Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept.",
       "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoProposalSubmitInput>",
       "output": "crate::memory::repo_doors::RepoProposalSubmitOutput",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.proposal_submit\", &input)?",
@@ -13937,7 +13973,7 @@
     },
     {
       "name": "self.browser.batch",
-      "description": "Runs one batched browser program for a subgoal, type and expect taking a secret by handle, stopping at the first failing step with a stop_cause and a failed_receipt (missed checks, the page); elapsed_ms times it, duration_ms each effect.",
+      "description": "Runs one batched browser program for a subgoal, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a stop_cause and failed_receipt; elapsed_ms times it.",
       "input": "crate::task_verb::sdk::BrowserBatchInput",
       "output": "crate::task_verb::sdk::BrowserBatchOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.batch(input)?)",
@@ -13947,7 +13983,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserBatchInput>",
-        "description": "Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle, stopping at the first failing step with its stop_cause and a failed_receipt of missed checks and the page.",
+        "description": "Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a failed_receipt.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -14022,7 +14058,7 @@
     },
     {
       "name": "self.browser.library.run",
-      "description": "Runs a replay library program live, strict (rules only; a step needing a model asks up at zero tokens) or assisted, as its proof allows; secret slots take run-bound handles; a miss returns a failed_receipt; 3 strict misses retire it drift.",
+      "description": "Runs a replay library program live, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; a miss or no_progress returns a failed_receipt; 3 strict misses retire it drift.",
       "input": "crate::task_verb::sdk::BrowserLibraryRunInput",
       "output": "crate::task_verb::sdk::BrowserLibraryRunOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_run(input)?)",
@@ -14032,7 +14068,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRunInput>",
-        "description": "Runs a replay library program live in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, as its proof allows; secret slots take run-bound handles; 3 strict misses retire it drift.",
+        "description": "Runs a replay library program in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; no_progress hands up; 3 strict misses retire it drift.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -14249,7 +14285,7 @@
     },
     {
       "name": "self.desktop.batch",
-      "description": "Runs one batched program of one or more desktop steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, and a long one comes in pages, read on with observe and the batch's next cursor.",
+      "description": "Runs one batched program of desktop steps for a subgoal, stopping at the first failing step or after 3 acting steps leave the window unchanged; its last observation edits the caller's base, a long one paged, read on with observe and next.",
       "input": "oneiron_browser::BatchInput",
       "output": "oneiron_browser::DesktopAnswer<oneiron_browser::BatchOutput>",
       "call": "oneiron_browser::DesktopAnswer::of(driver.batch(input)?)",

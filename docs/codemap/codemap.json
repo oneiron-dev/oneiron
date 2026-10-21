@@ -7463,9 +7463,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/lifecycle.rs",
-     "purpose": "Blob artifact delete path: version-chain, head, and asset-ref cleanup",
+     "purpose": "Blob artifact delete path: version-chain, head, and asset-ref cleanup, and the release of one response…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -7485,7 +7485,7 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "mod": 2,
       "re-export": 10
      }
@@ -7505,13 +7505,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/references.rs",
      "purpose": "Which artifacts hold which version bytes, on every vault (H125)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -13529,6 +13529,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/activity.rs",
+     "purpose": "The runtime's own witness of what a leased attempt is doing in this vault now (OF-568 L5): whether a tool…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/agent_authoring.rs",
      "purpose": "Bounded guest definition request; actor, lease and approval stay host-owned",
      "surface": {
@@ -14138,7 +14148,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 7,
       "re-export": 23
      }
@@ -21983,10 +21993,30 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/nightly_links.rs",
+     "purpose": "Semantic links across one night's children, PROPOSALS ONLY (OF-498d)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/nightly_links/pairs.rs",
+     "purpose": "Which cross-child pairs a night's link continuations judge, how one call asks about them, and what each…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/nightly_merge.rs",
      "purpose": "Nightly fan-in over child proposals",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 16
      }
     },
     {
@@ -21997,6 +22027,16 @@
      "purpose": "Which unlisted siblings a nightly merge fans in beside its listed children (FIX 7495, FIX 7524): a retry of…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/nightly_merge/write.rs",
+     "purpose": "The nightly writer (OF-498d): how the merge and each of its link continuations land",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -29251,7 +29291,7 @@
      "path": "src/federation/repo_access.rs",
      "purpose": "The repo admission seams on an owner's agent Grant (FIX 6867): the L02 seams the Engine approved for L11 G1",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -35613,7 +35653,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 44,
+      "const": 45,
       "fn": 1,
       "struct": 1
      }
@@ -36377,7 +36417,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 11,
       "re-export": 17
      }
@@ -36900,7 +36940,6 @@
      "path": "src/llm/seat/decisions.rs",
      "purpose": "The seat pick as typed decisions through the host's ladder, and the note seam beside it",
      "surface": {
-      "crate-vis": 1,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -36992,7 +37031,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 1,
       "re-export": 5
      }
@@ -37048,6 +37087,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/step/response_pins.rs",
+     "purpose": "The exact artifact version a terminal `dreamer.step` claim's oversize response lives in, held by the claim…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/step/schema.rs",
      "purpose": "One-shot structured-output policy",
      "surface": {
@@ -37097,7 +37146,7 @@
      "path": "src/llm/step/step_claim.rs",
      "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 22
      }
     },
     {
@@ -38832,7 +38881,7 @@
      "purpose": "Typed speculative merge queue doors (DOOR-132): enqueue stored repository proposals as one batch, stage it…",
      "surface": {
       "crate-vis": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -38853,6 +38902,25 @@
      "purpose": "—",
      "surface": {
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "QueueReviewMode",
+      "QueueReviewPolicyInput",
+      "QueueReviewPolicyProof",
+      "QueueReviewPolicySetRequest",
+      "QueueReviewPolicyState",
+      "QueueReviewPolicyView"
+     ],
+     "path": "src/memory/merge_queue_doors/review_policy.rs",
+     "purpose": "`vault.code.merge_queue.review_policy.get` and `.set` (FIX 8268): the vault's one opt-in review policy for…",
+     "surface": {
+      "enum": 3,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -39515,7 +39583,7 @@
       "OwnerProposalReviewPolicy"
      ],
      "path": "src/memory/repo_doors/review_policy.rs",
-     "purpose": "The stock review policy a host binds for runs' proposals (FIX 6867, G1 PR3b; closes FIX 7062)",
+     "purpose": "The stock review policy a host binds for runs' proposals (FIX 6867, G1 PR3b; FIX 8268)",
      "surface": {
       "fn": 2,
       "struct": 1
@@ -40879,9 +40947,9 @@
      "path": "src/merge_queue/mod.rs",
      "purpose": "Durable batched speculation over real detached worktrees",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 1
      }
     },
@@ -40897,6 +40965,33 @@
      "surface": {
       "const": 1,
       "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/received_enqueue.rs",
+     "purpose": "A received push's own entry into its merge queue (FIX 8268, CALL `REVIEW_POLICY_DEFAULT = LandOnGreen`)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "QueueReviewDefault",
+      "QueueReviewPolicy",
+      "QueueReviewThresholds"
+     ],
+     "path": "src/merge_queue/review_policy.rs",
+     "purpose": "The vault's opt-in review policy for merge queue work (FIX 8268, Engine 10-22 03:1x by canon…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 12,
+      "enum": 1,
       "struct": 2
      }
     },
@@ -49472,7 +49567,7 @@
       "enum": 2,
       "fn": 5,
       "mod": 1,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 1
      }
     },
@@ -49527,6 +49622,23 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QueueReviewAdmission",
+      "RepoProposalCritique",
+      "RepoProposalReview"
+     ],
+     "path": "src/repo_mutation/proposal/queue_review.rs",
+     "purpose": "What review a proposal is held to, and whether it met it (FIX 8268)",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -49544,7 +49656,7 @@
      "path": "src/repo_mutation/proposal/run.rs",
      "purpose": "A leased run's proposal (FIX 6867, G1 PR2b): the one checked proposer on the immutable base its work is…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -56207,13 +56319,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/body_envelope/retention.rs",
      "purpose": "Body instance retirement (KS-2A, FIX 5683 part A; ARCH-0038 #erase-checkpoint-bodies): a delete keeps an…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -56988,7 +57100,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 1,
       "re-export": 17
      }
@@ -62540,7 +62652,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1158
+      "fn": 1160
      }
     },
     {
@@ -69745,7 +69857,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 135,
+     "files": 136,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69983,7 +70095,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 116,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70326,7 +70438,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 119,
+     "files": 120,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70347,14 +70459,14 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 246,
+     "files": 247,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 31,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -70571,7 +70683,7 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
     "repo_mutation": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -71028,7 +71140,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4522,
+   "source_files": 4531,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72367,7 +72479,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/drift.rs",
@@ -72387,7 +72499,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/drift_plan.rs",
@@ -72401,9 +72513,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/cua/fixture.rs",
-     "purpose": "PRIVATE S1 lifecycle",
+     "purpose": "PRIVATE S1 lifecycle and the frozen PUBLIC-only served forward",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -72437,13 +72549,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/provider_gate.rs",
      "purpose": "Pass-through only: exact wire identities and durable campaign cash reservations",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/readiness.rs",
+     "purpose": "FIX 8326 readiness through the shipped served engine, never a CDP sidecar",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -72477,23 +72599,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/run.rs",
      "purpose": "One assigned trial, one original deadline and no failure retries",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/served.rs",
      "purpose": "Shipped binary lifecycle and official MCP stdio",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -73388,9 +73510,9 @@
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
     "cua": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "Synthetic browser bench: engine outcomes are not oracle passes"
     },
@@ -73488,7 +73610,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 140,
+   "source_files": 141,
    "test_files": 18
   },
   "oneiron-broker": {
@@ -74158,7 +74280,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 40,
       "trait": 2
      }
@@ -74281,6 +74403,18 @@
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/progress.rs",
+     "purpose": "A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 1
      }
     },
     {
@@ -74569,6 +74703,13 @@
      "layout": "file",
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…"
     },
+    "progress": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]…"
+    },
     "receipt_evidence": {
      "files": 1,
      "impl_vault": false,
@@ -74635,7 +74776,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 44,
+   "source_files": 45,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -81275,7 +81416,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1129
+      "fn": 1131
      }
     },
     {
@@ -82536,7 +82677,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1130
+      "fn": 1132
      }
     },
     {
@@ -86816,7 +86957,7 @@
      "path": "src/api/facade/merge_queue_checker_doors.rs",
      "purpose": "Credential-bound host projections of the owner's merge queue checker doors (FIX 6868)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
@@ -100495,6 +100636,13 @@
       "QueueExportHold",
       "QueueExportHoldReason",
       "QueueGreenExportView",
+      "QueueReviewMode",
+      "QueueReviewPolicy",
+      "QueueReviewPolicyInput",
+      "QueueReviewPolicySetRequest",
+      "QueueReviewPolicyState",
+      "QueueReviewPolicyView",
+      "QueueReviewThresholds",
       "QueueTaskBrief",
       "QuickFilterAtom",
       "QuoteAnchor",
@@ -101759,8 +101907,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 947,
-      "struct": 2963
+      "enum": 949,
+      "struct": 2968
      }
     },
     {

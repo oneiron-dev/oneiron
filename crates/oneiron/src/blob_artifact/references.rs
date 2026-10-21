@@ -19,7 +19,7 @@ use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
-use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 
@@ -130,6 +130,65 @@ pub(super) fn forget_claimed_hashes(
         VERSION_CLAIM.delete(store, txn, &(hash, *artifact))?;
     }
     Ok(())
+}
+
+/// Drops the one pair `artifact` × `hash` when a released response version (FIX 6225) took the
+/// last version of `artifact` holding `hash`, unless a retained `blob.version` claim of `artifact`
+/// still names it (one another vault wrote, whose version has no chain here). `true` when it
+/// went: the bytes then go by the delete rule. Every other pair stays.
+pub(super) fn forget_released_pair_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+    hash: &ContentHash,
+) -> Result<bool> {
+    if retained_claim_names(store, txn, artifact, Some(hash))? {
+        return Ok(false);
+    }
+    CLAIMED_HASH.delete(store, txn, &(*artifact, *hash))?;
+    VERSION_CLAIM.delete(store, txn, &(*hash, *artifact))?;
+    Ok(true)
+}
+
+/// Whether a stored claim about `artifact` (its inbound `claim_of`), under no delete this vault
+/// holds, still names it: a `blob.version` claim naming `hash`, or with `hash` `None` any claim
+/// at all. Every inbound claim is read.
+pub(super) fn retained_claim_names(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    hash: Option<&ContentHash>,
+) -> Result<bool> {
+    for edge in crate::ports::EdgeStoreRead::port_edges(
+        store,
+        txn,
+        artifact,
+        crate::ports::EdgeDirection::In,
+        Some(crate::edge::EdgeKind::ClaimOf),
+        None,
+    )? {
+        let claim = edge?.target;
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &claim)? else {
+            continue;
+        };
+        if raw.len() <= ENTITY_METADATA_HEADER_LEN
+            || raw[0] != ENTITY_TYPE_CLAIM
+            || crate::deletion::row_deletion_marked(store, txn, &claim, Some(raw.as_slice()))?
+        {
+            continue;
+        }
+        let Some(named) = hash else {
+            return Ok(true);
+        };
+        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        else {
+            continue;
+        };
+        if version_claim_reference(&body) == Some((*artifact, *named)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether a `blob.version` claim here named `artifact`: its delete has bytes to settle even

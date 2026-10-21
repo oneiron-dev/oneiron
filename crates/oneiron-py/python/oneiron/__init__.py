@@ -3496,7 +3496,7 @@ class Oneiron:
         def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs":
             return Oneiron._VaultCodeSymbolsVerbs(self._client)
         def proposal_submit(self, spec):
-            """Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."""
+            """Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed."""
             return json.loads(_translate(lambda: self._client.vault_code_proposal_submit(json.dumps(spec))))
         def conflict_record(self, spec):
             """Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves."""
@@ -3511,7 +3511,7 @@ class Oneiron:
             """Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt."""
             return json.loads(_translate(lambda: self._client.vault_code_proposal_review(json.dumps(spec))))
         def proposal_settle(self, spec):
-            """Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it."""
+            """Approve or reject one code proposal as an independent owner, keeping a receipt. Its own catalog still needs unanimous critics; Approve satisfies the vault's review policy. Only the tested merge queue lands it."""
             return json.loads(_translate(lambda: self._client.vault_code_proposal_settle(json.dumps(spec))))
         def proposal_settlement(self, spec):
             """Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only."""
@@ -3787,7 +3787,7 @@ class Oneiron:
             """Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_requeue_survivors(json.dumps(spec))))
         def land_reviewed(self, spec):
-            """Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing."""
+            """Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs the review it is held to and exact bytes and base; the owner proof approves nothing."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_land_reviewed(json.dumps(spec))))
         def settle_slow(self, spec):
             """Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."""
@@ -3807,9 +3807,21 @@ class Oneiron:
         def check_status(self, spec):
             """Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_check_status(json.dumps(spec))))
+        @property
+        def review_policy(self) -> "Oneiron._VaultCodeMergeQueueReviewPolicyVerbs":
+            return Oneiron._VaultCodeMergeQueueReviewPolicyVerbs(self._client)
         def export_green(self, spec):
             """Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_export_green(json.dumps(spec))))
+    class _VaultCodeMergeQueueReviewPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """Read the vault's opt-in review policy for merge queue work and the mode inherited work is in: none set lands on green through the same checks; an unreadable row holds. A live Owner, or one covering Grant."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_review_policy_get(json.dumps({} if spec is None else spec))))
+        def set(self, spec):
+            """Set the vault's opt-in review policy for merge queue work, a lens catalog with overridable limits, or clear it with null. While set, work naming no catalog waits for critics or Approve. Owner, or one covering Grant."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_review_policy_set(json.dumps(spec))))
     class _VaultCodeChecksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3910,7 +3922,7 @@ class Oneiron:
         def work(self) -> "Oneiron._VaultRepoWorkVerbs":
             return Oneiron._VaultRepoWorkVerbs(self._client)
         def proposal_submit(self, spec):
-            """Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept."""
+            """Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept."""
             return json.loads(_translate(lambda: self._client.vault_repo_proposal_submit(json.dumps(spec))))
         @property
         def checkout(self) -> "Oneiron._VaultRepoCheckoutVerbs":
@@ -5481,7 +5493,7 @@ class Oneiron:
             """Zooms into a rectangle of a held image."""
             return json.loads(_translate(lambda: self._client.self_browser_zoom(json.dumps(spec))))
         def batch(self, spec):
-            """Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle, stopping at the first failing step with its stop_cause and a failed_receipt of missed checks and the page."""
+            """Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a failed_receipt."""
             return json.loads(_translate(lambda: self._client.self_browser_batch(json.dumps(spec))))
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs":
@@ -5508,7 +5520,7 @@ class Oneiron:
             """The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."""
             return json.loads(_translate(lambda: self._client.self_browser_library_retired(json.dumps(spec))))
         def run(self, spec):
-            """Runs a replay library program live in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, as its proof allows; secret slots take run-bound handles; 3 strict misses retire it drift."""
+            """Runs a replay library program in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; no_progress hands up; 3 strict misses retire it drift."""
             return json.loads(_translate(lambda: self._client.self_browser_library_run(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:

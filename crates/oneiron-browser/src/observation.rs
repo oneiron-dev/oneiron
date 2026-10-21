@@ -165,7 +165,6 @@ pub(crate) fn rows_named(
 /// The ordered edit that makes `base` into `now`: the longest equal prefix
 /// and then the longest equal suffix of what is left (whole-row equality)
 /// stay, and the rows between are replaced. Rows that only moved change it.
-#[cfg(feature = "driver")]
 pub(crate) fn splice_of(base: &[Row], now: &[Row]) -> (RowSplice, Vec<Row>) {
     let prefix = base
         .iter()

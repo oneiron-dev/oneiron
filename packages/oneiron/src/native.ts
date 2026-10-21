@@ -690,6 +690,8 @@ vaultCodeMergeQueueCheck(input: unknown): unknown
 vaultCodeMergeQueueDiagnose(input: unknown): unknown
 vaultCodeMergeQueueCheckStatus(input: unknown): unknown
 vaultCodeChecksGet(input: unknown): unknown
+vaultCodeMergeQueueReviewPolicyGet(input: unknown): unknown
+vaultCodeMergeQueueReviewPolicySet(input: unknown): unknown
 vaultCodeMergeQueueExportGreen(input: unknown): unknown
 vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown

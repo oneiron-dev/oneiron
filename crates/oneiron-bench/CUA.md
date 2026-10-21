@@ -1,24 +1,31 @@
 # CUA: S2 runner, S3 checkers and S5 drift protocol
 
-This is harness source, not a collected direction screen. On this head
-`BrowserConfig::guest()` has no dynamic S1 transport. Linux `run` therefore
-emits every assigned cell as `fixture_transport_unavailable`, without starting
-S1, an engine, a browser or a model. A file fixture mount is not a substitute.
-The engine lane owns FIX 8061. Do not change the readiness function to accept an
-operator boolean or a standalone CDP guest.
+This is harness source, not a collected direction screen. Freeze S1 PUBLIC's
+numeric, non-loopback IPv4 bind with `taskgen --fixture-forward` and put the
+same value in the runtime pins' `browser.bench_fixture_forward`. The harness
+writes `[browser] bench_fixture_forward` into each served vault's config and
+sets `ONEIRON_EGRESS_CONFIG` to its private `egress.json` containing
+`{"allowed_domains": []}`. Guests open `http://127.0.0.1:8080` plus PRIVATE
+reset's relative `entry`; the host forwards only that origin to PUBLIC. Guests
+stay network=none; PRIVATE, direct bridge requests and external sites stay
+refused. A missing or mismatched plan, pin or written forward names its missing
+piece under `fixture_transport_unavailable`.
 
 ## CLI
 
 ```
-oneiron-bench cua taskgen --manifest crates/oneiron-bench/fixtures/cua/manifest.json --seed 20261021 --out /srv/cua/frozen
+oneiron-bench cua taskgen --manifest crates/oneiron-bench/fixtures/cua/manifest.json --seed 20261021 --fixture-forward 172.30.91.1:8765 --out /srv/cua/frozen
 oneiron-bench cua run --plan /srv/cua/frozen/plan.json --server /srv/bin/oneiron --pinned-config /srv/cua/pins.json --out /srv/cua/results
+oneiron-bench cua run --readiness-only --plan /srv/cua/frozen/plan.json --server /srv/bin/oneiron --pinned-config /srv/cua/pins.json --out /srv/cua/readiness
 oneiron-bench cua report --in /srv/cua/results/rows.jsonl --out /srv/cua/report
 oneiron-bench cua drift --plan /srv/cua/frozen/s5.json --programs /srv/cua/submissions.json --out /srv/cua/drift
 ```
 
 `run` refuses non-Linux hosts with `linux_execution_required` in its CLI parser.
-`drift` now freezes S5 assignments and emits terminal unavailable rows on this
-head. Its live Engine adapter is still blocked by FIX 8061. See `CUA-S5.md`
+`drift` freezes S5 assignments, checks the same forward pins and validates reset
+entries against the same virtual origin. Its live adapter still needs access to
+the original admitted workflows' vault and attached-run continuity; this is
+`s5_original_workflow_vault_unavailable`, not a missing engine forward. See `CUA-S5.md`
 for the protocol, input schema, lifecycle/repair state machine and limitations.
 No replay or repair is aliased to a fresh solve. Use prebuilt binaries on a booked, isolated Linux host.
 No Cargo dependency was added. No tests are part of this change.
@@ -31,12 +38,38 @@ are shared; its task corpus is not copied into CUA. `StdRng` freezes the generat
 seed list, so later runs consume saved seeds rather than regenerate them.
 
 Output must be a new private directory. `plan.json` contains fixture/checker
-versions and digests, assignments, caps and frozen task text. `public-packets.json`
+versions and digests, the optional `fixture_public_bind`, assignments, caps and frozen task text. `public-packets.json`
 contains only public work instructions, not expected values or PRIVATE paths.
 `holdout-freeze.json` separates evaluation and reserved seeds. The S1 renderer is
 never run by taskgen and generated fixture data/pages are never rewritten.
 Bench task instructions live outside the fixture tree in
 `crates/oneiron-bench/cua-task-packet.txt`.
+
+## Readiness receipt (FIX 8326)
+
+`run --readiness-only` writes one terminal `readiness.json` and private raw
+MCP/server/provider/S1 evidence. It does not run the 51 benchmark tasks. On the
+frozen F2/C cell it checks PUBLIC GET, a synthetic Company name autosave POST
+(including `X-CUA-Run`), PRIVATE refusal, direct bridge refusal, external
+`https://example.com/` refusal and a real `library.propose` fresh-guest replay.
+It also removes the forward from an in-memory copy of the pins and records all
+51 cells as unavailable at harness admission, without starting another guest.
+No request is sent to the external site when the empty allowlist works.
+
+Success requires engine bridge answers plus S1 events/state, and negative
+navigation requires a blocked egress gate row for that durable run. Candidate
+prose is not proof. Missing evidence, setup errors and timeouts never pass; a
+timeout is a failed row. Every later skipped case names the cause that stopped
+the matrix. Each case uses the existing F2 60-second cap; startup uses the pinned
+startup limit. The normal provider identity/cash gate and persistent $5 ledger
+also cover readiness; the outer executor is not claimed model-free. The replay
+itself is the engine's no-model admission check. No send or submit is authorized.
+
+Use a new private output directory. Terminal or interrupted readiness work is
+not retried there. Browser-pack installation and verified connection setup are
+still required by the served engine; missing setup fails closed, never by
+writing a verification bit. Linux compilation and this live matrix have not
+been run on this machine.
 
 ## Runtime pin manifest (JSON, schema 1)
 
@@ -50,7 +83,7 @@ Unknown fields are rejected. All digest fields used for file pins are BLAKE3.
 | `engine` | Exactly `chromium` or `lightpanda`; one per screen, no fallback. |
 | `engine_binary_digest`, `engine_head`, `driver_digest` | Prebuilt binary bytes, engine revision and deployed driver pin. |
 | `guest_image_digest`, `prompt_package_digest` | Deployment's guest image and prompt package pins. |
-| `browser` | JSON form of the engine's `BrowserConfig`, including an explicit `engine`, absolute `runtime` and pinned `image`; scalar TOML fields only. |
+| `browser` | JSON form of the engine's `BrowserConfig`, including an explicit `engine`, absolute `runtime`, pinned `image` and `bench_fixture_forward` matching `plan.fixture_public_bind`; scalar TOML fields only. |
 | `navigation_evidence` | Null or `{path,digest}` to a host-private observation described below. |
 | `arms` | Exactly B, C, C+, D, each with the arm fields below. |
 | `startup_seconds`, `continuation_poll_ms`, `settle_seconds` | Explicit positive startup/readiness, compaction-poll and drain/capture clocks. |
@@ -77,8 +110,8 @@ Thinking evidence is JSON with `attested:true`, exact `requested_model` and
 Navigation observations bind `engine`, `engine_binary_digest`, `driver_digest`,
 `guest_image_digest`, plus true `public_success`, `private_refused` and
 `external_refused`. Evidence files are pinned observations, not a readiness
-bypass: the missing engine transport still blocks this checkout. Chromium's
-fenced-guest navigation proof is an engine-lane observation, not an S2 run result.
+bypass: the frozen plan/pins and the written served configuration must agree.
+A standalone fenced-guest proof is not an S2 run result.
 
 Each route has exact `provider`, `engine_model` (`provider/name@revision`),
 `requested_model`, `returned_model`, upstream origin/prefix `upstream`,
@@ -121,10 +154,10 @@ commitments are not invoices. The next request that would cross $5 is refused
 
 ## Lifecycle and evidence
 
-The engine transport blocker is checked before any execution. The orchestration
-source behind it uses a new scratch vault and issuer per trial, shipped `init`
+The plan/pins are checked before any execution; the actual written forward is
+checked before `serve`. The orchestration uses a new scratch vault and issuer per trial, shipped `init`
 with no embedder, a stopped-vault agent mint, loopback `serve`, and the official
-`mcp --surface primary` bridge. It discovers schemas from `tools/list` after MCP
+`mcp --surface tool-first` bridge. It discovers schemas from `tools/list` after MCP
 initialization. It never signs credentials itself or reads LMDB. The candidate
 holds its own agent credential, never the issuer/PRIVATE token, and receives only
 public instructions/entry URL. Browser-pack installation and normal verified
@@ -140,9 +173,9 @@ continue; human/send approval, timeout and provider errors terminate the trial.
 
 Owned process groups and gate response delivery stop before bounded drain and
 PRIVATE capture. Every failure after reset still attempts final state/events and
-the independent checker. Guest-container teardown cannot yet be proved through
-the missing supported transport, so the latent path remains `evidence_incomplete`
-even after checker completion. Do not enable it merely by flipping a boolean.
+the independent checker. Guest-container teardown and complete primitive-effect coverage still need
+public evidence, so the trial remains `evidence_incomplete` even after checker
+completion. Forward readiness alone is not a direction-screen pass.
 A provider may still process a cancelled remote request: its reservation remains
 charged conservatively, and no late reply can drive the stopped candidate.
 

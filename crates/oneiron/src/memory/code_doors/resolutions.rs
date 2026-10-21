@@ -64,9 +64,11 @@ impl Memory<'_> {
             .vault
             .repo_proposal(input.proposal)?
             .ok_or_else(|| MemoryError::not_found("repository proposal not found"))?;
+        // Its own catalog's lens, else the vault review policy's (FIX 8268);
+        // the engine's writer routes the vote again under its own read.
+        let policy = self.vault.queue_review_policy()?;
         let lens = row
-            .catalog
-            .lens(&input.lens_id, &input.domain)
+            .review_lens(&policy, &input.lens_id, &input.domain)
             .ok_or_else(|| {
                 MemoryError::bad_request("review lens is not in this proposal's catalog")
             })?;
@@ -174,7 +176,7 @@ impl Memory<'_> {
         Ok(CodeProposalSettlementView {
             proposal: row.id,
             status: row.status,
-            reviews: row.critiques.len(),
+            reviews: row.critiques.len() + row.policy_critiques.len(),
             settlement: row.settlement,
             conflict,
             task,
