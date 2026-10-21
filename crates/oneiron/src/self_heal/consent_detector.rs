@@ -94,10 +94,11 @@ impl DiagnosticObservation {
 impl Vault {
     /// Reads only the caller-selected receipt scope and records explicit
     /// consent refusals through the diagnostic maintenance door. The query's
-    /// kinds, actor, outcome, job and time bounds are not widened. Selection
-    /// orders the facts before the pure detector sees them. Every receipt the
-    /// query returns is projected: past `limits.detector_receipt_rows` the
-    /// detector asks and reads on.
+    /// kinds, actor, outcome, job and time bounds are not widened. Its row
+    /// limit is not a cut: the selected scope is read to completion.
+    /// Selection orders the facts before the pure detector sees them. Every
+    /// receipt is projected: past `limits.detector_receipt_rows` the detector
+    /// asks and reads on.
     pub fn run_consent_denied_detector(
         &self,
         scope_ref: &str,
@@ -107,10 +108,10 @@ impl Vault {
             scope_ref,
             observations: &[],
         })?;
-        if query.limit == 0 {
-            return Err(Error::InvariantViolation("diagnostic receipt query limit"));
-        }
-        let receipts = self.receipts(query)?;
+        let receipts = self.receipts(ReceiptQuery {
+            limit: usize::MAX,
+            ..query
+        })?;
         let _ = self.measure_limit(EngineLimit::DetectorReceiptRows, receipts.len() as u64);
         let mut observations = Vec::new();
         for receipt in receipts {

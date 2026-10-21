@@ -548,7 +548,7 @@ impl Vault {
 /// the same runs writes the same events again, and a miss already answered
 /// files no second reindex.
 pub(super) fn run_read_hardening(vault: &Vault, now: u64) -> Result<()> {
-    let misses = vault.run_retrieval_miss_detector(READ_HARDENING_SCOPE, usize::MAX)?;
+    let misses = vault.run_retrieval_miss_detector(READ_HARDENING_SCOPE)?;
     vault.propose_tier1_repairs(&misses, now)?;
     Ok(())
 }

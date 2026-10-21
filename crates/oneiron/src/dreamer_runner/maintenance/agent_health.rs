@@ -165,6 +165,35 @@ pub const HEALTH_DUP_MIN_COST: SettingSpec = SettingSpec {
     seed: 2_000.0,
 };
 
+/// The owner gets a copy of every card at once (1) or only of a concern, a
+/// card on the project's leader, a card with no other recipient and a card
+/// left open past the TTL (0). It only adds the owner: a concern always
+/// reaches the owner, whatever this says.
+pub const HEALTH_OWNER_COPY: SettingSpec = SettingSpec {
+    key: "health.card.owner_copy",
+    min: 0.0,
+    max: 1.0,
+    seed: 0.0,
+};
+
+/// Hours back one review reads receipts and settled attempts.
+pub const HEALTH_REVIEW_WINDOW_HOURS: SettingSpec = SettingSpec {
+    key: "health.review.window_hours",
+    min: 1.0,
+    max: 720.0,
+    seed: 24.0,
+};
+
+/// `cost_spike`: the settled runs of a task type its p90 needs; with fewer,
+/// the plan's expected spend is the baseline, at low confidence. It sets
+/// the baseline only, never which work runs.
+pub const HEALTH_COST_MIN_RUNS: SettingSpec = SettingSpec {
+    key: "health.cost.min_runs",
+    min: 1.0,
+    max: 10_000.0,
+    seed: 10.0,
+};
+
 /// The unit `health.dup.min_cost` is read in: the policy budget's, which
 /// every model-call receipt settles in and an ordinary launch scope meters.
 /// A duplicate whose scope meters another unit, or none, is never held
@@ -173,12 +202,8 @@ fn dup_cost_unit() -> LeaseUnit {
     LeaseUnit::tokens()
 }
 
-/// How far back one review reads receipts and settled attempts.
-const LOOKBACK_SECS: u64 = 24 * 60 * 60;
 /// A wait on a person is not a problem (agent-mind §3.4).
 const WAIT_PERSON: &str = "person";
-/// `cost_spike` needs this many settled runs of a task type for its p90.
-const COST_MIN_RUNS: usize = 10;
 const HEALTH_DIGEST_DOMAIN: &[u8] = b"oneiron.coach.agent_health.evidence.v1";
 const CARD_REF_PREFIX: &str = "health:";
 
@@ -402,6 +427,12 @@ struct Dials {
     ttl_secs: u64,
     card_floor: f64,
     dup_min_cost: u64,
+    /// Every card copies to the owner at once.
+    owner_copy: bool,
+    /// How far back the review reads for this scope.
+    window_secs: u64,
+    /// The settled runs a task type's p90 needs.
+    cost_min_runs: usize,
 }
 
 /// The dials for each project and task type the review meets (agent-mind
@@ -452,6 +483,14 @@ impl DialBook {
                 .flat_map(BTreeMap::values)
                 .any(|dials| dials.review)
     }
+
+    /// Each review window a scope the review meets reads, once.
+    fn windows(&self) -> BTreeSet<u64> {
+        std::iter::once(&self.vault)
+            .chain(self.scoped.values().flat_map(BTreeMap::values))
+            .map(|dials| dials.window_secs)
+            .collect()
+    }
 }
 
 /// The dials one project and task type resolve to: goal, project, task type,
@@ -481,6 +520,9 @@ fn read_dials(
         ttl_secs: (value(&HEALTH_ESCALATE_TTL_HOURS)? * 3600.0).round() as u64,
         card_floor: value(&HEALTH_CARD_FLOOR)?,
         dup_min_cost: value(&HEALTH_DUP_MIN_COST)?.round() as u64,
+        owner_copy: value(&HEALTH_OWNER_COPY)? >= 0.5,
+        window_secs: (value(&HEALTH_REVIEW_WINDOW_HOURS)? * 3600.0).round() as u64,
+        cost_min_runs: (value(&HEALTH_COST_MIN_RUNS)?.round() as usize).max(1),
     })
 }
 
@@ -500,9 +542,6 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     if !book.any_review() {
         return Ok(0);
     }
-    let since = now.saturating_sub(LOOKBACK_SECS);
-    let calls = agent_calls(vault, since)?;
-
     let mut traps = Traps::new();
     for wait in open_trap_waits(vault)? {
         traps
@@ -511,64 +550,24 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
             .push(wait);
     }
 
-    let mut findings = loop_findings(&calls, &dispatched, &attempts, &book);
-    findings.extend(run_loop::run_loop_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        &book,
-        since,
-    )?);
-    findings.extend(check_repeat::check_repeat_findings(
-        vault,
-        &calls,
-        &dispatched,
-        &attempts,
-        &book,
-        since,
-    )?);
-    findings.extend(silent_findings(
-        vault,
-        &calls,
-        &dispatched,
-        &attempts,
-        &traps,
-        &book,
-        now,
-    )?);
-    findings.extend(long_wait_findings(
-        &dispatched,
-        &attempts,
-        &traps,
-        &book,
-        since,
-        now,
-    ));
-    let (duplicates, digest_pairs) =
-        duplicate_findings(vault, &dispatched, &attempts, &book, since, now)?;
-    findings.extend(duplicates);
-    findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
-    findings.extend(widen_denial_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        &book,
-        since,
-    )?);
-    findings.extend(unsupported_done_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        since,
-    )?);
-    findings.extend(cost_spike_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        &book,
-        since,
-        now,
-    )?);
+    // Each scope reads back over its own `health.review.window_hours`: one
+    // pass per distinct window, each finding and digest pair kept from the
+    // pass of its own scope's window. With every scope on one window, that
+    // is a single pass.
+    let mut findings = Vec::new();
+    let mut digest_pairs = Vec::new();
+    for window in book.windows() {
+        let since = now.saturating_sub(window);
+        let (found, pairs) = detect(vault, &dispatched, &attempts, &traps, &book, since, now)?;
+        findings.extend(found.into_iter().filter(|finding| {
+            book.for_attempt(&dispatched, finding.attempt).window_secs == window
+        }));
+        digest_pairs.extend(
+            pairs
+                .into_iter()
+                .filter(|pair| book.of(dispatched.get(&pair.second)).window_secs == window),
+        );
+    }
     // A project or task type whose review is off keeps its findings unsaid.
     findings.retain(|finding| book.for_attempt(&dispatched, finding.attempt).review);
     // What each agent said itself, for its card.
@@ -597,7 +596,7 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         let owners = crate::policy_model::owners_in_txn(vault, &rtxn)?;
         let mut routes = Vec::with_capacity(findings.len());
         for finding in &findings {
-            routes.push(route(vault, &rtxn, finding, &dispatched, &attempts)?);
+            routes.push(route(vault, &rtxn, finding, &dispatched, &attempts, &book)?);
         }
         (owners, routes)
     };
@@ -643,6 +642,47 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         }
         Ok(touched.len() as u64)
     })
+}
+
+/// Every detector over the review window from `since`, and the digest
+/// pairs its duplicate findings came from.
+fn detect(
+    vault: &Vault,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
+    traps: &Traps,
+    book: &DialBook,
+    since: u64,
+    now: u64,
+) -> Result<(Vec<Finding>, Vec<duplicate::DigestPair>)> {
+    let calls = agent_calls(vault, since)?;
+    let mut findings = loop_findings(&calls, dispatched, attempts, book);
+    findings.extend(run_loop::run_loop_findings(
+        vault, dispatched, attempts, book, since,
+    )?);
+    findings.extend(check_repeat::check_repeat_findings(
+        vault, &calls, dispatched, attempts, book, since,
+    )?);
+    findings.extend(silent_findings(
+        vault, &calls, dispatched, attempts, traps, book, now,
+    )?);
+    findings.extend(long_wait_findings(
+        dispatched, attempts, traps, book, since, now,
+    ));
+    let (duplicates, digest_pairs) =
+        duplicate_findings(vault, dispatched, attempts, book, since, now)?;
+    findings.extend(duplicates);
+    findings.extend(misalignment_findings(vault, dispatched, attempts, since)?);
+    findings.extend(widen_denial_findings(
+        vault, dispatched, attempts, book, since,
+    )?);
+    findings.extend(unsupported_done_findings(
+        vault, dispatched, attempts, since,
+    )?);
+    findings.extend(cost_spike_findings(
+        vault, dispatched, attempts, book, since, now,
+    )?);
+    Ok((findings, digest_pairs))
 }
 
 /// An agent-dispatch attempt's actor, project, parent, task type and plan.
@@ -993,8 +1033,8 @@ fn covered(mut spans: Vec<(u64, u64)>) -> u64 {
 
 /// `cost_spike`: an attempt's own spend over the dial times the p90 of its
 /// task type's settled runs in the same unit, every retained one read, from
-/// at least [`COST_MIN_RUNS`] of them. With fewer, it is held against the plan's
-/// expected spend, at low confidence. Own spend is the launch scope's spend
+/// at least its `health.cost.min_runs` of them. With fewer, it is held against
+/// the plan's expected spend, at low confidence. Own spend is the launch scope's spend
 /// less what its settled children spent. Retries share one scope, so a scope
 /// counts once, on its newest attempt.
 fn cost_spike_findings(
@@ -1066,7 +1106,7 @@ fn cost_spike_findings(
             .filter(|(run, _)| *run != name.as_str())
             .map(|(_, spent)| *spent)
             .collect();
-        let (baseline, counter) = if runs.len() >= COST_MIN_RUNS {
+        let (baseline, counter) = if runs.len() >= dials.cost_min_runs {
             (p90(runs), Vec::new())
         } else {
             match &dispatch.expected {
@@ -1577,12 +1617,16 @@ struct Route {
     owner_copy: bool,
 }
 
+/// A concern, a card on the project's own leader and a card with no other
+/// recipient always copy to the owner; `health.card.owner_copy` copies every
+/// other card too, and never takes one of those away.
 fn route(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     finding: &Finding,
     dispatched: &Dispatches,
     attempts: &Attempts,
+    book: &DialBook,
 ) -> Result<Route> {
     let dispatch = finding
         .attempt
@@ -1608,7 +1652,8 @@ fn route(
     );
     let owner_copy = AgentHealthTone::of(finding.signal) == AgentHealthTone::Concern
         || leader == Some(finding.subject)
-        || recipients.is_empty();
+        || recipients.is_empty()
+        || book.of(dispatch).owner_copy;
     Ok(Route {
         recipients,
         owner_copy,

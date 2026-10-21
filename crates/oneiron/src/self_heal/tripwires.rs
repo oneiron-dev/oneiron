@@ -13,7 +13,7 @@ use crate::{
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-fn draft(
+pub(super) fn draft(
     id: &str,
     class: DiagnosticEventClass,
     source: DiagnosticSourceKind,
@@ -159,7 +159,7 @@ impl TripwireBounds {
     /// A positive window and positive thresholds. A large threshold is the
     /// owner's to set; `Vault::tripwire_bounds` asks past
     /// `limits.tripwire_threshold`.
-    fn valid(self) -> bool {
+    pub(super) fn valid(self) -> bool {
         self.window_secs > 0
             && self.consent_depth > 0
             && self.actor_writes > 0
@@ -285,7 +285,7 @@ impl DeterministicDetector for RetrievalRegressionDetector {
         )
     }
 }
-fn observation<T: Serialize>(
+pub(super) fn observation<T: Serialize>(
     source_ref: EntityId,
     kind: &'static str,
     observed_at: u64,
@@ -440,15 +440,12 @@ impl Vault {
         Ok(Some(bounds))
     }
     /// Read the stored ARCH-0037 records, never caller-authored telemetry labels.
-    /// `limit` selects the newest runs; every miss among them is observed, and
-    /// past `limits.detector_observations` the detector asks and reads on.
-    pub fn run_retrieval_miss_detector(&self, scope: &str, limit: usize) -> Result<Vec<EntityId>> {
-        if limit == 0 {
-            return Ok(vec![]);
-        }
+    /// Every stored run is read and every miss among them observed: past
+    /// `limits.detector_observations` the detector asks and reads on.
+    pub fn run_retrieval_miss_detector(&self, scope: &str) -> Result<Vec<EntityId>> {
         let observations: Vec<_> = self
             .store
-            .retrieval_runs(limit)?
+            .retrieval_runs(usize::MAX)?
             .iter()
             .filter_map(DiagnosticObservation::from_retrieval_run)
             .collect();

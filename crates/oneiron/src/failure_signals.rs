@@ -383,13 +383,14 @@ fn executed_model(
 /// Only compiled detector identities may travel across vaults in clear.
 /// Unknown/custom detector IDs remain per-vault opaque tokens.
 fn registered_detector(id: &str) -> Option<&'static str> {
-    const IDS: [&str; 7] = [
+    const IDS: [&str; 8] = [
         "consent.denied.v1",
         "retrieval.miss.v1",
         "consolidation.error.v1",
         "dreamer.degenerate.v1",
         "conversation.silent.v1",
         "consent.storm.v1",
+        "consent.queue_depth.v1",
         "predicate.drift.v1",
     ];
     IDS.into_iter().find(|registered| *registered == id)
