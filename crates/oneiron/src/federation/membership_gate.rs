@@ -388,57 +388,79 @@ impl Vault {
         principal: crate::EntityId,
         grant_id: crate::EntityId,
     ) -> Result<Option<MembershipStanding>> {
-        if self.shared_vault_deletion_in_txn(txn)?.is_some() {
-            return Ok(None);
-        }
-        let creation = self.shared_vault_creation_in_txn(txn)?;
-        let stands = match scope {
-            FederationGrantScope::Connect { .. } => true,
-            FederationGrantScope::Vault { vault_id } => {
-                creation.is_some_and(|creation| vault_id != 0 && vault_id == creation.vault_id)
-            }
-            FederationGrantScope::Ask { .. } => creation.is_some(),
-        };
-        if !stands {
-            return Ok(None);
-        }
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
-        if fold.vault_root_is_conflicted() {
-            return Err(denied());
-        }
-        let Some(record) = self.store.port_entity_record(txn, &grant_id)? else {
-            return Ok(None);
-        };
-        let raw = record.encode();
-        if EntityMetadataHeader::parse(&raw)
-            .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
-            || raw.len() == ENTITY_METADATA_HEADER_LEN
-            || !crate::vault::live_entity_row_in_txn(&self.store, txn, &grant_id)?.is_live()
-        {
-            return Ok(None);
-        }
-        let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        if grant.member_ref != principal
-            || grant.is_git_push()
-            || grant.scope != scope
-            || grant
-                .expires_at
-                .is_some_and(|expires| self.store.clock.now_recorded_at() >= expires)
-            || !super::pact_admits_grant(&fold, &grant_id, &grant)
-        {
-            return Ok(None);
-        }
-        Ok(Some(
-            if matches!(grant.scope, FederationGrantScope::Vault { .. })
-                && FIRST_PARTY_MEMBER_ROLES.contains(&grant.role)
-            {
-                MembershipStanding::Member {
-                    grant: grant_id,
-                    role: grant.role,
-                }
-            } else {
-                MembershipStanding::ScopedGuest { grant: grant_id }
-            },
-        ))
+        authenticated_grant_membership_for_store_in_txn(
+            &self.store,
+            self.privacy_posture(),
+            txn,
+            scope,
+            principal,
+            grant_id,
+        )
     }
+}
+
+/// [`Vault::authenticated_grant_membership_in_txn`] for a reader that holds a
+/// `Store` and the posture its vault opened with, and no `Vault` (FIX 7461):
+/// the same standing of the one grant `grant_id`, each row read through its
+/// store form.
+pub(crate) fn authenticated_grant_membership_for_store_in_txn(
+    store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    scope: FederationGrantScope,
+    principal: crate::EntityId,
+    grant_id: crate::EntityId,
+) -> Result<Option<MembershipStanding>> {
+    if super::shared_act::shared_vault_deletion_for_store_in_txn(store, txn)?.is_some() {
+        return Ok(None);
+    }
+    let creation = super::shared_creation::shared_vault_creation_for_store_in_txn(store, txn)?;
+    let stands = match scope {
+        FederationGrantScope::Connect { .. } => true,
+        FederationGrantScope::Vault { vault_id } => {
+            creation.is_some_and(|creation| vault_id != 0 && vault_id == creation.vault_id)
+        }
+        FederationGrantScope::Ask { .. } => creation.is_some(),
+    };
+    if !stands {
+        return Ok(None);
+    }
+    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
+    if fold.vault_root_is_conflicted() {
+        return Err(denied());
+    }
+    let Some(record) = store.port_entity_record(txn, &grant_id)? else {
+        return Ok(None);
+    };
+    let raw = record.encode();
+    if EntityMetadataHeader::parse(&raw)
+        .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
+        || raw.len() == ENTITY_METADATA_HEADER_LEN
+        || !crate::vault::live_entity_row_in_txn(store, txn, &grant_id)?.is_live()
+    {
+        return Ok(None);
+    }
+    let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    if grant.member_ref != principal
+        || grant.is_git_push()
+        || grant.scope != scope
+        || grant
+            .expires_at
+            .is_some_and(|expires| store.clock.now_recorded_at() >= expires)
+        || !super::pact_admits_grant(&fold, &grant_id, &grant)
+    {
+        return Ok(None);
+    }
+    Ok(Some(
+        if matches!(grant.scope, FederationGrantScope::Vault { .. })
+            && FIRST_PARTY_MEMBER_ROLES.contains(&grant.role)
+        {
+            MembershipStanding::Member {
+                grant: grant_id,
+                role: grant.role,
+            }
+        } else {
+            MembershipStanding::ScopedGuest { grant: grant_id }
+        },
+    ))
 }

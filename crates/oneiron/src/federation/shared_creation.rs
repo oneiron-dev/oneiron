@@ -9,6 +9,11 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, TimeRange, Vault};
 
+mod training_setup;
+pub use training_setup::{
+    SharedTrainingSetup, SharedTrainingSetupAnswer, SharedTrainingSetupQuestion,
+};
+
 /// One-time creation-time membership defaults. Key: `()` (singleton).
 const SHARED_VAULT_CREATION: SideTable<(), SharedVaultCreation, LegacyJson> =
     SideTable::new(&side_table::SHARED_VAULT_CREATION);
@@ -43,6 +48,10 @@ pub struct SharedVaultCreation {
     pub owner_ref: String,
     pub grant_refs: Vec<String>,
     pub policy_ref: Option<String>,
+    /// The vault's one training question, asked once at setup (OF-420 T3):
+    /// pending until its admin answers it, or answered by the counted admin
+    /// choice of the setting already in force at creation.
+    pub training_setup: SharedTrainingSetup,
 }
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
@@ -144,12 +153,17 @@ impl Vault {
                 "founding members are invited by the creator, who needs a grant of their own",
             ));
         }
+        // The setup training question rides this creation write; creation
+        // never waits on, asks for or refuses without its answer.
+        let owner_ref = actor.to_hex();
+        let training_setup = self.pending_shared_training_setup(&txn, vault_id, &owner_ref);
         let mut creation = SharedVaultCreation {
             vault_id,
             preset,
-            owner_ref: actor.to_hex(),
+            owner_ref,
             grant_refs: Vec::new(),
             policy_ref: None,
+            training_setup,
         };
         let mut ops = Vec::new();
         for (member, role) in rows {
@@ -259,11 +273,20 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Option<SharedVaultCreation>> {
-        SHARED_VAULT_CREATION.get(&self.store, txn, &())
+        shared_vault_creation_for_store_in_txn(&self.store, txn)
     }
 
     pub fn shared_vault_creation(&self) -> Result<Option<SharedVaultCreation>> {
         let txn = self.store.env.read_txn()?;
         self.shared_vault_creation_in_txn(&txn)
     }
+}
+
+/// [`Vault::shared_vault_creation_in_txn`] for a reader that holds a `Store`
+/// and no `Vault` (FIX 7461): the same row.
+pub(crate) fn shared_vault_creation_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<SharedVaultCreation>> {
+    SHARED_VAULT_CREATION.get(store, txn, &())
 }

@@ -259,6 +259,21 @@ pub enum WeaveItemView {
         agrees: bool,
         audited_at: u64,
     },
+    /// One loop decision (OF-499 A2), its refs as hex: its outcome and kind
+    /// exactly as stored, its family, each reason, and whether it is an
+    /// erasure skeleton. It carries no wrong control (FIX 7598).
+    LoopDecision {
+        decision_ref: String,
+        created_at: u64,
+        family: String,
+        kind: String,
+        outcome: String,
+        reason_codes: Vec<String>,
+        redacted: bool,
+        claim_ref: Option<String>,
+        actor_ref: Option<String>,
+        evidence_refs: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -682,8 +697,12 @@ impl Memory<'_> {
     ) -> MemoryResult<WeaveDigestFramed> {
         // A saved period serves the rows its report was read from.
         self.produced_from(stored.report.value.source_rows());
+        // Its lens composes over the rows its render was written over.
         let lens = stored.lens.as_ref().and_then(|render| {
-            super::weave_lens::compose_weave_lens_framed(read, reader, &stored.report.value, render)
+            read.saved_weave_lens_rows(stored.reader, &stored.report.value)
+                .and_then(|rows| {
+                    super::weave_lens::compose_weave_lens_framed(read, reader, &rows, render)
+                })
                 .inspect_err(|error| tracing::warn!(?error, "weave lens did not compose"))
                 .ok()
         });
@@ -756,6 +775,10 @@ impl Memory<'_> {
                                     super::weave_report::sieve_score::sieve_audit_view(
                                         *attempt, audit,
                                     )
+                                }
+                                WeaveItem::LoopDecision { .. } => {
+                                    super::weave_report::admissions::loop_decision_view(item)
+                                        .map_err(MemoryError::from)?
                                 }
                             })
                         })

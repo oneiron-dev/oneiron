@@ -41,7 +41,9 @@ pub fn campaign_judgment_inputs(
             "canonical campaign judgment principal",
         ))?
         .exempt_while_owner(principal);
-    let scoped = vault.scoped_read(key);
+    // FIX 7461: this locally built reader also reads under the principal's
+    // own live owner authority once its admission and Grants refuse a row.
+    let scoped = crate::llm::decision::questions::question_lane(vault, key);
     let ids = rows.iter().map(|row| row.membership).collect::<Vec<_>>();
     let memberships = scoped.get_entities_parts_with_receipt(&ids, None)?.value;
     rows.iter()
