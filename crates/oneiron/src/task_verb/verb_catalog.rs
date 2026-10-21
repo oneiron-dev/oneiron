@@ -649,6 +649,10 @@ pub enum AgentVerb {
     VaultCodeMergeQueueLandReviewed,
     VaultCodeMergeQueueSettleSlow,
     VaultCodeMergeQueueRecover,
+    VaultCodeMergeQueueInit,
+    VaultCodeMergeQueueCheck,
+    VaultCodeMergeQueueDiagnose,
+    VaultCodeMergeQueueCheckStatus,
     VaultArtifactsExport,
     VaultAgentsCreate,
     VaultAgentsGet,
@@ -1768,6 +1772,10 @@ impl AgentVerb {
         Self::VaultCodeMergeQueueLandReviewed,
         Self::VaultCodeMergeQueueSettleSlow,
         Self::VaultCodeMergeQueueRecover,
+        Self::VaultCodeMergeQueueInit,
+        Self::VaultCodeMergeQueueCheck,
+        Self::VaultCodeMergeQueueDiagnose,
+        Self::VaultCodeMergeQueueCheckStatus,
         Self::VaultArtifactsExport,
         Self::VaultAgentsCreate,
         Self::VaultAgentsGet,
@@ -2908,6 +2916,10 @@ impl AgentVerb {
             Self::VaultCodeMergeQueueLandReviewed => "vault.code.merge_queue.land_reviewed",
             Self::VaultCodeMergeQueueSettleSlow => "vault.code.merge_queue.settle_slow",
             Self::VaultCodeMergeQueueRecover => "vault.code.merge_queue.recover",
+            Self::VaultCodeMergeQueueInit => "vault.code.merge_queue.init",
+            Self::VaultCodeMergeQueueCheck => "vault.code.merge_queue.check",
+            Self::VaultCodeMergeQueueDiagnose => "vault.code.merge_queue.diagnose",
+            Self::VaultCodeMergeQueueCheckStatus => "vault.code.merge_queue.check_status",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultAgentsCreate => "vault.agents.create",
             Self::VaultAgentsGet => "vault.agents.get",
@@ -4039,6 +4051,10 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueLandReviewed
                 | Self::VaultCodeMergeQueueSettleSlow
                 | Self::VaultCodeMergeQueueRecover
+                | Self::VaultCodeMergeQueueInit
+                | Self::VaultCodeMergeQueueCheck
+                | Self::VaultCodeMergeQueueDiagnose
+                | Self::VaultCodeMergeQueueCheckStatus
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -5186,6 +5202,10 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueLandReviewed
                 | Self::VaultCodeMergeQueueSettleSlow
                 | Self::VaultCodeMergeQueueRecover
+                | Self::VaultCodeMergeQueueInit
+                | Self::VaultCodeMergeQueueCheck
+                | Self::VaultCodeMergeQueueDiagnose
+                | Self::VaultCodeMergeQueueCheckStatus
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -6428,6 +6448,10 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueLandReviewed
                 | Self::VaultCodeMergeQueueSettleSlow
                 | Self::VaultCodeMergeQueueRecover
+                | Self::VaultCodeMergeQueueInit
+                | Self::VaultCodeMergeQueueCheck
+                | Self::VaultCodeMergeQueueDiagnose
+                | Self::VaultCodeMergeQueueCheckStatus
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -7257,6 +7281,9 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueLandReviewed
                 | Self::VaultCodeMergeQueueSettleSlow
                 | Self::VaultCodeMergeQueueRecover
+                | Self::VaultCodeMergeQueueInit
+                | Self::VaultCodeMergeQueueCheck
+                | Self::VaultCodeMergeQueueDiagnose
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsUpdate
                 | Self::VaultAgentsDreamingSet
@@ -8216,6 +8243,10 @@ impl AgentVerb {
             Self::VaultCodeMergeQueueLandReviewed => &["spec"],
             Self::VaultCodeMergeQueueSettleSlow => &["spec"],
             Self::VaultCodeMergeQueueRecover => &["spec"],
+            Self::VaultCodeMergeQueueInit => &["spec"],
+            Self::VaultCodeMergeQueueCheck => &["spec"],
+            Self::VaultCodeMergeQueueDiagnose => &["spec"],
+            Self::VaultCodeMergeQueueCheckStatus => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -9336,6 +9367,10 @@ impl AgentVerb {
             Self::VaultCodeMergeQueueLandReviewed => &["spec"],
             Self::VaultCodeMergeQueueSettleSlow => &["spec"],
             Self::VaultCodeMergeQueueRecover => &["spec"],
+            Self::VaultCodeMergeQueueInit => &["spec"],
+            Self::VaultCodeMergeQueueCheck => &["spec"],
+            Self::VaultCodeMergeQueueDiagnose => &["spec"],
+            Self::VaultCodeMergeQueueCheckStatus => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -11714,6 +11749,18 @@ impl AgentVerb {
             }
             Self::VaultCodeMergeQueueRecover => {
                 "Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."
+            }
+            Self::VaultCodeMergeQueueInit => {
+                "Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue."
+            }
+            Self::VaultCodeMergeQueueCheck => {
+                "Queue one fast or slow check on exact pinned inputs. Owner only. Excess checks wait; no pass, argv or output is accepted from the caller."
+            }
+            Self::VaultCodeMergeQueueDiagnose => {
+                "Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only."
+            }
+            Self::VaultCodeMergeQueueCheckStatus => {
+                "Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."

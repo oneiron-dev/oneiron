@@ -3226,6 +3226,26 @@ export_facade! {
     let output = client.vault_code_merge_queue_recover(&input)?;
     crate::codec::lift_record("vault.code.merge_queue.recover", &output)
 };
+"vault.code.merge_queue.init" => fn vault_code_merge_queue_init(&self, input: MergeQueueInitializeRequest) -> MergeQueueCheckWorkView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueInitializeRequest = crate::codec::lower_record("vault.code.merge_queue.init", input)?;
+    let output = client.vault_code_merge_queue_init(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.init", &output)
+};
+"vault.code.merge_queue.check" => fn vault_code_merge_queue_check(&self, input: MergeQueueCheckRequest) -> MergeQueueCheckWorkView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueCheckRequest = crate::codec::lower_record("vault.code.merge_queue.check", input)?;
+    let output = client.vault_code_merge_queue_check(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.check", &output)
+};
+"vault.code.merge_queue.diagnose" => fn vault_code_merge_queue_diagnose(&self, input: MergeQueueDiagnoseRequest) -> MergeQueueCheckWorkView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueDiagnoseRequest = crate::codec::lower_record("vault.code.merge_queue.diagnose", input)?;
+    let output = client.vault_code_merge_queue_diagnose(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.diagnose", &output)
+};
+"vault.code.merge_queue.check_status" => fn vault_code_merge_queue_check_status(&self, input: MergeQueueCheckStatusRequest) -> MergeQueueCheckWorkView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueCheckStatusRequest = crate::codec::lower_record("vault.code.merge_queue.check_status", input)?;
+    let output = client.vault_code_merge_queue_check_status(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.check_status", &output)
+};
 "vault.artifacts.export" => fn vault_artifacts_export(&self, input: ArtifactExportRequest) -> Option<ArtifactExportFile> = |client| {
     let input: oneiron::blob_artifact::ArtifactExportRequest = crate::codec::lower_record("vault.artifacts.export", input)?;
     let output = client.vault_artifacts_export(&input)?;

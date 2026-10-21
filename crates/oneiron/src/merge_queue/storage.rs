@@ -14,7 +14,7 @@ const QUEUE_STATE: SideTable<String, QueueRecord, Named> =
 
 /// One merge batch, keyed by `{repo_hex}:{batch_id}` exactly as `batch_key` spelled it —
 /// a plain `String` key rather than a split key type, since nothing ever scans this table.
-const BATCHES: SideTable<String, MergeBatch, Named> =
+pub(super) const BATCHES: SideTable<String, MergeBatch, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_BATCH);
 
 impl MergeQueue<'_> {
@@ -101,7 +101,7 @@ impl MergeQueue<'_> {
         self.read_queue()?
             .ok_or_else(|| invalid("merge queue is not initialized"))
     }
-    fn read_queue(&self) -> Result<Option<QueueRecord>> {
+    pub(super) fn read_queue(&self) -> Result<Option<QueueRecord>> {
         let record = self.read(QUEUE_STATE, self.queue_key())?;
         if let Some(record) = &record
             && record.schema_version != 1
@@ -177,11 +177,11 @@ impl MergeQueue<'_> {
     fn queue_key(&self) -> String {
         self.repo.identity().as_hex()
     }
-    fn batch_key(&self, id: &str) -> String {
+    pub(super) fn batch_key(&self, id: &str) -> String {
         format!("{}:{id}", self.repo.identity().as_hex())
     }
 }
-fn check_row_size(bytes: &[u8]) -> Result<()> {
+pub(super) fn check_row_size(bytes: &[u8]) -> Result<()> {
     if bytes.len() > 128 * 1024 * 1024 {
         return Err(invalid("merge queue row exceeds limit"));
     }

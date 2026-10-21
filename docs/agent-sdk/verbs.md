@@ -651,6 +651,10 @@ both bindings and their export-census tests in one change.
 - `vault.code.merge_queue.land_reviewed`
 - `vault.code.merge_queue.settle_slow`
 - `vault.code.merge_queue.recover`
+- `vault.code.merge_queue.init`
+- `vault.code.merge_queue.check`
+- `vault.code.merge_queue.diagnose`
+- `vault.code.merge_queue.check_status`
 - `vault.artifacts.export`
 - `vault.agents.create`
 - `vault.agents.get`

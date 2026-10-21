@@ -2080,6 +2080,14 @@ export class Oneiron {
         settle_slow: (input: Facade.MergeQueueRepoRequest): Facade.MergeQueuePointersView => this.#call(() => this.#client.vaultCodeMergeQueueSettleSlow(input) as Facade.MergeQueuePointersView),
         /** Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased. */
         recover: (input: Facade.MergeQueueRepoRequest): Facade.MergeQueuePointersView => this.#call(() => this.#client.vaultCodeMergeQueueRecover(input) as Facade.MergeQueuePointersView),
+        /** Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue. */
+        init: (input: Facade.MergeQueueInitializeRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueInit(input) as Facade.MergeQueueCheckWorkView),
+        /** Queue one fast or slow check on exact pinned inputs. Owner only. Excess checks wait; no pass, argv or output is accepted from the caller. */
+        check: (input: Facade.MergeQueueCheckRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueCheck(input) as Facade.MergeQueueCheckWorkView),
+        /** Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only. */
+        diagnose: (input: Facade.MergeQueueDiagnoseRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueDiagnose(input) as Facade.MergeQueueCheckWorkView),
+        /** Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only. */
+        check_status: (input: Facade.MergeQueueCheckStatusRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueCheckStatus(input) as Facade.MergeQueueCheckWorkView),
       },
     },
     results: {

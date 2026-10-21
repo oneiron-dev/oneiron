@@ -63,6 +63,7 @@ pub(super) enum LifecycleJobKind {
     MirrorPush,
     AuthorityCheckpoint,
     OwnerWork,
+    MergeQueueChecks,
 }
 
 /// The lifecycle loop, and the housekeeping pass it last started. Dropping it
@@ -144,6 +145,7 @@ impl SyncServer {
                 // The owner work naming this install as executor runs on the
                 // same tick, with no interval of its own.
                 server.start_owner_work_drain(&admit).await;
+                server.start_merge_queue_checker(&admit).await;
             }
         });
         LifecycleScheduler {

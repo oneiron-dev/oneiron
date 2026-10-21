@@ -677,6 +677,10 @@ vaultCodeMergeQueueRequeueSurvivors(input: unknown): unknown
 vaultCodeMergeQueueLandReviewed(input: unknown): unknown
 vaultCodeMergeQueueSettleSlow(input: unknown): unknown
 vaultCodeMergeQueueRecover(input: unknown): unknown
+vaultCodeMergeQueueInit(input: unknown): unknown
+vaultCodeMergeQueueCheck(input: unknown): unknown
+vaultCodeMergeQueueDiagnose(input: unknown): unknown
+vaultCodeMergeQueueCheckStatus(input: unknown): unknown
 vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsGet(input: unknown): unknown

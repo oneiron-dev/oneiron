@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1096 facade rows, 3751 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1048.
+// UniFFI census: 1100 facade rows, 3760 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1052.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -34027,6 +34027,165 @@ pub struct MergeQueuePointersView {
     pub green_commit: String,
     #[serde(rename = "pending_slow_batch_refs")]
     pub pending_slow_batch_refs: Vec<String>,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueInitializeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueInitializeRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "baseline_commit")]
+    pub baseline_commit: String,
+    #[serde(
+        rename = "contract_baseline_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub contract_baseline_ref: Option<String>,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueCheckWorkKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MergeQueueCheckWorkKind {
+    #[serde(rename = "init")]
+    Init,
+    #[serde(rename = "check")]
+    Check,
+    #[serde(rename = "diagnose")]
+    Diagnose,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueCheckState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MergeQueueCheckState {
+    #[serde(rename = "queued")]
+    Queued,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "needs_configuration")]
+    NeedsConfiguration,
+    #[serde(rename = "held")]
+    Held,
+    #[serde(rename = "passed")]
+    Passed,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "settled")]
+    Settled,
+}
+
+/// `oneiron::merge_queue::check_inputs::QueueCheckHoldReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QueueCheckHoldReason {
+    #[serde(rename = "interrupted")]
+    Interrupted,
+    #[serde(rename = "executor_unavailable")]
+    ExecutorUnavailable,
+    #[serde(rename = "missing_offline_input")]
+    MissingOfflineInput,
+    #[serde(rename = "unstable_inputs")]
+    UnstableInputs,
+    #[serde(rename = "authority")]
+    Authority,
+    #[serde(rename = "tree_unavailable")]
+    TreeUnavailable,
+    #[serde(rename = "refused")]
+    Refused,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueCheckWorkView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MergeQueueCheckWorkView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "work_ref")]
+    pub work_ref: String,
+    #[serde(rename = "kind")]
+    pub kind: MergeQueueCheckWorkKind,
+    #[serde(rename = "status")]
+    pub status: MergeQueueCheckState,
+    #[serde(rename = "configuration_keys")]
+    pub configuration_keys: Vec<String>,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(rename = "hold", default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<QueueCheckHoldReason>,
+    #[serde(rename = "generation")]
+    pub generation: u32,
+    #[serde(
+        rename = "baseline_commit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub baseline_commit: Option<String>,
+    #[serde(
+        rename = "plan_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub plan_digest: Option<String>,
+    #[serde(rename = "receipt_refs")]
+    pub receipt_refs: Vec<String>,
+    #[serde(rename = "verdict_refs")]
+    pub verdict_refs: Vec<String>,
+    #[serde(rename = "pointers", default, skip_serializing_if = "Option::is_none")]
+    pub pointers: Option<MergeQueuePointersView>,
+    #[serde(
+        rename = "quarantine",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub quarantine: Option<Quarantine>,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::QueueCheckPhase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QueueCheckPhase {
+    #[serde(rename = "fast")]
+    Fast,
+    #[serde(rename = "slow")]
+    Slow,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueCheckRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueCheckRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "batch_ref")]
+    pub batch_ref: String,
+    #[serde(rename = "mask")]
+    pub mask: u64,
+    #[serde(rename = "phase")]
+    pub phase: QueueCheckPhase,
+    #[serde(
+        rename = "force_refresh",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub force_refresh: Option<bool>,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueDiagnoseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueDiagnoseRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "batch_ref")]
+    pub batch_ref: String,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueCheckStatusRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueCheckStatusRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "work_ref")]
+    pub work_ref: String,
 }
 
 /// `oneiron::blob_artifact::verbs::ArtifactExportRequest`.

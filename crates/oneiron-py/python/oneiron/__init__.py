@@ -3732,6 +3732,18 @@ class Oneiron:
         def recover(self, spec):
             """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_recover(json.dumps(spec))))
+        def init(self, spec):
+            """Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_init(json.dumps(spec))))
+        def check(self, spec):
+            """Queue one fast or slow check on exact pinned inputs. Owner only. Excess checks wait; no pass, argv or output is accepted from the caller."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_check(json.dumps(spec))))
+        def diagnose(self, spec):
+            """Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_diagnose(json.dumps(spec))))
+        def check_status(self, spec):
+            """Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_check_status(json.dumps(spec))))
     class _VaultResultsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
