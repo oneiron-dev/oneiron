@@ -464,13 +464,15 @@ impl Shared {
     }
 }
 
-impl Drop for Dispatcher {
+impl Dispatcher {
     /// Closes: each worker's thread ends after the unit it runs, and every
     /// call still queued is answered, so no completion a claim outlived the
     /// dispatcher with waits for good. A call submitted later is answered at
     /// once. Each supervised session's wait is stopped, and its supervisor
-    /// joined once it has shut its process down and reaped it.
-    fn drop(&mut self) {
+    /// joined once it has shut its process down and reaped it. It blocks for
+    /// those joins, so serve's teardown calls it on a blocking unit through
+    /// [`super::SlotClose`] (FIX 7383); a second close finds nothing left.
+    pub(crate) fn close(&self) {
         let (queued, stops) = {
             let mut scheduler = self.shared.lock();
             scheduler.closed = true;
@@ -493,5 +495,12 @@ impl Drop for Dispatcher {
         for supervisor in supervisors {
             let _ = supervisor.join();
         }
+    }
+}
+
+impl Drop for Dispatcher {
+    /// Closes, unless teardown already did ([`Dispatcher::close`]).
+    fn drop(&mut self) {
+        self.close();
     }
 }

@@ -1397,6 +1397,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         failure_signals.abort();
         let _ = failure_signals.await;
         let _ = futures_util::future::OptionFuture::from(tagging.take()).await;
+        // Tagging has ended: each platform child is shut down and reaped (FIX 7383).
+        if let Some(slot) = sync_server.tagger.as_ref() {
+            slot.closer().close().await;
+        }
         for worker in ladder_workers {
             worker.abort();
             let _ = worker.await;
@@ -1445,6 +1449,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     if let Some(tagging) = tagging {
         shutdown.trigger();
         let _ = tagging.await;
+        // A failed start reaps its platform children too (FIX 7383).
+        if let Some(slot) = sync_server.tagger.as_ref() {
+            slot.closer().close().await;
+        }
     }
     outcome
 }
