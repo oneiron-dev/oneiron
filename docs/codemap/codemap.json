@@ -84559,7 +84559,7 @@
      "path": "src/api/facade/browser_doors.rs",
      "purpose": "Typed browser calls on the caller's own attached run and existing guest door",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
