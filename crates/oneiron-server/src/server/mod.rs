@@ -16,6 +16,7 @@ mod live_runs;
 mod media_door;
 mod media_embedding;
 mod message_stream;
+mod mirror_pushes;
 mod note_editors;
 #[cfg(unix)]
 mod organs;

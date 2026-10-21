@@ -299,6 +299,7 @@ impl Vault {
             VISIBLE_REF.delete(&self.store, wtxn, &visible_ref_key(&repo_id, ref_name))?;
             Ok(())
         })
+        .inspect(|()| self.note_origin_ref_moved(ref_name.as_str()))
     }
 
     /// Whether this repository's publication protocol has ever published this
