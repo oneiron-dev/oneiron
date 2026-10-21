@@ -15,8 +15,15 @@
 //!
 //! A declaration whose group the topic's current group strictly outgrew
 //! before it ran completes without composing (Engine 10-21, option A), so a
-//! burst of reviews composes no summary per growth step. Only a NOTE
-//! review's own declarations are read so; any other NOTE set composes.
+//! burst of reviews composes no summary per growth step. It first declares
+//! the current group itself, under the same review and run (FIX 7492): a
+//! group that grew with no new review (a member became readable or was
+//! unarchived) still has its summary owed. Only a NOTE review's own
+//! declarations are read so; any other NOTE set composes.
+//!
+//! A NOTE whose review moves it to another topic, or to none, re-declares
+//! the group it left in the same write (FIX 7459), so that group's summary
+//! is composed again without it.
 
 use std::collections::BTreeSet;
 
@@ -157,52 +164,82 @@ fn declare_in_txn(
 
 /// Whether `attempt`, a NOTE set's summary declaration planned over
 /// `declared` for `requester`, is one a NOTE review declared for a topic
-/// whose current group strictly outgrew it (Engine 10-21, option A): it then
-/// completes without composing, as the larger group's own declaration does.
-/// A declaration under no NOTE review attempt, a declared NOTE whose review
-/// record is gone, does not read or keeps another topic, and a read that
-/// fails all answer no: the summary composes as it would.
+/// whose current group strictly outgrew it (Engine 10-21, option A): the
+/// current group's own declaration is queued first, under the same review
+/// and run (FIX 7492), and this one then completes without composing. A
+/// declaration under no NOTE review attempt, a declared NOTE whose review
+/// record is gone, does not read or keeps another topic, a read that fails
+/// and a larger declaration that does not queue all answer no: the summary
+/// composes as it would.
 pub(super) fn note_topic_summary_outgrown(
     vault: &Vault,
     attempt: &DreamerAdmittedAttempt,
     requester: WriteActor,
     declared: &[EntityId],
 ) -> bool {
-    let parent = attempt.status.payload.parent_attempt;
-    let Ok(Some(current)) = outgrown_by(vault, parent, requester, declared) else {
+    let Some(parent) = attempt.status.payload.parent_attempt else {
         return false;
     };
+    let run_id = attempt.status.attempt.run_id.as_deref();
+    let queued = vault.store.authorization_now().and_then(|_| {
+        let now = vault.store.clock.now_recorded_at();
+        vault.with_write_txn_grouped(|txn| {
+            let Some(group) = outgrown_in_txn(vault, txn, parent, requester, declared)? else {
+                return Ok(None);
+            };
+            let current = group.notes.len();
+            let queued = vault.request_scope_summary_in_txn(
+                txn,
+                &group.request(requester),
+                Some(parent),
+                run_id,
+                now,
+            )?;
+            Ok(Some((current, queued.coalesced)))
+        })
+    });
+    let (current, coalesced) = match queued {
+        Ok(Some(outgrown)) => outgrown,
+        Ok(None) => return false,
+        Err(error) => {
+            tracing::warn!(
+                target: "oneiron::dreamer",
+                kind = ?error.kind(),
+                "an outgrown topic summary composes: its larger group did not queue"
+            );
+            return false;
+        }
+    };
+    vault.store.notify_attempt_observers();
     tracing::info!(
         target: "oneiron::dreamer",
         code = "note_topic_summary_outgrown",
         attempt = %bytes_to_hex_lower(attempt.status.attempt.id.as_bytes()),
         declared = declared.len(),
         current,
-        "topic summary completes without composing"
+        coalesced,
+        "topic summary completes without composing; its larger group is declared"
     );
     true
 }
 
-/// How many NOTEs the declared topic's current group holds, when it strictly
-/// outgrew `declared`; read in one snapshot.
-fn outgrown_by(
+/// The declared topic's current group, in `txn`, when it strictly outgrew
+/// `declared`.
+fn outgrown_in_txn(
     vault: &Vault,
-    parent: Option<AttemptId>,
+    txn: &heed::RoTxn<'_>,
+    parent: AttemptId,
     requester: WriteActor,
     declared: &[EntityId],
-) -> Result<Option<usize>> {
-    let Some(parent) = parent else {
-        return Ok(None);
-    };
-    let txn = super::turn_text::snapshot(vault)?;
+) -> Result<Option<NoteTopicGroup>> {
     // Only a NOTE review declares a NOTE set under its own attempt.
-    let review = AttemptQueue::new(vault).get_in_txn(&txn, parent)?;
+    let review = AttemptQueue::new(vault).get_in_txn(txn, parent)?;
     if review.is_none_or(|row| row.kind != DREAMER_NOTE_REVIEW_ATTEMPT_KIND) {
         return Ok(None);
     }
     let mut topic = None;
     for note in declared {
-        let Some(kept) = super::note_review::topic_of_in_txn(vault, &txn, note) else {
+        let Some(kept) = super::note_review::topic_of_in_txn(vault, txn, note) else {
             return Ok(None);
         };
         if topic.is_some_and(|topic| topic != kept) {
@@ -213,10 +250,10 @@ fn outgrown_by(
     let Some(topic) = topic else {
         return Ok(None);
     };
-    let Some(group) = NoteTopicGroup::in_txn(vault, &txn, &topic, requester)? else {
+    let Some(group) = NoteTopicGroup::in_txn(vault, txn, &topic, requester)? else {
         return Ok(None);
     };
-    let current: BTreeSet<EntityId> = group.notes.into_iter().collect();
+    let current: BTreeSet<EntityId> = group.notes.iter().copied().collect();
     let declared: BTreeSet<EntityId> = declared.iter().copied().collect();
-    Ok((current.len() > declared.len() && current.is_superset(&declared)).then_some(current.len()))
+    Ok((current.len() > declared.len() && current.is_superset(&declared)).then_some(group))
 }

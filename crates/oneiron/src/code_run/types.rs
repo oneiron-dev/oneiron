@@ -1109,4 +1109,7 @@ pub enum SelfAgentSpawnResult {
         /// As on `Queued`.
         unapplied: Vec<crate::agent_dispatch::SpawnUnapplied>,
     },
+    /// An erase took the AGENT_DEF the planned spawn's plan seats (Engine
+    /// 10-22): the intent records it, and nothing launched.
+    TargetErased,
 }

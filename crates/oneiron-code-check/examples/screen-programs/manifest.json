@@ -1,0 +1,57 @@
+[
+  {
+    "id": "recall-medium",
+    "file": "recall-medium.js",
+    "source_path": "crates/oneiron-server/src/api/tests/mcp_quickjs.rs",
+    "source_lines": [
+      414,
+      415
+    ],
+    "sha256": "22d42eafaf97150bbffaf6986c853b5b957cba96954b625204240e2fe65876a2",
+    "adaptation": "Reformatted only."
+  },
+  {
+    "id": "recall-call-refusal",
+    "file": "recall-call-refusal.js",
+    "source_path": "crates/oneiron-server/src/api/tests/mcp_quickjs/call_mode.rs",
+    "source_lines": [
+      10,
+      13
+    ],
+    "sha256": "98100ca4a904d91d8210ee47f6395766f112e1369996d5aa7798f6c7f1dbf830",
+    "adaptation": "Reformatted only; deadline refusal is not a static type error."
+  },
+  {
+    "id": "search-then-claim",
+    "file": "search-then-claim.js",
+    "source_path": "crates/oneiron-server/src/api/tests/mcp_quickjs/run_rows.rs",
+    "source_lines": [
+      9,
+      20
+    ],
+    "sha256": "f300571baed2ecdc68c910bfde554eedb4c75f015b05fbe7e5b1fa9f09104efb",
+    "adaptation": "Reformatted; Rust format ids replaced with fixed synthetic ids."
+  },
+  {
+    "id": "memory-search-two-claims",
+    "file": "memory-search-two-claims.js",
+    "source_path": "crates/oneiron/src/engine_executor/tests/memory_rows.rs",
+    "source_lines": [
+      131,
+      143
+    ],
+    "sha256": "6bf07ba027222c5761bf8bb62b28f02eef99459751a4f068be5a63d4ae8d0197",
+    "adaptation": "Reformatted; Rust format ids replaced with fixed synthetic ids."
+  },
+  {
+    "id": "task-outcomes",
+    "file": "task-outcomes.js",
+    "source_path": "crates/oneiron-server/src/api/tests/mcp_quickjs/device_local.rs",
+    "source_lines": [
+      356,
+      360
+    ],
+    "sha256": "f727976e8451c97686acc4f36cb0f427038620b8a2538acd1b19e0e9c9d701b4",
+    "adaptation": "Reformatted; fixed synthetic group id. Intentionally retains the unguarded length access: the current reply includes StoredResult, which has no length."
+  }
+]

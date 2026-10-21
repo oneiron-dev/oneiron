@@ -70,8 +70,14 @@ pub struct AgentHealthCoachAnswer {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum AgentHealthPadRead {
-    /// The pads were read; `read` is the agent's read-log row.
-    Read { read: Option<EntityId>, pads: usize },
+    /// The pads were read; `read` is the agent's read-log row. `pads` counts
+    /// the pads the read returned and `pad_ids` names them, in its order
+    /// (FIX 5457).
+    Read {
+        read: Option<EntityId>,
+        pads: usize,
+        pad_ids: Vec<EntityId>,
+    },
     /// The agent reviews reads first; `request` waits for its answer.
     PendingReview { request: EntityId },
     /// The agent said no to the Coach's reason.
@@ -314,6 +320,7 @@ impl Vault {
                 AgentHealthPadRead::Read {
                     read,
                     pads: entries.len(),
+                    pad_ids: entries.iter().map(|pad| pad.id).collect(),
                 },
                 entries,
             ),

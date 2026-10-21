@@ -167,7 +167,11 @@ impl Vault {
         })
     }
 
-    /// Narrows the current outbound overlay without ending the relationship.
+    /// Narrows the current outbound overlay without ending the relationship,
+    /// as the party this host's signing key stands for in the fold (FIX
+    /// 7933): it may widen its own narrowing back within the dual-signed
+    /// ceiling; another party's narrowing stays until a new dual-signed
+    /// re-scope ([`Self::propose_connect_rescope_as`]).
     pub fn narrow_connect_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -180,11 +184,15 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
-            require_host(&fold, issuer)?;
+            let local = local_vault_id(&fold, issuer)?;
             let state = pact(&fold, &pact_id)?;
-            if !Ceiling::new(outbound.clone())
-                .is_within(&Ceiling::new(state.effective_scope.clone()))
-            {
+            let party = crate::authority::current_scope::projected_narrowing_party(
+                &fold,
+                &issuer.public_key(),
+            );
+            let bound =
+                crate::authority::current_scope::pact_scope_beside(&local, &state, Some(&party));
+            if !Ceiling::new(outbound.clone()).is_within(&Ceiling::new(bound)) {
                 return Err(invalid_authority());
             }
             let mut action = action(&state, pact_id, FederationLifecycleKind::Rescope, epoch);
