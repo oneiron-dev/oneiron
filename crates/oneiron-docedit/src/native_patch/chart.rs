@@ -392,7 +392,7 @@ pub(super) fn set_series(
                 *slot = as_kind(seq.kind, value.clone());
             }
         }
-        edits.extend(cache::patched(&model, seq.cache, &held, &cache));
+        edits.extend(cache::patched(&model, seq.cache, &held, &cache)?);
     }
     let out = xml::splice(&model.bytes, edits)
         .map_err(|_| NativeRefusal::Invalid("overlapping cache writes"))?;

@@ -2,7 +2,8 @@
 //! its own attributes and children (its extension list, its format), only
 //! its value and value type replaced; a new cell goes in column order in
 //! its row, a new row in row order; a row's other children and every byte
-//! the write does not name keep their bytes.
+//! the write does not name keep their bytes. Empty elements open through
+//! the shared [`xml::insert_end`].
 
 use super::super::NativeRefusal;
 use super::{CellKey, SML, Stored, cell_ref, cell_xml, number};
@@ -27,7 +28,8 @@ fn value_xml(prefix: &str, value: &Cell) -> Result<String, NativeRefusal> {
 
 /// The splices that write `value` into the stored cell `cell`: its value
 /// children (`v`, `is`) replaced, its `t` set to the value's type, every
-/// other attribute and child kept.
+/// other attribute and child kept. A self-closed cell opens to hold its
+/// value ([`xml::insert_end`]).
 fn patched_cell(
     bytes: &[u8],
     tree: &XmlTree,
@@ -37,35 +39,13 @@ fn patched_cell(
     let node = &tree.nodes[cell];
     let prefix = node.qualified.strip_suffix('c').unwrap_or("");
     let inner = value_xml(prefix, value)?;
-    let text = matches!(value, Cell::Text(_) | Cell::Date(_));
-    if node.empty {
-        // A self-closed cell opens to hold its value; its `t` follows it.
-        let tag = &bytes[node.span.start..node.open_end];
-        let mut open = tag.strip_suffix(b"/>").unwrap_or(tag).to_vec();
-        if let Some(t) = node.attr_spans.get("t") {
-            let (start, end) = (t.start - node.span.start, t.end - node.span.start);
-            open.drain(start..end);
-        }
-        while open.last().is_some_and(u8::is_ascii_whitespace) {
-            open.pop();
-        }
-        if text {
-            open.extend_from_slice(b" t=\"inlineStr\"");
-        }
-        if inner.is_empty() {
-            open.extend_from_slice(b"/>");
-        } else {
-            open.push(b'>');
-            open.extend(inner.into_bytes());
-            open.extend(format!("</{}>", node.qualified).into_bytes());
-        }
-        return Ok(vec![(node.span.clone(), open)]);
-    }
     let mut edits = Vec::new();
-    match (node.attr_spans.get("t"), text) {
-        (_, true) => edits.push(xml::set_attribute(bytes, node, "t", "inlineStr")),
-        (Some(t), false) => edits.push((t.clone(), Vec::new())),
-        (None, false) => {}
+    match (node.attr_spans.get("t"), value) {
+        (_, Cell::Text(_) | Cell::Date(_)) => {
+            edits.push(xml::set_attribute(bytes, node, "t", "inlineStr"));
+        }
+        (Some(t), _) => edits.push((t.clone(), Vec::new())),
+        (None, _) => {}
     }
     let mut extension = None;
     for (at, child) in tree.children(cell) {
@@ -78,10 +58,15 @@ fn patched_cell(
             _ => {}
         }
     }
-    // CT_Cell: f?, v?, is?, extLst?.
-    let at = extension.map_or(node.content.end, |at| tree.nodes[at].span.start);
     if !inner.is_empty() {
-        edits.push((at..at, inner.into_bytes()));
+        // CT_Cell: f?, v?, is?, extLst?.
+        edits.push(match extension {
+            Some(at) => {
+                let at = tree.nodes[at].span.start;
+                (at..at, inner.into_bytes())
+            }
+            None => xml::insert_end(bytes, node, inner.as_bytes()),
+        });
     }
     Ok(edits)
 }
@@ -142,9 +127,9 @@ pub(super) fn rewrite(
         let mut fresh = String::new();
         for (&col, value) in cells {
             match stored.get(&col) {
-                Some(&cell) => edits.extend(patched_cell(bytes, tree, cell, value)?),
+                Some(&cell) => edits.extend(patched_cell(bytes, tree, cell, *value)?),
                 None => {
-                    let xml = new_cell(&cell_name, col, *number, value)?;
+                    let xml = new_cell(&cell_name, col, *number, *value)?;
                     match stored.range(col..).next() {
                         Some((_, &next)) => inserted
                             .entry(tree.nodes[next].span.start)
@@ -165,10 +150,7 @@ pub(super) fn rewrite(
                 .or_default()
                 .push_str(&fresh),
             None if row_node.empty => {
-                let mut out = xml::open_tag(bytes, row_node);
-                out.extend(fresh.into_bytes());
-                out.extend(format!("</{}>", row_node.qualified).into_bytes());
-                edits.push((row_node.span.clone(), out));
+                edits.push(xml::insert_end(bytes, row_node, fresh.as_bytes()));
             }
             None => inserted
                 .entry(row_node.open_end)
@@ -185,7 +167,7 @@ pub(super) fn rewrite(
         }
         let mut out = format!("<{row_name} r=\"{number}\">");
         for (&col, value) in cells {
-            out.push_str(&new_cell(&cell_name, col, *number, value)?);
+            out.push_str(&new_cell(&cell_name, col, *number, *value)?);
         }
         out.push_str(&format!("</{row_name}>"));
         match rows.range(*number..).next() {
@@ -198,10 +180,7 @@ pub(super) fn rewrite(
     }
     if !tail.is_empty() {
         if data_node.empty {
-            let mut out = xml::open_tag(bytes, data_node);
-            out.extend(tail.into_bytes());
-            out.extend(format!("</{}>", data_node.qualified).into_bytes());
-            edits.push((data_node.span.clone(), out));
+            edits.push(xml::insert_end(bytes, data_node, tail.as_bytes()));
         } else {
             inserted
                 .entry(data_node.content.end)
