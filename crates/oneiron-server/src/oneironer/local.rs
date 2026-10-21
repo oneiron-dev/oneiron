@@ -18,6 +18,7 @@ mod heads;
 mod window;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::Path;
 use std::sync::Mutex;
 
 use candle_core::{Device, Module};
@@ -32,9 +33,10 @@ use crate::config::{EmbedderDevice, OneironerConfig};
 use backbone::{Backbone, Config};
 use heads::{Affect, CharacterBoundary, Coreference};
 use window::{
-    CharacterFeatures, Characters, DecodeLayers, Named, ONEIRONER_DECODE_REVISION, Window,
-    conversation_tokenizer, decode, decode_ner,
+    CharacterFeatures, Characters, DecodeLayers, Named, conversation_tokenizer, decode, decode_ner,
 };
+
+pub(super) use window::{CHAR_REFINE_K, CHAR_REFINE_TAU, ONEIRONER_DECODE_REVISION, Window};
 
 struct Network {
     backbone: Backbone,
@@ -77,14 +79,50 @@ pub(crate) struct WindowCounter {
 }
 
 impl WindowCounter {
+    /// The counter of the section's bundle, `manifest` its parsed manifest,
+    /// loaded from its verified tokenizer with no model: what a platform
+    /// runtime's admission and its worker count and build windows by
+    /// (FIX 6755 slice 3), the same as a [`LocalTagger`] of the section's.
+    pub(crate) fn load(config: &OneironerConfig, manifest: &Manifest) -> anyhow::Result<Self> {
+        let dir = config
+            .model_dir
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("oneironer.model_dir is required"))?;
+        Ok(Self {
+            tokenizer: bundle_tokenizer(manifest, dir)?,
+            cap: config.max_input_tokens,
+            live: config.live_window_tokens as usize,
+        })
+    }
+
     /// The tokens of `input`'s live window, special tokens included: its
     /// context joined and cut to the live budget. A window that cannot be
     /// built fails as the call's infer would.
     pub(crate) fn count(&self, input: &EncoderInput) -> oneiron::Result<usize> {
-        let window = Window::new(input, &self.tokenizer, self.cap, self.live)
-            .map_err(|_| extraction_failed())?;
-        Ok(window.tokens())
+        Ok(self.window(input)?.tokens())
     }
+
+    /// `input`'s live window, as [`Self::count`] counts it and Candle tags
+    /// in it: what a platform worker is sent.
+    pub(in crate::oneironer) fn window<'a>(
+        &self,
+        input: &'a EncoderInput,
+    ) -> oneiron::Result<Window<'a>> {
+        Window::new(input, &self.tokenizer, self.cap, self.live)
+            .map_err(|_| extraction_failed())
+    }
+}
+
+/// The bundle's tokenizer, its bytes verified against the manifest, with no
+/// padding and no truncation: every window is cut by `Window::new` alone.
+fn bundle_tokenizer(manifest: &Manifest, dir: &Path) -> anyhow::Result<Tokenizer> {
+    let mut tokenizer = Tokenizer::from_bytes(manifest.tokenizer.read(dir)?)
+        .map_err(|_| anyhow::anyhow!("invalid local extraction tokenizer"))?;
+    tokenizer.with_padding(None);
+    tokenizer
+        .with_truncation(None)
+        .map_err(|_| anyhow::anyhow!("invalid local extraction tokenizer truncation"))?;
+    Ok(tokenizer)
 }
 
 /// The failure of a native call, by class alone: never a tensor dump or any
@@ -152,12 +190,7 @@ impl LocalTagger {
             // (`super::engines`); a direct load runs on the built-in CPU one.
             EmbedderDevice::Auto => Device::Cpu,
         };
-        let mut tokenizer = Tokenizer::from_bytes(manifest.tokenizer.read(dir)?)
-            .map_err(|_| anyhow::anyhow!("invalid local extraction tokenizer"))?;
-        tokenizer.with_padding(None);
-        tokenizer
-            .with_truncation(None)
-            .map_err(|_| anyhow::anyhow!("invalid local extraction tokenizer truncation"))?;
+        let tokenizer = bundle_tokenizer(&manifest, dir)?;
         let weights = manifest.trunk.weights(dir, &device)?;
         let backbone = Backbone::load(weights.pp("encoder"), &body, gte, config.max_input_tokens)?;
         let ner = linear(
