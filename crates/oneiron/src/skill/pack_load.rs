@@ -434,9 +434,12 @@ impl Vault {
                     "actor self-model belongs to a different resident",
                 ));
             }
+            // A claim whose every cited TURN is erased has no live support,
+            // however late it replicated (FIX 8643): it is not loaded.
             if !body.predicate.starts_with("actor.")
                 || !claim_surfaceable(&body)
                 || !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, claim)?
+                || !crate::claim::has_live_support_in_txn(&self.store, txn, &body)?
                 || body.valid_from.is_some_and(|start| start > at)
                 || body.valid_to.is_some_and(|end| end <= at)
             {

@@ -37,6 +37,7 @@ struct CauseRow {
     receipt: String,
     /// `None` once the actor is erased: the label stays with its receipt.
     actor: Option<EntityId>,
+    /// `None` once the skill is erased (FIX 8265), as the actor's slot.
     skill: Option<EntityId>,
     label: String,
     share: f32,
@@ -58,7 +59,7 @@ pub struct AttributionCauseRecord {
     pub receipt: String,
     /// The executing actor, `None` once erased.
     pub actor: Option<EntityId>,
-    /// The loaded skill the evidence row named, if any.
+    /// The loaded skill the evidence row named, if any; `None` once erased.
     pub skill: Option<EntityId>,
     /// The judge's label for the whole outcome.
     pub label: AttributionVerdict,
@@ -160,27 +161,34 @@ pub(crate) fn attempt_attribution_causes(
     Ok(causes)
 }
 
-/// Forgets `actor` on every cause row it executed, in the erase's own write:
-/// the actor slot is nil and the label stays with its receipt, as a call
-/// receipt keeps its row and drops its identity.
+/// Forgets erased `entity` on every cause row that names it, in the erase's
+/// own write: an actor it executed or a skill it loaded (FIX 8265), each slot
+/// nil, and the label stays with its receipt, as a call receipt keeps its row
+/// and drops its identity. A later projection keeps the row as it is held
+/// ([`put_attribution_cause_in_txn`]), so it never names either again.
 ///
 /// # Errors
 ///
 /// Storage and codec errors.
-pub(crate) fn erase_attribution_cause_actor_in_txn(
+pub(crate) fn erase_attribution_cause_entity_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
+    entity: &EntityId,
 ) -> Result<()> {
     let mut erased = Vec::new();
     for row in CAUSES.iter_from(&vault.store, wtxn, &[])? {
         let (key, row) = row?;
-        if row.actor == Some(*actor) {
+        if row.actor == Some(*entity) || row.skill == Some(*entity) {
             erased.push((key, row));
         }
     }
     for (key, mut row) in erased {
-        row.actor = None;
+        if row.actor == Some(*entity) {
+            row.actor = None;
+        }
+        if row.skill == Some(*entity) {
+            row.skill = None;
+        }
         CAUSES.put(&vault.store, wtxn, &key, &row)?;
     }
     Ok(())
