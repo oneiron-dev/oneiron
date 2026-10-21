@@ -172,7 +172,7 @@ const HOST_FACETS: [&str; 16] = [
     COACH_FEEDBACK_DELIVERY_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 9] = [
+const MAINTENANCE_FACETS: [&str; 10] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -180,6 +180,8 @@ const MAINTENANCE_FACETS: [&str; 9] = [
     COACH_LEARNING_SWEEP_FACET,
     COACH_CONTRIBUTION_CHECK_FACET,
     super::agent_health::COACH_AGENT_HEALTH_FACET,
+    // The daily trend pass (OF-568 L3), its own job beside the review.
+    super::agent_health::COACH_HEALTH_TRENDS_FACET,
     super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
     COACH_ROOM_UPKEEP_FACET,
 ];
