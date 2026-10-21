@@ -37,7 +37,7 @@ use super::create_validation::consult_refusal;
 use super::decision_port::TaskDecisions;
 use super::highway_types::{
     AttemptHandle, TaskAccept, TaskCall, TaskCallReceipt, TaskLifecycleRecord, TaskPhase, TaskPost,
-    TaskReport, TaskStatusQuery, TaskVia,
+    TaskRedo, TaskReport, TaskStatusQuery, TaskVia,
 };
 use super::task_actor::TaskActor;
 use super::terminal_state::TaskExecutionState;
@@ -80,6 +80,7 @@ impl Memory<'_> {
             TaskCall::Accept(accept) => self.highway_accept(&via, accept),
             TaskCall::Report(report) => self.highway_report(&via, report, decisions),
             TaskCall::Status(query) => self.highway_status(query),
+            TaskCall::Redo(redo) => self.highway_redo(&via, redo, decisions),
         }
     }
 
@@ -101,6 +102,25 @@ impl Memory<'_> {
     /// Status, or a poll when `after` names the last observation.
     pub fn tasks_status(&self, query: TaskStatusQuery) -> MemoryResult<TaskCallReceipt> {
         self.tasks_highway(TaskVia::Wire, TaskCall::Status(query))
+    }
+
+    /// Wire redo of one TASK (FIX 3153): a new TASK and its own try, posted
+    /// from the named TASK's current brief, assignee, spec, label and parent.
+    /// The named TASK, its result and its receipts are never written, settled
+    /// or not.
+    ///
+    /// The redo needs no standing on the named TASK beyond what `describe`
+    /// needs to read it, through the same check (the handle's read
+    /// credential), since it copies the TASK's content: a TASK the caller
+    /// does not read is not found. The new TASK is the caller's own post,
+    /// under the intent key `redo:<task hex>:<blake3 hex of intent_key>`, which its
+    /// provenance keeps as the link back. It meets the post's gate, proposal
+    /// parking and replay unchanged, and its receipt's lifecycle names the
+    /// named TASK as `redo_of`. A TASK with no typed brief is refused: a
+    /// post needs one. Its TTL is not carried, so the redo is not born
+    /// expired.
+    pub fn tasks_redo(&self, redo: TaskRedo) -> MemoryResult<TaskCallReceipt> {
+        self.tasks_highway(TaskVia::Wire, TaskCall::Redo(redo))
     }
 
     /// Proves this surface's actor may run `verb` on `task`, in the caller's

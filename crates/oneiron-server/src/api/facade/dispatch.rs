@@ -2297,6 +2297,40 @@ async fn tasks_accept(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn tasks_redo(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    facade_room_turn_serves(
+        call,
+        "tasks.redo",
+        oneiron::memory::RoomTurnHandle::serves("tasks.redo"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    let (server, owned) = (Arc::clone(server), call.owned());
+    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+        let call = owned.call();
+        let producers = oneiron::memory::ProducerRows::default();
+        let output = facade_invoke(
+            &server,
+            &call,
+            actor,
+            class,
+            "tasks.redo",
+            value,
+            &producers,
+        )?;
+        Ok(FacadeCallOutput::listed(output, &producers))
+    })
+    .await
+    .map_err(|_| FacadeApiError::from(super::host_doors::internal("tasks.redo")))?
+}
 async fn vault_commit_message(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -35579,6 +35613,7 @@ pub(crate) async fn call_verb(
         "vault.fanout.ack" => vault_fanout_ack(server, call, input).await,
         "tasks.update" => tasks_update(server, call, input).await,
         "tasks.accept" => tasks_accept(server, call, input).await,
+        "tasks.redo" => tasks_redo(server, call, input).await,
         "vault.commit_message" => vault_commit_message(server, call, input).await,
         "vault.begin_message_stream" => vault_begin_message_stream(server, call, input).await,
         "vault.append_to_stream" => vault_append_to_stream(server, call, input).await,
