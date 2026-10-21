@@ -2799,7 +2799,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/manifest/encoder_export.rs` | src | s | 4 struct · 15 fn · 1 crate-vis | CheckpointPin, EncoderDistillationRequest, EncoderExport, SharedBaseFork | Offline interchange with the model project |
 | `src/llm/manifest/teacher_probe.rs` | src | s | 2 struct · 6 fn · 1 const · 4 crate-vis | TeacherProbeApproval, TeacherProbePolicy | Policy-bound extraction-teacher probe approval for manifest publication |
 | `src/llm/manifest/tests.rs` | test | m | — | — | — |
-| `src/llm/mod.rs` | src | s | 11 mod · 16 re-export · 11 crate-vis | — | Engine-facing LLM invocation seam |
+| `src/llm/mod.rs` | src | s | 11 mod · 17 re-export · 11 crate-vis | — | Engine-facing LLM invocation seam |
 | `src/llm/model_stream.rs` | src | m | 12 struct · 1 enum · 5 fn | ModelStreamAbort, ModelStreamDetach, ModelStreamDetached, ModelStreamEvents, ModelStreamEventsRequest, ModelStreamOpen, ModelStreamOpened, ModelStreamSink +5 | Owner-submitted shared model streams over the engine's one-producer `LlmEventBus`: many subscribers attach… |
 | `src/llm/model_trials.rs` | src | m | 9 fn · 1 re-export · 7 crate-vis | — | Per-question held-out trials nominated by external benchmark scores |
 | `src/llm/model_trials/evidence.rs` | src | s | 4 crate-vis | — | Freeze the question's own labels, check backend reads and bind the sufficiency card |
