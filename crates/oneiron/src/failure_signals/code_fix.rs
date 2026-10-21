@@ -29,7 +29,7 @@ use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::FailureClassV1;
-use super::verbatim::shares_verbatim_span;
+use super::verbatim::verbatim_spans;
 use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::authority::{AuthorityFold, EffectiveRead};
@@ -48,7 +48,9 @@ pub use self::exact::{ExactReplayRequest, ReplayFidelity};
 pub(super) use self::queue::{
     CodeFixShare, ack_code_fix_records_in_txn, code_fix_still_eligible_in,
 };
-pub(crate) use self::subject::dispatch_worlds_in;
+pub(crate) use self::subject::{
+    CodeFixSourceSnapshot, code_fix_source_snapshot, dispatch_worlds_in,
+};
 use self::subject::{SubjectFailure, blocked_source_failure_in};
 
 pub const CODE_FIX_RECORD_VERSION: u16 = 1;
@@ -337,8 +339,9 @@ pub(crate) fn queue_sealed_in_txn(
 impl Vault {
     /// Seals the Coach's invented example of the failure `source` names for
     /// export. The vault reads the real failure itself; the example may copy
-    /// no span of it. Every check runs before the record is queued, and the
-    /// first that fails withholds it.
+    /// no span of it, nor of the reports and the kept request read with it.
+    /// Every check runs before the record is queued, and the first that
+    /// fails withholds it.
     pub fn prepare_invented_example(
         &self,
         source: &CodeFixSource,
@@ -346,18 +349,20 @@ impl Vault {
         replay: &dyn CodeFixReplay,
         scrubber: &dyn ExportScrubber,
     ) -> Result<CodeFixVerdict> {
-        let sealing = self.seal_invented_example(source, draft, replay, scrubber)?;
+        let sealing = self.seal_invented_example(source, draft, replay, scrubber, None)?;
         self.queue_sealing(source, sealing)
     }
 
     /// [`Vault::prepare_invented_example`] short of queueing: the caller
-    /// queues the sealed record.
+    /// queues the sealed record. `snapshot` is the real failure as the
+    /// caller's invocation read it (OF-380 L1); with none, it is read here.
     pub(crate) fn seal_invented_example(
         &self,
         source: &CodeFixSource,
         draft: InventedExampleDraft,
         replay: &dyn CodeFixReplay,
         scrubber: &dyn ExportScrubber,
+        snapshot: Option<&CodeFixSourceSnapshot>,
     ) -> Result<Sealing> {
         use CodeFixWithheld as W;
         if !self.config.failure_signals.exports() {
@@ -382,6 +387,17 @@ impl Vault {
             draft.conversation.len() as u64,
         );
         self.store.authorization_now()?;
+        let assembled;
+        let snapshot = match snapshot {
+            Some(snapshot) => snapshot,
+            None => match code_fix_source_snapshot(self, source)? {
+                Ok(snapshot) => {
+                    assembled = snapshot;
+                    &assembled
+                }
+                Err(reason) => return withheld(reason),
+            },
+        };
         let txn = self.store.env.read_txn()?;
         let Some(subject) = code_fix_subject_in(self, &txn, source)? else {
             return withheld(W::UnknownCase);
@@ -395,19 +411,23 @@ impl Vault {
             return withheld(W::PrivateWorld);
         }
         drop(txn);
-        let sources = failure.texts();
-        if sources.is_empty() {
+        let texts = failure.texts();
+        if texts.is_empty() {
             return withheld(W::SourceUnavailable);
         }
-
-        let joined = std::iter::once(draft.note.as_str())
-            .chain(draft.conversation.iter().map(|m| m.text.as_str()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if shares_verbatim_span(&sources, &joined) {
+        // OF-380 L1: beside the failure's own texts, every report the Coach
+        // read and every part of the kept request the replay sends.
+        let sources: Vec<&str> = texts
+            .iter()
+            .chain(&snapshot.verbatim_sources)
+            .map(String::as_str)
+            .collect();
+        let joined = invented_text(&draft);
+        if !verbatim_spans(&sources, &joined).is_empty() {
             return withheld(W::VerbatimSpan);
         }
         drop(sources);
+        drop(texts);
         let credential = std::iter::once(draft.note.as_str())
             .chain(draft.conversation.iter().map(|m| m.text.as_str()))
             .chain(std::iter::once(joined.as_str()))
@@ -690,6 +710,15 @@ fn all_public(fold: &AuthorityFold, worlds: &[EntityId]) -> bool {
     worlds
         .iter()
         .all(|world| fold.world_privacy(*world).read == EffectiveRead::Everywhere)
+}
+
+/// The note and every message of `draft`, one per line: the text the
+/// verbatim guard and the scrubber read.
+fn invented_text(draft: &InventedExampleDraft) -> String {
+    std::iter::once(draft.note.as_str())
+        .chain(draft.conversation.iter().map(|m| m.text.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A note and a conversation, each message with words in it. Its size is no

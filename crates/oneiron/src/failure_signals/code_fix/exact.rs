@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{CodeFixSource, failed_case_in};
 use crate::attempt_queue::AttemptId;
-use crate::code_run::{CapsuleRequest, CapsuleRungBinding, capsule_request, step_replay_capsules};
+use crate::code_run::{
+    CapsuleRequest, CapsuleRungBinding, StepReplayCapsule, capsule_request, step_replay_capsules,
+};
 use crate::self_heal::blocked_reports::{SentRequest, blocked_source_in, step_sources_in};
 use crate::{EntityId, LlmRequest, Result, Vault};
 
@@ -100,44 +102,69 @@ impl ExactReplay {
     }
 }
 
+/// The failing call one code-fix invocation replays, chosen once (OF-380
+/// L1): what the vault kept of its request, and its captured step, which an
+/// engine pair runs from. A replay reads the kept request again before each
+/// send (FIX 6659) and a pair reads the step again under its identity, but
+/// neither chooses another call.
+pub(crate) struct CodeFixReplaySelection {
+    /// What the vault kept of the call's request.
+    pub(crate) exact: ExactReplay,
+    /// The call's replay capsule: the failing attempt's last kept call, or
+    /// the one a blocked report names by its hash. `None` with no durable
+    /// run, or none kept.
+    pub(crate) capsule: Option<StepReplayCapsule>,
+}
+
 /// What the vault kept of the request the failure `source` names. A request
 /// the report's own row keeps is read there, under that row's own erase.
 pub(crate) fn exact_replay(vault: &Vault, source: &CodeFixSource) -> Result<ExactReplay> {
+    Ok(code_fix_replay_selection(vault, source)?.exact)
+}
+
+/// The failing call of the failure `source` names, chosen once
+/// ([`CodeFixReplaySelection`]): its kept request, read where
+/// [`exact_replay`] reads it, and the capsule of the call among its run's
+/// kept calls.
+pub(crate) fn code_fix_replay_selection(
+    vault: &Vault,
+    source: &CodeFixSource,
+) -> Result<CodeFixReplaySelection> {
     let txn = vault.store.env.read_txn()?;
-    // The attempt whose kept calls hold it, and the hash of the one a report
-    // names, when it names one.
-    let (attempt, digest) = match source {
+    // The attempt whose kept calls hold it, the hash of the one a report
+    // names, when it names one, and the copy the report's own row keeps.
+    let (attempt, digest, kept) = match source {
         CodeFixSource::Case { case_ref } => match failed_case_in(vault, &txn, case_ref)? {
             Some((case, _)) => (
-                EntityId::from_bytes(*case.failing_attempt_id.as_bytes())?,
+                Some(EntityId::from_bytes(*case.failing_attempt_id.as_bytes())?),
+                None,
                 None,
             ),
-            None => return Ok(ExactReplay::NotKept),
+            None => (None, None, None),
         },
         CodeFixSource::Blocked { receipt, run } => {
             let sent = blocked_source_in(vault, &txn, receipt)?
                 .and_then(|source| source.request)
                 .and_then(|request| request.sent);
-            match (sent, run) {
-                // The report's own row keeps it.
-                (
-                    Some(SentRequest {
-                        digest,
-                        kept: Some(kept),
-                    }),
-                    _,
-                ) => {
-                    let copy = as_kept(kept.request, None, digest, kept.stored);
-                    return Ok(ExactReplay::of(copy));
-                }
-                (sent, Some(run)) => (*run, sent.map(|sent| sent.digest)),
-                (_, None) => return Ok(ExactReplay::NotKept),
-            }
+            let digest = sent.as_ref().map(|sent| sent.digest);
+            // The report's own row keeps it.
+            let kept = sent.and_then(|SentRequest { digest, kept }| {
+                kept.map(|kept| ExactReplay::of(as_kept(kept.request, None, digest, kept.stored)))
+            });
+            (*run, digest, kept)
         }
     };
     drop(txn);
-    let replay = attempt_request(vault, attempt, digest)?;
-    if let ExactReplay::Withheld { reasons, fallback } = &replay {
+    let capsule = match attempt {
+        Some(attempt) => failing_call(vault, attempt, digest)?,
+        None => None,
+    };
+    let exact = match (kept, attempt) {
+        (Some(kept), _) => kept,
+        (None, Some(attempt)) => attempt_request(vault, attempt, digest, capsule.clone())?,
+        (None, None) => ExactReplay::NotKept,
+    };
+    if let ExactReplay::Withheld { reasons, fallback } = &exact {
         // Local only (FIX 6348): why the capsule keeps no copy.
         tracing::debug!(
             ?reasons,
@@ -145,7 +172,20 @@ pub(crate) fn exact_replay(vault: &Vault, source: &CodeFixSource) -> Result<Exac
             "the failing call's capsule withheld its request"
         );
     }
-    Ok(replay)
+    Ok(CodeFixReplaySelection { exact, capsule })
+}
+
+/// The failing call's capsule among `attempt`'s kept calls: the one whose
+/// hash is `digest`, or with none named, the last one it sent.
+fn failing_call(
+    vault: &Vault,
+    attempt: EntityId,
+    digest: Option<[u8; 32]>,
+) -> Result<Option<StepReplayCapsule>> {
+    Ok(step_replay_capsules(vault, attempt)?
+        .into_iter()
+        .rev()
+        .find(|capsule| digest.is_none_or(|digest| capsule.request_hash == digest)))
 }
 
 /// `request` while it still reads as the copy kept, whose hash is `stored`;
@@ -168,18 +208,15 @@ fn as_kept(
 
 /// The failing call among `attempt`'s kept calls: the one whose hash is
 /// `digest`, or with none named, the last one it sent. Its replay capsule
-/// first, then a durable step's row. A capsule whose copy reads as none is
-/// read again before a step's row stands in for it, so an erase meanwhile
-/// reads as erased (FIX 6251).
+/// `capsule` ([`failing_call`]) first, then a durable step's row. A capsule
+/// whose copy reads as none is read again before a step's row stands in for
+/// it, so an erase meanwhile reads as erased (FIX 6251).
 fn attempt_request(
     vault: &Vault,
     attempt: EntityId,
     digest: Option<[u8; 32]>,
+    capsule: Option<StepReplayCapsule>,
 ) -> Result<ExactReplay> {
-    let capsule = step_replay_capsules(vault, attempt)?
-        .into_iter()
-        .rev()
-        .find(|capsule| digest.is_none_or(|digest| capsule.request_hash == digest));
     // The selected capsule, once it read as live but its copy as none.
     let mut held = None;
     if let Some(capsule) = capsule {
