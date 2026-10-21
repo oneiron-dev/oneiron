@@ -8,7 +8,7 @@
 //! A host must supply a queue connected to an already-loaded GPU process. Neither
 //! queue admission nor a host readiness claim alone proves a GPU is deployed.
 
-pub use crate::gate::voice_serving::VoiceServingLimits;
+pub use crate::gate::voice_serving::{VoiceServingLimits, VoiceServingPolicyReceipt};
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, sync::Arc};
 
@@ -206,7 +206,9 @@ impl VoxCpm2Pcm {
 /// worker; a withdrawal, a new render decision or a ref change stops the render.
 pub struct VoxCpm2Adapter<Q> {
     vault: Arc<Vault>,
-    limits: VoiceServingLimits,
+    /// The serving policy this adapter resolved, kept whole: its limits, and
+    /// whether the shipped defaults stood in for an absent row (FIX 8772).
+    policy: VoiceServingPolicyReceipt,
     voice_id: String,
     register: String,
     /// Where the host's worker runs.
@@ -223,6 +225,15 @@ pub struct VoxCpm2Adapter<Q> {
     pending: VecDeque<u64>,
     ended: bool,
     cancelled: bool,
+}
+
+impl<Q> VoxCpm2Adapter<Q> {
+    /// The serving policy this adapter resolved, and whether the shipped
+    /// defaults stood in for an absent row (FIX 8772).
+    #[must_use]
+    pub fn serving_policy(&self) -> VoiceServingPolicyReceipt {
+        self.policy
+    }
 }
 
 impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
@@ -250,13 +261,13 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
         if locality == ModelLocality::ThirdParty {
             return Err(invalid("a voice reference never goes to a third party"));
         }
-        let limits = vault.voice_serving_limits(holder)?;
+        let policy = vault.voice_serving_policy(holder)?;
         if voice_id.trim().is_empty() || register.trim().is_empty() || register.len() > 128 {
             return Err(invalid("invalid reference selection"));
         }
         Ok(Self {
             vault,
-            limits,
+            policy,
             voice_id: voice_id.into(),
             register: register.into(),
             locality,
@@ -302,7 +313,7 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
 
     fn boundary(&mut self, generation: GenerationEpoch, end: bool) -> Result<()> {
         if !self.buffer.is_empty() {
-            let max = usize::try_from(self.limits.max_text_bytes).unwrap_or(usize::MAX);
+            let max = usize::try_from(self.policy.limits.max_text_bytes).unwrap_or(usize::MAX);
             let pieces = speakable::pieces(&self.buffer, max);
             self.held.extend(pieces.into_iter().map(str::to_owned));
             self.buffer.clear();
@@ -317,7 +328,7 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
     /// audio; the rest wait for it to drain. A refused send keeps its render
     /// held for the next boundary or response.
     fn release(&mut self, generation: GenerationEpoch) -> Result<()> {
-        let window = usize::try_from(self.limits.max_queued_renders).unwrap_or(usize::MAX);
+        let window = usize::try_from(self.policy.limits.max_queued_renders).unwrap_or(usize::MAX);
         // Never wait on the ref guard here: GPU work can hold a read lock
         // while a withdrawal waits to write. The worker checks the exact
         // revision at dispatch; returned PCM is checked before playback.
@@ -387,7 +398,7 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
             }
             let warm = self.queue.warm_target()?;
             warm.validate()?;
-            if !self.limits.within(warm.limits) {
+            if !self.policy.limits.within(warm.limits) {
                 return Err(invalid("worker serving limits narrower than vault policy"));
             }
             // Source refs only: generated refs never stand in for the identity.
@@ -419,7 +430,7 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
                 voice_id: cloned.voice_id,
                 register: self.register.clone(),
                 fence,
-                limits: self.limits,
+                limits: self.policy.limits,
                 warm,
             };
             self.send(
@@ -471,11 +482,22 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
 }
 
 impl Vault {
-    /// Resolve the live trusted manifest, including vault and authenticated
-    /// holder narrowing. Missing or malformed policy refuses serving.
-    pub fn voice_serving_limits(&self, holder: Option<EntityId>) -> Result<VoiceServingLimits> {
+    /// Resolve the live trusted manifest's voice serving policy, including
+    /// vault and authenticated holder narrowing, with whether the shipped
+    /// defaults stood in for an absent row. Unreadable, malformed or
+    /// untrusted policy refuses serving (FIX 8772).
+    pub fn voice_serving_policy(
+        &self,
+        holder: Option<EntityId>,
+    ) -> Result<VoiceServingPolicyReceipt> {
         let txn = self.store.env.read_txn()?;
-        crate::gate::resolve_policy_manifest(&self.store, &txn)?.voice_serving_limits(holder)
+        crate::gate::resolve_policy_manifest(&self.store, &txn)?.voice_serving_policy(holder)
+    }
+
+    /// The limits of [`Self::voice_serving_policy`], for a caller that
+    /// keeps the policy's receipt elsewhere.
+    pub fn voice_serving_limits(&self, holder: Option<EntityId>) -> Result<VoiceServingLimits> {
+        Ok(self.voice_serving_policy(holder)?.limits)
     }
 }
 

@@ -199,5 +199,7 @@ pub(crate) fn restore_row_in_txn(
             let key = std::str::from_utf8(&at.key).map_err(|_| corrupt())?;
             dbs.sync_state().put(txn, key, value)
         }
+        // A queue key is raw bytes, never read as text.
+        RowDb::SyncQueue => dbs.sync_queue().put(txn, &at.key, value),
     }
 }
