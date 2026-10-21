@@ -9,16 +9,20 @@
 //! reply keeps its standard counters and gets no record. Standard counters are
 //! never rewritten here.
 //!
-//! llama.cpp reports no backend epoch and no model, tokenizer, template or
-//! cache-mode identity, so a llama record names only its runtime: a digest of
-//! the build string it reports as `system_fingerprint`, which is a build, not
-//! an incarnation. The rest stays absent until the backend reports it.
+//! A llama.cpp record's identity is what the answer's own launch alias names
+//! (FIX 7895, `llama_identity.rs`): the launch's epoch, and the digests its
+//! verified manifest lists. An answer without an alias, or whose manifest did
+//! not verify, has those absent. A chat record's runtime is then a digest of
+//! the build string the reply reports as `system_fingerprint`, which is a
+//! build, not an incarnation.
 use oneiron::llm::{
     CACHE_CALLS_KEY, CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheIdentity,
     CachePassReport, CachePassUsage, CachePhase,
 };
 use serde_json::{Value as JsonValue, json};
 use sha2::{Digest, Sha256};
+
+use super::llama_identity::AnsweringIdentity;
 
 /// The usage key a llama.cpp reply's build string is carried under.
 const SYSTEM_FINGERPRINT_KEY: &str = "system_fingerprint";
@@ -29,10 +33,11 @@ const SYSTEM_FINGERPRINT_KEY: &str = "system_fingerprint";
 /// reported build. The standard cached count is the read when there is one;
 /// when it and `timings.cache_n` disagree the read is unknown, never either
 /// guess. `tokens_cached` is never a read: it is the slot's occupancy, which
-/// counts generated tokens too. A body without llama.cpp's timings, without a
-/// usage object, or whose usage already holds records (the EXL3 server's own)
-/// is left as it came.
-pub(super) fn carry_chat_evidence(body: &mut JsonValue) {
+/// counts generated tokens too. The identity is what `answering`, the reply's
+/// own alias, names. A body without llama.cpp's timings, without a usage
+/// object, or whose usage already holds records (the EXL3 server's own) is
+/// left as it came.
+pub(super) fn carry_chat_evidence(body: &mut JsonValue, answering: Option<&AnsweringIdentity>) {
     let Some(timings) = body.get("timings") else {
         return;
     };
@@ -76,10 +81,7 @@ pub(super) fn carry_chat_evidence(body: &mut JsonValue) {
     });
     let call = CacheCallUsage {
         backend: CacheBackend::LlamaCpp,
-        identity: CacheIdentity {
-            runtime: fingerprint.as_deref().and_then(digest),
-            ..CacheIdentity::default()
-        },
+        identity: chat_identity(answering, fingerprint.as_deref()),
         logical_prompt_tokens: input,
         passes: vec![pass],
     };
@@ -93,12 +95,32 @@ pub(super) fn carry_chat_evidence(body: &mut JsonValue) {
     }
 }
 
+/// A chat record's identity: what the answer's own alias names, with the
+/// reported build's digest as its runtime when no manifest names one.
+fn chat_identity(
+    answering: Option<&AnsweringIdentity>,
+    fingerprint: Option<&str>,
+) -> CacheIdentity {
+    let mut identity = answering
+        .map(AnsweringIdentity::for_chat)
+        .unwrap_or_default();
+    if identity.runtime.is_none() {
+        identity.runtime = fingerprint.and_then(digest);
+    }
+    identity
+}
+
 /// One native decision-read answer's cache read and raw usage: its `timings`
 /// as it came, beside its record (`tokens_evaluated` in, `timings.cache_n`
 /// read from the cache, `timings.prompt_n` computed). The read is the
 /// record's when its counts agree, else 0, as the standard counter always
-/// read it; the record keeps the read unknown.
-pub(super) fn label_read(answer: &JsonValue) -> (u64, JsonValue) {
+/// read it; the record keeps the read unknown. The identity is what
+/// `answering`, the answer's own alias, names: never a chat template, which
+/// a native prompt does not go through.
+pub(super) fn label_read(
+    answer: &JsonValue,
+    answering: Option<&AnsweringIdentity>,
+) -> (u64, JsonValue) {
     let timings = answer.get("timings");
     let native = |key: &str| timings.and_then(|timings| count(timings, key));
     let input = count(answer, "tokens_evaluated");
@@ -115,7 +137,9 @@ pub(super) fn label_read(answer: &JsonValue) -> (u64, JsonValue) {
     let read = pass.measured_read().unwrap_or(0);
     let call = CacheCallUsage {
         backend: CacheBackend::LlamaCpp,
-        identity: CacheIdentity::default(),
+        identity: answering
+            .map(AnsweringIdentity::for_native)
+            .unwrap_or_default(),
         logical_prompt_tokens: input,
         passes: vec![pass],
     };

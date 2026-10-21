@@ -26,7 +26,9 @@ impl Vault {
     /// An attempt that is not this facet's Coach attempt or not the
     /// revision's current job; a finding that cites anything but the note it
     /// was given or names no problem (nothing is filed, and the revision
-    /// stays unacknowledged); storage errors.
+    /// stays unacknowledged); [`Error::Refused`] once the owner erased the
+    /// revision's evidence (nothing is filed, and the next sweep settles it
+    /// erased); storage errors.
     pub fn run_coach_feedback_triage(
         &self,
         attempt: &DreamerAdmittedAttempt,

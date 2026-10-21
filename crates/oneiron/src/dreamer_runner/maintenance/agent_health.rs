@@ -61,8 +61,12 @@ mod duplicate;
 mod environment;
 mod loaded;
 mod outcomes;
+mod rollups;
 mod run_loop;
 mod targeted;
+mod trend;
+mod trend_output;
+mod trend_policy;
 pub use apply::{
     AgentHealthApplicationState, AgentHealthCoachApplication, ConcernApplyOutcome,
     ConcernApplyRequest,
@@ -76,7 +80,17 @@ pub use brief::{HealthBriefPin, HealthObservedBrief};
 pub use environment::HealthCauseSource;
 pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
 pub use outcomes::HealthReviewReceipt;
+pub use rollups::{
+    HealthTrendRollup, HealthTrendRollups, TrendMargin, TrendRatio, TrendSignalTally, TrendSource,
+    TrendSpendTally, TrendStratum, health_trend_rollups,
+};
 pub(super) use targeted::review;
+pub use trend::{
+    COACH_HEALTH_TRENDS_FACET, HealthTrendComparison, HealthTrendInput, HealthTrendReview,
+    TrendDirection, TrendMetric, TrendSide, TrendUnknown, review_health_trends,
+};
+pub(super) use trend_output::run_health_trends;
+pub use trend_policy::{DetectionDialChanges, HEALTH_TREND_PERIOD_DAYS, TrendPeriods, TrendWindow};
 
 /// The recipe's facet. It rides the Coach's timer jobs (`MAINTENANCE_FACETS`),
 /// deduped per wake.

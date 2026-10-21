@@ -2,7 +2,8 @@
 //! replacement body as though it were the historical quotation.
 
 use super::graph::{
-    CANONICAL, conversation_of, edge_ids, invalid, read_id, require_member, require_type,
+    CANONICAL, all_edge_ids, conversation_of, edge_ids, invalid, read_id, require_member,
+    require_type, walk_count,
 };
 use super::policy::{self, AppendFailure};
 use super::thread_projection::{chain_in_txn, selected_thread_in_txn};
@@ -10,7 +11,6 @@ use super::{AppendRecord, AppendedRecord};
 use crate::claim::ScopedRead;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::memory::{Memory, MemoryResult};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
@@ -278,15 +278,11 @@ fn roots_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result<Vec<E
     let conversation = conversation_of(&vault.store, txn, &trunk)?;
     let canonical = read_id(&vault.store, txn, CANONICAL, &trunk)?;
     let mut roots = Vec::new();
+    let mut walk = walk_count(&vault.store, txn, &conversation)?;
+    let children = all_edge_ids(&vault.store, txn, &trunk, EdgeKind::Parent, true, &mut walk)?;
+    walk.defer(&vault.store);
     // A thread hangs off its trunk on Parent; its reply targets may point anywhere.
-    for child in edge_ids(
-        &vault.store,
-        txn,
-        &trunk,
-        EdgeKind::Parent,
-        true,
-        MAX_ANCESTOR_DEPTH,
-    )? {
+    for child in children {
         if !live_entity_row_in_txn(&vault.store, txn, &child)?.is_live() {
             continue;
         }
@@ -350,15 +346,16 @@ pub(crate) fn invalidate_thread_meta(
         if !seen.insert(id) {
             break; // The read walk reports the malformed cycle; keep the cache dirty.
         }
-        if seen.len() > MAX_ANCESTOR_DEPTH {
-            return Err(Error::IndexOverflow("conversation_dag_walk"));
-        }
         THREAD_DIRTY.put(store, txn, &id, &[1])?;
         if thread_kind(store, txn, &id)? == Some(false) {
             break;
         }
         cursor = super::graph::parent(store, txn, &id)?;
     }
+    // Rule 5: the chain is marked whole, however long, and counted.
+    let mut walk = walk_count(store, txn, &start)?;
+    walk.rows(seen.len());
+    walk.defer(store);
     Ok(())
 }
 
@@ -412,7 +409,10 @@ pub(crate) fn invalidate_thread_meta_for_turn_put(
 ) -> Result<()> {
     let mut chained = thread_kind(store, txn, &id)? != Some(false);
     if !chained {
-        for child in edge_ids(store, txn, &id, EdgeKind::Parent, true, MAX_ANCESTOR_DEPTH)? {
+        let mut walk = walk_count(store, txn, &id)?;
+        let children = all_edge_ids(store, txn, &id, EdgeKind::Parent, true, &mut walk)?;
+        walk.defer(store);
+        for child in children {
             if thread_kind(store, txn, &child)? == Some(true) {
                 chained = true;
                 break;
@@ -724,8 +724,8 @@ impl Vault {
             let mut cursor = Some(target);
             let mut visited = HashSet::new();
             while let Some(id) = cursor {
-                if !visited.insert(id) || visited.len() > MAX_ANCESTOR_DEPTH {
-                    return Err(Error::IndexOverflow("conversation_dag_walk").into());
+                if !visited.insert(id) {
+                    return Err(Error::from(crate::error::RegistryError::CycleDetected).into());
                 }
                 rebuild_thread_meta_in_txn(self, txn, id)?;
                 if !super::graph::is_thread_record(&self.store, txn, &id)? {
@@ -733,6 +733,9 @@ impl Vault {
                 }
                 cursor = super::graph::parent(&self.store, txn, &id)?;
             }
+            let mut walk = walk_count(&self.store, txn, &conversation)?;
+            walk.rows(visited.len());
+            walk.defer(&self.store);
             // The caller may have selected a higher trunk than the actual parent.
             if !visited.contains(&trunk) {
                 rebuild_thread_meta_in_txn(self, txn, trunk)?;
