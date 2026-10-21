@@ -178,7 +178,7 @@ pub(crate) use self::effect::{
 pub(crate) use self::grants::{
     PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,
     scoped_read_claim_allowed_with_scope, scoped_read_grant_reads_world,
-    scoped_read_record_allowed,
+    scoped_read_record_allowed, scoped_read_record_allowed_with_scope,
 };
 pub(crate) use self::hosted_tts_policy::{HostedTtsLimits, resolve_hosted_tts_limits};
 pub(crate) use self::input::{

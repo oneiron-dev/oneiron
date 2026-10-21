@@ -1,6 +1,7 @@
 //! Claim admission on the scoped lane: the lane's claim-status mode, then the
 //! reader, credential, ceiling, audience and grant checks every claim meets.
 
+use super::access_gate::HeldAuthority;
 use super::*;
 
 /// Which claim statuses a scoped read lane admits.
@@ -53,7 +54,7 @@ impl<'v> ScopedRead<'v> {
     }
 }
 
-impl ScopedRead<'_> {
+impl<'v> ScopedRead<'v> {
     /// The same lane admitting claims of every status the record verbs serve.
     #[must_use]
     pub(crate) fn with_claim_status(mut self, status: ClaimReadStatus) -> Self {
@@ -67,6 +68,13 @@ impl ScopedRead<'_> {
         principal.is_none() || principal == EntityId::from_hex(self.actor_key.actor_ref()).ok()
     }
 
+    /// A CLAIM row's admission. Under `grant`, one live Grant of the reader's
+    /// own (FIX 7462), that Grant stands in for the relationship check and
+    /// the positive claim check; `None` is today's admission.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a claim row's admission under its filter, held authority and an optional Grant"
+    )]
     pub(super) fn is_claim_raw_readable_with_policy_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -74,6 +82,8 @@ impl ScopedRead<'_> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority<'v>,
+        grant: Option<&crate::federation::Scope>,
     ) -> Result<bool> {
         if raw.len() == ENTITY_METADATA_HEADER_LEN
             && self.vault.store.entity_deletion_present_in_txn(
@@ -87,9 +97,15 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, raw, &body, filter)
+        self.is_claim_readable_with_body_and_policy_in(
+            rtxn, policy, id, raw, &body, filter, authority, grant,
+        )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a claim's admission under its filter, held authority and an optional Grant"
+    )]
     fn is_claim_readable_with_body_and_policy_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -98,6 +114,8 @@ impl ScopedRead<'_> {
         raw: &[u8],
         body: &ClaimBody,
         filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority<'v>,
+        grant: Option<&crate::federation::Scope>,
     ) -> Result<bool> {
         // History controls travel through scoped sync/export, never ordinary
         // claim recall. Their binary value contains signed birth payloads.
@@ -156,17 +174,23 @@ impl ScopedRead<'_> {
         let admitted = self.claim_status.admits(filter, body)
             && crate::pipeline::claim_ceiling_allowed(filter, body);
         if !admitted
-            || !self.audience_readable_raw_in(rtxn, id, raw)?
-            || !self.relationship_claim_allowed_in(rtxn, id, body)?
+            || !self.audience_readable_raw_in(rtxn, id, raw, authority)?
+            || (grant.is_none() && !self.relationship_claim_allowed_in(rtxn, id, body)?)
         {
             return Ok(false);
         }
         let claim_facets = self.claim_facet_refs_in(rtxn, id)?;
-        Ok(crate::gate::scoped_read_claim_allowed(
-            policy,
-            &self.actor_key,
-            body,
-            &claim_facets,
-        ))
+        Ok(match grant {
+            None => {
+                crate::gate::scoped_read_claim_allowed(policy, &self.actor_key, body, &claim_facets)
+            }
+            Some(grant) => crate::gate::scoped_read_claim_allowed_with_scope(
+                policy,
+                &self.actor_key,
+                body,
+                &claim_facets,
+                Some(grant),
+            ),
+        })
     }
 }

@@ -3724,7 +3724,7 @@
      "path": "src/authority/principal_standing.rs",
      "purpose": "FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -12094,7 +12094,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -12114,14 +12114,24 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 22,
       "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/admission/audience.rs",
+     "purpose": "The audience conjunct of a scoped read: device-local worlds, private threads, an unbound agent's own entry…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -12132,6 +12142,16 @@
      "purpose": "A room turn's ceiling as each row's snapshot refreshes it, and the peer reads a room or audience conjoins…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/agent_grants.rs",
+     "purpose": "FIX 7462: an agent's ordinary read also admits what one of its own live owner-minted Grants covers (owner…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -12240,7 +12260,7 @@
      "path": "src/claim/scoped_read/note_visibility.rs",
      "purpose": "Actor and class checks for private NOTE bodies in scoped reads",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -12326,7 +12346,7 @@
      "path": "src/claim/scoped_read/retrieval_visibility.rs",
      "purpose": "The retrieval authority floor for graph channels on a scoped read",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -12393,7 +12413,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -12403,7 +12423,7 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 3
      }
     },
@@ -21476,7 +21496,7 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch, and the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -21610,6 +21630,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/note_classification.rs",
+     "purpose": "The NOTE review's classification request and reply (ARCH-0032 stage 2, OF-073)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/note_parts.rs",
      "purpose": "A Dreamer-written text past the NOTE body bound, as the ordered parts it lands in: the split an imported…",
      "surface": {
@@ -21623,7 +21653,7 @@
      "path": "src/dreamer_consolidation/note_review.rs",
      "purpose": "ARCH-0032 stage 2 (OF-073): the Dreamer reviews NOTEs",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -21634,6 +21664,16 @@
      "purpose": "The text of one NOTE as the Dreamer may read it (ARCH-0032 stage 2), in the caller's transaction: one…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/note_topics.rs",
+     "purpose": "The stage-2 topic summary trigger (ARCH-0032 write gate, OF-073 / FIX 907)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -21667,7 +21707,7 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 7,
       "struct": 3
      }
@@ -24135,7 +24175,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 17,
       "struct": 1
      }
@@ -24448,9 +24488,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/nightly.rs",
-     "purpose": "Budgeted interest-queue spending",
+     "purpose": "Budgeted interest-queue spending, one thing per entity or topic (OF-498c, see `things`): its world, facet…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/nightly/things.rs",
+     "purpose": "One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -27871,7 +27921,7 @@
      "path": "src/federation/agent_grant.rs",
      "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -29498,7 +29548,7 @@
      "path": "src/gate/grants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -29982,7 +30032,7 @@
      "path": "src/gate/retrieval_filter.rs",
      "purpose": "Retrieval authority projection and narrowing, independent of result filtering",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 1
      }
     },
@@ -49256,7 +49306,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 5,
       "struct": 1
      }
@@ -67875,7 +67925,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 79,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68155,7 +68205,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 82,
+     "files": 84,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68197,7 +68247,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69198,9 +69248,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 184,
+   "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4376,
+   "source_files": 4381,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92214,7 +92264,57 @@
      "path": "src/oneironer/bundle/platform.rs",
      "purpose": "The manifest's runtime rows (contract rev 3, B1-B2): the Core ML model and the MLX worker, one archive each",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 29
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/coreml/arrays.rs",
+     "purpose": "One Core ML prediction's arrays (FIX 6755 slice 2c, contract rev 3 B2), built on macOS aarch64 only",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/coreml/decode.rs",
+     "purpose": "The Core ML worker's answer from its outputs (FIX 6755 slice 2c, contract rev 3 B2), on every target",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/coreml/inputs.rs",
+     "purpose": "The Core ML worker's inputs (FIX 6755 slice 2c, contract rev 3 B2), on every target: the trunk's raw word…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/coreml/mod.rs",
+     "purpose": "The native Core ML worker (FIX 6755 slice 2c, contract rev 3 B2): the bundle's `coreml-ane` row, its…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/coreml/model.rs",
+     "purpose": "The compiled model's functions on Core ML (FIX 6755 slice 2c, contract rev 3 B2), built on macOS aarch64 only",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -92254,7 +92354,7 @@
      "path": "src/oneironer/dispatcher/mod.rs",
      "purpose": "The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -92292,7 +92392,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/engines/admission.rs",
-     "purpose": "The background admission of a slot's platform runtimes (FIX 6755 slice 3, Engine calls 3-5): on a Mac, the…",
+     "purpose": "The background admission of a slot's platform runtimes (FIX 6755 slices 3 and 2c, Engine calls 3-5): on a…",
      "surface": {
       "crate-vis": 3
      }
@@ -92312,9 +92412,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/engines/candidate.rs",
-     "purpose": "A platform runtime's candidate on this machine (FIX 6755 slice 3): the bundle's `mlx-worker` row, found…",
+     "purpose": "A platform runtime's candidate on this machine (FIX 6755 slices 3 and 2c): the bundle's `mlx-worker` or…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -92344,7 +92444,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -92364,7 +92464,7 @@
      "path": "src/oneironer/local/heads.rs",
      "purpose": "The trained coreference ranker, turn-affect MLP and character edge head",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -92394,7 +92494,7 @@
      "path": "src/oneironer/local/window/platform.rs",
      "purpose": "The window as a platform worker tags it (FIX 6755 slice 3): the text it is sent, the current turn's byte…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -92444,7 +92544,7 @@
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 29
      }
     },
     {
@@ -94901,7 +95001,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 36,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95029,7 +95129,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1031,
+   "source_files": 1036,
    "test_files": 182
   },
   "oneiron-spawn": {

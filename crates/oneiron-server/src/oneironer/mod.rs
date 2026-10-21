@@ -15,8 +15,9 @@
 //! other call.
 //!
 //! On a Mac, the serving build also starts the slot's platform admission
-//! ([`Admission`]), which adds the bundle's managed MLX worker
-//! ([`mlx`]) to the dispatcher in the background once it clears here.
+//! ([`Admission`]), which adds the bundle's managed MLX worker ([`mlx`]) and
+//! its native Core ML worker ([`coreml`]) to the dispatcher in the
+//! background, each once it clears here.
 
 #[cfg(test)]
 use std::collections::VecDeque;
@@ -37,6 +38,7 @@ use local::WindowCounter;
 pub(crate) use dispatcher::DispatchClaim;
 
 pub(crate) mod bundle;
+mod coreml;
 mod dispatcher;
 pub(crate) mod endpoint;
 pub(crate) mod engines;
@@ -164,6 +166,27 @@ impl ProviderTagger {
     }
 }
 
+/// The slot's close, held apart from the slot by a teardown that outlives
+/// its borrow (FIX 7383). Serve and managed teardown close the slot once
+/// tagging has ended, so each platform child is shut down and reaped before
+/// the process exits, not left to the OS.
+pub(crate) struct SlotClose(Arc<ProviderTagger>);
+
+impl SlotClose {
+    /// Closes the slot's dispatcher on a blocking unit, which waits for each
+    /// supervised child's shutdown and reap.
+    pub(crate) async fn close(self) {
+        let tagger = self.0;
+        let closed = tokio::task::spawn_blocking(move || tagger.dispatcher.close()).await;
+        if let Err(error) = closed {
+            tracing::warn!(
+                panicked = error.is_panic(),
+                "oneironer slot close ended early"
+            );
+        }
+    }
+}
+
 impl ExtractionEncoder for ProviderTagger {
     fn model_id(&self) -> &ModelId {
         &self.model
@@ -204,6 +227,11 @@ pub(crate) struct TaggerSlot {
 impl TaggerSlot {
     pub(crate) fn config(&self) -> &OneironerConfig {
         &self.config
+    }
+
+    /// The slot's close, for teardown ([`SlotClose`]).
+    pub(crate) fn closer(&self) -> SlotClose {
+        SlotClose(Arc::clone(&self.tagger))
     }
 
     pub(crate) fn tagger(&self) -> &Arc<ProviderTagger> {
