@@ -317,7 +317,7 @@ enum WireItem {
     },
     SieveAudit {
         attempt: crate::attempt_queue::AttemptId,
-        audit: crate::dreamer_wake::SieveAudit,
+        audit: crate::dreamer_wake::SieveAuditRecord,
     },
     LoopDecision(loop_decisions::WireLoopDecision),
 }

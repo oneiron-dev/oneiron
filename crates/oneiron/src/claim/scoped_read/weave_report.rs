@@ -92,11 +92,12 @@ pub enum WeaveItem {
     },
     /// One sampled sieve audit (OF-499), in a SieveScore section after its
     /// predicate rows: the attempt that wrote it, and the rule's reading
-    /// beside the expensive path's label. Its turn, source and the entities
-    /// it names each passed the reader's own floor.
+    /// beside the expensive path's label, or an unflagged window's finding
+    /// (OF-498f). Its turn, source and the entities it names each passed
+    /// the reader's own floor.
     SieveAudit {
         attempt: crate::attempt_queue::AttemptId,
-        audit: crate::dreamer_wake::SieveAudit,
+        audit: crate::dreamer_wake::SieveAuditRecord,
     },
     /// One loop decision (OF-499 A2), in an Admissions section after its
     /// predicate rows: a loop's run or action admitted, held or refused, as

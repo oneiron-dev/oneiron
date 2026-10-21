@@ -22,7 +22,7 @@ pub(crate) const RUNG_ATTEMPT: &str = "dreamer.sieve.rungs";
 /// Original cheap reading survives spending for later expensive-path audits.
 const HISTORY: SideTable<(EntityId, [u8; 32]), SieveSpan, Named> =
     SideTable::new(&side_table::DREAMER_SIEVE_HISTORY);
-const AUDIT: SideTable<AttemptId, SieveAudit, Named> =
+const AUDIT: SideTable<AttemptId, SieveAuditRecord, Named> =
     SideTable::new(&side_table::DREAMER_SIEVE_AUDIT);
 const CONSUMED: SideTable<(AttemptId, [u8; 32]), SieveConsumeReceipt, Named> =
     SideTable::new(&side_table::DREAMER_SIEVE_CONSUMED);
@@ -70,6 +70,64 @@ pub struct SieveAudit {
     pub step_hashes: Vec<[u8; 32]>,
 }
 
+/// One audit receipt as kept: a flagged span's reading, sampled or owed,
+/// exactly as before, or an unflagged window's finding (OF-498f). The enum
+/// adds no tag, so a flagged receipt keeps its own bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SieveAuditRecord {
+    Flagged(SieveAudit),
+    Window(super::SieveWindowAudit),
+}
+
+impl SieveAuditRecord {
+    /// Whether the receipt is a sampled audit, not an owed rung's reading.
+    pub fn sampled(&self) -> bool {
+        match self {
+            Self::Flagged(audit) => audit.sampled,
+            Self::Window(_) => true,
+        }
+    }
+
+    pub fn turn(&self) -> EntityId {
+        match self {
+            Self::Flagged(audit) => audit.turn,
+            Self::Window(audit) => audit.finding.window.turn,
+        }
+    }
+
+    pub fn source(&self) -> EntityId {
+        match self {
+            Self::Flagged(audit) => audit.source,
+            Self::Window(audit) => audit.finding.window.source,
+        }
+    }
+
+    /// Whether the expensive path agrees with the rules: a flagged span's
+    /// kind and entity, or nothing found in a window the rules left
+    /// unflagged.
+    pub fn agrees(&self) -> bool {
+        match self {
+            Self::Flagged(audit) => audit.agrees,
+            Self::Window(audit) => audit.finding.discovered.is_empty(),
+        }
+    }
+
+    fn completed_units(&self) -> u64 {
+        match self {
+            Self::Flagged(audit) => audit.completed_units,
+            Self::Window(audit) => audit.completed_units,
+        }
+    }
+
+    fn step_hashes(&self) -> &[[u8; 32]] {
+        match self {
+            Self::Flagged(audit) => &audit.step_hashes,
+            Self::Window(audit) => &audit.step_hashes,
+        }
+    }
+}
+
 pub(crate) fn queue_key(span: &SieveSpan) -> QueueKey {
     ((u32::MAX - span.score).to_be_bytes(), span.id)
 }
@@ -94,7 +152,7 @@ pub(super) fn forget_in_txn(
     let audits = AUDIT
         .iter_from(store, txn, &[])?
         .filter_map(|row| match row {
-            Ok((id, audit)) if audit.turn == *turn => Some(Ok(id)),
+            Ok((id, audit)) if audit.turn() == *turn => Some(Ok(id)),
             Ok(_) => None,
             Err(e) => Some(Err(e)),
         })
@@ -422,7 +480,7 @@ pub(crate) fn finish_rungs(
             &vault.store,
             txn,
             &attempt,
-            &SieveAudit {
+            &SieveAuditRecord::Flagged(SieveAudit {
                 sampled: input.audit,
                 span: input.span.id,
                 turn: input.span.turn,
@@ -438,7 +496,7 @@ pub(crate) fn finish_rungs(
                 at: now,
                 completed_units,
                 step_hashes,
-            },
+            }),
         )?;
         if !input.audit {
             let policy = policy::policy_in_txn(vault, txn)?;
@@ -513,7 +571,9 @@ impl Vault {
         Ok(receipts)
     }
 
-    pub fn sieve_audits(&self, limit: usize) -> Result<Vec<SieveAudit>> {
+    /// The sampled audits, in attempt order: flagged spans' and unflagged
+    /// windows' alike (OF-498f).
+    pub fn sieve_audits(&self, limit: usize) -> Result<Vec<SieveAuditRecord>> {
         let txn = self.store.env.read_txn()?;
         let mut audits = Vec::new();
         if limit == 0 {
@@ -521,7 +581,7 @@ impl Vault {
         }
         for row in AUDIT.iter_from(&self.store, &txn, &[])? {
             let (_, audit) = row?;
-            if audit.sampled {
+            if audit.sampled() {
                 audits.push(audit);
             }
             if audits.len() >= limit {
@@ -543,7 +603,7 @@ impl Vault {
 pub(crate) fn sieve_audits_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-) -> Result<Vec<Result<(AttemptId, SieveAudit)>>> {
+) -> Result<Vec<Result<(AttemptId, SieveAuditRecord)>>> {
     let scan = EngineScan::SieveAuditRows;
     let mut count = match ScanCount::start(&vault.store, txn, scan, &[]) {
         Ok(count) => Some(count),
@@ -563,7 +623,7 @@ pub(crate) fn sieve_audits_in_txn(
                 count.row();
             }
         })
-        .filter(|row| !matches!(row, Ok((_, audit)) if !audit.sampled))
+        .filter(|row| !matches!(row, Ok((_, audit)) if !audit.sampled()))
         .collect();
     if let Some(count) = count {
         count.finish(vault);
@@ -576,8 +636,31 @@ pub(crate) fn sieve_audit_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     attempt: &AttemptId,
-) -> Result<Option<SieveAudit>> {
+) -> Result<Option<SieveAuditRecord>> {
     AUDIT.get(store, txn, attempt)
+}
+
+/// Keeps an unflagged window's finding as `attempt`'s audit receipt.
+pub(super) fn put_audit_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: &AttemptId,
+    record: &SieveAuditRecord,
+) -> Result<()> {
+    AUDIT.put(store, txn, attempt, record)
+}
+
+/// The spans of `turn`'s current reading, its rules' and its saved tags'.
+pub(super) fn history_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Vec<SieveSpan>> {
+    Ok(HISTORY
+        .scan_from(store, txn, turn.as_bytes())?
+        .into_iter()
+        .map(|(_, span)| span)
+        .collect())
 }
 
 pub(crate) fn rung_result_units(vault: &Vault, attempt: AttemptId) -> Result<Option<u64>> {
@@ -589,11 +672,11 @@ pub(crate) fn rung_result_units(vault: &Vault, attempt: AttemptId) -> Result<Opt
         return Ok(None);
     };
     let store = DreamerRunnerStore::new(vault);
-    let mut paid = !result.step_hashes.is_empty();
-    for hash in &result.step_hashes {
+    let mut paid = !result.step_hashes().is_empty();
+    for hash in result.step_hashes() {
         paid &= store.checkpoint_step_charged(attempt, hash)?;
     }
-    Ok(Some(if paid { 0 } else { result.completed_units }))
+    Ok(Some(if paid { 0 } else { result.completed_units() }))
 }
 
 pub(crate) fn rung_superseded(vault: &Vault, input: &RungInput) -> Result<bool> {

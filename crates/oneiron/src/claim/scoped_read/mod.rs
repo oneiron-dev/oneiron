@@ -65,6 +65,7 @@ pub use weave_correction::{WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrec
 pub use weave_report::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
+pub use weave_serve::sieve_audit::{WeaveSieveDiscoveryView, WeaveSieveFindingView};
 pub use weave_serve::{
     WeaveDigestFramed, WeaveDigestRequest, WeaveDigestView, WeaveItemCorrectionView, WeaveItemView,
     WeaveLinkCorrectionView, WeaveReaderKind, WeaveReaderRef, WeaveReportRequest, WeaveReportView,

@@ -38,13 +38,22 @@
 //! holds, with nothing it has read read or hashed again, and each segment's
 //! spans go in the queue as it reads, so a pass writes only what it read.
 
+mod audit_windows;
+pub use audit_windows::{
+    SieveAuditDiscovery, SieveAuditExpectation, SieveAuditFinding, SieveAuditWindow,
+    SieveWindowAudit,
+};
+pub(crate) use audit_windows::{
+    WindowAuditInput, WindowOutcome, WindowRead, audit_window_sample_in_txn,
+    enqueue_window_audit_in_txn, finish_window_audit, window_read,
+};
 mod chunks;
 pub mod evidence;
 mod policy;
 mod read;
 mod recipes;
 pub(crate) use recipes::*;
-pub use recipes::{SieveAudit, SieveConsumeReceipt};
+pub use recipes::{SieveAudit, SieveAuditRecord, SieveConsumeReceipt};
 mod rules;
 #[cfg(test)]
 mod tests;
