@@ -567,6 +567,21 @@ pub(super) fn readable(
     actor: &ScopedReadActorKey,
     id: &EntityId,
 ) -> Result<bool> {
+    readable_with(store, txn, id, |body, facets| {
+        crate::gate::scoped_read_claim_allowed(policy, actor, body, facets)
+    })
+}
+
+/// [`readable`]'s row prerequisites, with the CLAIM read judged by `allowed`:
+/// an archived, absent, wiped or bodyless row is never readable, any other
+/// non-CLAIM row is, and a CLAIM is when it is surfaceable and `allowed`
+/// admits its body under its current facets.
+pub(super) fn readable_with(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    allowed: impl FnOnce(&ClaimBody, &[EntityId]) -> bool,
+) -> Result<bool> {
     if crate::vault_cleanup::is_archived_in_txn(store, txn, id)? {
         return Ok(false);
     }
@@ -583,8 +598,7 @@ pub(super) fn readable(
     }
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
     let facets = crate::claim::facet_refs_in_port(store, txn, id)?;
-    Ok(crate::claim::claim_surfaceable(&body)
-        && crate::gate::scoped_read_claim_allowed(policy, actor, &body, &facets))
+    Ok(crate::claim::claim_surfaceable(&body) && allowed(&body, &facets))
 }
 
 pub(super) fn value_hash(value: &rmpv::Value) -> Result<[u8; 32]> {
