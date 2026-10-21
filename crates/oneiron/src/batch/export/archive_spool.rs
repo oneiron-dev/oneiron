@@ -189,25 +189,72 @@ impl FileSpool {
         Ok(())
     }
 
-    /// [`Self::attach_as`] for `bytes` bytes `reader` yields, copied as they
-    /// stream (FIX 5392): bytes whose BLAKE3 and length the caller has
-    /// checked. Only a whole copy is indexed.
-    pub(crate) fn attach_reader_as(
+    /// Copies a body through `copy` onto the spool's end without indexing it
+    /// (FIX 7213), so a scan reads it there before it is kept: the one copy
+    /// of it on disk. A copy that fails, or is not the `bytes` long the
+    /// caller has checked, is cut off again and fails. Nothing else is
+    /// spooled while a body is staged.
+    pub(crate) fn stage(
         &mut self,
-        digest: String,
         bytes: u64,
-        reader: &mut dyn Read,
-    ) -> Result<()> {
-        if self.index.contains_key(&digest) {
-            return Ok(());
-        }
-        let copied = std::io::copy(reader, &mut self.file)?;
+        copy: impl FnOnce(&mut BufWriter<File>) -> Result<()>,
+    ) -> Result<StagedFile> {
         let at = self.end;
-        self.end += copied;
-        if copied != bytes {
-            return Err(spool_failed());
+        self.file.seek(SeekFrom::Start(at))?;
+        let copied = match copy(&mut self.file) {
+            Ok(()) => self.file.stream_position().map_err(Error::from),
+            Err(error) => Err(error),
+        };
+        let staged = StagedFile { at, bytes };
+        match copied {
+            Ok(end) if end == at + bytes => Ok(staged),
+            failed => {
+                self.discard_staged(staged)?;
+                Err(failed.err().unwrap_or_else(spool_failed))
+            }
         }
-        self.index.insert(digest, (at, copied));
+    }
+
+    /// Hands a staged body to `scan` as a reader over exactly its bytes, read
+    /// where they are spooled (FIX 7213); the spool writes on after it.
+    pub(crate) fn scan_staged<T>(
+        &mut self,
+        staged: &StagedFile,
+        scan: impl FnOnce(&mut StagedReader<'_>) -> Result<T>,
+    ) -> Result<T> {
+        self.file.flush()?;
+        let at = staged.at;
+        let file = self.file.get_mut();
+        file.seek(SeekFrom::Start(at))?;
+        let mut reader = StagedReader {
+            file,
+            at,
+            bytes: staged.bytes,
+            pos: 0,
+        };
+        let scanned = scan(&mut reader);
+        reader.file.seek(SeekFrom::Start(at + staged.bytes))?;
+        scanned
+    }
+
+    /// Indexes a staged body under `digest`, whose BLAKE3 and length the
+    /// caller has checked (FIX 7213). A body already spooled under it is cut
+    /// off instead, so no digest is spooled twice.
+    pub(crate) fn commit_staged(&mut self, digest: String, staged: StagedFile) -> Result<()> {
+        if self.index.contains_key(&digest) {
+            return self.discard_staged(staged);
+        }
+        self.end = staged.at + staged.bytes;
+        self.index.insert(digest, (staged.at, staged.bytes));
+        Ok(())
+    }
+
+    /// Cuts a staged body off the spool's end (FIX 7213): its bytes are
+    /// freed, and the next file is written where it started.
+    pub(crate) fn discard_staged(&mut self, staged: StagedFile) -> Result<()> {
+        self.file.seek(SeekFrom::Start(staged.at))?;
+        self.file.get_ref().set_len(staged.at)?;
+        self.end = staged.at;
         Ok(())
     }
 
@@ -235,6 +282,51 @@ impl FileSpool {
             copy(blake3, &mut (&mut file).take(*bytes))?;
         }
         Ok(())
+    }
+}
+
+/// A body staged at the end of a [`FileSpool`] and not yet indexed
+/// (FIX 7213), until [`FileSpool::commit_staged`] keeps it or
+/// [`FileSpool::discard_staged`] cuts it off.
+#[must_use]
+pub(crate) struct StagedFile {
+    at: u64,
+    bytes: u64,
+}
+
+/// A staged body read where it is spooled ([`FileSpool::scan_staged`]):
+/// exactly its bytes, through the file under the spool's writer.
+pub(crate) struct StagedReader<'f> {
+    file: &'f mut File,
+    at: u64,
+    bytes: u64,
+    pos: u64,
+}
+
+impl Read for StagedReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.bytes.saturating_sub(self.pos);
+        let take = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+        let read = self.file.read(&mut buf[..take])?;
+        self.pos += read as u64;
+        Ok(read)
+    }
+}
+
+impl Seek for StagedReader<'_> {
+    fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+        let pos = match to {
+            SeekFrom::Start(pos) => Some(pos),
+            SeekFrom::End(by) => self.bytes.checked_add_signed(by),
+            SeekFrom::Current(by) => self.pos.checked_add_signed(by),
+        };
+        let Some(pos) = pos else {
+            return Err(std::io::ErrorKind::InvalidInput.into());
+        };
+        let from = self.at.saturating_add(pos);
+        self.file.seek(SeekFrom::Start(from))?;
+        self.pos = pos;
+        Ok(pos)
     }
 }
 

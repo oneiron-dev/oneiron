@@ -58,7 +58,9 @@ pub use marker::{
 };
 pub use output::OutputRefusal;
 pub use provisional::ProvisionalEntity;
-pub use reconciler::{TaggingBackoff, TaggingPass, TaggingReconciler};
+pub use reconciler::{
+    PreparedTagging, TaggingBackoff, TaggingPass, TaggingPreparation, TaggingReconciler,
+};
 pub use tags::{
     DerivationEnvelope, MentionHit, MentionLink, MentionReference, MergeEvidence, TaggedMention,
     TurnTags,

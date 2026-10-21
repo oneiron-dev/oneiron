@@ -23,7 +23,7 @@ use crate::error::Result;
 
 /// Commits one topological page lists with their parents. A page whose
 /// listing overflows is asked again at half.
-const COMMIT_PAGE: usize = 65_536;
+pub(super) const COMMIT_PAGE: usize = 65_536;
 
 /// Commits one diff call covers. A call that overflows or runs out of time
 /// splits in half.
@@ -51,7 +51,7 @@ pub enum GitReviewItem {
 }
 
 /// One commit of a topological page and its parents.
-type PagedCommit = (GitOid, Vec<GitOid>);
+pub(super) type PagedCommit = (GitOid, Vec<GitOid>);
 
 impl GitWire<'_> {
     /// Hands `visit` every commit `tip` reaches that no commit of `exclude`
@@ -152,7 +152,7 @@ fn past_bound(failure: &GitWireFailure) -> bool {
 }
 
 /// A `rev-list --parents` page: each commit with its parents.
-fn parse_commit_page(stdout: &[u8]) -> Result<Vec<PagedCommit>> {
+pub(super) fn parse_commit_page(stdout: &[u8]) -> Result<Vec<PagedCommit>> {
     let text = std::str::from_utf8(stdout).map_err(|_| invalid("git commit page must be UTF-8"))?;
     let mut page = Vec::new();
     for line in text.lines() {
