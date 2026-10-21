@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1142 code-mode rows (1104 host rows, 38 run rows), 3855 declarations.
-// Replies: 1022 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1144 code-mode rows (1106 host rows, 38 run rows), 3861 declarations.
+// Replies: 1024 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2303,6 +2303,12 @@ declare namespace Sdk {
   type AgentGrantMinted = { grant: AgentGrantView; act_ref: string };
   type AgentGrantRevokeRequest = { grant_ref: EntityId; seen?: string | null };
   type AgentGrantRevoked = { grant_ref: EntityId; changed: boolean; agent?: EntityId | null; act_ref?: string | null };
+  type GitPushRepo = { repo: EntityId; project: EntityId };
+  type GitPushGrantMintInput = { member: EntityId; repos: GitPushRepo[]; expires_at?: number | null };
+  type GitPushGrantView = { grant_ref: EntityId; member: EntityId; repos: GitPushRepo[]; delegated_by: EntityId; expires_at?: number | null; stands: boolean; revoke_command: string };
+  type GitPushGrantMintOutput = { grant: GitPushGrantView; act_ref: string };
+  type GitPushGrantRevokeInput = { grant_ref: EntityId; seen?: string | null };
+  type GitPushGrantRevokeOutput = { grant_ref: EntityId; changed: boolean; member?: EntityId | null; act_ref?: string | null };
   type BaseAgentPrincipal = { name: string; id: EntityId };
   type BaseAgentList = { agents: BaseAgentPrincipal[] };
   type StandingBlockConfigureRequest = { agent_ref: EntityId; world_ref: EntityId; name: string; token_floor: number };
@@ -5952,6 +5958,14 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Commits one claim through the gate, the same as vault.claims.upsert. */
   remember(input: Sdk.ClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
+  repo: {
+    git_push: {
+      /** The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it. */
+      mint(input: Sdk.GitPushGrantMintInput): Promise<Sdk.GitPushGrantMintOutput | StoredResult>;
+      /** The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing. */
+      revoke(input: Sdk.GitPushGrantRevokeInput): Promise<Sdk.GitPushGrantRevokeOutput | StoredResult>;
+    };
+  };
   reports: {
     /** The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny. */
     disclosure(input: Sdk.ReportDisclosureRequest): Promise<Sdk.ReportIssue | StoredResult>;

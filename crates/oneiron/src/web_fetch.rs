@@ -28,13 +28,10 @@ mod ladder;
 pub use door::{WebCrawlRequest, WebFetchRequest};
 pub use egress::{HOSTED_INFRASTRUCTURE_REASON, HostedEgressGuard, HostedInfrastructureRefusal};
 mod render;
+mod rungs;
 
 use self::ladder::{CrawlWalk, FetchResultWire, crawl_failure_reason, require_renderer_slot};
-use self::render::{
-    FirecrawlScrapeEnvelope, FirecrawlScrapeRequest, decode_response_body, extract_readable_page,
-    parse_web_url, read_capped_body, redact_url_credentials, redacted_transport_detail,
-    renderer_final_url, renderer_request_url, validated_web_url,
-};
+use self::render::{parse_web_url, redact_url_credentials, validated_web_url};
 
 /// Domain prefix for the OF-444 content identity.
 pub const WEB_FETCH_CONTENT_HASH_DOMAIN: &[u8] = b"oneiron.web_fetch.content.v1\0";
@@ -170,6 +167,9 @@ pub enum RendererErrorKind {
     Transport,
     Extraction,
     InvalidResponse,
+    /// A managed node's egress guard refused a hop, an address or a landing
+    /// the rung reached (SCAN C447, FIX 6101). The ladder ends on it typed.
+    HostedInfrastructure,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -211,6 +211,20 @@ pub type RendererResult<T> = std::result::Result<T, RendererError>;
 pub trait Renderer: Send + Sync {
     fn kind(&self) -> RendererKind;
     fn render(&self, url: &str) -> RendererResult<RenderedPage>;
+
+    /// [`Self::render`] on a managed (hosted) node, which hands the rung its
+    /// egress guard (SCAN C447, FIX 6101): a rung that reaches the network
+    /// checks every hop and address it reaches with it, failing a refused one
+    /// with [`RendererError::hosted_infrastructure`]. The default renders
+    /// unchecked; the ladder still checks the requested URL before and the
+    /// navigation-final URL the rung hands back after.
+    fn render_guarded(
+        &self,
+        url: &str,
+        _guard: &HostedEgressGuard,
+    ) -> RendererResult<RenderedPage> {
+        self.render(url)
+    }
 }
 
 /// What a host browser returns for one navigation.
@@ -226,6 +240,21 @@ pub struct HeadlessDocument {
 /// Host-injected browser boundary. The engine owns no browser process or crate.
 pub trait HeadlessRenderer: Send + Sync {
     fn render_html(&self, url: &str) -> RendererResult<HeadlessDocument>;
+
+    /// [`Self::render_html`] on a managed (hosted) node (SCAN C447,
+    /// FIX 6101): a browser that sees its own traffic checks every
+    /// navigation, redirect and request it makes, by the address it connects
+    /// to ([`HostedEgressGuard::refuses`]), and fails a refused one with
+    /// [`RendererError::hosted_infrastructure`]. The default navigates
+    /// unchecked; the engine then checks only the requested URL and the
+    /// browser-final URL.
+    fn render_html_guarded(
+        &self,
+        url: &str,
+        _guard: &HostedEgressGuard,
+    ) -> RendererResult<HeadlessDocument> {
+        self.render_html(url)
+    }
 }
 
 /// One rung's outcome when it did not win. Absent configuration, a typed
@@ -307,12 +336,14 @@ pub enum WebFetchError {
         attempts: Vec<RendererAttemptFailure>,
     },
 
-    /// A managed (hosted) node's fetcher refused a destination that resolves
-    /// to the infrastructure it runs on (SCAN C447), before any rung ran. The
-    /// message names [`HOSTED_INFRASTRUCTURE_REASON`]; the reported URL is
+    /// A managed (hosted) node's fetcher refused a destination that reaches
+    /// the infrastructure it runs on (SCAN C447): the requested page before
+    /// any rung ran, or a redirect hop, a re-resolved address or a landing a
+    /// rung reached (FIX 6101), which ends the ladder. The message names
+    /// [`HOSTED_INFRASTRUCTURE_REASON`]; `url` is the requested page,
     /// credential-redacted.
     #[error(
-        "web fetch refused (hosted_infrastructure): on a hosted node, {url} resolves to the hosting infrastructure (loopback, link-local, this node's own address or a cloud metadata endpoint); a self-hosted node fetches it"
+        "web fetch refused (hosted_infrastructure): on a hosted node, {url} resolves or redirects to the hosting infrastructure (loopback, link-local, this node's own address or a cloud metadata endpoint); a self-hosted node fetches it"
     )]
     HostedInfrastructure { url: String },
 }
@@ -464,7 +495,8 @@ fn content_hash(markdown: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Rung adapters
+// Rung adapters (their `Renderer` impls, guarded paths included, are in
+// `rungs`)
 // ---------------------------------------------------------------------------
 
 /// Rung 1: one blocking GET plus native readability extraction.
@@ -495,51 +527,6 @@ impl NativeReadabilityRenderer {
     }
 }
 
-impl Renderer for NativeReadabilityRenderer {
-    fn kind(&self) -> RendererKind {
-        RendererKind::Readability
-    }
-
-    fn render(&self, url: &str) -> RendererResult<RenderedPage> {
-        let target = renderer_request_url(url)?;
-        // Both failures below are rendered through the redaction seam. The
-        // check above admitted `target`, but the client may have followed a
-        // redirect since, and the URL inside a `reqwest` error is then the
-        // peer's `Location` — which nothing here has vouched for.
-        let response = self.client.get(target).send().map_err(|error| {
-            RendererError::transport(format!(
-                "web fetch GET failed: {}",
-                redacted_transport_detail(error)
-            ))
-        })?;
-        // `error_for_status` accepts 3xx. That is wrong when the injected client
-        // disables redirects: a redirect body is not the requested page. Require
-        // the complete 2xx class explicitly before any response content is read.
-        if !response.status().is_success() {
-            let status = response.status();
-            let target = redact_url_credentials(response.url().as_str());
-            return Err(RendererError::transport(format!(
-                "web fetch GET returned status {status} (target {target})"
-            )));
-        }
-        let final_url = renderer_final_url(response.url().as_str())?;
-        // The transport's charset statement has to be taken here: reading the
-        // body consumes the response, and the header is what decides how the
-        // bytes below the ceiling are decoded.
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
-        // Read under an explicit ceiling instead of `Response::text`, which
-        // buffers the whole body first and so cannot be bounded. Decoding is a
-        // separate closed step over exactly those bounded bytes.
-        let body = read_capped_body(response, self.max_response_bytes)?;
-        let html = decode_response_body(&body, content_type.as_deref())?;
-        extract_readable_page(&html, &final_url)
-    }
-}
-
 /// Rung 2: a host-provided browser navigation fed through the same extraction.
 pub struct NativeHeadlessRenderer {
     headless: Arc<dyn HeadlessRenderer>,
@@ -561,33 +548,6 @@ impl NativeHeadlessRenderer {
     pub fn with_max_response_bytes(mut self, max_response_bytes: NonZeroUsize) -> Self {
         self.max_response_bytes = max_response_bytes;
         self
-    }
-}
-
-impl Renderer for NativeHeadlessRenderer {
-    fn kind(&self) -> RendererKind {
-        RendererKind::Headless
-    }
-
-    fn render(&self, url: &str) -> RendererResult<RenderedPage> {
-        // The host browser is a network boundary like any other, so the same
-        // pre-transport check applies before a URL is handed to it.
-        let target = renderer_request_url(url)?;
-        let document = self.headless.render_html(&target)?;
-        if !(200..300).contains(&document.status) {
-            return Err(RendererError::transport(format!(
-                "headless target returned status {}",
-                document.status
-            )));
-        }
-        let ceiling = self.max_response_bytes.get();
-        if document.html.len() > ceiling {
-            return Err(RendererError::invalid_response(format!(
-                "headless rendered body exceeded the {ceiling} byte ceiling"
-            )));
-        }
-        let final_url = renderer_final_url(&document.final_url)?;
-        extract_readable_page(&document.html, &final_url)
     }
 }
 
@@ -630,59 +590,6 @@ impl FirecrawlRenderer {
     }
 }
 
-impl Renderer for FirecrawlRenderer {
-    fn kind(&self) -> RendererKind {
-        RendererKind::Firecrawl
-    }
-
-    fn render(&self, url: &str) -> RendererResult<RenderedPage> {
-        let payload = FirecrawlScrapeRequest {
-            // No credential reaches the provider: the URL is checked before it
-            // is written into the request body.
-            url: renderer_request_url(url)?,
-            formats: ["markdown", "links"],
-            only_main_content: true,
-        };
-        let response = self
-            .client
-            .post(self.scrape_endpoint.clone())
-            .json(&payload)
-            .send()
-            // The endpoint was checked credential-free at construction, but a
-            // provider redirect can still put userinfo into the URL the error
-            // carries, so this boundary redacts like the native one.
-            .map_err(|error| {
-                RendererError::transport(format!(
-                    "firecrawl scrape request failed: {}",
-                    redacted_transport_detail(error)
-                ))
-            })?;
-        let transport_status = response.status();
-        let body = read_capped_body(response, self.max_response_bytes)?;
-        // The target's outcome lives in the envelope, so the envelope is
-        // decoded and interpreted before the transport status is allowed to
-        // speak. `error_for_status` ahead of this point would discard a
-        // structured scrape error and report a generic status instead. The
-        // transport status only decides how an *undecodable* body is reported.
-        let envelope = match serde_json::from_slice::<FirecrawlScrapeEnvelope>(&body) {
-            Ok(envelope) => envelope,
-            // With no decodable envelope there is no target verdict to honor,
-            // so a non-2xx transport status becomes the remaining evidence.
-            Err(_) if !transport_status.is_success() => {
-                return Err(RendererError::transport(format!(
-                    "firecrawl scrape returned an error status: {transport_status}"
-                )));
-            }
-            Err(error) => {
-                return Err(RendererError::invalid_response(format!(
-                    "firecrawl scrape envelope was undecodable: {error}"
-                )));
-            }
-        };
-        Self::map_envelope(envelope)
-    }
-}
-
 // ---------------------------------------------------------------------------
 // The ladder driver
 // ---------------------------------------------------------------------------
@@ -698,8 +605,9 @@ pub struct WebFetcher {
     headless: Option<Arc<dyn Renderer>>,
     firecrawl: Option<Arc<dyn Renderer>>,
     minimum_content: MinExtractedContentBytes,
-    /// A managed node's egress guard (SCAN C447); `None` on a self-hosted one.
-    egress: Option<Arc<HostedEgressGuard>>,
+    /// A managed node's egress guard (SCAN C447), installed by its host,
+    /// which may be at first use; empty on a self-hosted one.
+    egress: std::sync::OnceLock<Arc<HostedEgressGuard>>,
 }
 
 impl WebFetcher {
@@ -716,7 +624,7 @@ impl WebFetcher {
             headless: None,
             firecrawl: None,
             minimum_content: MinExtractedContentBytes::default(),
-            egress: None,
+            egress: std::sync::OnceLock::new(),
         })
     }
 
@@ -750,8 +658,10 @@ impl WebFetcher {
     /// Returns [`WebFetchError::InvalidUrl`], [`WebFetchError::UnsupportedScheme`],
     /// or [`WebFetchError::CredentialsInUrl`] for a URL this module will not
     /// fetch; [`WebFetchError::MissingRequiredRenderer`] when a required rung is
-    /// unconfigured; and [`WebFetchError::AllRenderersFailed`] carrying the
-    /// ordered ladder trace when no rung produced content.
+    /// unconfigured; [`WebFetchError::HostedInfrastructure`] when a managed
+    /// node's guard refused the page, a hop or an address a rung reached; and
+    /// [`WebFetchError::AllRenderersFailed`] carrying the ordered ladder trace
+    /// when no rung produced content.
     pub fn fetch(&self, url: &str, fetched_at: u64) -> WebFetchResult<FetchResult> {
         let parsed = parse_web_url(url)?;
         let (result, _links, _final_url) = self.fetch_page(&parsed, fetched_at, false)?;
