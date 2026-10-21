@@ -192,29 +192,44 @@ async fn trial(plan: &Plan, config: &Config, binary: &Path, cell: &Cell, row: &m
     row.measures["setup_ms"] = json!(setup_ms);
     // Retain raw receipts even when final state or the checker is unavailable.
     write_json(&row.evidence.join("engine-receipts.json"),&receipts)?;
+    let (mut observed, engine_stop, browser_stop) = measures::observe(&receipts, &config.engine);
+    // Receipt observations survive a missing snapshot or checker failure.
+    for key in ["elapsed_total_ms", "setup_ms", "candidate_ms"] {
+        observed[key] = row.measures[key].clone();
+    }
+    row.measures = observed;
+    row.engine_stop = engine_stop;
     let state = snapshot?;
     write_json(&row.evidence.join("state.json"),&state)?;
     let events = rows::load_values(&fixture.events)?;
     row.checker = check::evaluate(plan,&row.evidence,&reset,&state,&events,artifact_files,capture_deadline).await?;
-    let (mut observed,engine_stop,browser_stop) = measures::observe(&receipts,&config.engine);
+    let mut observed = row.measures.clone();
     observed["executor_completed"] = completed;
     observed["elapsed_total_ms"] = json!(started.elapsed().as_secs_f64()*1000.0);
     observed["setup_ms"] = json!(setup_ms); observed["candidate_ms"] = json!(candidate_ms);
     observed["drain_checker_ms"] = json!(started.elapsed().as_secs_f64()*1000.0-setup_ms-candidate_ms);
+    observed["timing_reason"] = Value::Null;
     observed["first_useful"] = measures::first_useful(&row.checker,&cell.fixture,start_utc,capture_end,captured_seconds,config.clock_tolerance_ms);
+    observed["first_useful_ms"] = observed["first_useful"]["ms"].clone();
+    observed["first_useful_reason"] = observed["first_useful"]["reason"].clone();
     observed["observed_distinct_effect_receipts_lower_bound"] = json!(measures::observed_effects(&receipts));
     observed["action_cap_overshoot"] = if measures::observed_effects(&receipts) > cell.actions as usize {json!(true)} else {Value::Null};
     let physical = rows::load_values(&config.cash_ledger)?;
     let calls: Vec<_> = physical.iter().filter(|r| r["cell"] == cell.id && r["inference"] == true).collect();
     observed["physical_calls"] = json!(calls.len());
+    observed["physical_calls_reason"] = Value::Null;
     let reserved: u64 = calls.iter().filter_map(|r| r["reserved_microusd"].as_u64()).sum();
     observed["cash_reservation_usd"] = json!(reserved as f64/1_000_000.0);
+    observed["cash_reservation_reason"] = Value::Null;
     observed["campaign_cash_reservation_usd"] = json!(ledger.lock().map_err(|_| "cash_ledger_lock_failed")?.reserved() as f64/1_000_000.0);
     let provider_stop = ledger.lock().map_err(|_| "cash_ledger_lock_failed")?.blocked(cell.arm == "D");
     if let Some(stop) = provider_stop {
         row.harness_stop = Some(json!({"cause":stop,"scope":"provider_gate"}));
     }
-    row.measures = observed; row.engine_stop = engine_stop;
+    if observed["action_cap_overshoot"] == true {
+        observed["action_cap_reason"] = json!("observed_effect_receipts_exceed_cap");
+    }
+    row.measures = observed;
     stopped?; fixture_stopped?; execution?;
     if row.harness_stop.is_some() { return Err("provider_gate_terminal".into()) }
     if let Some(reason) = browser_stop { return Err(reason) }

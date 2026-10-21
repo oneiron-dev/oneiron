@@ -197,7 +197,16 @@ F5 600s/60. F5 inherits S1's research cap assumption. Setup/candidate/drain/tota
 elapsed times are separate. Reports show observed medians, missing counts and
 successful-run medians separately, never p95 or success-only all-assigned latency.
 
-E6 field provenance is `unavailable_e6`; E3 monitoring is `unavailable_e3`.
+E6 field provenance is `unavailable_e6`. E3 `no_progress_detection` observes
+engine batches' `stop_cause.cause == "no_progress"`, with the failed receipt's
+step, URL and title. No such stop records false, with the checked receipt count
+and batch stop evidence; this says nothing about whether the page made progress.
+Host-recorded MCP verb-output JSON is decoded, never candidate prose. E1
+`admission_model_free` reads admission replay decision receipts (including an
+empty decision list); E2 `execution_model_free` reads library-run receipts,
+keeping incomplete `model_free_unproven` evidence null. Available observations
+clear their unavailable reason. Whole-TASK freedom stays null without its model
+edge ledger, unless a browser receipt positively records model use (false).
 E4 TASK-before-planner and E5 browser-planner routing are present. A direct
 library call or configured role alone does not prove whole-TASK model freedom
 or complete observed role coverage. Physical attempts and raw usage are archived, but incomplete public
