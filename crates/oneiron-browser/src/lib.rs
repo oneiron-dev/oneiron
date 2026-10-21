@@ -37,6 +37,7 @@ mod mcp;
 mod observation;
 #[cfg(feature = "driver")]
 mod outline;
+mod progress;
 mod receipt_evidence;
 mod request;
 mod retention;
@@ -66,6 +67,8 @@ pub use observation::{
 };
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
+pub use progress::NO_PROGRESS_STEPS;
+use progress::Progress;
 pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};
 pub use request::DestinationRefusal;
 #[cfg(feature = "driver")]
@@ -1359,7 +1362,9 @@ pub trait BrowserDriver: Send {
     /// driver's own verbs, so a host wrapper's door still gates each effect,
     /// and its routine steps through `decider` under the subgoal's one clock.
     /// The batch stops at the first refused, timed-out, unmet or sent-up
-    /// step, never for its count: it holds one or more steps.
+    /// step, never for its count: it holds one or more steps. It goes up
+    /// too once [`NO_PROGRESS_STEPS`] steps in a row acted and left the page
+    /// as it was (CUA E3): after the last of them ran, never before.
     fn batch_with(
         &mut self,
         input: BatchInput,
@@ -1396,7 +1401,11 @@ pub trait BrowserDriver: Send {
             base: base.clone(),
             rebindings: Vec::new(),
         };
+        // Starts with the batch: a run of unchanged steps is the batch's own.
+        let mut monitor = Progress::new();
         for (index, step) in input.steps.into_iter().enumerate() {
+            let counts = step.counts_for_progress();
+            monitor.before(self, counts);
             // The targets this step matched by their locators.
             let mut rebindings = Vec::new();
             let outcome: Result<Option<Observation>, Stop> = match step {
@@ -1543,6 +1552,11 @@ pub trait BrowserDriver: Send {
                             output.receipts.push(receipt.clone());
                         }
                         output.observation = Some(observation);
+                    }
+                    // The step's effect is kept; the page read after it
+                    // may show it the last of a run that changed nothing.
+                    if let Some(page) = monitor.after(self, counts) {
+                        return Ok(progress::handed_up(output, index, page, started));
                     }
                 }
                 Err(stop) => {

@@ -13,6 +13,7 @@ pub mod live_run;
 pub mod vault_read;
 
 mod action_inputs;
+pub(crate) mod activity;
 // The guest authoring request is decoded at the typed component bridge, and
 // a verb hook's rewrite of it as the guest's own.
 mod agent_authoring;
