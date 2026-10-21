@@ -5384,13 +5384,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/archive_spool.rs",
      "purpose": "FIX 2766 (rule 5): the whole-vault archive is built through spool files and read member by member, so no…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 25,
       "fn": 1
      }
     },
