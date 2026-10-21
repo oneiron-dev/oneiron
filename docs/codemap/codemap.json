@@ -64124,10 +64124,20 @@
       "const": 2,
       "enum": 6,
       "fn": 22,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 13,
       "trait": 2,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_fetch/client.rs",
+     "purpose": "The readability rung's HTTP client as a host builds it (FIX 7123)",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -64156,7 +64166,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -68538,7 +68548,7 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)"
     },
     "web_fetch": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -68575,7 +68585,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4324,
+   "source_files": 4325,
    "test_files": 902
   },
   "oneiron-android": {
