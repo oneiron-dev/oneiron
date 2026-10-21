@@ -485,7 +485,13 @@ pub(super) fn promote_one_answering(
         }
     };
     let hints: Vec<&str> = prospective_queries.iter().map(String::as_str).collect();
-    let write = if let Some(checker) = checker {
+    // The checker's turn, waited for here, before the batch announces its
+    // write (FIX 8751, 8701): the gate inside never waits for capacity.
+    let checker = checker
+        .map(|checker| checker.admit_for_writes(&vault.store, run.agent_actor.entity_ref()))
+        .transpose()
+        .map_err(|error| PromotionRejection::engine_in("checker admission failed", error))?;
+    let write = if let Some(checker) = checker.as_ref() {
         vault
             .batch()
             .claim_candidate_with_lexical_hints(

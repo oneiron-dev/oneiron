@@ -4,6 +4,7 @@
 mod cli_env;
 mod egress;
 mod host_net_floor;
+pub mod image_release;
 mod relay_protocol;
 mod transport;
 pub use cli_env::set_cli_env;
@@ -144,6 +145,11 @@ pub struct SessionManifest {
     /// Non-Linux or explicitly unfenced sessions never claim isolation.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub fence_unproven: bool,
+    /// The guest-image release this launch saw (FIX 8253): evidence only,
+    /// separate from the fence evidence, and never a launch decision.
+    /// Absent from a record that predates it.
+    #[serde(default)]
+    pub image_release: image_release::ImageReleaseObservation,
 }
 
 /// Evidence verified before a guest can make its first network call.
@@ -221,6 +227,12 @@ impl ContainerRuntime {
             digest.update(arg.as_encoded_bytes());
             digest.update(&[0]);
         }
+        let image_release = image_release::observe_release(
+            None,
+            &image_release::ObservedArtifacts::from_image_ref(&spec.image),
+            &image_release::HostCapabilities::default(),
+            &image_release::NoVerifierConfigured,
+        );
         let mut child = oneiron_spawn::command(&self.program)
             .args(&args)
             .env_clear()
@@ -245,6 +257,7 @@ impl ContainerRuntime {
             generation,
             fence_proof: None,
             fence_unproven: true,
+            image_release,
         };
         Ok(GuestSession {
             runtime: self.program.clone(),
@@ -296,6 +309,12 @@ impl ContainerRuntime {
                 digest.update(arg.as_encoded_bytes());
                 digest.update(&[0]);
             }
+            let image_release = image_release::observe_release(
+                None,
+                &image_release::ObservedArtifacts::from_image_ref(&spec.image),
+                &image_release::HostCapabilities::default(),
+                &image_release::NoVerifierConfigured,
+            );
             let mut child = oneiron_spawn::command(&self.program)
                 .args(&args)
                 .env_clear()
@@ -320,6 +339,7 @@ impl ContainerRuntime {
                 generation,
                 fence_proof: None,
                 fence_unproven: true,
+                image_release,
             };
             let mut session = GuestSession {
                 runtime: self.program.clone(),

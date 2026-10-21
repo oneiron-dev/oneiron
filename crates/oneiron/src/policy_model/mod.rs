@@ -134,8 +134,7 @@ pub use enforce::{
     PolicyModelEnforcement,
 };
 pub use pattern::{
-    POLICY_PATTERN_ID_MAX_LEN, POLICY_PATTERN_MAX_LEN, POLICY_PATTERN_RULES_MAX, PolicyPatternRole,
-    PolicyPatternRule,
+    POLICY_PATTERN_ID_MAX_LEN, POLICY_PATTERN_MAX_LEN, PolicyPatternRole, PolicyPatternRule,
 };
 pub use planes::{
     HostedLegalAction, HostedLegalPolicy, HostedLegalRow, POLICY_DOCUMENT_MAX_LEN,
