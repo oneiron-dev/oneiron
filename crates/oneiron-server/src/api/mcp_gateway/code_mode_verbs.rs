@@ -568,12 +568,14 @@ impl RunBrowser {
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
-            // The session keeps the starter its engine switches take.
+            // The session keeps the starter its engine switches take. No
+            // host request handler: its pages take the run's relay.
             let started = browser_guest::start_run_browser(
                 &self.vault,
                 self.run_id,
                 &self.guest,
                 &self.handles,
+                None,
             )?;
             *session = Some(started);
         }
