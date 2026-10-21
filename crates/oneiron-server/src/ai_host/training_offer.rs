@@ -416,9 +416,16 @@ impl Brief {
             (None, None) => std::cmp::Ordering::Equal,
         });
         let mut recipes: Vec<Choice> = Vec::new();
+        // A question head trains no seat's role, so no offer recipe names it.
         let mut seat_runs: Vec<&TrainingRun> = runs
             .iter()
-            .filter(|run| run.plan.role == role && run.plan.seat == seat)
+            .filter(|run| {
+                run.plan
+                    .target
+                    .role_binding()
+                    .is_some_and(|(run_role, _)| run_role == role)
+                    && run.plan.seat == seat
+            })
             .collect();
         seat_runs.sort_by_key(|run| std::cmp::Reverse((run.created_at, run.id)));
         for run in &seat_runs {

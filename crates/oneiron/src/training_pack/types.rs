@@ -11,6 +11,8 @@ use crate::llm::{ModelId, ModelLocality};
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::skill_optimize::{EvalCohort, EvalExposure, EvalSeat};
 
+use super::TrainingTarget;
+
 /// A source is a repository and an immutable revision, never a moving branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourcePin {
@@ -88,10 +90,11 @@ pub struct ProbeMeasurement {
 /// The skill supplies the recipe; the engine supplies no model or tolerance.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrainingPlan {
-    pub role: ModelRole,
+    /// A role and its binding, or one detector question (FIX 7263).
+    #[serde(flatten)]
+    pub target: TrainingTarget,
     pub seat: EvalSeat,
     pub starting_checkpoint: PinnedCheckpoint,
-    pub output_binding: ModelBinding,
     pub purpose: String,
     pub settings: Value,
     pub harness: SourcePin,
@@ -129,6 +132,19 @@ pub struct CorpusSplit {
     pub cohort: EvalCohort,
     pub rows: Vec<SplitRow>,
     pub exact_hash_overlaps: u64,
+    /// A question run's split and consent receipts, from its detector-row
+    /// ingress; a role run's reservoir corpus has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detector: Option<DetectorProvenance>,
+}
+
+/// Where a question run's rows come from: the source-family split and the
+/// consent behind them, as the ingress receipted them. The trainer echoes
+/// both and certifies neither.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DetectorProvenance {
+    pub split_receipt: String,
+    pub consent_receipt: String,
 }
 
 /// There is no default destination. External explicitly approves this run's egress.
@@ -284,6 +300,18 @@ pub struct ExportCheck {
     pub argmax_flips: u64,
     pub max_logit_difference: f64,
     pub tolerance: f64,
+    /// A question head's own producer check; a role run has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_check: Option<QuestionExportCheck>,
+}
+
+/// What a question head's trainer also measured on its fixed probes: every
+/// logit finite, the export's tokens the training's, and its own verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionExportCheck {
+    pub finite: bool,
+    pub tokens_match: bool,
+    pub passed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

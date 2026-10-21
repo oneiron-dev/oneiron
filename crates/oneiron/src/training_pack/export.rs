@@ -123,6 +123,8 @@ fn split_bytes(
 impl Vault {
     /// Owner-triggered: the OF-400 exporter remains the only corpus door.
     /// Inputs are not recovered by joining a receipt to unconsented prompt text.
+    /// The reservoir's chosen and rejected pairs train a role; a question
+    /// head's per-target rows come from its own detector ingress, not here.
     pub fn prepare_training_pack(
         &self,
         owner: &AuthenticatedOwner,
@@ -131,6 +133,11 @@ impl Vault {
         connector: &PaidConnector,
     ) -> Result<TrainingRun> {
         self.recheck_owner(owner)?;
+        if draft.plan.target.question().is_some() {
+            return Err(invalid(
+                "the consented reservoir trains a role; a question head trains on detector rows",
+            ));
+        }
         draft.plan.validate()?;
         if draft.quantity == 0 || connector.connector.trim().is_empty() {
             return Err(invalid(
@@ -180,6 +187,7 @@ impl Vault {
                 cohort: cohort.clone(),
                 rows: split.rows,
                 exact_hash_overlaps: split.overlaps,
+                detector: None,
             };
             let compute = ComputePin {
                 choice: draft.compute,

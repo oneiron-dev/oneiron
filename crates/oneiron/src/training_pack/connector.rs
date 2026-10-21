@@ -14,9 +14,10 @@ use crate::llm::run_admission::{CallOutcome, PaidConnector, RunAdmission};
 
 use super::custody::{keep_checkpoint, read_pin};
 use super::{
-    CheckpointUpload, ComputePin, ExportCheck, PinnedCheckpoint, ProbeMeasurement, RUNS, SourcePin,
-    TrainingDeclarationPin, TrainingDispatch, TrainingOwner, TrainingPlan, TrainingResult,
-    TrainingRun, TrainingState, hash_json, invalid, json_value, run_in_txn,
+    CheckpointUpload, ComputePin, DetectorProvenance, ExportCheck, PinnedCheckpoint,
+    ProbeMeasurement, QuestionExportCheck, RUNS, SourcePin, TrainingDeclarationPin,
+    TrainingDispatch, TrainingOwner, TrainingPlan, TrainingResult, TrainingRun, TrainingState,
+    hash_json, invalid, json_value, run_in_txn,
 };
 
 #[derive(Debug)]
@@ -27,6 +28,9 @@ pub struct TrainRequest {
     pub compute: ComputePin,
     pub training_jsonl: Vec<u8>,
     pub training_blake3: [u8; 32],
+    /// The run's corpus's split and consent receipts, for a question run;
+    /// taken from the run, never minted by the host.
+    pub detector: Option<DetectorProvenance>,
 }
 
 /// The adapter supplies measurements and returns files, not a deployed model.
@@ -43,6 +47,9 @@ pub struct TrainOutput {
     pub harness: SourcePin,
     pub receipt: Value,
     pub service_units: u64,
+    /// A question head's producer check, which its result requires; a role
+    /// run's connector sends none.
+    pub question_check: Option<QuestionExportCheck>,
 }
 
 pub type TrainingFuture<'a> = Pin<Box<dyn Future<Output = Result<TrainOutput>> + Send + 'a>>;
@@ -68,7 +75,10 @@ impl TrainingPlan {
                 .settings
                 .as_object()
                 .is_some_and(|settings| !settings.is_empty())
-            || !self.output_binding.route_models.is_empty()
+            || self
+                .target
+                .role_binding()
+                .is_some_and(|(_, binding)| !binding.route_models.is_empty())
             || self.probes.is_empty()
             || self
                 .starting_checkpoint
@@ -85,6 +95,9 @@ impl TrainingPlan {
             return Err(invalid(
                 "training needs settings, purpose, a fixed probe set and a finite tolerance",
             ));
+        }
+        if let Some(question) = self.target.question() {
+            question.validate(&self.starting_checkpoint.model)?;
         }
         Ok(())
     }
@@ -136,6 +149,7 @@ fn check_export(
         argmax_flips: flips,
         max_logit_difference: max_difference,
         tolerance: run.plan.export_logit_tolerance,
+        question_check: output.question_check,
     })
 }
 
@@ -184,7 +198,7 @@ impl Vault {
             ));
         }
         if let Some(teachers) = declaration.teachers()
-            && (teachers.target() != run.plan.output_binding.model.as_str()
+            && (teachers.target() != run.plan.target.output_model().as_str()
                 || teachers.purpose() != run.plan.purpose)
         {
             return Err(invalid(
@@ -243,6 +257,7 @@ impl Vault {
             compute: run.compute,
             training_jsonl,
             training_blake3: run.corpus.training.blake3,
+            detector: run.corpus.detector,
         };
         let output = match connector.train(request, admission).await {
             Ok(output) => output,
@@ -285,8 +300,9 @@ impl Vault {
                     .dispatch
                     .as_ref()
                     .is_some_and(|dispatch| dispatch.dispatched)
-                || output.training_checkpoint.model != run.plan.output_binding.model
-                || output.exported_checkpoint.model != run.plan.output_binding.model
+                || output.training_checkpoint.model != *run.plan.target.output_model()
+                || output.exported_checkpoint.model != *run.plan.target.output_model()
+                || output.question_check.is_some() != run.plan.target.question().is_some()
                 || !output
                     .receipt
                     .as_object()
@@ -306,6 +322,7 @@ impl Vault {
                     || result.settings != output.settings
                     || result.harness != output.harness
                     || result.connector_receipt != output.receipt
+                    || result.checks.question_check != output.question_check
                 {
                     return Err(invalid("a completed training run cannot be replaced"));
                 }

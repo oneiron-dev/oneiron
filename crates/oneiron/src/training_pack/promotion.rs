@@ -1,4 +1,6 @@
 //! Held-out scoring releases a counted cohort. Binding is a separate owner act.
+//! Only a role run binds here: a question head has no role, no incumbent and
+//! no manifest row, whatever the owner's choice.
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -41,8 +43,14 @@ pub struct SwapExpectation {
 impl SwapExpectation {
     /// What a swap of `run` binds against while `manifest` stands.
     /// # Errors
-    /// A run whose checkpoint has not returned, or a pin that does not encode.
+    /// A question run, a run whose checkpoint has not returned, or a pin that
+    /// does not encode.
     pub fn of(run: &TrainingRun, manifest: Option<&ModelManifest>) -> Result<Self> {
+        let (role, _) = run
+            .plan
+            .target
+            .role_binding()
+            .ok_or_else(|| invalid(QUESTION_HAS_NO_ROLE))?;
         let result = run
             .result
             .as_ref()
@@ -52,7 +60,7 @@ impl SwapExpectation {
             checkpoint_blake3: result.exported_checkpoint.content_hash()?,
             evaluation_blake3: hash_json(&run.evaluation)?,
             incumbent: manifest
-                .and_then(|manifest| manifest.roles.get(&run.plan.role))
+                .and_then(|manifest| manifest.roles.get(&role))
                 .cloned(),
         })
     }
@@ -70,6 +78,9 @@ pub enum ViewedSwap {
     /// door binds nothing.
     Embedder,
 }
+
+/// Why no role door binds a question head.
+const QUESTION_HAS_NO_ROLE: &str = "a question head binds no role; its approval is separate";
 
 fn role_key(role: ModelRole) -> Result<String> {
     serde_json::to_string(&role).map_err(|_| invalid("training role encoding failed"))
@@ -282,7 +293,12 @@ impl Vault {
         self.recheck_owner(owner)?;
         self.with_write_txn_grouped(|txn| {
             let run = run_in_txn(self, txn, id)?;
-            if run.plan.role == ModelRole::RetrievalEmbedder {
+            let (role, _) = run
+                .plan
+                .target
+                .role_binding()
+                .ok_or_else(|| invalid(QUESTION_HAS_NO_ROLE))?;
+            if role == ModelRole::RetrievalEmbedder {
                 return Ok(ViewedSwap::Embedder);
             }
             let manifest = crate::llm::manifest::read_manifest(&self.store, txn)?;
@@ -322,6 +338,13 @@ impl Vault {
     ) -> Result<RoleSwapReceipt> {
         let actor = owner.revalidate_in_txn(self, txn)?;
         let mut run = run_in_txn(self, txn, id)?;
+        // A question head binds no role, explicit override or not.
+        let (role, binding) = run
+            .plan
+            .target
+            .role_binding()
+            .map(|(role, binding)| (role, binding.clone()))
+            .ok_or_else(|| invalid(QUESTION_HAS_NO_ROLE))?;
         match &choice {
             SwapChoice::Evaluated if !run.can_propose_swap() => {
                 return Err(invalid(
@@ -351,7 +374,6 @@ impl Vault {
                 "the training result or the role's model moved since this swap was asked",
             ));
         }
-        let role = run.plan.role;
         let key = role_key(role)?;
         if let Some(current) = ROLES.get(&self.store, txn, &key)?
             && current.run == *id
@@ -362,7 +384,7 @@ impl Vault {
         let previous = manifest.roles.get(&role).cloned();
         if previous
             .as_ref()
-            .is_some_and(|binding| binding.slot != run.plan.output_binding.slot)
+            .is_some_and(|current| current.slot != binding.slot)
         {
             return Err(invalid(
                 "a trained checkpoint cannot move its role to another slot",
@@ -386,7 +408,7 @@ impl Vault {
         } else {
             None
         };
-        manifest.roles.insert(role, run.plan.output_binding.clone());
+        manifest.roles.insert(role, binding.clone());
         self.write_model_manifest_in_txn(txn, &manifest, teacher_approval, None)?;
         let receipt = RoleSwapReceipt {
             id: self.store.clock.entity_id()?,
@@ -395,7 +417,7 @@ impl Vault {
             at: self.store.clock.now_recorded_at(),
             role,
             previous,
-            binding: run.plan.output_binding.clone(),
+            binding,
             checkpoint: result.exported_checkpoint.clone(),
             evaluation: run.evaluation.clone(),
             checks: result.checks.clone(),

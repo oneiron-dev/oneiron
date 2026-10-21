@@ -1,12 +1,15 @@
 //! OF-382: a consented corpus, pinned training job, checked checkpoint and
 //! owner-approved role swap. Training and evaluation are host-supplied work;
 //! this module never launches a trainer or deploys its result automatically.
+//! A run trains a model for a manifest role or, FIX 7263, one head for one
+//! exact detector question (`TrainingTarget`); only a role run swaps.
 mod actor_erase;
 mod authorize;
 mod connector;
 mod custody;
 mod export;
 mod promotion;
+mod target;
 mod types;
 
 use serde::Serialize;
@@ -23,6 +26,7 @@ pub(crate) use authorize::training_run_job_input;
 pub use connector::{TrainOutput, TrainRequest, TrainingConnector, TrainingFuture};
 pub use promotion::{SwapExpectation, TrainingEvalInput, ViewedSwap};
 pub(crate) use promotion::{role_swap_receipt_in, training_run_in, training_runs_in};
+pub use target::{QUESTION_LABEL_SCHEMA, QUESTION_RENDERER, QuestionTarget, TrainingTarget};
 pub use types::*;
 
 const RUNS: SideTable<EntityId, TrainingRun, Named> =
@@ -58,8 +62,10 @@ impl TrainingRun {
     }
 
     /// Failed checks are evidence for the owner, never an automatic deployment.
+    /// A question head binds no role, so it never proposes a role swap.
     pub fn can_propose_swap(&self) -> bool {
-        self.corpus.exact_hash_overlaps == 0
+        self.plan.target.role_binding().is_some()
+            && self.corpus.exact_hash_overlaps == 0
             && self
                 .result
                 .as_ref()
@@ -80,6 +86,9 @@ impl ExportCheck {
             && self.harness_matches
             && self.argmax_flips == 0
             && self.max_logit_difference <= self.tolerance
+            && self
+                .question_check
+                .is_none_or(|check| check.finite && check.tokens_match && check.passed)
     }
 }
 
