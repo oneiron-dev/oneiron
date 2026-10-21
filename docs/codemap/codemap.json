@@ -36900,7 +36900,6 @@
      "path": "src/llm/seat/decisions.rs",
      "purpose": "The seat pick as typed decisions through the host's ladder, and the note seam beside it",
      "surface": {
-      "crate-vis": 1,
       "fn": 1,
       "struct": 1,
       "trait": 1
