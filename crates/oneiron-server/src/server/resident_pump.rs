@@ -38,7 +38,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use oneiron::agent_def::{
-    AgentModel, UNBOUND_LIST_KEEPS_ROUTE, ensure_listed, note_stale_listed_models,
+    AgentDefinition, AgentModel, UNBOUND_LIST_KEEPS_ROUTE, ensure_listed, note_stale_listed_models,
     note_unbound_listed_run,
 };
 use oneiron::agent_dispatch::{
@@ -60,7 +60,8 @@ use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confessio
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
 use oneiron::engine_executor::continuation::{fork_executor_run, run_continuation};
 use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, RunCompaction,
+    EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EnteredRun, RunCompaction,
+    entered_run,
 };
 use oneiron::failure_ladder::{
     DetectorTier, FailureEscalationMode, FailureLadderOutcome, FailureScope, FailureScopePolicy,
@@ -75,7 +76,10 @@ use oneiron::llm::{
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::self_heal::audit::AttemptConfession;
 use oneiron::task_type::TaskTypeRef;
-use oneiron::{DreamerRunnerStore, EntityId, LlmError, RetryableLlmError, Vault, WriteActor};
+use oneiron::{
+    DreamerRunnerStore, EntityId, LlmError, ModelId, ModelLocality, RetryableLlmError, Vault,
+    WriteActor,
+};
 use tokio::sync::broadcast;
 
 use super::run_host_door::RunHostDoor;
@@ -86,8 +90,8 @@ use crate::ai_host::payer_funding::{
 use crate::config::models::PlannerSettings;
 use crate::decision_host::DecisionHost;
 use crate::mcp::{
-    EngineRunError, McpCodeModeProvider, ScopeMeter, enter_engine_native_run, task_engine_run_seat,
-    task_run_seat,
+    EngineRunError, McpCodeModeProvider, PlannedModel, ScopeMeter, enter_engine_native_run,
+    task_engine_run_seat, task_run_seat,
 };
 
 /// The pump's lease owner, and the owner of the park a run stopped by a
@@ -546,6 +550,43 @@ fn run_bound(
             definition.models.clone(),
         )?
     };
+    // FIX 2310 (OF-541 PR H): a planned child no seat binds runs its plan's
+    // pick exactly where its provider routes that model so and its frozen
+    // definition lists it; else the provider's own model, each call another
+    // model answers marked on its receipts. The pin is decided at the
+    // child's first entry alone (Engine C3), before its list holds it. A
+    // later entry keeps what its record was first entered under, read once
+    // its task is whole below, and only then is it held to its list.
+    let plan = status
+        .input
+        .plan
+        .as_ref()
+        .filter(|_| !continues && model_seat.is_none());
+    let mut reentered = None;
+    let mut planned = None;
+    if let Some(plan) = plan {
+        match entered_run(vault, run_id) {
+            Ok(None) => {
+                planned = Some(first_entry_pin(
+                    vault,
+                    provider,
+                    definition,
+                    run_id,
+                    &plan.plan.model,
+                    &mut config,
+                ));
+            }
+            Ok(Some(entered)) => reentered = Some(entered),
+            Err(error) => {
+                tracing::warn!(%error, run = %run_id.to_hex(), "a planned child's replay record did not read; it runs as it would today");
+                planned = Some(PlannedModel {
+                    child: run_id,
+                    pick: plan.plan.model.clone(),
+                    exact: false,
+                });
+            }
+        }
+    }
     if let Some(seat) = &model_seat {
         ensure_listed(definition, seat.model()).map_err(text)?;
         let lease_owner = status
@@ -573,19 +614,8 @@ fn run_bound(
         {
             tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a wake's model change was not noted in the agent's diary");
         }
-    } else if !definition.models.is_empty() {
-        // FIX 6030: with no seat the run is still held to its list; a
-        // configured route off the list refuses, naming it. Under the old
-        // hook (FIX 4544) the run keeps that route, as before lists, and the
-        // owner is told once per model it ran on; a note that fails does not
-        // stop it.
-        if !UNBOUND_LIST_KEEPS_ROUTE {
-            ensure_listed(definition, &config.model).map_err(text)?;
-        } else if let Err(error) =
-            note_unbound_listed_run(vault, actor.entity_ref(), definition, &config.model)
-        {
-            tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a listed agent's seatless run's owner note was not recorded");
-        }
+    } else if reentered.is_none() {
+        hold_seatless_to_list(vault, actor, definition, &config.model)?;
     }
     // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
     // pack its launch froze, its SKILL.md before any other skill's body; a
@@ -637,6 +667,19 @@ fn run_bound(
             ));
         }
     }
+    // A planned child's later entry (Engine C3), its task now whole.
+    if let (Some(plan), Some(entered)) = (plan, &reentered) {
+        planned = Some(later_entry_pin(
+            vault,
+            provider,
+            definition,
+            entered,
+            run_id,
+            &plan.plan.model,
+            &mut config,
+        ));
+        hold_seatless_to_list(vault, actor, definition, &config.model)?;
+    }
     // Its model calls and its reader children spend under the attempt's
     // scope. An unmetered attempt's calls stay on the provider's meter, and
     // so do its children's. Its door withholds nothing, so its children's
@@ -671,7 +714,11 @@ fn run_bound(
     // Its compaction passes spend under the attempt's scope too. An agent
     // whose profile names `self` writes them as itself (FIX 4465), as it
     // would on any other host.
-    let mut compaction = provider.compaction(caller, key, metered.as_ref());
+    // A planned child's live admission sees its plan's binding (Engine C5).
+    let mut compaction = match &planned {
+        Some(planned) => provider.planned_compaction(caller, key, metered.as_ref(), planned),
+        None => provider.compaction(caller, key, metered.as_ref()),
+    };
     // The host's root key signs a leader's subproject spawn (OF-389): the
     // managed issuer, else the one the configured host secret derives.
     let derived = match server.managed_issuer {
@@ -705,6 +752,7 @@ fn run_bound(
             &server.live_runs,
             &exposures,
             &server.ai,
+            planned.as_ref(),
         );
         // The first step's capsule takes the rung that answered it, on the
         // thread the entry ran its calls on.
@@ -795,6 +843,111 @@ fn continued_seat(
     })
 }
 
+/// FIX 6030: with no seat the run is still held to its list; a configured
+/// route off the list refuses, naming it. Under the old hook (FIX 4544) the
+/// run keeps that route, as before lists, and the owner is told once per
+/// model it ran on; a note that fails does not stop it. A definition that
+/// lists none holds nothing.
+fn hold_seatless_to_list(
+    vault: &Vault,
+    actor: WriteActor,
+    definition: &AgentDefinition,
+    model: &ModelId,
+) -> Result<(), String> {
+    if definition.models.is_empty() {
+        return Ok(());
+    }
+    if !UNBOUND_LIST_KEEPS_ROUTE {
+        ensure_listed(definition, model).map_err(text)?;
+    } else if let Err(error) = note_unbound_listed_run(vault, actor.entity_ref(), definition, model)
+    {
+        tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a listed agent's seatless run's owner note was not recorded");
+    }
+    Ok(())
+}
+
+/// Every route a model can be served on: a planned child's later entry reads
+/// which one its first entry pinned (Engine C3).
+const LOCALITIES: [ModelLocality; 3] = [
+    ModelLocality::OnDevice,
+    ModelLocality::OwnServer,
+    ModelLocality::ThirdParty,
+];
+
+/// Where `provider` routes `pick`, a planned child's model, exactly, when
+/// the child's frozen definition lists it too (FIX 2310, Engine C1/C2). A
+/// provider that lists no model routes none: the child runs as today.
+fn exact_route(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    definition: &AgentDefinition,
+    pick: &ModelId,
+) -> Option<ModelLocality> {
+    provider
+        .planned_route(vault, pick)
+        .filter(|_| ensure_listed(definition, pick).is_ok())
+}
+
+/// A planned child's pin at its first entry (FIX 2310): its plan's pick,
+/// on the route its provider serves it on, when [`exact_route`] finds one;
+/// else `config` stays as today's, and the provider's own model runs.
+fn first_entry_pin(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    definition: &AgentDefinition,
+    child: EntityId,
+    pick: &ModelId,
+    config: &mut EngineExecutorConfig,
+) -> PlannedModel {
+    let route = exact_route(vault, provider, definition, pick);
+    if let Some(locality) = route {
+        config.model = pick.clone();
+        config.model_locality = locality;
+    }
+    PlannedModel {
+        child,
+        pick: pick.clone(),
+        exact: route.is_some(),
+    }
+}
+
+/// A planned child's pin at a later entry (Engine C3): the config its
+/// record was first entered under, never decided again. The template's is
+/// tried first; a pick that is the template's own model, on the route it is
+/// served on now, runs exactly, as at a first entry, since the config is the
+/// same either way. Then the pick on each route. With none of them, the
+/// template, and the run resumes as it does today.
+fn later_entry_pin(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    definition: &AgentDefinition,
+    entered: &EnteredRun<'_>,
+    child: EntityId,
+    pick: &ModelId,
+    config: &mut EngineExecutorConfig,
+) -> PlannedModel {
+    let exact = if entered.under(config) {
+        config.model == *pick
+            && exact_route(vault, provider, definition, pick) == Some(config.model_locality)
+    } else {
+        let mut pinned = config.clone();
+        pinned.model = pick.clone();
+        let found = LOCALITIES.into_iter().any(|locality| {
+            pinned.model_locality = locality;
+            entered.under(&pinned)
+        });
+        if found {
+            *config = pinned;
+        }
+        found
+    };
+    PlannedModel {
+        child,
+        pick: pick.clone(),
+        exact,
+    }
+}
+
 /// One entry of the run, as `execute_code` enters its runs, but bound to the
 /// leased attempt: its dispatcher carries the attempt, so `tasks.refuse`
 /// reaches the TASK it realizes, a TASK it creates runs under it, its
@@ -828,6 +981,7 @@ fn enter_run(
     live_runs: &super::LiveRuns,
     exposures: &[TaskExposure],
     ai: &crate::ai_host::AiHandle,
+    planned: Option<&PlannedModel>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?
@@ -886,7 +1040,7 @@ fn enter_run(
         .enter();
     door.bind_meter(line);
     let entered = enter_engine_native_run(
-        vault, provider, &bound, config, compaction, reactor, meter, model_seat,
+        vault, provider, &bound, config, compaction, reactor, meter, model_seat, planned,
     );
     door.bind_meter(None);
     entered
