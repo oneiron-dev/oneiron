@@ -267,7 +267,7 @@ pub(crate) enum RunnerSettle<'a> {
 /// already writes it as: an agent dispatch's agent definition; otherwise
 /// the base agent stamped on the Dreamer row, or the Dreamer for a TASK
 /// realization. `None` when the row names none, and then nothing is owed.
-fn runner_actor_in(
+pub(super) fn runner_actor_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
@@ -345,6 +345,8 @@ pub(super) fn runner_refusal(error: MemoryError) -> Error {
 /// The engine runner's take of the TASK its freshly leased row realizes:
 /// [`accept_runner_task_in_txn`] as the runner's own actor, in the
 /// transaction that leased it. A row that realizes no TASK is left alone.
+/// A bound TASK's try pins its library program here too, at its first
+/// lease (CUA E4); the pin never fails the claim.
 pub(crate) fn accept_leased_task_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -357,7 +359,7 @@ pub(crate) fn accept_leased_task_in_txn(
         return Ok(());
     };
     accept_runner_task_in_txn(vault, txn, actor, record, None).map_err(runner_refusal)?;
-    Ok(())
+    super::browser_workflow::pin_first_lease_in_txn(vault, txn, record)
 }
 
 /// The engine runner's report on the TASK its held row realizes:

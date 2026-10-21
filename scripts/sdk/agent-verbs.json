@@ -839,7 +839,7 @@
     },
     {
       "name": "describe",
-      "description": "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it), or the whole TASKS section when nothing is named.",
+      "description": "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it; `workflow`: its bound try), or the whole TASKS section when nothing is named.",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
       "outputs_by_input": {
@@ -889,7 +889,7 @@
     },
     {
       "name": "tasks.create",
-      "description": "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway.",
+      "description": "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway, and may bind an agent TASK to a library program (`context.workflow`).",
       "prose_links": [
         "/label",
         "/spec/title",
@@ -1245,7 +1245,7 @@
     },
     {
       "name": "tasks.update",
-      "description": "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK.",
+      "description": "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries.",
       "refs": [
         "/task_ref"
       ],

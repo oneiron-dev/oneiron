@@ -15,10 +15,12 @@ use crate::error::Result;
 use crate::llm::decision::Reversibility;
 
 use super::brief::StoredBrief;
+use super::browser_workflow::task_workflow_binding_in_txn;
 use super::decision_port::{PortAnswer, TaskDecisions, TaskQuestion, ask};
 use super::highway_report::done_question_inputs;
 use super::highway_runner::workflow_try::WorkflowRunEnd;
 use super::highway_runner::{runner_refusal, runner_task_in};
+use super::highway_types::{HostBinding, TaskWorkflowOutcome};
 use super::terminal_state::TaskExecutionState;
 use super::wire_decode::task_verb_body_in;
 
@@ -117,6 +119,66 @@ pub fn runner_done_question(
         return Ok(None);
     }
     done_question_in(vault, &txn, task_ref, result_ref, &[])
+}
+
+/// A bound try's typed Done (CUA E4; Engine C1), given with no question
+/// asked: its pin records Done, so its strict program met its postcondition
+/// and every one of the TASK's browser checks held on the page it left, and
+/// those checks are the TASK's whole goal. It binds the try's receipt NOTE
+/// as the result and the brief version the try was leased under, read under
+/// `binding`'s lease. `None` when the try is not so: no recorded Done, a goal
+/// with a criterion or with no check, a brief revised since the try was
+/// leased, an ask holding the TASK, or a TASK with no authority row; its
+/// TASK's judge then decides as before.
+///
+/// # Errors
+///
+/// A lapsed lease, and storage errors.
+pub fn runner_workflow_done_answer(
+    vault: &Vault,
+    binding: &HostBinding,
+) -> Result<Option<RunnerDoneAnswer>> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(pinned) = task_workflow_binding_in_txn(vault, &txn, binding)? else {
+        return Ok(None);
+    };
+    let TaskWorkflowOutcome::Done { receipt_ref } = pinned.outcome() else {
+        return Ok(None);
+    };
+    if !pinned.typed_goal() {
+        return Ok(None);
+    }
+    let Some((_, task_ref)) = binding.leased_task_in_txn(vault, &txn)? else {
+        return Ok(None);
+    };
+    if task_ref != pinned.task_ref() {
+        return Ok(None);
+    }
+    let Some(body) = task_verb_body_in(vault, &txn, task_ref)? else {
+        return Ok(None);
+    };
+    if matches!(&body.state, Some(TaskExecutionState::Blocked { on, .. }) if !on.is_empty()) {
+        return Ok(None);
+    }
+    let Some(brief) = body.brief else {
+        return Ok(None);
+    };
+    if brief.stamp() != pinned.brief() {
+        return Ok(None);
+    }
+    let Some(authority) = vault.task_authority_state_in(&txn, task_ref)? else {
+        return Ok(None);
+    };
+    Ok(Some(RunnerDoneAnswer {
+        judged: Judged {
+            task_ref,
+            result_ref: *receipt_ref,
+            brief_rev: brief.rev,
+            brief_digest: brief.digest,
+            principal: authority.owner_ref,
+        },
+        answer: PortAnswer::Yes,
+    }))
 }
 
 /// The question an ended workflow run `end`'s Done asks over its report

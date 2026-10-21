@@ -3962,11 +3962,11 @@ class Oneiron:
             """Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."""
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
-            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""
+            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway, and may bind an agent TASK to a library program (`context.workflow`)."""
         def wave(self, spec: Facade.TaskWaveRequest) -> Facade.TaskWaveReceipt:
             """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
         def update(self, spec: Facade.TaskUpdateRequest) -> Facade.TaskUpdateReceipt:
-            """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."""
+            """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries."""
         def accept(self, spec: Facade.TaskAccept) -> Facade.TaskCallReceipt:
             """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:

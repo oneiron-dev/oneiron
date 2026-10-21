@@ -413,6 +413,11 @@ pub struct TaskStatusView {
     pub pending: bool,
     pub asks: Vec<(TaskAskHandle, TaskAskStatus)>,
     pub last_receipt: Option<String>,
+    /// A bound TASK's try and the library program it pinned (CUA E4): the
+    /// try a handle names, else the TASK's newest bound one. Absent for an
+    /// unbound TASK.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<TaskWorkflowStatus>,
     /// Digest of everything above; a poll passes it back as `after`.
     #[serde(with = "hex32")]
     pub observed: [u8; 32],
@@ -427,6 +432,72 @@ pub struct AttemptView {
     pub yours: bool,
     pub claimed_at: Option<u64>,
     pub backoff_until: Option<u64>,
+}
+
+/// One bound try's library program (CUA E4): the record its TASK named, the
+/// one its first lease resolved that to, the brief it was leased under, and
+/// what its strict run came to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskWorkflowStatus {
+    pub attempt_ref: String,
+    /// The record the TASK's handle named.
+    pub requested: EntityId,
+    /// The live program the try pinned; `None` when the handle led to none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<EntityId>,
+    pub brief: BriefStamp,
+    pub outcome: TaskWorkflowOutcome,
+}
+
+/// What a bound try's strict library run came to (CUA E4). Each settled
+/// outcome names the receipt NOTE that holds its whole evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskWorkflowOutcome {
+    /// Not run yet.
+    Pending,
+    /// The program met its postcondition and every TASK check held.
+    Done { receipt_ref: EntityId },
+    /// The try went on to its planner, for `cause`.
+    Handoff {
+        cause: TaskWorkflowHandoff,
+        receipt_ref: EntityId,
+    },
+}
+
+/// Why a bound try went on to its planner (CUA E4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskWorkflowHandoff {
+    /// The strict program stopped short; its own cause is in the receipt.
+    Program,
+    /// The program met its postcondition and a TASK check did not hold
+    /// (`task_goal_unmet`).
+    GoalUnmet,
+    /// The handle's lineage ends at `id`, retired with no successor.
+    Retired {
+        id: EntityId,
+        reason: Option<String>,
+    },
+    /// No program was ever filed under `id`.
+    Missing { id: EntityId },
+    /// The library could not be read for `id` at the try's first lease; the
+    /// error is in the receipt.
+    Unreadable { id: EntityId },
+}
+
+impl TaskWorkflowHandoff {
+    /// The stable code a planner reads the handoff by.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::Program => "workflow_stopped",
+            Self::GoalUnmet => "task_goal_unmet",
+            Self::Retired { .. } => "workflow_retired",
+            Self::Missing { .. } => "workflow_missing",
+            Self::Unreadable { .. } => "workflow_unreadable",
+        }
+    }
 }
 
 /// The body of the `TaskLifecycle` receipt one mutating call owes: the call,

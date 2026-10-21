@@ -38,6 +38,11 @@ side_tables! {
     /// Round-robin cursor of the soft-confirm retry sweep: the last visited delivery key suffix
     /// (id16 group + id16 person). Key: ().
     TASK_ASK_SOFT_CONFIRM_DELIVERY_CURSOR: VaultMeta b"tasks.ask.soft_confirm.delivery_cursor.v1" Raw;
+    /// One bound try's library program (CUA E4): the record its first lease resolved its TASK's
+    /// handle to, with the TASK's arguments, or why there is none; the brief stamp and done-means
+    /// it was leased under; and what its strict run came to. Copied from the admitted brief, and
+    /// gone with its TASK's hard erase. Key: id16 (attempt).
+    TASK_BROWSER_WORKFLOW_ATTEMPT: VaultMeta b"tasks.browser_workflow.attempt.v1/" Named Admitted;
     /// By-owner index backfill marker. Key: ().
     TASK_BY_OWNER_BACKFILLED: VaultMeta b"tasks.by_owner.backfilled.v1" Raw;
     /// Owner's tasks forward index. Key: id16 + id16 + id16.
