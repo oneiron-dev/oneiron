@@ -24,6 +24,7 @@ mod board_task;
 mod comm_widen;
 pub(crate) use board_task::board_task_for_id;
 mod brief;
+mod browser_workflow;
 mod checkout_facts;
 mod code_consent_word;
 pub(crate) use checkout_facts::CheckoutTaskAccess;
@@ -168,16 +169,25 @@ pub use verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 pub use brief::{
     BriefConstraints, BriefContext, BriefIntent, BriefStamp, Care, ComposerStamp, Criterion,
     DoneMeans, EscalationRule, EscalationTrigger, PinnedPack, PinnedRef, QueueTaskBrief, SpawnPins,
-    StoredBrief, TypeRef, brief_digest,
+    StoredBrief, TypeRef, WorkflowBinding, brief_digest,
+};
+pub(crate) use browser_workflow::erase_task_workflows_in_txn;
+pub use browser_workflow::{
+    TaskWorkflowAttempt, TaskWorkflowCheck, TaskWorkflowPin, TaskWorkflowReport,
+    TaskWorkflowUnavailable, record_task_workflow_outcome, task_workflow_binding,
+    task_workflow_binding_in_txn,
 };
 pub use decision_port::TaskDecisions;
 pub(crate) use highway_post::settle_task_proposal_in_txn;
 pub use highway_types::{
     AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle,
     TaskLifecycleRecord, TaskOutcome, TaskPhase, TaskPost, TaskReport, TaskReportBody,
-    TaskStatusQuery, TaskStatusView, TaskVia,
+    TaskStatusQuery, TaskStatusView, TaskVia, TaskWorkflowHandoff, TaskWorkflowOutcome,
+    TaskWorkflowStatus,
 };
-pub use runner_done::{RunnerDoneAnswer, RunnerDoneQuestion, runner_done_question};
+pub use runner_done::{
+    RunnerDoneAnswer, RunnerDoneQuestion, runner_done_question, runner_workflow_done_answer,
+};
 
 pub(crate) use create_validation::{
     completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,

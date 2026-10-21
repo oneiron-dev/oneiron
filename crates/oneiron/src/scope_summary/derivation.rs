@@ -9,7 +9,7 @@ use crate::{EntityId, Vault, WriteActor};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-const PROJECTION: SideTable<[u8; 32], Projection, Named> =
+pub(super) const PROJECTION: SideTable<[u8; 32], Projection, Named> =
     SideTable::new(&side_table::SCOPE_SUMMARY_PROJECTION);
 /// The identity key's field for a NOTE set's digest.
 const NOTE_SET_KEY: &str = "note_set";
@@ -96,11 +96,14 @@ pub struct ScopeSummaryMetadata {
     pub derivation: SummaryDerivation,
 }
 
+/// A declaration's projection row. An Arc's row (FIX 7509 P8) also holds its
+/// gate state, and stands before its first summary lands, with none current.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Projection {
-    request: Vec<u8>,
-    current: String,
-    observed: [u8; 32],
+pub(super) struct Projection {
+    pub(super) request: Vec<u8>,
+    pub(super) current: Option<String>,
+    pub(super) observed: [u8; 32],
+    pub(super) arc: Option<super::arc_gate::ArcState>,
 }
 
 pub(super) fn encode(value: &Value) -> Result<Vec<u8>> {
@@ -141,7 +144,10 @@ pub(super) fn declaration(
 /// 3198), so a later set for the same room replaces the earlier set's row
 /// and continues its summary, never re-derives beside it. A NOTE set has no
 /// scope: its digest stands in the scope's place ([`note_set_identity`]).
-fn projection_key(request: &super::ScopeSummaryRequest, purpose: &str) -> Result<[u8; 32]> {
+pub(super) fn projection_key(
+    request: &super::ScopeSummaryRequest,
+    purpose: &str,
+) -> Result<[u8; 32]> {
     let mut normalized = declaration(request, purpose, None);
     if let Value::Map(fields) = &mut normalized {
         fields.retain(|(key, _)| key.as_str() != Some(super::request::SOURCES_KEY));
@@ -208,8 +214,9 @@ pub(super) fn options(
     let meta = crate::entity_doc::summary_meta_in_txn(vault, txn, &previous)?;
     // A sitting's summary is written from its retained turns, never from its
     // own earlier body (CLM-009, FIX 7509): the prior summary is lineage only
-    // and its body is not read; its keep memo stays the editor's wants.
-    if super::session::is_session_declaration(input) {
+    // and its body is not read; its keep memo stays the editor's wants. An
+    // Arc is written from its sittings' summary lines the same way (P8).
+    if super::session::is_session_declaration(input) || super::arc::is_arc_declaration(input) {
         return Ok((purpose, Some(previous), meta.keep, None));
     }
     // A retired source may have withdrawn the old summary. Its retained
@@ -233,10 +240,13 @@ pub(super) fn current_in_txn(
     purpose: &str,
 ) -> Result<Option<EntityId>> {
     let key = projection_key(request, purpose)?;
-    let Some(projection) = PROJECTION.get(&vault.store, txn, &key)? else {
+    let Some(current) = PROJECTION
+        .get(&vault.store, txn, &key)?
+        .and_then(|projection| projection.current)
+    else {
         return Ok(None);
     };
-    let id = EntityId::from_hex(&projection.current)?;
+    let id = EntityId::from_hex(&current)?;
     let state = crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &id)?;
     if state.deleted || vault.archive_tombstone_in_txn(txn, &id)?.is_some() {
         return Ok(None);
@@ -260,25 +270,41 @@ pub(super) fn register_in_txn(
         &purpose.id,
         Some(summary),
     );
-    let observed = match observation(vault, txn, &current_input) {
-        Ok(observed) => observed,
-        // A source TURN partly away from this replica (OF-534) has no
-        // observation yet (FIX 3861): the projection takes the input's own
-        // hash, as an unreadable scope does at the commit boundary, so the
-        // first commit after the promotion that reads it re-derives.
-        Err(error) if crate::dreamer_consolidation::waits_on_residency(&error) => {
-            *blake3::hash(&encode(&current_input)?).as_bytes()
+    // An Arc is re-derived through its gate (FIX 7509 P8), never by an
+    // observation, and its row keeps its gate state.
+    let arc = super::arc::is_arc_declaration(input);
+    let observed = if arc {
+        [0; 32]
+    } else {
+        match observation(vault, txn, &current_input) {
+            Ok(observed) => observed,
+            // A source TURN partly away from this replica (OF-534) has no
+            // observation yet (FIX 3861): the projection takes the input's
+            // own hash, as an unreadable scope does at the commit boundary,
+            // so the first commit after the promotion that reads it
+            // re-derives.
+            Err(error) if crate::dreamer_consolidation::waits_on_residency(&error) => {
+                *blake3::hash(&encode(&current_input)?).as_bytes()
+            }
+            Err(error) => return Err(error),
         }
-        Err(error) => return Err(error),
     };
+    let state = PROJECTION
+        .get(&vault.store, txn, &key)?
+        .and_then(|projection| projection.arc);
     PROJECTION.put(
         &vault.store,
         txn,
         &key,
         &Projection {
             request,
-            current: summary.to_hex(),
+            current: Some(summary.to_hex()),
             observed,
+            arc: if arc {
+                Some(state.unwrap_or_default())
+            } else {
+                None
+            },
         },
     )
 }
@@ -306,8 +332,9 @@ pub(crate) fn roll_back_summary_in_txn(
     let Some(projection) = PROJECTION.get(&vault.store, txn, &key)? else {
         return Ok((None, header));
     };
-    if projection.current != summary.to_hex() {
-        return Ok((Some(EntityId::from_hex(&projection.current)?), header));
+    if projection.current.as_deref() != Some(summary.to_hex().as_str()) {
+        let current = projection.current.as_deref().map(EntityId::from_hex);
+        return Ok((current.transpose()?, header));
     }
     let previous = meta
         .derivation
@@ -323,6 +350,12 @@ pub(crate) fn roll_back_summary_in_txn(
             return Ok((Some(previous), header));
         }
     }
+    // An Arc's row keeps its gate state (FIX 7509 P8): with no summary
+    // standing, it is owed again.
+    if projection.arc.is_some() {
+        super::arc_gate::withdrawn_in_txn(vault, txn, &key, projection)?;
+        return Ok((None, header));
+    }
     PROJECTION.delete(&vault.store, txn, &key)?;
     Ok((None, header))
 }
@@ -335,7 +368,18 @@ pub(crate) fn rederive_changed_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) 
         .iter_from(&vault.store, txn, b"")?
         .collect::<Result<Vec<_>>>()?;
     for (key, mut projection) in rows {
-        let current = EntityId::from_hex(&projection.current)?;
+        // An Arc is marked here, never queued or read (FIX 7509 P8): its
+        // gate and backstop decide when it is written, and its row stays
+        // owed when its summary goes.
+        if projection.arc.is_some() {
+            super::arc_gate::on_commit_in_txn(vault, txn, &key, projection)?;
+            continue;
+        }
+        let Some(current) = projection.current.as_deref().map(EntityId::from_hex) else {
+            PROJECTION.delete(&vault.store, txn, &key)?;
+            continue;
+        };
+        let current = current?;
         let state =
             crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &current)?;
         if state.deleted || vault.archive_tombstone_in_txn(txn, &current)?.is_some() {
