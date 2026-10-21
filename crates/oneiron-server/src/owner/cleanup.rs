@@ -1,16 +1,20 @@
 //! Cleanup review (ARCH-0073): the archive proposals the cleanup job opened,
-//! the digests of what cleanup archived, the job's posture and the done-task
-//! retention dial, and bringing an archived record back.
+//! the digests of what cleanup archived, the runs that archived and what each
+//! held before, the job's posture and the done-task retention dial, bringing
+//! an archived record back, and reverting a whole run (OF-449).
 //!
 //! The job proposes first while ARCH-0066's integrity teeth are open: nothing
 //! is archived until the owner accepts, and the engine refuses the automatic
 //! posture until those teeth close. Archive is the only verb; a record
-//! restored here is the same record, never a copy.
+//! restored here is the same record, never a copy, and the owner keeps it:
+//! cleanup leaves it alone until it changes.
 
 use oneiron::attempt_queue::AttemptId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::vault_cleanup::{
     self, ArchivedEntity, CleanupDigest, CleanupKind, CleanupPosture, CleanupProposal,
+    CleanupRevertEntry, CleanupRevertReason, CleanupRunRecord, CleanupRunRevert,
+    CleanupRunRevertAnswer, CleanupSnapshotEntry,
 };
 use oneiron::{EntityId, ErrorKind, Vault};
 use serde::{Deserialize, Serialize};
@@ -36,6 +40,76 @@ pub(crate) struct CleanupReview {
     /// Everything cleanup archived that is still archived: records and
     /// completed attempts, one restorable view (ARCH-0073 §6).
     pub(crate) archived: Vec<Archived>,
+    /// Every run that archived something, oldest first: each entry as it
+    /// stood before the run archived it, and the run's revert once there is
+    /// one. Send a run's `attempt` to `/cleanup/revert-run` to revert it.
+    pub(crate) runs: Vec<Run>,
+    /// Runs whose record does not read, by attempt; the rest of the review
+    /// still answers.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) unreadable_runs: Vec<String>,
+}
+
+/// One cleanup run that archived something.
+#[derive(Debug, Serialize)]
+pub(crate) struct Run {
+    /// The run's attempt id: what `/cleanup/revert-run` takes.
+    pub(crate) attempt: String,
+    /// `auto_archived` or `proposal_accepted`.
+    pub(crate) decision: &'static str,
+    /// The digest that decision recorded.
+    pub(crate) digest: String,
+    pub(crate) archived_at: String,
+    /// What the run archived, each entry as it stood just before.
+    pub(crate) entries: Vec<RunEntry>,
+    /// The stored answer of the run's revert; null until it is reverted.
+    pub(crate) reverted: Option<Reverted>,
+}
+
+/// One entry a run archived.
+#[derive(Debug, Serialize)]
+pub(crate) struct RunEntry {
+    pub(crate) entity: String,
+    pub(crate) kind: &'static str,
+    /// BLAKE3 of the stored bytes the run hid (64 hex). The archive keeps
+    /// them; a revert lifts the mark and writes no body.
+    pub(crate) revision: String,
+    /// The mark in force before the run, hex; null when there was none.
+    pub(crate) before: Option<String>,
+    /// The exact mark the run wrote, hex.
+    pub(crate) after: String,
+}
+
+/// A run's revert, as stored.
+#[derive(Debug, Serialize)]
+pub(crate) struct Reverted {
+    pub(crate) at: String,
+    pub(crate) entries: Vec<RevertEntry>,
+}
+
+/// What reverting a whole run did.
+#[derive(Debug, Serialize)]
+pub(crate) struct RunReverted {
+    pub(crate) attempt: String,
+    pub(crate) reverted_at: String,
+    /// True when an earlier revert stored this answer; nothing changed now.
+    pub(crate) repeated: bool,
+    pub(crate) entries: Vec<RevertEntry>,
+}
+
+/// What reverting a run did to one entry.
+#[derive(Debug, Serialize)]
+pub(crate) struct RevertEntry {
+    pub(crate) entity: String,
+    pub(crate) kind: &'static str,
+    /// `restored`, `already_restored`, `changed` or `unavailable`.
+    pub(crate) outcome: &'static str,
+    /// Why a `changed` or `unavailable` entry stayed as it is:
+    /// `archived_again`, `unreadable`, `deleted` or `gone`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reason: Option<&'static str>,
+    /// Its stored bytes changed after the run archived them.
+    pub(crate) edited: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -126,6 +200,7 @@ pub(crate) fn review(vault: &Vault) -> OwnerResult<CleanupReview> {
                 .map(|row| rfc3339_secs(row.at)),
         });
     }
+    let runs = vault_cleanup::cleanup_runs(vault)?;
     Ok(CleanupReview {
         posture: vault_cleanup::cleanup_posture(vault)?.as_str(),
         task_retention_days: vault.task_retention_days()?,
@@ -135,6 +210,8 @@ pub(crate) fn review(vault: &Vault) -> OwnerResult<CleanupReview> {
             .collect(),
         digests: digests.iter().map(digest).collect(),
         archived,
+        runs: runs.runs.iter().map(run_view).collect(),
+        unreadable_runs: runs.unreadable.into_iter().map(attempt_hex).collect(),
     })
 }
 
@@ -218,6 +295,32 @@ pub(crate) fn restore(
     })
 }
 
+/// Reverts one whole cleanup run, named by the `attempt` of a review `runs`
+/// entry. Each entry answers for itself and a repeat answers as stored. A
+/// run whose proposal still waits, or that ran before runs kept snapshots,
+/// has nothing this door reverts.
+pub(crate) fn revert_run(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    attempt: &str,
+) -> OwnerResult<RunReverted> {
+    let run = AttemptId::from_bytes(entity_id("attempt", attempt)?.as_bytes())?;
+    match vault.revert_cleanup_run_as(owner, run)? {
+        CleanupRunRevertAnswer::Reverted(revert) => Ok(run_reverted(&revert)),
+        CleanupRunRevertAnswer::NoSuchRun => {
+            Err(OwnerError::NotFound("cleanup run", attempt.to_owned()))
+        }
+        CleanupRunRevertAnswer::ProposalOpen(proposal) => Err(OwnerError::Changed(format!(
+            "cleanup run {attempt} has archived nothing yet: its proposal {} waits for review; \
+             reject it instead",
+            proposal.to_hex()
+        ))),
+        CleanupRunRevertAnswer::Unrecorded => Err(OwnerError::Refused(format!(
+            "cleanup run {attempt} ran before runs kept snapshots; restore its entries one by one"
+        ))),
+    }
+}
+
 fn proposal_gone(error: oneiron::Error, proposal: &str) -> OwnerError {
     match error.kind() {
         ErrorKind::VaultCleanupProposalNotFound => OwnerError::Changed(format!(
@@ -268,6 +371,53 @@ fn archived(row: &ArchivedEntity) -> Archived {
         kind: RECORD,
         archived_at: Some(rfc3339_secs(row.archived_at)),
     }
+}
+
+fn run_view(row: &CleanupRunRecord) -> Run {
+    Run {
+        attempt: attempt_hex(row.attempt),
+        decision: row.snapshot.decision.as_str(),
+        digest: row.snapshot.digest.to_hex(),
+        archived_at: rfc3339_secs(row.snapshot.at),
+        entries: row.snapshot.entries.iter().map(run_entry).collect(),
+        reverted: row.revert.as_ref().map(|revert| Reverted {
+            at: rfc3339_secs(revert.reverted_at),
+            entries: revert.entries.iter().map(revert_entry).collect(),
+        }),
+    }
+}
+
+fn run_entry(entry: &CleanupSnapshotEntry) -> RunEntry {
+    RunEntry {
+        entity: entry.entity.to_hex(),
+        kind: entry.kind.as_str(),
+        revision: bytes_hex(&entry.revision),
+        before: entry.before.as_deref().map(bytes_hex),
+        after: bytes_hex(&entry.after),
+    }
+}
+
+fn run_reverted(revert: &CleanupRunRevert) -> RunReverted {
+    RunReverted {
+        attempt: attempt_hex(revert.attempt),
+        reverted_at: rfc3339_secs(revert.reverted_at),
+        repeated: revert.repeated,
+        entries: revert.entries.iter().map(revert_entry).collect(),
+    }
+}
+
+fn revert_entry(entry: &CleanupRevertEntry) -> RevertEntry {
+    RevertEntry {
+        entity: entry.entity.to_hex(),
+        kind: entry.kind.as_str(),
+        outcome: entry.outcome.as_str(),
+        reason: entry.outcome.reason().map(CleanupRevertReason::as_str),
+        edited: entry.edited,
+    }
+}
+
+fn bytes_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn hexes(ids: &[EntityId]) -> Vec<String> {

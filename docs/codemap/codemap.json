@@ -21248,6 +21248,7 @@
       "RunnerWork",
       "SeatAuth",
       "SeatIdentity",
+      "SeatPassedOver",
       "SeatRoute",
       "SeatSpent",
       "SkippedRunnerSeat"
@@ -21257,7 +21258,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 3,
-      "enum": 5,
+      "enum": 6,
       "fn": 13,
       "struct": 5
      }
@@ -21277,7 +21278,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ByoaInputStager",
@@ -21286,7 +21287,7 @@
      "path": "src/dispatch_byoa/staged_input.rs",
      "purpose": "A CLI run's job carried as a file in its checkout, never in argv: one argv entry has an OS limit (Linux…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -21340,6 +21341,7 @@
      "notable": [
       "BindRunnerWork",
       "RunnerSeatChoice",
+      "RunnerTaskSource",
       "RunnerWorkBinding",
       "RunnerWorkBindingId",
       "RunnerWorkBound",
@@ -21351,9 +21353,19 @@
      "purpose": "A Dreamer's runner work, bound once and handed seat to seat (OF-137): \"the router mints the next attempt on…",
      "surface": {
       "crate-vis": 3,
-      "enum": 4,
+      "enum": 5,
       "fn": 6,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/work_hand_off.rs",
+     "purpose": "A spent seat's work handed to the next seat (OF-137): \"the router mints the next attempt on the next seat…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -34681,7 +34693,7 @@
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -63507,13 +63519,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault_cleanup/attempt_retention.rs",
      "purpose": "Reversible retention for private queue records; the serialized attempt is never changed",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -63557,12 +63569,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/vault_cleanup/marks.rs",
+     "purpose": "Cleanup marks keyed by id16: a run's archive mark on a completed attempt, and the owner's kept mark on an…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/vault_cleanup/mod.rs",
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)",
      "surface": {
       "crate-vis": 5,
       "mod": 1,
-      "re-export": 4
+      "re-export": 6
      }
     },
     {
@@ -63572,7 +63594,7 @@
      "path": "src/vault_cleanup/owner_doors.rs",
      "purpose": "The owner's cleanup doors for a transport",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -63593,7 +63615,7 @@
      "path": "src/vault_cleanup/proposals_archive.rs",
      "purpose": "Proposal accept/reject lane plus the archived query and restore door",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 7
      }
     },
@@ -63649,7 +63671,43 @@
      "path": "src/vault_cleanup/run_record.rs",
      "purpose": "Durable cleanup results close the job-commit → queue-settlement crash gap",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CleanupRevertEntry",
+      "CleanupRevertOutcome",
+      "CleanupRevertReason",
+      "CleanupRunRevert",
+      "CleanupRunRevertAnswer"
+     ],
+     "path": "src/vault_cleanup/run_revert.rs",
+     "purpose": "The owner reverts one whole cleanup run (OF-449)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CleanupRunRecord",
+      "CleanupRunSnapshot",
+      "CleanupRuns",
+      "CleanupSnapshotEntry"
+     ],
+     "path": "src/vault_cleanup/run_snapshot.rs",
+     "purpose": "What each cleanup run archived, kept on the run's own RUN row (OF-449)",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1,
+      "struct": 4
      }
     },
     {
@@ -68083,7 +68141,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69063,7 +69121,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
     "vault_cleanup": {
-     "files": 18,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69142,7 +69200,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4372,
+   "source_files": 4376,
    "test_files": 902
   },
   "oneiron-android": {
@@ -91134,7 +91192,7 @@
      "path": "src/managed/vm_outbox/host.rs",
      "purpose": "The host's end of a vault VM's outbox carrier: an attachment bound to one VM's guest-initiated socket for…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 2
      }
@@ -92602,13 +92660,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/cleanup.rs",
      "purpose": "Cleanup review (ARCH-0073): the archive proposals the cleanup job opened, the digests of what cleanup…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 19
      }
     },
     {
