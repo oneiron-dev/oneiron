@@ -123,6 +123,9 @@ impl FetchOrigin {
 
 impl OrganSpec {
     /// A first-party organ with the default grant: two threads, 512 MiB.
+    /// Its caller vouches for the program's provenance: first party means
+    /// reviewed repo code (ARCH-0075), and a content hash or an owner's
+    /// install is not that (FIX 7644).
     #[must_use]
     pub fn first_party(name: impl Into<String>, program: impl Into<PathBuf>) -> Self {
         Self {

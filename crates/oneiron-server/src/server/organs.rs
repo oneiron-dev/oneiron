@@ -6,6 +6,12 @@
 //! build the vault came to hold since, reaches the host without a restart.
 //! The seal installs through its worker, whose grant names the seal's asks
 //! and fetch origins.
+//!
+//! A pack build's tier is its verified provenance alone (FIX 7644): first
+//! party when the operator listed its blake3 (`--trusted-organ-build`), else
+//! third party, which the host refuses to start until filesystem confinement
+//! for organs lands. Owner installation and a content pin prove which bytes
+//! run, not that they are reviewed repo code (ARCH-0075).
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -26,12 +32,6 @@ use super::SyncServer;
 /// `oneiron-organs` under the OS temp directory.
 const ORGAN_DIR_ENV: &str = "ONEIRON_ORGAN_DIR";
 
-/// The tier a pack's organ installs at. A pack's build is pinned by its
-/// blake3 and the owner installed the pack, so it runs as first party, as
-/// the seal's pack build already does; a third-party tier is refused until
-/// filesystem confinement lands.
-const PACK_ORGAN_TIER: OrganTier = OrganTier::FirstParty;
-
 /// One pass over the pack organs at a time: the boot install and the
 /// listener's tick never install the same organ twice over each other.
 static PASS: Mutex<()> = Mutex::new(());
@@ -51,10 +51,16 @@ fn ambient_organ_dir() -> PathBuf {
         )
 }
 
-/// Whether `spec` is the install `organ`'s `build` makes: the same pinned
-/// binary under the same version pin and grant.
-fn installed_as(spec: &OrganSpec, organ: &PackOrgan, build: &PackOrganBuild) -> bool {
-    spec.tier == PACK_ORGAN_TIER
+/// Whether `spec` is the install `organ`'s `build` makes at
+/// `expected_tier`: the same pinned binary under the same tier, version pin
+/// and grant. A build whose tier changed is reinstalled.
+fn installed_as(
+    spec: &OrganSpec,
+    organ: &PackOrgan,
+    build: &PackOrganBuild,
+    expected_tier: OrganTier,
+) -> bool {
+    spec.tier == expected_tier
         && spec
             .program_hash
             .is_some_and(|hash| hash.to_hex() == build.blake3)
@@ -98,6 +104,24 @@ impl SyncServer {
         self.organ_dir.clone().unwrap_or_else(ambient_organ_dir)
     }
 
+    /// The tier a pack organ `build` installs at (FIX 7644): first party
+    /// only when the operator listed its blake3 among the server's trusted
+    /// organ builds ([`crate::config::SyncServerConfig::trusted_organ_builds`]),
+    /// else third party. The digest is the one the vault verified the
+    /// build's bytes against, and the host checks the file against it before
+    /// every start. Nothing the pack carries adds to the list.
+    pub(crate) fn pack_build_tier(&self, build: &PackOrganBuild) -> OrganTier {
+        if self
+            .config
+            .trusted_organ_builds
+            .contains(build.blake3.as_str())
+        {
+            OrganTier::FirstParty
+        } else {
+            OrganTier::ThirdParty
+        }
+    }
+
     /// Brings the host in step with the vault's Active packs: every organ a
     /// pack carries a build of for this platform is installed, the first
     /// pack to name an organ winning; one whose pack now carries another
@@ -138,10 +162,11 @@ impl SyncServer {
                 continue;
             }
             carried.insert(name);
+            let tier = self.pack_build_tier(build);
             if self
                 .organs
                 .spec(name)
-                .is_some_and(|spec| installed_as(&spec, &entry.organ, build))
+                .is_some_and(|spec| installed_as(&spec, &entry.organ, build, tier))
             {
                 continue;
             }
@@ -149,19 +174,33 @@ impl SyncServer {
                 .vault
                 .pack_organ_build(&entry.pack_name, name, &platform)
                 .map_err(HostError::from)
-                .and_then(|binary| pack_spec(&binary, &dir, PACK_ORGAN_TIER));
+                .and_then(|binary| pack_spec(&binary, &dir, tier));
             match spec {
-                Ok(spec) => self.organs.install(spec),
+                Ok(spec) => {
+                    if tier == OrganTier::ThirdParty {
+                        tracing::warn!(
+                            organ = %name,
+                            pack = %entry.pack_name,
+                            build = %build.blake3,
+                            %platform,
+                            "pack organ build is third party: it will not start on this platform until filesystem confinement for organs lands; to run it as first party, the operator lists its blake3 with --trusted-organ-build"
+                        );
+                    }
+                    self.organs.install(spec);
+                }
                 Err(error) => {
                     tracing::warn!(organ = %name, pack = %entry.pack_name, %error, "pack organ install");
                 }
             }
         }
         for (name, _) in self.organs.installed() {
+            // A pass installs every pack build pinned, whatever its tier,
+            // and this host pins no other organ but the seal, which follows
+            // its own worker: a pinned install here is a pack's.
             let pack_organ = self
                 .organs
                 .spec(&name)
-                .is_some_and(|spec| spec.tier == PACK_ORGAN_TIER && spec.program_hash.is_some());
+                .is_some_and(|spec| spec.program_hash.is_some());
             if name != SEAL_ORGAN
                 && !carried.contains(name.as_str())
                 && pack_organ

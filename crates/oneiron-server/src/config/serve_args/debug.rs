@@ -66,6 +66,7 @@ impl fmt::Debug for ServeArgs {
             .field("browser_runtime", &self.browser_runtime)
             .field("desktop_runtime", &self.desktop_runtime)
             .field("organ_dir", &self.organ_dir)
+            .field("trusted_organ_builds", &self.trusted_organ_builds)
             .field("mesh_bind", &self.mesh_bind)
             .field("mesh_relays", &self.mesh_relays)
             .field("shared_model_root", &self.shared_model_root)

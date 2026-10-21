@@ -301,6 +301,20 @@ A vault VM reads the guest runtimes and the mesh settings from the one-line
 files `/config/browser-runtime`, `/config/desktop-runtime`, `/config/mesh-bind`
 and `/config/mesh-relays` on its config drive.
 
+`--trusted-organ-build <blake3>` (plain or managed serve, repeatable) names a
+pack organ build this server runs as first party, by its 64-hex blake3 as the
+pack's `ORGAN.json` names it. Listing one is the operator's statement that the
+build is reviewed first-party code. Every other pack organ build, the seal's
+among them, installs as third party, and the organ host refuses to start a
+third-party organ on any platform until filesystem confinement for organs
+lands. The log names the pack, organ, build and platform once per install, and
+e-sign seals wait, said once, until the seal build is listed or a seal organ
+program is named (`--seal-organ`, `ONEIRON_SEAL_ORGAN`), which stays first
+party. No config file, settings file or environment sets the list: a settings
+file that names it is refused as an unknown field. A vault VM has no
+config-drive file for it. An engine from before this flag refuses it, so a
+supervisor passes it only to engines at or after the merge that added it.
+
 A `local` embedder names its files with `model_dir` or `models_dir`, because
 the XDG data root is never read. A keystore lives in the supervisor's
 `--keystore-dir` alone, since one without it would be looked for under HOME:

@@ -34,6 +34,14 @@ pub const MAX_FDS_PER_FRAME: usize = 16;
 /// The frame limit both sides use until the handshake sets one.
 pub const DEFAULT_FRAME_LIMIT: u32 = 64 * 1024 * 1024;
 
+/// The largest `hello` or `hello_ack` frame body either side sends or reads
+/// (FIX 7648). It binds only that first exchange, before a session exists:
+/// an allowed pre-session bound, never one on an established call, reply,
+/// ask or answer, which cross under the wire's own `u32` length. The
+/// shipped organs' `hello_ack`s are under 1 KiB; this leaves wide room for
+/// an organ that offers many verbs.
+pub const INITIAL_HANDSHAKE_FRAME_BYTES: u32 = 1024 * 1024;
+
 /// A protocol version. The major must match; both sides speak the lower minor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtocolVersion {

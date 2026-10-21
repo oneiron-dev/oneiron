@@ -322,6 +322,15 @@ pub struct ServeArgs {
     #[arg(long = "organ-dir", requires = "managed_by_hypnos")]
     pub organ_dir: Option<PathBuf>,
 
+    /// An organ build this server runs as first party, by its blake3 (64
+    /// hex); repeat it for each (FIX 7644). Listing one is the operator's
+    /// statement that the build is reviewed first-party code. A pack organ
+    /// build not listed runs as third party, which the organ host refuses to
+    /// start until filesystem confinement for organs lands. Plain or managed
+    /// serve; no config file, settings file or environment sets it.
+    #[arg(long = "trusted-organ-build", value_parser = blake3_hex)]
+    pub trusted_organ_builds: Vec<String>,
+
     /// Managed mode: where the paired-machine mesh listener binds
     /// (`ip:port`), in place of `ONEIRON_MESH_BIND`, which managed mode never
     /// reads. Without it the mesh is off.
@@ -609,6 +618,17 @@ fn parse_runtime_provider_kind(value: &str) -> Result<RuntimeProviderKind, Strin
 /// closed instead of resolving to a default.
 fn parse_privacy_posture(value: &str) -> Result<HostingPrivacyPosture, String> {
     value.parse()
+}
+
+/// Clap value parser for `--trusted-organ-build`: a blake3 digest, 64 hex,
+/// kept in lowercase as a pack's `ORGAN.json` names its builds, so a typo
+/// stops the start instead of trusting nothing.
+fn blake3_hex(value: &str) -> Result<String, String> {
+    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(value.to_ascii_lowercase())
+    } else {
+        Err("a blake3 digest is 64 hex characters".to_owned())
+    }
 }
 
 pub(super) fn runtime_override_from_args(args: &ServeArgs) -> Option<RuntimeConfigOverride> {

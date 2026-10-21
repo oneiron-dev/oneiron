@@ -573,10 +573,10 @@ impl ManagedArgs {
     /// roots, log level, `--no-hooks`, the maximum tier and the owner's
     /// failure-signal export and training choices. Each of them, given,
     /// stands over the settings file's own value. The supervisor's own
-    /// bindings read here too (browser origins, the host's public origin and
-    /// the kit fetch URLs) are ones the settings file never sets. Everything
-    /// else on `ServeArgs` is refused before this runs, so nothing reaches
-    /// here to be quietly dropped.
+    /// bindings read here too (browser origins, the host's public origin,
+    /// the kit fetch URLs and the trusted organ builds) are ones the settings
+    /// file never sets. Everything else on `ServeArgs` is refused before this
+    /// runs, so nothing reaches here to be quietly dropped.
     ///
     /// `auth_secret` stays `None`: bearer auth terminates at the supervisor,
     /// which owns the listening socket inside an owner-only directory.
@@ -603,6 +603,9 @@ impl ManagedArgs {
             kit_bundle_public_urls: crate::config::normalize_list(
                 args.kit_bundle_public_urls.clone().unwrap_or_default(),
             ),
+            // The organ builds the supervisor vouches for as first party
+            // (FIX 7644); the settings file never names one.
+            trusted_organ_builds: args.trusted_organ_builds.iter().cloned().collect(),
             dimensions: args.dimensions.unwrap_or(defaults.dimensions),
             fast_dims: args.fast_dims,
             map_size: args.map_size.unwrap_or(defaults.map_size),

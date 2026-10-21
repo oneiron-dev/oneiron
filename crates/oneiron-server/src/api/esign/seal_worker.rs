@@ -19,7 +19,11 @@
 //! (`--seal-organ`) names. A pack build follows the packs: when the
 //! vault's installs change and the seal build they carry is not the one
 //! installed (a seal pack updated or removed), the host drops it, and the
-//! tick installs the current one, or waits for one.
+//! tick installs the current one, or waits for one. A pack's seal build is
+//! third party unless the operator listed its blake3
+//! (`--trusted-organ-build`, FIX 7644), and a third-party organ cannot start
+//! until filesystem confinement for organs lands: seals then wait, and the
+//! worker says so once. The program the host names stays first party.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,7 +35,7 @@ use oneiron_organ_host::seal::{
     FileSealKeys, HostedSealer, SEAL_ORGAN, SealKeys, SealSettings, SealTsa, pem_certificates,
     seal_spec, seal_spec_from_pack,
 };
-use oneiron_organ_host::{FetchGrant, FetchOrigin, OrganSpec};
+use oneiron_organ_host::{FetchGrant, FetchOrigin, OrganSpec, OrganTier};
 
 use crate::builtin_host::public_origin;
 use crate::server::{HousekeepingAdmission, SyncServer};
@@ -192,6 +196,18 @@ fn tick(
     if host.status(SEAL_ORGAN).is_none() {
         host.install(install(server, seal, fetch_grant(seal, tsa.as_deref())?)?);
     }
+    if let Some(installed) = host.spec(SEAL_ORGAN)
+        && installed.tier == OrganTier::ThirdParty
+    {
+        let build = installed
+            .program_hash
+            .map(|hash| hash.to_hex())
+            .unwrap_or_default();
+        return Err(format!(
+            "the seal organ build {build} is third party, and this platform has no filesystem confinement for organs yet: set {}, or list the build with --trusted-organ-build",
+            seal.name(ORGAN)
+        ));
+    }
     let anchors = match &seal.trust {
         Some(path) => {
             let pem = std::fs::read(&path)
@@ -270,8 +286,19 @@ fn install(server: &SyncServer, seal: &SealConfig, fetch: FetchGrant) -> Result<
         .vault
         .pack_organ_build(&entry.pack_name, SEAL_ORGAN, &platform)
         .map_err(|err| format!("the seal organ build: {err}"))?;
-    seal_spec_from_pack(&binary, &server.organ_dir(), fetch)
-        .map_err(|err| format!("the seal organ build: {err}"))
+    let tier = server.pack_build_tier(&binary.build);
+    let spec = seal_spec_from_pack(&binary, &server.organ_dir(), tier, fetch)
+        .map_err(|err| format!("the seal organ build: {err}"))?;
+    if tier == OrganTier::ThirdParty {
+        tracing::warn!(
+            organ = SEAL_ORGAN,
+            pack = %entry.pack_name,
+            build = %binary.build.blake3,
+            %platform,
+            "pack organ build is third party: it will not start on this platform until filesystem confinement for organs lands; to seal with it, the operator lists its blake3 with --trusted-organ-build, or names a seal organ program"
+        );
+    }
+    Ok(spec)
 }
 
 /// Drops the seal organ the host installed from a pack once the vault's
@@ -304,11 +331,12 @@ fn follow_seal_pack(server: &SyncServer, seen: &mut Option<Vec<PackInstallReceip
             .find(|entry| {
                 entry.organ.name == SEAL_ORGAN && entry.held_platforms.contains(&platform)
             })
-            .and_then(|entry| entry.organ.build(&platform))
-            .map(|build| build.blake3.as_str());
-        if installed.program_hash.map(|hash| hash.to_hex()).as_deref() != carried
-            && server.organs.uninstall(SEAL_ORGAN)
-        {
+            .and_then(|entry| entry.organ.build(&platform));
+        // Another build, or the same one at another tier (FIX 7644).
+        let moved = installed.program_hash.map(|hash| hash.to_hex()).as_deref()
+            != carried.map(|build| build.blake3.as_str())
+            || carried.is_some_and(|build| server.pack_build_tier(build) != installed.tier);
+        if moved && server.organs.uninstall(SEAL_ORGAN) {
             tracing::info!("the seal organ's pack changed; the seal installs its current build");
         }
     }
