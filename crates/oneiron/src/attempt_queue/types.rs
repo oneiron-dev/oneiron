@@ -397,6 +397,11 @@ pub struct AttemptRecord {
     /// work no role ran.
     #[serde(default)]
     pub executor_role: Option<crate::llm::manifest::ModelRole>,
+    /// FIX 7720: a seatless planned child's first pick, route and exactness,
+    /// written once with `executor_model` under its lease before its pack
+    /// loads. `None` for any other run; a fresh retry decides its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_binding: Option<PlannedBinding>,
     /// FIX 6934: the rows its producers read its inputs from while it ran,
     /// copied onto its terminal pack receipt. Absent while none recorded a
     /// set, so a row written before the field reads the same, unknown.
@@ -649,6 +654,32 @@ pub struct InterveneAttempt {
 pub struct AttemptPlacement {
     pub worker: Option<String>,
     pub parent: Option<AttemptId>,
+}
+
+/// A seatless planned child's binding (FIX 7720/7721/7723): its plan's pick,
+/// the route it runs on and whether it runs that pick exactly, frozen once
+/// beside the executor model it runs. Every later entry of the try reuses it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannedBinding {
+    pub pick: crate::ModelId,
+    pub locality: crate::ModelLocality,
+    pub exactness: PlannedExactness,
+    /// The try whose run a continuation forks (FIX 3694), when it is one.
+    pub source: Option<AttemptId>,
+}
+
+/// Whether a planned child runs its pick exactly, as its binding records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlannedExactness {
+    /// Its provider routes the pick exactly and its list holds it.
+    Exact,
+    /// Its provider's own model runs; a call another model answers is marked.
+    NonExact,
+    /// A continuation whose source recorded no exactness: run as not exact,
+    /// never guessed from today's catalog.
+    Inherited,
 }
 
 /// Observable effect of an intervention.
