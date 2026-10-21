@@ -337,6 +337,41 @@ impl Vault {
         Ok(())
     }
 
+    /// Whether every member of `batch` is an open stored proposal with its
+    /// unanimous critic approval unused, read without writing: the queue
+    /// driver lands only then (FIX 6868, G2 PR2). The admission itself is
+    /// unchanged and still judges every member again.
+    pub(crate) fn reviewed_stack_members_ready(
+        &self,
+        batch: &MergeBatch,
+    ) -> Result<std::result::Result<(), String>> {
+        for candidate in &batch.proposals {
+            let Some(row) = EntityId::from_hex(&candidate.id)
+                .ok()
+                .map(|id| self.repo_proposal(id))
+                .transpose()?
+                .flatten()
+            else {
+                return Ok(Err(format!("{} is no stored proposal", candidate.id)));
+            };
+            let open = matches!(
+                row.status,
+                RepoProposalStatus::Proposed | RepoProposalStatus::Approved
+            ) && row.operation_seq.is_none()
+                && row
+                    .merge_stack
+                    .as_deref()
+                    .is_none_or(|stack| stack == batch.id);
+            if !open || !row.eligible()? {
+                return Ok(Err(format!(
+                    "proposal {} lacks an unused unanimous critic approval",
+                    candidate.id
+                )));
+            }
+        }
+        Ok(Ok(()))
+    }
+
     /// The staged path `batch` lands; see [`landed_path`].
     pub(crate) fn reviewed_landed_path<'a>(
         &self,
