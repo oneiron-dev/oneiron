@@ -651,6 +651,9 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                     proposal: proposal_ref.clone(),
                     unapplied: unapplied.clone(),
                 },
+                SelfAgentSpawnResult::TargetErased => AgentSpawnOutput::TargetErased {
+                    kind: AgentSpawnKind::AgentSpawn,
+                },
             };
             json!({ "output": spawn })
         }

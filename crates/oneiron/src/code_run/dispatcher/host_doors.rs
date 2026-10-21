@@ -68,6 +68,11 @@ impl<'a> HostSelfDispatcher<'a> {
                 proposal: proposal_ref,
                 unapplied,
             }),
+            SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::TargetErased) => {
+                Ok(AgentSpawnOutput::TargetErased {
+                    kind: AgentSpawnKind::AgentSpawn,
+                })
+            }
             SelfDispatchOutcome::Failed(failed) => {
                 Err(MemoryError::new(&failed.error, &failed.error, &[]))
             }
