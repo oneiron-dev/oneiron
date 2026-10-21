@@ -155,12 +155,14 @@ pub(crate) use self::storage_seal::{
     read_stored_custody_in_txn, stored_value_held_in_txn,
 };
 #[cfg(feature = "sync")]
-pub(crate) use self::transition::holds_custody_carrier_in_txn;
-#[cfg(feature = "sync")]
 pub(crate) use self::transition::moves_custody_floor;
 pub(crate) use self::transition::{
     CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_portable,
-    custody_transitions, remember_custody_transition_in_txn,
+    custody_row_key, custody_transitions, parse_custody_row_key,
+};
+#[cfg(feature = "sync")]
+pub(crate) use self::transition::{
+    completed_custody_groups_in_txn, holds_custody_carrier_in_txn, keep_custody_piece_in_txn,
 };
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
