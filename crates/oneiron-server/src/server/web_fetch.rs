@@ -1,8 +1,10 @@
 //! The host owns renderer configuration; acquisition itself stays in the engine.
 //!
 //! A managed (hosted) node's fetcher never reaches the infrastructure it runs
-//! on (SCAN C447): the engine refuses each page it is asked for and each hop,
-//! address and landing its rungs reach, typed, and the client the engine's
+//! on (SCAN C447), nor a private network (RFC1918, CGNAT, ULA) except at the
+//! private origins the operator passed (`--hosted-private-origin`, FIX 7657):
+//! the engine refuses each page it is asked for and each hop, address and
+//! landing its rungs reach, typed, and the client the engine's
 //! [`build_web_fetch_client`] builds here refuses every address it connects
 //! to, a redirect's included, with the same [`HostedEgressGuard`]. The guard
 //! reads the node's own addresses afresh at each check, and a ladder the host
@@ -49,11 +51,13 @@ impl SyncServer {
     /// supplied one included, carries the hosted egress guard.
     pub(crate) fn web_fetcher(&self) -> MemoryResult<Arc<WebFetcher>> {
         // The managed switch every hosted-only rule reads: set only by
-        // managed boot.
-        let guard = self
-            .managed_issuer
-            .is_some()
-            .then(|| Arc::new(HostedEgressGuard::new(node_addresses)));
+        // managed boot, which alone passes the operator's private origins.
+        let guard = self.managed_issuer.is_some().then(|| {
+            Arc::new(HostedEgressGuard::new(
+                node_addresses,
+                self.config.hosted_private_origins.clone(),
+            ))
+        });
         let fetcher = match self.web_fetcher.get() {
             Some(fetcher) => Arc::clone(fetcher),
             None => {
@@ -84,8 +88,8 @@ impl SyncServer {
 }
 
 /// The default ladder: one credential-free native GET rung, its client
-/// refusing hosted infrastructure at every connection on a managed node,
-/// then the host's `headless` browser where a managed node has one.
+/// checking every connection with the guard on a managed node, then the
+/// host's `headless` browser where a managed node has one.
 fn default_web_fetcher(
     guard: Option<&Arc<HostedEgressGuard>>,
     headless: Option<headless::GuestHeadless>,
