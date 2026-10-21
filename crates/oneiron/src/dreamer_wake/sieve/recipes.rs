@@ -3,12 +3,10 @@
 use std::collections::BTreeSet;
 
 use crate::attempt_queue::AttemptId;
-use crate::claim::ScopedReadActorKey;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
 };
-use crate::llm::{Scope, ScopeResource};
-use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
+use crate::llm::Scope;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
@@ -16,7 +14,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::super::recipes::WakeRecipePolicy;
-use super::{QUEUE, QueueKey, READ, SPANS, SieveSpan, SpanBand, chunks, policy};
+use super::{QUEUE, QueueKey, READ, SPANS, SieveSpan, chunks};
 
 pub(crate) const RUNG_ATTEMPT: &str = "dreamer.sieve.rungs";
 /// Original cheap reading survives spending for later expensive-path audits.
@@ -246,6 +244,29 @@ pub(crate) fn enqueue_rungs_in_txn(
     now: u64,
 ) -> Result<()> {
     let policy = super::super::recipes::policy_in_txn(store.vault(), txn)?;
+    // The follower reads an owed novelty rung in its batch (FIX 7510); a span
+    // it cannot frame stays on its own rung, as before.
+    if !audit
+        && policy.follower_enabled
+        && span.owed.contains(&super::SieveRung::Novelty)
+        && crate::dreamer_wake::follower::route_in_txn(store, txn, Some(parent), span, now)?
+    {
+        return Ok(());
+    }
+    per_span_in_txn(store, txn, parent, span, audit, policy, now)
+}
+
+/// Queues `span`'s own rung attempt under `parent`, with the recipe policy
+/// it reads by: the per-span path, and every audit.
+pub(crate) fn per_span_in_txn(
+    store: &DreamerRunnerStore<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    parent: &DreamerAttemptStatus,
+    span: &SieveSpan,
+    audit: bool,
+    policy: WakeRecipePolicy,
+    now: u64,
+) -> Result<()> {
     let input = serde_json::to_string(&RungInput {
         span: span.clone(),
         audit,
@@ -386,64 +407,11 @@ fn rung_evidence_in_txn(
     let Some(quote) = text.get(start..end) else {
         return Ok(None);
     };
-    let actor = crate::WriteActor::new(
-        crate::dreamer_runner::authority::dreamer_actor_id()?,
-        crate::EdgeActorClass::System,
-    );
-    let key = ScopedReadActorKey::with_actor_class(
-        actor.entity_ref().to_hex(),
-        actor.actor_class().gate_actor_class(),
-    )
-    .ok_or(Error::InvalidConfig("sieve read actor".into()))?;
-    let read = vault.scoped_read(key);
     let mut scope = Scope::default();
-    for id in BTreeSet::from([span.turn, span.source]) {
-        let Some(raw) = read.entity_raw_live_in(txn, &id)? else {
-            return Ok(None);
-        };
-        scope.readable.insert(ScopeResource::DocumentVersion {
-            document: id,
-            version: format!(
-                "blake3:{}",
-                crate::entity_id::bytes_to_hex_lower(
-                    &crate::dreamer_consolidation::swarm_evidence_content_hash(
-                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]
-                    )
-                )
-            ),
-        });
-    }
-    let mut ids = BTreeSet::new();
-    for kind in [ENTITY_TYPE_PERSON, ENTITY_TYPE_ORG, ENTITY_TYPE_PLACE] {
-        ids.extend(vault.lookup_identity_key_in_txn(txn, kind, quote)?);
-    }
-    if let super::SpanOrigin::SavedTag { envelope, index } = span.origin {
-        if let Some(tags) = crate::tagging::readable_view_in_txn(&vault.store, txn, &span.turn)?
-            && super::read::envelope_digest(&tags.envelope) == envelope
-            && let Some(mention) = usize::try_from(index)
-                .ok()
-                .and_then(|index| tags.mentions.get(index))
-        {
-            ids.extend(mention.link.entities());
-        }
-    }
-    let mut entities = Vec::new();
-    for id in ids {
-        if let Some(raw) = read.entity_raw_live_in(txn, &id)? {
-            scope.readable.insert(ScopeResource::DocumentVersion {
-                document: id,
-                version: format!(
-                    "blake3:{}",
-                    crate::entity_id::bytes_to_hex_lower(
-                        &crate::dreamer_consolidation::swarm_evidence_content_hash(
-                            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]
-                        )
-                    )
-                ),
-            });
-            entities.push(id);
-        }
-    }
+    let Some(entities) = super::follower::candidates_in_txn(vault, txn, span, quote, &mut scope)?
+    else {
+        return Ok(None);
+    };
     Ok(Some(RungEvidence {
         text,
         entities,
@@ -499,37 +467,13 @@ pub(crate) fn finish_rungs(
             }),
         )?;
         if !input.audit {
-            let policy = policy::policy_in_txn(vault, txn)?;
-            let mut updated = input.span.clone();
-            updated.kind = kind;
-            updated.entity = entity;
-            updated.novel = Some(novel);
-            updated.confidence = confidence;
-            updated.band = if confidence < policy.uncertain_low {
-                SpanBand::Low
-            } else if confidence < policy.uncertain_high {
-                SpanBand::Uncertain
-            } else {
-                SpanBand::Sure
+            let reading = super::follower::SpanReading {
+                kind,
+                entity,
+                novel,
+                confidence,
             };
-            updated.score = match kind {
-                super::SpanKind::Date => policy.date_interest,
-                super::SpanKind::Name => policy.name_interest,
-            }
-            .saturating_mul(u32::from(confidence));
-            if !novel {
-                updated.score = 0;
-            }
-            updated.policy_digest = policy.digest()?;
-            updated.owed = if typing_owed {
-                vec![super::SieveRung::Typing]
-            } else {
-                Vec::new()
-            };
-            spend_in_txn(&vault.store, txn, &input.span)?;
-            let key = queue_key(&updated);
-            QUEUE.put(&vault.store, txn, &key, &updated)?;
-            SPANS.put(&vault.store, txn, &(updated.turn, key), &())?;
+            super::follower::apply_reading_in_txn(vault, txn, &input.span, reading, typing_owed)?;
         }
         Ok(true)
     })

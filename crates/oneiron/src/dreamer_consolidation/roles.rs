@@ -42,20 +42,40 @@ pub struct RoleBackend {
     pub binding: HostInferenceBinding,
 }
 
-/// The backends a host routes the Dreamer's roles to.
+/// The backends a host routes the Dreamer's roles to, and the input window
+/// the host lends the sieve's follower (FIX 7510).
 #[derive(Clone, Default)]
-pub struct RoleBackends(BTreeMap<ModelRole, RoleBackend>);
+pub struct RoleBackends {
+    routes: BTreeMap<ModelRole, RoleBackend>,
+    /// The tokens one follower call's input may fill on the extraction
+    /// role's model, as the host counts them; `None` when the host lends
+    /// none, so the follower packs by its sizing estimate alone.
+    follower_window_tokens: Option<u64>,
+}
 
 impl RoleBackends {
     #[must_use]
     pub fn with(mut self, role: ModelRole, backend: RoleBackend) -> Self {
-        self.0.insert(role, backend);
+        self.routes.insert(role, backend);
         self
     }
 
     #[must_use]
     pub fn get(&self, role: ModelRole) -> Option<&RoleBackend> {
-        self.0.get(&role)
+        self.routes.get(&role)
+    }
+
+    /// Lends the follower the extraction model's input window (FIX 7510).
+    #[must_use]
+    pub fn with_follower_window(mut self, tokens: Option<u64>) -> Self {
+        self.follower_window_tokens = tokens;
+        self
+    }
+
+    /// The input window the host lent the follower, if any.
+    #[must_use]
+    pub fn follower_window_tokens(&self) -> Option<u64> {
+        self.follower_window_tokens
     }
 }
 

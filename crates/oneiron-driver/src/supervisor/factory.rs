@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
 use oneiron::dreamer_consolidation::{
-    DREAMER_NARRATIVE_ROLE, PersonAboutExecutor, RoleBackends, RoleCall, ScopeSummaryExecutor,
+    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, PersonAboutExecutor, RoleBackends, RoleCall,
+    ScopeSummaryExecutor,
 };
 use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, ConnectorEventResponder};
 use oneiron::dreamer_runner::maintenance::{
@@ -424,6 +425,23 @@ impl ConsolidationExecutorFactory {
             Some(decisions) => decisions.clone(),
             None => ConsolidationDecisions::shipped()?,
         };
+        // The sieve's follower calls the extraction role: it borrows that
+        // model's input window, when the host counts one (FIX 7510).
+        let follower_window = self
+            .model_windows
+            .get(
+                RoleCall::resolve(
+                    &self.roles,
+                    DREAMER_EXTRACTION_ROLE,
+                    self.backend.as_ref(),
+                    &self.model,
+                    &self.binding,
+                    self.extraction_egress.as_deref(),
+                )
+                .model,
+            )
+            .copied();
+        let roles = self.roles.clone().with_follower_window(follower_window);
         let mut executors = Vec::new();
         for sink in std::iter::once(&mut self.sink).chain(self.parallel_sinks.iter_mut()) {
             let inner = ConsolidationExecutor {
@@ -436,7 +454,7 @@ impl ConsolidationExecutorFactory {
                     binding: self.binding.clone(),
                     extraction_egress: self.extraction_egress.as_deref(),
                 },
-                roles: self.roles.clone(),
+                roles: roles.clone(),
                 sink: sink.as_mut(),
                 scope: None,
                 decisions: decisions.clone(),

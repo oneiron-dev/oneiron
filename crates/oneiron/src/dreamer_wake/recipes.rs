@@ -41,6 +41,17 @@ pub struct WakeRecipePolicy {
     pub arc_min_new_statements: u32,
     /// What the expensive path is asked of an unflagged window.
     pub audit_window_instruction: String,
+    /// Whether the sieve's follower session reads the owed novelty rung in
+    /// batches over its cached log prefix (FIX 7510); false asks it one
+    /// span at a time, as before.
+    pub follower_enabled: bool,
+    /// What the follower is asked of a suffix's spans: one reading each.
+    pub follower_instruction: String,
+    /// How the follower folds its retained frames into a keyframe.
+    pub follower_keyframe_instruction: String,
+    /// The follower's packing estimate of bytes per token: a sizing guess,
+    /// never a tokenizer count.
+    pub follower_sizing_bytes_per_token: u32,
 }
 
 impl WakeRecipePolicy {
@@ -56,6 +67,10 @@ impl WakeRecipePolicy {
             || (self.audit_window_share > 0
                 && (self.audit_window_bytes == 0
                     || self.audit_window_instruction.trim().is_empty()))
+            || (self.follower_enabled
+                && (self.follower_instruction.trim().is_empty()
+                    || self.follower_keyframe_instruction.trim().is_empty()
+                    || self.follower_sizing_bytes_per_token == 0))
         {
             return Err(Error::InvalidConfig("invalid Dreamer recipe policy".into()));
         }
