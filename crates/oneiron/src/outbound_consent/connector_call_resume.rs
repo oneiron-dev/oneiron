@@ -16,7 +16,7 @@ use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_i
 
 use super::authority::OutboundBindingAuthority;
 use super::connector_call::{
-    ConnectorCallCaller, ConnectorCallHost, PendingConnectorCall, Step, now_ms, step_from_dispatch,
+    ConnectorCallCaller, ConnectorCallHost, PendingConnectorCall, Step, now_ms, step_from_host,
 };
 use super::execution::resume_scoped_mcp_outbound_intent;
 
@@ -50,13 +50,14 @@ impl Vault {
                     name: pending.name.clone(),
                 }),
         );
-        // A reply left from an earlier send is never this call's.
+        // A reply or questions left from an earlier send are never this
+        // call's, and no caller holds such questions (FIX 3844).
         drop(host.take_result());
-        drop(host.take_awaiting_input());
+        if let Some(left) = host.take_awaiting_input() {
+            host.abandon_awaiting_input(&left.handle);
+        }
         let dispatch =
             resume_scoped_mcp_outbound_intent(self, &authority, record.id, now_ms(), &mut *host)?;
-        let reply = host.take_result();
-        let awaiting = host.take_awaiting_input();
-        Ok(Some(step_from_dispatch(&dispatch, reply, awaiting)))
+        Ok(Some(step_from_host(&dispatch, host)))
     }
 }

@@ -112,13 +112,12 @@ fn room_people(vault: &Vault, room: EntityId) -> BTreeSet<EntityId> {
 /// whose `participates_in` edges reach it, and those its body lists. One
 /// whose participants do not read fails the check for every audience.
 fn participants(vault: &Vault, txn: &heed::RoTxn<'_>, relationship: EntityId) -> Vec<EntityId> {
-    let mut people = crate::conversation_dag::edge_ids(
+    let mut people = crate::conversation_dag::counted_edge_ids(
         &vault.store,
         txn,
         &relationship,
         EdgeKind::ParticipatesIn,
         true,
-        crate::limits::MAX_ANCESTOR_DEPTH,
     )
     .unwrap_or_default();
     if let Ok(Some(raw)) = vault.store.port_entity_raw(txn, &relationship)

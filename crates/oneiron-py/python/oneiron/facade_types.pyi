@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1135 facade rows, 3964 declarations.
-Inputs: 1070 of 1135 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1022 of 1135 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 109; unread shapes: 0.
+Census: 1136 facade rows, 3970 declarations.
+Inputs: 1070 of 1136 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1022 of 1136 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 110; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -14858,10 +14858,11 @@ class ConnectorCallReplyPendingDelivery(TypedDict):
 class ConnectorCallReplyAwaitingInput(TypedDict):
     outcome: Literal["awaiting_input"]
     handle: str
+    call_ref: NotRequired[str | None]
     source: str
     foreign: bool
     questions: list[ConnectorQuestion]
-    expires_at_ms: int
+    live_until_ms: int
     reasons: NotRequired[list[str]]
 ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
 class LiveVoiceToolReply(TypedDict):
@@ -15606,7 +15607,16 @@ class ConnectorCallStatusSettled(TypedDict):
     name: str
     tool: str
     reply: ConnectorCallReply
-ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled
+class ConnectorCallStatusAwaitingInput(TypedDict):
+    state: Literal["awaiting_input"]
+    call_ref: str
+    name: str
+    tool: str
+    generation: int
+    asked: int
+    uncertain: NotRequired[bool]
+    reply: ConnectorCallReply
+ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled | ConnectorCallStatusAwaitingInput
 class ScopedCommitRequest(TypedDict):
     claims: list[ScopedClaimInput]
 RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
@@ -16970,12 +16980,19 @@ class TableBody(TypedDict):
     cells: NotRequired[dict[str, dict[str, str]]]
     merges: NotRequired[list[TableMerge]]
 ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar"]
+class ChartCategory(TypedDict):
+    id: NotRequired[NodeId | None]
+    levels: NotRequired[list[str | None]]
+class ChartCategories(TypedDict):
+    level_count: NotRequired[int]
+    points: NotRequired[list[ChartCategory]]
 class ChartSeries(TypedDict):
     id: NotRequired[NodeId | None]
     name: str
     values: list[float | None]
     family: NotRequired[ChartKind | None]
     x: NotRequired[list[float | None] | None]
+    categories: NotRequired[ChartCategories | None]
 ChartSource = Literal["workbook", "literal", "cached"]
 ConnectorPreset = Literal["straight", "elbow", "curved"]
 class ConnectorEnd(TypedDict):
@@ -17036,7 +17053,7 @@ class NodePayloadTable(TypedDict):
     table: TableBody
 class NodePayloadChartBody(TypedDict):
     family: ChartKind
-    categories: list[str]
+    categories: ChartCategories
     series: list[ChartSeries]
     source: NotRequired[ChartSource]
 class NodePayloadChart(TypedDict):
@@ -17273,6 +17290,7 @@ class ChartEditInsertSeriesBody(TypedDict):
     values: NotRequired[list[float | None]]
     family: NotRequired[ChartKind | None]
     x: NotRequired[list[float | None] | None]
+    categories: NotRequired[ChartCategories | None]
 class ChartEditInsertSeries(TypedDict):
     insert_series: ChartEditInsertSeriesBody
 class ChartEditDeleteSeriesBody(TypedDict):
@@ -17309,14 +17327,47 @@ class ChartEditSetFamilyBody(TypedDict):
 class ChartEditSetFamily(TypedDict):
     set_family: ChartEditSetFamilyBody
 class ChartEditSetCategoriesBody(TypedDict):
-    categories: list[str]
+    categories: ChartCategories
 class ChartEditSetCategories(TypedDict):
     set_categories: ChartEditSetCategoriesBody
+class ChartEditSetSeriesCategoriesBody(TypedDict):
+    series: NodeId
+    categories: NotRequired[ChartCategories | None]
+class ChartEditSetSeriesCategories(TypedDict):
+    set_series_categories: ChartEditSetSeriesCategoriesBody
+class ChartEditInsertCategoryBody(TypedDict):
+    owner: NotRequired[NodeId | None]
+    id: NotRequired[NodeId | None]
+    after: NotRequired[NodeId | None]
+    levels: NotRequired[list[str | None]]
+class ChartEditInsertCategory(TypedDict):
+    insert_category: ChartEditInsertCategoryBody
+class ChartEditDeleteCategoryBody(TypedDict):
+    owner: NotRequired[NodeId | None]
+    category: NodeId
+class ChartEditDeleteCategory(TypedDict):
+    delete_category: ChartEditDeleteCategoryBody
+class ChartEditMoveCategoryBody(TypedDict):
+    owner: NotRequired[NodeId | None]
+    category: NodeId
+    after: NotRequired[NodeId | None]
+class ChartEditMoveCategory(TypedDict):
+    move_category: ChartEditMoveCategoryBody
+class ChartEditSetCategoryLevelsBody(TypedDict):
+    owner: NotRequired[NodeId | None]
+    category: NodeId
+    levels: list[str | None]
+class ChartEditSetCategoryLevels(TypedDict):
+    set_category_levels: ChartEditSetCategoryLevelsBody
+class ChartEditReserveCategoriesBody(TypedDict):
+    ids: list[NodeId]
+class ChartEditReserveCategories(TypedDict):
+    reserve_categories: ChartEditReserveCategoriesBody
 class ChartEditSetSourceBody(TypedDict):
     source: ChartSource
 class ChartEditSetSource(TypedDict):
     set_source: ChartEditSetSourceBody
-ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSource
+ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSeriesCategories | ChartEditInsertCategory | ChartEditDeleteCategory | ChartEditMoveCategory | ChartEditSetCategoryLevels | ChartEditReserveCategories | ChartEditSetSource
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):
@@ -17592,7 +17643,8 @@ class OpaqueChange(TypedDict):
     part: str
     base: NotRequired[list[int] | None]
     proposal: NotRequired[list[int] | None]
-SeriesField = Literal["name", "values", "family", "x", "order", "existence"]
+SeriesField = Literal["name", "values", "family", "x", "categories", "order", "existence"]
+CategoryField = Literal["levels", "order", "existence"]
 class ConflictBothMovedBody(TypedDict):
     node: NodeId
 class ConflictBothMoved(TypedDict):
@@ -17630,7 +17682,14 @@ class ConflictSeriesVsSeriesBody(TypedDict):
     field: SeriesField
 class ConflictSeriesVsSeries(TypedDict):
     series_vs_series: ConflictSeriesVsSeriesBody
-Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload | ConflictCellVsCell | ConflictSeriesVsSeries
+class ConflictCategoryVsCategoryBody(TypedDict):
+    node: NodeId
+    owner: NotRequired[NodeId | None]
+    category: NodeId
+    field: CategoryField
+class ConflictCategoryVsCategory(TypedDict):
+    category_vs_category: ConflictCategoryVsCategoryBody
+Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload | ConflictCellVsCell | ConflictSeriesVsSeries | ConflictCategoryVsCategory
 class RelationshipChange(TypedDict):
     source: str
     id: str
@@ -19656,6 +19715,14 @@ class IdentityPairProposals(TypedDict):
     b: EntityId
     proposals: list[EntityId]
     distinct_claims: list[EntityId]
+ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
+class ConnectorQuestionAnswer(TypedDict):
+    key: str
+    action: ConnectorAnswerAction
+    content: NotRequired[Any | None]
+class ConnectorAnswerRequest(TypedDict):
+    handle: str
+    answers: list[ConnectorQuestionAnswer]
 class OpenInput(TypedDict):
     url: str
 class TakeoverRecord(TypedDict):

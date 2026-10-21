@@ -8,6 +8,9 @@ pub(super) struct ComparabilityAxes {
     pub tier: TierAxis,
     pub regime: Regime,
     pub native_scale: String,
+    /// An absent disclosure is unknown, never permission to publish a comparison.
+    #[serde(default)]
+    pub scale_comparability: ScaleComparability,
     pub backbone: BackboneAxis,
     pub judge: JudgeAxis,
     pub retrieval_k: usize,
@@ -48,10 +51,19 @@ pub(super) struct ProvenanceAxis {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(super) enum CitationDisposition {
+    NonComparable,
     Cite,
     CiteWithCaveat,
     WalledAppendix,
     Dropped,
+}
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ScaleComparability {
+    Comparable,
+    Incompatible,
+    #[default]
+    Unknown,
 }
 impl ComparabilityAxes {
     pub(super) fn validate(&self) -> BeamResult<()> {
@@ -81,6 +93,14 @@ impl ComparabilityAxes {
     pub(super) fn disposition(&self) -> CitationDisposition {
         if self.provenance.withdrawn {
             CitationDisposition::Dropped
+        } else if self.scale_comparability != ScaleComparability::Comparable
+            || self
+                .native_scale
+                .trim()
+                .to_ascii_lowercase()
+                .starts_with("unknown")
+        {
+            CitationDisposition::NonComparable
         } else if self.tier.row != self.tier.reference
             || self.regime == Regime::Oracle
             || self.judge.in_family

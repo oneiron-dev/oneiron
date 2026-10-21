@@ -4135,9 +4135,11 @@ class Oneiron:
         def schema(self, spec: Facade.ConnectorSchemaRequest) -> Facade.ConnectorSchemaReply:
             """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
         def call_status(self, spec: Facade.ConnectorCallStatusRequest) -> Facade.ConnectorCallStatus:
-            """Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."""
+            """Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."""
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs": ...
+        def answer(self, spec: Facade.ConnectorAnswerRequest) -> Facade.ConnectorCallReply:
+            """Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."""
     class _ConnectorOutboundVerbs:
         def schedule(self, spec: Facade.OutboundScheduleRequest) -> Facade.OutboundIntentReceipt:
             """Schedules one send through a granted outbound connector, gated and held for delivery."""

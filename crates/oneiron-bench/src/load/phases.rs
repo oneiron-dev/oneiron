@@ -37,6 +37,8 @@ impl Grade {
 /// Everything a cell needs from the run.
 pub(super) struct Ctx<'a> {
     pub(super) corpus: &'a Corpus,
+    pub(super) documents: usize,
+    pub(super) secret_scan: &'a str,
     pub(super) owner: &'a str,
     pub(super) server: &'a Running,
     pub(super) agents: &'a [Agent],
@@ -91,15 +93,24 @@ impl Ctx<'_> {
                 .push(sample.clone());
         }
         let all = samples.into_iter().map(|(_, s)| s).collect::<Vec<_>>();
+        let summary = |samples: &[Sample]| {
+            let summary = Summary::of(samples, seconds);
+            if grade == "ingest" {
+                summary
+            } else {
+                summary.below_corpus_floor(self.documents)
+            }
+        };
         Cell {
             name: name.to_owned(),
+            secret_scan: self.secret_scan.to_owned(),
             grade: grade.to_owned(),
             agents,
-            summary: Summary::of(&all, seconds),
+            summary: summary(&all),
             by_verb: if by_verb.len() > 1 {
                 by_verb
                     .iter()
-                    .map(|(verb, s)| (verb.clone(), Summary::of(s, seconds)))
+                    .map(|(verb, s)| (verb.clone(), summary(s)))
                     .collect()
             } else {
                 BTreeMap::new()
@@ -246,6 +257,7 @@ impl Ctx<'_> {
             .map(|grade| {
                 let mut part = Cell {
                     name: format!("{name}_{}", grade.name),
+                    secret_scan: self.secret_scan.to_owned(),
                     grade: grade.name.clone(),
                     agents: roles.iter().filter(|(_, g)| g.name == grade.name).count(),
                     ..Cell::default()
@@ -304,9 +316,11 @@ impl Ctx<'_> {
         });
         let heavy_cell = Cell {
             name: "fairness_heavy".to_owned(),
+            secret_scan: self.secret_scan.to_owned(),
             grade: heavy.name.clone(),
             agents: 1,
-            summary: Summary::of(&heavy_samples, started.elapsed().as_secs_f64()),
+            summary: Summary::of(&heavy_samples, started.elapsed().as_secs_f64())
+                .below_corpus_floor(self.documents),
             ..Cell::default()
         };
         Fairness {

@@ -4,7 +4,7 @@
 //! series identities a writer names before an edit is logged, so every
 //! replay inserts the same rows, columns and series.
 
-use super::chart_ops::lower_chart;
+use super::chart_ops::{lower_chart, lower_edits};
 use super::table::{TableBody, TableEdit, TableMerge, deactivated, dedupe};
 use super::{ChartEdit, DeckOp, LiveDeck, NodeId, NodePayload};
 use crate::live::LiveError;
@@ -165,32 +165,48 @@ impl LiveDeck {
     /// column it names that the held table does not hold is new and takes a
     /// fresh identity from `mint`, never one an export's positions suggest.
     /// A whole chart written over the chart a node holds is lowered to the
-    /// chart edits that make it, by series identity, the same way. Any other
-    /// operation is logged as written.
+    /// chart edits that make it, by series and category identity, the same
+    /// way, and so is a whole category set a chart edit writes over a set
+    /// the chart holds; the points the chart's settlement then adds are
+    /// reserved identities from `mint` too. Any other operation is logged as
+    /// written.
     pub fn lower(&self, op: &DeckOp, mut mint: impl FnMut() -> NodeId) -> DeckOp {
-        if let DeckOp::SetPayload { node, payload } = op
-            && let Some(held) = self
-                .nodes
-                .get(node)
-                .and_then(|found| found.payload.as_ref())
-        {
-            match (held, payload) {
-                (NodePayload::Table(held), NodePayload::Table(wanted)) => {
-                    return DeckOp::EditTable {
-                        node: *node,
-                        edits: lower_table(held, wanted, &mut mint),
-                    };
-                }
-                (NodePayload::Chart { .. }, NodePayload::Chart { .. }) => {
-                    return DeckOp::EditChart {
-                        node: *node,
-                        edits: lower_chart(held, payload, &mut mint),
-                    };
-                }
-                _ => {}
+        let (node, held) = match op {
+            DeckOp::SetPayload { node, .. } | DeckOp::EditChart { node, .. } => (
+                *node,
+                self.nodes
+                    .get(node)
+                    .and_then(|found| found.payload.as_ref()),
+            ),
+            _ => return op.clone(),
+        };
+        let mut edits = match (held, op) {
+            (
+                Some(NodePayload::Table(held)),
+                DeckOp::SetPayload {
+                    payload: NodePayload::Table(wanted),
+                    ..
+                },
+            ) => {
+                return DeckOp::EditTable {
+                    node,
+                    edits: lower_table(held, wanted, &mut mint),
+                };
             }
-        }
-        op.clone()
+            (
+                Some(held @ NodePayload::Chart { .. }),
+                DeckOp::SetPayload {
+                    payload: payload @ NodePayload::Chart { .. },
+                    ..
+                },
+            ) => lower_chart(held, payload, &mut mint),
+            (Some(held @ NodePayload::Chart { .. }), DeckOp::EditChart { edits, .. }) => {
+                lower_edits(held, edits, &mut mint)
+            }
+            _ => return op.clone(),
+        };
+        self.reserve_categories(node, &mut edits, &mut mint);
+        DeckOp::EditChart { node, edits }
     }
 }
 

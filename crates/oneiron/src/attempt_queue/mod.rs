@@ -68,7 +68,9 @@ pub use types::{
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
 pub(crate) use payload_erase::{
+    attempt_payload_family, attempt_payload_owners, attempt_payload_stub,
     erase_attempt_payload_actor_in_txn, erase_attempt_payload_actors_in_txn,
+    retire_attempt_payload_in_txn,
 };
 #[cfg(test)]
 pub(crate) fn encode_signal_record(record: &AttemptRecord) -> crate::Result<Vec<u8>> {

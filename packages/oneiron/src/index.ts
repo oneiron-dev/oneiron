@@ -3262,12 +3262,14 @@ export class Oneiron {
     call: (input: Facade.ConnectorCallRequest): Facade.ActAnswer<Facade.ConnectorCallReply> => this.#call(() => this.#client.connectorCall(input) as Facade.ActAnswer<Facade.ConnectorCallReply>),
     /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
     schema: (input: Facade.ConnectorSchemaRequest): Facade.ConnectorSchemaReply => this.#call(() => this.#client.connectorSchema(input) as Facade.ConnectorSchemaReply),
-    /** Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it. */
+    /** Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it. */
     call_status: (input: Facade.ConnectorCallStatusRequest): Facade.ConnectorCallStatus => this.#call(() => this.#client.connectorCallStatus(input) as Facade.ConnectorCallStatus),
     outbound: {
       /** Schedules one send through a granted outbound connector, gated and held for delivery. */
       schedule: (input: Facade.OutboundScheduleRequest): Facade.OutboundIntentReceipt => this.#call(() => this.#client.connectorOutboundSchedule(input) as Facade.OutboundIntentReceipt),
     },
+    /** Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data. */
+    answer: (input: Facade.ConnectorAnswerRequest): Facade.ConnectorCallReply => this.#call(() => this.#client.connectorAnswer(input) as Facade.ConnectorCallReply),
   }
   readonly calendar = {
     /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */

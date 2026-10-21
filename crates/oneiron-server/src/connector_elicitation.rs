@@ -7,7 +7,7 @@
 //! one per server, holds each live question set: the handle, what it binds
 //! (the original call's principal, exact grant, governing key, parent
 //! intent, connector, tool, endpoint and protocol revision), its round and
-//! its deadline, and the channel to its worker. The worker owns the
+//! its live lease, and the channel to its worker. The worker owns the
 //! exchange; the registry holds no borrow of it, no credential and no
 //! answer.
 //!
@@ -20,28 +20,42 @@
 //! connector says next: another round of questions under the same handle,
 //! the tool's result, or a failure.
 //!
+//! A set's round is durable too (FIX 3837): the engine keeps it on the
+//! call's row (its handle, generation and count, never the questions'
+//! text), which its caller polls by `connector.call_status`, and the
+//! registry knows that row, so the worker keeps it current. A round
+//! never lapses: its worker waits for an answer for as long as the exchange
+//! lives, and an exchange that ends unanswered leaves the questions standing
+//! with their delivery uncertain.
+//!
 //! The calls (canon silent), each in one place:
-//! - [`ELICITATION_WAIT`]: a round of questions lapses this long after it
-//!   arrived; its worker then cancels it and ends the session.
-//! - [`MAX_LIVE_ELICITATIONS`]: the live question sets one server holds; a
-//!   connector that asks while it is full gets a `cancel` at once and the
-//!   call goes on without it.
+//! - [`ELICITATION_LIVE_WAIT`]: a round's live lease, how long one answer
+//!   call waits on the owner before it answers that the owner's ruling is
+//!   still to come. Never an expiry.
+//! - The live question sets one server holds are the `[limits]` row
+//!   `connector_live_questions` (FIX 3895): a question past it still
+//!   registers and waits like any other, and the row asks whether
+//!   everything is okay. Only the memory floor ends a question.
 //! - [`answer_connector_question`]'s owner ask: under `always ask` an answer
-//!   that carries content waits, within the round's deadline, for the
-//!   owner's yes on exactly that answer; a no sends a decline, a lapse
-//!   cancels.
+//!   that carries content waits for the owner's yes on exactly that answer;
+//!   a no sends a decline. Past the lease the ask stays, and the same
+//!   answer given again reads its ruling.
+//! - [`check_answer`]: the answer that goes is read by the release check's
+//!   secret shapes; a match raises the owner's typed "is everything okay"
+//!   check and never stops the answer (FIX 3841).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
-use std::sync::{Mutex, MutexGuard, PoisonError, mpsc};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::EntityId;
-use oneiron::llm::decision::DecisionAnswer;
+use oneiron::llm::decision::{DecisionAnswer, DecisionAsks};
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use oneiron::outbound_consent::{
     ConnectorAwaitingInput, ConnectorCallOutcome, ConnectorElicitationAnswer,
-    ConnectorElicitationBinding, ConnectorQuestion, ElicitationAnswerVerdict, UntrustedToolResult,
+    ConnectorElicitationBinding, ConnectorElicitationOwnerAsk, ConnectorQuestion,
+    ElicitationAnswerVerdict, UntrustedToolResult,
 };
 use oneiron::task_verb::sdk::{
     ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorCallReply, ConnectorQuestionAnswer,
@@ -52,12 +66,9 @@ use serde_json::Value;
 use crate::connector_call_host::elicitation_response;
 use crate::server::SyncServer;
 
-/// How long one round of a connector's questions stays live, from when it
-/// arrived.
-pub(crate) const ELICITATION_WAIT: Duration = Duration::from_secs(120);
-
-/// The live question sets one server holds at once.
-pub(crate) const MAX_LIVE_ELICITATIONS: usize = 64;
+/// A round's live lease, from when it arrived: how long one answer call
+/// waits on the owner's ruling. Never an expiry (FIX 3837).
+pub(crate) const ELICITATION_LIVE_WAIT: Duration = Duration::from_secs(120);
 
 /// How often an answer waiting on the owner reads the ask again, for an
 /// answer given through a door that wakes no waiter.
@@ -85,7 +96,7 @@ pub(crate) struct QuestionBinding {
 }
 
 impl QuestionBinding {
-    fn authority(&self) -> ConnectorElicitationBinding {
+    pub(crate) fn authority(&self) -> ConnectorElicitationBinding {
         ConnectorElicitationBinding {
             principal_ref: self.principal.to_hex(),
             grant_id: self.grant_id,
@@ -110,7 +121,7 @@ pub(crate) enum WorkerEvent {
     /// The connector asked again: the next round, under the same handle.
     Question {
         questions: Vec<ConnectorQuestion>,
-        expires_at_ms: u64,
+        live_until_ms: u64,
     },
     /// The call's terminal reply.
     Result(UntrustedToolResult),
@@ -119,26 +130,37 @@ pub(crate) enum WorkerEvent {
     Failed { sent: bool, reason: &'static str },
 }
 
-/// A question set the registry took in: its handle, its round's deadline,
-/// and the worker's end of its channel.
+/// A question set the registry took in: its handle, the end of its round's
+/// live lease, the worker's end of its channel, and the live sets the
+/// registry held with it.
 pub(crate) struct Registered {
     pub(crate) handle: String,
-    pub(crate) deadline: Instant,
-    pub(crate) expires_at_ms: u64,
+    pub(crate) live_until_ms: u64,
     pub(crate) commands: mpsc::Receiver<AnswerCommand>,
+    pub(crate) live: usize,
 }
 
 /// One live question set.
 struct LiveQuestions {
     binding: QuestionBinding,
     generation: u64,
-    /// The connector's questions this round, kept only so an owner ask can
-    /// quote them. Foreign text: never logged or receipted.
+    /// The connector's questions this round, kept so an owner ask can quote
+    /// them and a pending answer can name them. Foreign text: never logged
+    /// or receipted.
     questions: Vec<ConnectorQuestion>,
-    deadline: Instant,
+    /// The end of this round's live lease.
+    lease: Instant,
+    live_until_ms: u64,
     /// An answer to this round is being decided or sent: a round takes one.
     claimed: bool,
     commands: mpsc::Sender<AnswerCommand>,
+    /// The call whose row keeps these questions (FIX 3837), once the engine
+    /// kept them.
+    call_ref: Option<EntityId>,
+    /// The owner ask about one exact answer to this round still to be
+    /// ruled on, by the answer's digest: the same answer given again reads
+    /// it, never a second ask.
+    owner_ask: Option<([u8; 32], ConnectorElicitationOwnerAsk)>,
 }
 
 /// The live question sets of one server, by handle.
@@ -152,17 +174,15 @@ impl ConnectorElicitationRegistry {
         self.live.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Takes in a new question set and mints its handle; `None` when the
-    /// registry is full.
+    /// Takes in a new question set and mints its handle. It never refuses
+    /// one: how many it holds is the `[limits]` row's to measure
+    /// (FIX 3895).
     pub(crate) fn register(
         &self,
         binding: QuestionBinding,
         questions: &[ConnectorQuestion],
-    ) -> Option<Registered> {
+    ) -> Registered {
         let mut live = self.lock();
-        if live.len() >= MAX_LIVE_ELICITATIONS {
-            return None;
-        }
         let handle = loop {
             let handle = mint_handle();
             if !live.contains_key(&handle) {
@@ -170,7 +190,7 @@ impl ConnectorElicitationRegistry {
             }
         };
         let (sender, commands) = mpsc::channel();
-        let (deadline, expires_at_ms) = round_deadline();
+        let (lease, live_until_ms) = round_lease();
         // Ids only: never the questions' text or the handle.
         tracing::debug!(
             server = %binding.server,
@@ -186,35 +206,77 @@ impl ConnectorElicitationRegistry {
                 binding,
                 generation: 0,
                 questions: questions.to_vec(),
-                deadline,
+                lease,
+                live_until_ms,
                 claimed: false,
                 commands: sender,
+                call_ref: None,
+                owner_ask: None,
             },
         );
-        Some(Registered {
+        Registered {
             handle,
-            deadline,
-            expires_at_ms,
+            live_until_ms,
             commands,
-        })
+            live: live.len(),
+        }
     }
 
     /// Opens round `generation` of `handle` with `questions` and a fresh
-    /// deadline; `None` when the set is gone.
+    /// lease, and returns the lease's end (unix ms) and the call whose row
+    /// keeps the questions; `None` when the set is gone.
     pub(crate) fn advance(
         &self,
         handle: &str,
         generation: u64,
         questions: &[ConnectorQuestion],
-    ) -> Option<(Instant, u64)> {
+    ) -> Option<(u64, Option<EntityId>)> {
         let mut live = self.lock();
         let entry = live.get_mut(handle)?;
-        let (deadline, expires_at_ms) = round_deadline();
+        let (lease, live_until_ms) = round_lease();
         entry.generation = generation;
         entry.questions = questions.to_vec();
-        entry.deadline = deadline;
+        entry.lease = lease;
+        entry.live_until_ms = live_until_ms;
         entry.claimed = false;
-        Some((deadline, expires_at_ms))
+        entry.owner_ask = None;
+        Some((live_until_ms, entry.call_ref))
+    }
+
+    /// Binds the questions `handle` names to the call `call_ref` whose row
+    /// keeps them (FIX 3837). A set whose worker already ended leaves the
+    /// row's questions uncertain.
+    pub(crate) fn bind_call(&self, vault: &oneiron::Vault, handle: &str, call_ref: EntityId) {
+        let bound = match self.lock().get_mut(handle) {
+            Some(entry) => {
+                entry.call_ref = Some(call_ref);
+                true
+            }
+            None => false,
+        };
+        if !bound && let Err(error) = vault.mark_connector_input_uncertain(&call_ref, handle) {
+            tracing::warn!(%error, "connector call questions not marked uncertain");
+        }
+    }
+
+    /// The call whose row keeps the questions `handle` names, once bound.
+    pub(crate) fn call_ref(&self, handle: &str) -> Option<EntityId> {
+        self.lock().get(handle).and_then(|entry| entry.call_ref)
+    }
+
+    /// Keeps the owner ask about the answer `digest` to round `generation`
+    /// of `handle`, or forgets it (`None`).
+    fn keep_owner_ask(
+        &self,
+        handle: &str,
+        generation: u64,
+        ask: Option<([u8; 32], ConnectorElicitationOwnerAsk)>,
+    ) {
+        if let Some(entry) = self.lock().get_mut(handle)
+            && entry.generation == generation
+        {
+            entry.owner_ask = ask;
+        }
     }
 
     /// Drops a question set its worker ended.
@@ -223,12 +285,12 @@ impl ConnectorElicitationRegistry {
     }
 
     /// Claims the current round of `handle` for one answer by `principal`.
+    /// A round past its lease is still answered (FIX 3837).
     fn claim(&self, handle: &str, principal: EntityId) -> MemoryResult<Claim<'_>> {
         let mut live = self.lock();
         let entry = live
             .get_mut(handle)
             .filter(|entry| entry.binding.principal == principal)
-            .filter(|entry| Instant::now() < entry.deadline)
             .ok_or_else(|| {
                 MemoryError::not_found(
                     "no live connector question with this handle is yours to answer",
@@ -250,7 +312,10 @@ impl ConnectorElicitationRegistry {
             generation: entry.generation,
             binding: entry.binding.clone(),
             questions: entry.questions.clone(),
-            deadline: entry.deadline,
+            lease: entry.lease,
+            live_until_ms: entry.live_until_ms,
+            call_ref: entry.call_ref,
+            owner_ask: entry.owner_ask.clone(),
             commands: entry.commands.clone(),
             handed: false,
         })
@@ -282,16 +347,16 @@ fn hex(bytes: &[u8]) -> String {
     text
 }
 
-/// A new round's deadline, as an instant and in unix ms.
-fn round_deadline() -> (Instant, u64) {
+/// A new round's live lease end, as an instant and in unix ms.
+fn round_lease() -> (Instant, u64) {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| {
             u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
         });
-    let wait_ms = u64::try_from(ELICITATION_WAIT.as_millis()).unwrap_or(u64::MAX);
+    let wait_ms = u64::try_from(ELICITATION_LIVE_WAIT.as_millis()).unwrap_or(u64::MAX);
     (
-        Instant::now() + ELICITATION_WAIT,
+        Instant::now() + ELICITATION_LIVE_WAIT,
         now_ms.saturating_add(wait_ms),
     )
 }
@@ -304,7 +369,10 @@ struct Claim<'a> {
     generation: u64,
     binding: QuestionBinding,
     questions: Vec<ConnectorQuestion>,
-    deadline: Instant,
+    lease: Instant,
+    live_until_ms: u64,
+    call_ref: Option<EntityId>,
+    owner_ask: Option<([u8; 32], ConnectorElicitationOwnerAsk)>,
     commands: mpsc::Sender<AnswerCommand>,
     /// The worker took the answer: it opens the next round or ends the set.
     handed: bool,
@@ -327,8 +395,8 @@ impl Claim<'_> {
     }
 
     /// Hands the frozen responses to the worker and waits for what it met
-    /// next; `None` when the worker is gone (its round lapsed, or the server
-    /// is closing).
+    /// next; `None` when the worker is gone (its exchange ended, or the
+    /// server is closing).
     fn hand_over(mut self, responses: BTreeMap<String, Value>) -> Option<WorkerEvent> {
         let (reply, events) = mpsc::sync_channel(1);
         self.commands
@@ -420,8 +488,9 @@ fn freeze(keys: &[&str], answers: &[ConnectorQuestionAnswer]) -> MemoryResult<Fr
 enum OwnerRuling {
     Yes,
     No,
-    /// The round lapsed first.
-    Lapsed,
+    /// The round's live lease ended first: the ask stands, and the same
+    /// answer given again reads its ruling (FIX 3837).
+    Pending,
     /// The ask could not be queued.
     Unasked,
 }
@@ -432,10 +501,12 @@ enum OwnerRuling {
 /// checked under the original call's exact grant; a decline or a cancel
 /// always goes. An escalation leaves the round live, so a retry can land; a
 /// refusal cancels it. Under `always ask` the owner's yes on exactly this
-/// answer sends it, a no sends a decline, and a lapse leaves the worker to
-/// cancel. The reply is what the connector said next, as `connector.call`
-/// projects it. Blocking: it waits on the connector and on the owner, so
-/// call it on a blocking worker.
+/// answer sends it and a no sends a decline; past the round's live lease
+/// the round stays open, the questions come back with
+/// `connector_answer_owner_pending`, and the same answer given again reads
+/// the same ask (FIX 3837). The reply is what the connector said next, as
+/// `connector.call` projects it. Blocking: it waits on the connector and on
+/// the owner, so call it on a blocking worker.
 pub(crate) fn answer_connector_question(
     server: &SyncServer,
     memory: &Memory<'_>,
@@ -469,7 +540,7 @@ pub(crate) fn answer_connector_question(
                     frozen.replaced(ConnectorAnswerAction::Decline),
                     vec!["connector_answer_owner_declined".to_owned()],
                 ),
-                OwnerRuling::Lapsed => return Ok(lapsed()),
+                OwnerRuling::Pending => return Ok(owner_pending(claim)),
                 OwnerRuling::Unasked => {
                     return Ok(ConnectorCallReply::Refused {
                         decision_ref: None,
@@ -479,26 +550,29 @@ pub(crate) fn answer_connector_question(
             }
         }
     };
-    let (name, tool, intent) = (
+    check_answer(server, &claim, &authority, &responses);
+    let (name, tool, intent, call_ref) = (
         claim.binding.name.clone(),
         claim.binding.tool.clone(),
         claim.binding.parent_intent,
+        claim.call_ref,
     );
     let handle = claim.handle.clone();
     let Some(event) = claim.hand_over(responses) else {
-        return Ok(lapsed().noting(reasons));
+        return Ok(gone().noting(reasons));
     };
     Ok(match event {
         WorkerEvent::Question {
             questions,
-            expires_at_ms,
+            live_until_ms,
         } => ConnectorCallReply::awaiting_input(
             &name,
             &tool,
+            call_ref,
             ConnectorAwaitingInput {
                 handle,
                 questions,
-                expires_at_ms,
+                live_until_ms,
             },
         ),
         WorkerEvent::Result(result) => ConnectorCallReply::project(
@@ -524,48 +598,159 @@ pub(crate) fn answer_connector_question(
     .noting(reasons))
 }
 
-/// The reply to an answer whose round lapsed before it went: nothing was
-/// sent, and the worker cancels the questions.
-fn lapsed() -> ConnectorCallReply {
-    ConnectorCallReply::Refused {
-        decision_ref: None,
-        reasons: vec!["connector_question_lapsed".to_owned()],
+/// Runs the release check's secret shapes over the answer about to go, as
+/// it goes (FIX 3841, ruled 10-22): a match raises the owner's typed "is
+/// everything okay" check on detached work, and the answer goes either way.
+/// Nothing here refuses, holds or waits on the check, its storage or the
+/// owner; a check that cannot be raised is logged.
+fn check_answer(
+    server: &SyncServer,
+    claim: &Claim<'_>,
+    authority: &ConnectorElicitationBinding,
+    responses: &BTreeMap<String, Value>,
+) {
+    let mut checked = Value::Object(responses.clone().into_iter().collect());
+    let digest = *blake3::hash(checked.to_string().as_bytes()).as_bytes();
+    // The check reads a copy: what goes is `responses`, untouched.
+    if !oneiron::batch::export::redact_credentials(&mut checked) {
+        return;
+    }
+    let vault = Arc::clone(server.vault());
+    let (authority, handle, generation) =
+        (authority.clone(), claim.handle.clone(), claim.generation);
+    let raise = move || {
+        if let Err(error) =
+            vault.queue_connector_elicitation_answer_check(&authority, &handle, generation, digest)
+        {
+            tracing::warn!(%error, "connector answer check not queued");
+        }
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(runtime) => drop(runtime.spawn_blocking(raise)),
+        Err(_) => {
+            if let Err(error) = std::thread::Builder::new()
+                .name("connector-answer-check".to_owned())
+                .spawn(raise)
+            {
+                tracing::warn!(%error, "connector answer check not started");
+            }
+        }
     }
 }
 
-/// Asks the owner about exactly `frozen`, and waits for the ruling within
-/// the round's deadline. A lapsed ask is withdrawn, so it leaves the
-/// owner's queue.
+/// The reply to an answer whose live exchange ended before it went:
+/// nothing was sent, and the call's row keeps the questions, uncertain
+/// (FIX 3837).
+fn gone() -> ConnectorCallReply {
+    ConnectorCallReply::Refused {
+        decision_ref: None,
+        reasons: vec!["connector_question_gone".to_owned()],
+    }
+}
+
+/// The reply to an answer still waiting on the owner past the round's live
+/// lease: the round's questions again, with the reason. Nothing was sent;
+/// the claim is released, so the same answer given again reads the ruling.
+fn owner_pending(claim: Claim<'_>) -> ConnectorCallReply {
+    ConnectorCallReply::awaiting_input(
+        &claim.binding.name,
+        &claim.binding.tool,
+        claim.call_ref,
+        ConnectorAwaitingInput {
+            handle: claim.handle.clone(),
+            questions: claim.questions.clone(),
+            live_until_ms: claim.live_until_ms,
+        },
+    )
+    .noting(vec!["connector_answer_owner_pending".to_owned()])
+}
+
+/// Asks the owner about exactly `frozen`, or reads the ask the same answer
+/// to this round already raised, and waits for the ruling within the
+/// round's live lease. Past the lease the ask stands, kept with the round,
+/// so the same answer given again reads it (FIX 3837); an ask another
+/// answer superseded is withdrawn. The linked parts of a long ask are
+/// withdrawn once it is decided (FIX 3842).
 fn owner_rules(
     server: &SyncServer,
     claim: &Claim<'_>,
     authority: &ConnectorElicitationBinding,
     frozen: &FrozenAnswer,
 ) -> OwnerRuling {
-    let answer = ConnectorElicitationAnswer {
-        handle: &claim.handle,
-        generation: claim.generation,
-        questions: &claim.questions,
-        answers: &frozen.text,
-        digest: frozen.digest,
+    let asks = server.decision_host().asks();
+    let kept = match &claim.owner_ask {
+        Some((digest, asked)) if *digest == frozen.digest => Some(asked.clone()),
+        Some((_, superseded)) => {
+            drop(asks.withdraw(superseded.seq));
+            for part in &superseded.parts {
+                drop(asks.withdraw(*part));
+            }
+            None
+        }
+        None => None,
     };
-    let seq = match server
-        .vault()
-        .queue_connector_elicitation_owner_ask(authority, &answer)
-    {
-        Ok(seq) => seq,
-        Err(error) => {
-            tracing::warn!(%error, "connector elicitation owner ask not queued");
-            return OwnerRuling::Unasked;
+    let asked = match kept {
+        Some(asked) => asked,
+        None => {
+            let answer = ConnectorElicitationAnswer {
+                handle: &claim.handle,
+                generation: claim.generation,
+                questions: &claim.questions,
+                answers: &frozen.text,
+                digest: frozen.digest,
+            };
+            match server
+                .vault()
+                .queue_connector_elicitation_owner_ask(authority, &answer)
+            {
+                Ok(asked) => asked,
+                Err(error) => {
+                    tracing::warn!(%error, "connector elicitation owner ask not queued");
+                    return OwnerRuling::Unasked;
+                }
+            }
         }
     };
-    let asks = server.decision_host().asks();
+    let ruling = owner_ruling(asks, asked.seq, claim.lease);
+    let registry = &server.connector_elicitations;
+    if matches!(ruling, OwnerRuling::Pending) {
+        registry.keep_owner_ask(
+            &claim.handle,
+            claim.generation,
+            Some((frozen.digest, asked)),
+        );
+        return ruling;
+    }
+    registry.keep_owner_ask(&claim.handle, claim.generation, None);
+    for part in asked.parts {
+        drop(asks.withdraw(part));
+    }
+    ruling
+}
+
+/// The owner's ruling on ask `seq` as it stands: `None` while it is open; a
+/// withdrawn or vanished ask abstains.
+fn ruling_now(asks: &DecisionAsks, seq: u64) -> Option<oneiron::Result<DecisionAnswer>> {
+    match asks.get(seq) {
+        Ok(Some(ask)) if ask.withdrawn_at.is_some() => Some(Ok(DecisionAnswer::Abstain)),
+        Ok(Some(ask)) => ask.answer.map(|answer| Ok(answer.answer)),
+        Ok(None) => Some(Ok(DecisionAnswer::Abstain)),
+        Err(error) => Some(Err(error)),
+    }
+}
+
+/// Waits for the owner's ruling on ask `seq` until `lease`; past it the ask
+/// is read once and, still open, stands (FIX 3837).
+fn owner_ruling(asks: &DecisionAsks, seq: u64, lease: Instant) -> OwnerRuling {
     let runtime = tokio::runtime::Handle::try_current().ok();
     loop {
-        let left = claim.deadline.saturating_duration_since(Instant::now());
+        let left = lease.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            drop(asks.withdraw(seq));
-            return OwnerRuling::Lapsed;
+            return match ruling_now(asks, seq) {
+                None | Some(Err(_)) => OwnerRuling::Pending,
+                Some(Ok(DecisionAnswer::Noul(true))) => OwnerRuling::Yes,
+                Some(Ok(_)) => OwnerRuling::No,
+            };
         }
         let wait = left.min(OWNER_ASK_POLL);
         let answered = match &runtime {
@@ -576,14 +761,7 @@ fn owner_rules(
             },
             None => {
                 std::thread::sleep(wait);
-                match asks.get(seq) {
-                    Ok(Some(ask)) if ask.withdrawn_at.is_some() => {
-                        Some(Ok(DecisionAnswer::Abstain))
-                    }
-                    Ok(Some(ask)) => ask.answer.map(|answer| Ok(answer.answer)),
-                    Ok(None) => Some(Ok(DecisionAnswer::Abstain)),
-                    Err(error) => Some(Err(error)),
-                }
+                ruling_now(asks, seq)
             }
         };
         match answered {

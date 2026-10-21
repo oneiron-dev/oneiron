@@ -7,7 +7,8 @@
 //! caller's own principal, its own standing grant and the gate. The call is
 //! never the owner's by default. The principal is the caller's: the facade
 //! credential's own (`facade_actor`), the MCP connector's resolved actor, or
-//! the pumped run's agent.
+//! the pumped run's agent. `connector.answer` has the same door beside it
+//! (FIX 3838), for a caller whose call answered `awaiting_input`.
 //!
 //! The door takes the logical invocation its call resolved and maps it, with
 //! the caller, onto the ledger's call identity
@@ -143,6 +144,31 @@ pub(crate) fn connector_call_listing_as(
         .call_connector_listing(memory, input, invocation, &mut host)
         .map_err(sdk::connector_call_error)?;
     Ok((ConnectorCallReply::project(&name, &tool, outcome), rows))
+}
+
+/// `connector.answer`'s host door (FIX 3838): `caller`'s answer, on the
+/// credential it presented, to the questions one of its own connector calls
+/// waits on, so an HTTP or MCP `connector.call` that answered
+/// `awaiting_input` has a door to answer through. The same registry and the
+/// same check as a run's answer ([`connector_answer_as`]): only the call's
+/// own caller answers, under that call's grant. Beside it, the rows its
+/// reads listed; the connector's reply is foreign data and lists none.
+pub(crate) async fn connector_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
+    input: ConnectorAnswerRequest,
+) -> Listed<ConnectorCallReply> {
+    const VERB: &str = "connector.answer";
+    credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+        let memory = match invocation {
+            Some(invocation) => memory.with_invocation(invocation),
+            None => memory,
+        };
+        connector_answer_as(server, &memory, input)
+    })
+    .await
 }
 
 /// `connector.answer` (ONE-2510) for the caller `memory` is bound to: its
