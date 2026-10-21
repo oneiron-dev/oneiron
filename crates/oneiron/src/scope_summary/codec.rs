@@ -16,7 +16,8 @@ pub struct ScopeSummaryBody {
     /// Codec version: 1, or 2 for a composed body.
     pub v: u8,
     /// Selector resolved in the mint transaction; `None` (a nil `scope`) for
-    /// a NOTE set's summary (FIX 5757), which is in no conversation.
+    /// a NOTE set's summary (FIX 5757) or a sitting's (FIX 7509), which are
+    /// in no conversation.
     pub scope: Option<ScopeSelector>,
     /// The body as its producer wrote it, never rewritten by the engine.
     pub text: String,
@@ -163,11 +164,15 @@ fn validate(body: &ScopeSummaryBody) -> Result<()> {
     if unique.len() != body.covers.len() {
         return Err(invalid("duplicate covered record"));
     }
-    // A NOTE set's summary is composed from the NOTEs it covers, and NOTEs
-    // carry no MESSAGEs.
+    // A summary in no conversation is composed from what it covers: a NOTE
+    // set's from its NOTEs, a sitting's from its TURNs and their MESSAGEs
+    // (FIX 7509). Its saved declaration tells which, and the doors check its
+    // covers and MESSAGEs against it.
     let Some(scope) = &body.scope else {
-        if body.v != 2 || body.covers.is_empty() || !body.messages.is_empty() {
-            return Err(invalid("a NOTE set's summary is composed from its NOTEs"));
+        if body.v != 2 || body.covers.is_empty() {
+            return Err(invalid(
+                "a summary in no conversation is composed from what it covers",
+            ));
         }
         return Ok(());
     };

@@ -12,8 +12,11 @@ mod public_types;
 mod purpose;
 pub use public_types::*;
 mod request;
+mod session;
 mod status;
-pub use derivation::{ScopeSummaryMetadata, SummaryDerivation, SummarySourceVersion};
+pub use derivation::{
+    ScopeSummaryMetadata, SummaryDerivation, SummaryLineSources, SummarySourceVersion,
+};
 pub(crate) use derivation::{rederive_changed_in_txn, roll_back_summary_in_txn};
 pub use purpose::SummaryPurpose;
 pub use status::{ScopeSummaryResult, ScopeSummaryStatus};
@@ -28,6 +31,7 @@ pub(crate) use doors::{
 };
 pub(crate) use request::ComposedSummary;
 pub use request::{ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget};
+pub(crate) use session::enqueue_session_summary_in_txn;
 pub(crate) use word_sources::{WordSources, word_sources_in, word_sources_through_in};
 
 #[cfg(test)]
