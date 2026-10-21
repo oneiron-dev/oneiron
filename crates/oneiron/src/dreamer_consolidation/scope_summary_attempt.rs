@@ -30,6 +30,8 @@ use crate::{EntityId, Vault};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod output;
+
 /// Wraps an executor with the declared-summary arm. Every other attempt is
 /// delegated untouched.
 pub struct ScopeSummaryExecutor<'a, E> {
@@ -135,15 +137,27 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
         let Some(first) = evidence.covers.first().copied() else {
+            // A sitting that retained no text has no summary (FIX 7509): its
+            // attempt completes with none, never with invented prose.
+            if plan.session.is_some() {
+                return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            }
             return Err(invalid_consolidation("summary scope has no text"));
         };
+        // A sitting's lines cite its TURNs by the labels its evidence showed
+        // (FIX 7509).
+        let labels = plan.session.map(|_| output::turn_labels(&evidence.covers));
         // The host supplies the instruction. The typed output contract makes
         // the Dreamer distill editor wants into `keep` alongside its prose.
-        let schema = serde_json::json!({
-            "type": "object", "additionalProperties": false,
-            "required": ["text", "keep"],
-            "properties": {"text": {"type": "string"}, "keep": {"type": "string"}}
-        });
+        let schema = if labels.is_some() {
+            output::session_schema()
+        } else {
+            serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["text", "keep"],
+                "properties": {"text": {"type": "string"}, "keep": {"type": "string"}}
+            })
+        };
         let params = serde_json::to_vec(&(instruction, self.model.as_str(), &schema))
             .map_err(|_| invalid_consolidation("summary policy did not encode"))?;
         let params_hash = *blake3::hash(&params).as_bytes();
@@ -241,12 +255,18 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let mut charges = StepChargeTally::default();
         // The reply answers to the summary contract inside the step (FIX
         // 7272): the schema's door first, then the parse the landing uses.
+        let check = |response: &LlmResponse| match &labels {
+            Some(labels) => output::session_output(response, labels)
+                .map(drop)
+                .map_err(str::to_owned),
+            None => check_summary_reply(response),
+        };
         let response = match call_as_step_checked(
             &step_ctx,
             self.backend,
             self.guard,
             request,
-            &check_summary_reply,
+            &check,
         )
         .await
         {
@@ -299,20 +319,26 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         }
         // The step's check already admitted this reply; a memo stored before
         // the check existed still answers to the same parse here.
-        let output = match summary_output(&response) {
-            Ok(output) => output,
-            Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),
+        let (text, keep, line_sources) = match &labels {
+            Some(labels) => match output::session_output(&response, labels) {
+                Ok(lines) => (lines.text, lines.keep, Some(lines.line_sources)),
+                Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),
+            },
+            None => match summary_output(&response) {
+                Ok(summary) => (summary.text.trim().to_owned(), summary.keep, None),
+                Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),
+            },
         };
-        let body = output.text.trim();
         let composed = ComposedSummary {
-            text: body,
-            keep: &output.keep,
+            text: &text,
+            keep: &keep,
             params_hash,
             instruction,
             model: self.model.as_str(),
             covers: evidence.covers.clone(),
             messages: evidence.messages.clone(),
             memo,
+            line_sources,
         };
         match ctx
             .vault
@@ -359,15 +385,7 @@ struct SummaryOutput {
 /// parse as [`SummaryOutput`] and the summary text is not blank. The step's
 /// check and the landing both read the reply through this one parse.
 fn summary_output(response: &LlmResponse) -> std::result::Result<SummaryOutput, &'static str> {
-    let body: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
+    let body = output::reply_text(response);
     let output: SummaryOutput = serde_json::from_str(body.trim())
         .map_err(|_| "the model wrote an invalid summary/keep result")?;
     if output.text.trim().is_empty() {
@@ -430,10 +448,14 @@ fn source_pin(
 
 /// Reads through the Dreamer's own scoped read, including every child of a
 /// witnessed turn. It is also the landing fence, under the landing writer.
+/// A sitting's TURNs (`labelled`, FIX 7509) are shown under the labels the
+/// engine mints for the call, in source order, which its lines cite; every
+/// other TURN under its id.
 pub(crate) fn scope_summary_evidence_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     sources: &[EntityId],
+    labelled: bool,
 ) -> Result<ScopeSummaryEvidence> {
     let read = dreamer_read(vault)?;
     let rows = read.get_entities_parts_in_txn(txn, sources)?;
@@ -465,9 +487,12 @@ pub(crate) fn scope_summary_evidence_in_txn(
         let Some(text) = turn.text() else {
             continue;
         };
-        evidence
-            .text
-            .push_str(&format!("[{}] {text}\n", record.to_hex()));
+        let label = if labelled {
+            output::turn_label(evidence.covers.len())
+        } else {
+            record.to_hex()
+        };
+        evidence.text.push_str(&format!("[{label}] {text}\n"));
         evidence.covers.push(*record);
         evidence.readable.insert(document_version(*record, &body));
         for (message, revision, version) in turn.message_pins() {
