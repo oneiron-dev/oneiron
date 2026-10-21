@@ -81,6 +81,7 @@ impl AttemptQueue<'_> {
             executor_model: None,
             executor_seat: None,
             executor_role: None,
+            planned_binding: None,
             read_set: None,
             cancel_state: AttemptCancelState::default(),
             signals: Vec::new(),

@@ -139,6 +139,7 @@ impl AttemptQueue<'_> {
             executor_model: None,
             executor_seat: None,
             executor_role: None,
+            planned_binding: None,
             read_set: None,
             // Likewise its cancel lifecycle: the new try inherits neither the
             // source's refusal history nor its spent landing reserve. It DOES

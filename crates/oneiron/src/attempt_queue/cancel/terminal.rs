@@ -580,6 +580,7 @@ fn landing_successor(
         executor_model: None,
         executor_seat: None,
         executor_role: None,
+        planned_binding: None,
         read_set: None,
         cancel_state: AttemptCancelState {
             // The whole point of a designed landing: the successor starts from

@@ -7,6 +7,7 @@ use crate::attempt_queue::encoding::MAX_DEDUPE_ACTOR_REF_LEN;
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{
     AttemptEvent, AttemptRecord, AttemptState, CleanupAttemptLeases, ManifestEntry,
+    PlannedExactness,
 };
 use crate::error::{ArtifactError, Error, Result};
 
@@ -331,6 +332,31 @@ pub(in crate::attempt_queue) fn validate_result_rebind(
         )),
         _ => Ok(()),
     }
+}
+
+const ERR_PLANNED_BINDING_UNSTAMPED: &str = "a planned binding requires its executor model";
+
+const ERR_PLANNED_EXACT_OFF_PICK: &str = "an exact planned binding must run its pick";
+
+/// A planned binding is written in one write with its executor model (FIX
+/// 7720), so one without that model, or an exact one whose model is not its
+/// pick, is a row no door wrote. Shape only, never a model's availability.
+pub(in crate::attempt_queue) fn validate_planned_binding(record: &AttemptRecord) -> Result<()> {
+    let Some(binding) = &record.planned_binding else {
+        return Ok(());
+    };
+    let reason = match record.executor_model.as_deref() {
+        None => ERR_PLANNED_BINDING_UNSTAMPED,
+        Some(model)
+            if binding.exactness == PlannedExactness::Exact && model != binding.pick.as_str() =>
+        {
+            ERR_PLANNED_EXACT_OFF_PICK
+        }
+        Some(_) => return Ok(()),
+    };
+    Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+        reason,
+    )))
 }
 
 pub(in crate::attempt_queue) fn validate_optional_run_id(run_id: Option<&str>) -> Result<()> {

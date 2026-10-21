@@ -21,6 +21,7 @@
 //! retrieval — nothing here reads or writes it.
 
 mod placement;
+mod split;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -646,62 +647,6 @@ impl TaskTypeTree {
         candidates
     }
 
-    /// Splits one node on a decision its tasks disagree on: one child per
-    /// qualifying winner. Bumps the tree version. Refused when the node
-    /// does not actually disagree on `axis` — splits follow decisions,
-    /// never topic, so there is no split-by-name path.
-    pub fn split(&mut self, node_id: &str, axis: DecisionAxis) -> Result<Vec<TaskTypeRef>> {
-        let winners: Vec<String> = {
-            let node = self
-                .nodes
-                .get(node_id)
-                .ok_or_else(|| invalid_type_ref("split node is outside the tree"))?;
-            if !node.is_live() {
-                return Err(invalid_type_ref("split node has merged away"));
-            }
-            if !node.disagrees_on(axis) {
-                return Err(invalid_type_ref(
-                    "a type splits only when its tasks disagree on a decision",
-                ));
-            }
-            node.decision_wins
-                .get(axis.as_str())
-                .map(|by_winner| {
-                    by_winner
-                        .iter()
-                        .filter(|(_, runs)| **runs >= SPLIT_MIN_RUNS_PER_WINNER)
-                        .map(|(winner, _)| winner.clone())
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        let mut created = Vec::new();
-        for winner in winners {
-            let child_id = format!("{node_id}/{}={}", axis.as_str(), slug(&winner));
-            if self.nodes.contains_key(&child_id) {
-                continue;
-            }
-            let mut child = TaskTypeNode::new(
-                &child_id,
-                Some(node_id),
-                &format!("{node_id} where {} is {winner}", axis.as_str()),
-                None,
-            );
-            child.split_axis = Some(axis);
-            child.split_winner = Some(winner);
-            self.nodes.insert(child_id.clone(), child);
-            created.push(child_id);
-        }
-        if created.is_empty() {
-            return Err(invalid_type_ref("split produced no new child type"));
-        }
-        self.version = self.version.saturating_add(1);
-        Ok(created
-            .iter()
-            .map(|child_id| self.type_ref(child_id))
-            .collect())
-    }
-
     /// True when two live siblings read the same on every decision axis:
     /// wherever both have a clear winner, the winners match.
     #[must_use]
@@ -1053,18 +998,4 @@ pub fn place_type_ref(
     let tree = type_tree(vault, project)?;
     let outcome = place_task(&tree.inner, request, decisions);
     Ok(TypeRef::from(&outcome.type_ref))
-}
-
-/// Node-id-safe spelling of a decision winner.
-fn slug(winner: &str) -> String {
-    winner
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect()
 }

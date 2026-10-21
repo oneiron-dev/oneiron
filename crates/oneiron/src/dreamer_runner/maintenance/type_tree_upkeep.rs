@@ -309,8 +309,8 @@ pub(super) fn reshape(tree: &mut TaskTypeTree) -> Reshape {
         if split.contains(&candidate.node_id) || !tree.is_leaf(&candidate.node_id) {
             continue;
         }
-        // A refusal (children of an earlier split merged away under the same
-        // ids) leaves the node as it is.
+        // A re-split mints fresh child ids beside merged-away ones (FIX
+        // 2971); a refusal leaves the node as it is.
         if tree.split(&candidate.node_id, candidate.axis).is_ok() {
             changes.splits += 1;
             split.insert(candidate.node_id);
