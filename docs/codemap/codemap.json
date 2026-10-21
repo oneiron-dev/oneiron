@@ -95358,6 +95358,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/resident_pump/browser_workflow.rs",
+     "purpose": "A TASK bound to a library program (CUA E4, FIX 7603; DESIGN-2 §2): its try runs the program its first lease…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/resident_pump/craft.rs",
      "purpose": "A resident's own craft in its run's task (OF-490): every lesson and failure mode it keeps, learned or…",
      "surface": {
@@ -96712,7 +96722,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 57,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -96784,7 +96794,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1055,
+   "source_files": 1056,
    "test_files": 182
   },
   "oneiron-spawn": {
