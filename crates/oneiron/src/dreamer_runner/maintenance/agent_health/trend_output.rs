@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 
 use rmpv::Value;
 
-use super::rollups::{TrendMargin, TrendSource, health_trend_rollups};
+use super::rollups::{HealthTrendRollups, TrendMargin, TrendSource, health_trend_rollups};
 use super::trend::{
     HealthTrendComparison, HealthTrendInput, TrendDirection, TrendSide, review_health_trends,
 };
@@ -62,12 +62,27 @@ pub(super) fn soft<T>(
 /// and a write that fails is skipped, each with a kind-only warning.
 pub(crate) fn run_health_trends(vault: &Vault, now: u64) -> u64 {
     let today = now / SECONDS_PER_DAY;
-    let dial_changes = soft(
-        &mut BTreeSet::new(),
-        TrendSource::DialRows,
-        DetectionDialChanges::read(vault),
-    );
-    let rollups = health_trend_rollups(vault, today);
+    // The dial rows and the rollups read one snapshot, so a dial set between
+    // two reads never passes as unchanged (FIX 8358).
+    let mut unread = BTreeSet::new();
+    let opened = vault.store.env.read_txn().map_err(crate::Error::from);
+    let (dial_changes, rollups) = match soft(&mut unread, TrendSource::Attempts, opened) {
+        Some(rtxn) => (
+            soft(
+                &mut BTreeSet::new(),
+                TrendSource::DialRows,
+                DetectionDialChanges::read_in(vault, &rtxn),
+            ),
+            health_trend_rollups(vault, &rtxn, today),
+        ),
+        None => (
+            None,
+            HealthTrendRollups {
+                failed: unread,
+                ..HealthTrendRollups::default()
+            },
+        ),
+    };
     let review = review_health_trends(&HealthTrendInput {
         today,
         rollups,

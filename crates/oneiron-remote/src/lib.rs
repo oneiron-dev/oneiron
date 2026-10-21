@@ -37,6 +37,7 @@
 
 #![forbid(unsafe_code)]
 
+#[path = "generated/agent_verbs.rs"]
 mod agent_verbs;
 mod caps;
 mod embedded;

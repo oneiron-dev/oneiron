@@ -3,13 +3,10 @@
 use super::cli_and_pinned_config::PinnedAttestation;
 use super::config_types::{
     ArmId, BROWSE_JUDGE_PROMPT_VERSION, BenchTask, CAMPAIGN_ID, ChatResponse, FixtureVault,
-    GoldLabel, OPENROUTER_CHAT_COMPLETIONS, REQUEST_TEMPERATURE, RunSettings, SCORER_VERSION,
-    TaskClass, WALL_CLOCK_CAP_S,
+    GoldLabel, REQUEST_TEMPERATURE, RunSettings, SCORER_VERSION, TaskClass,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write;
-use std::process::{Command, Stdio};
 pub(super) fn request_nonce(task: &BenchTask, arm: ArmId, rep_index: u32) -> String {
     format!(
         "{CAMPAIGN_ID}:{}:{}:rep-{rep_index}",
@@ -130,102 +127,7 @@ pub(super) fn blake3_hex(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
 
-pub(super) fn call_openrouter(
-    api_key: &str,
-    messages: &[Value],
-    max_tokens: u32,
-    request_user: &str,
-    settings: &RunSettings,
-) -> Result<ChatResponse, String> {
-    if api_key.contains(['\r', '\n']) {
-        return Err("OPENROUTER_API_KEY contains unsupported newline characters".to_owned());
-    }
-    let request = openrouter_request_body(messages, max_tokens, request_user, settings);
-    // The single transmit chokepoint (eval rows AND the browse judge): a pinned
-    // run refuses here, before curl is spawned, unless the model this body
-    // actually carries resolves to a pinned revision.
-    pinned_transmit_attestation(settings, &request)?;
-    let mut request_file =
-        tempfile::NamedTempFile::new().map_err(|error| format!("create request body: {error}"))?;
-    request_file
-        .write_all(request.to_string().as_bytes())
-        .map_err(|error| format!("write OpenRouter request body: {error}"))?;
-    request_file
-        .flush()
-        .map_err(|error| format!("flush OpenRouter request body: {error}"))?;
-
-    let curl_config = format!(
-        "silent\n\
-         show-error\n\
-         fail-with-body\n\
-         max-time = \"{}\"\n\
-         header = \"Authorization: Bearer {}\"\n\
-         header = \"Content-Type: application/json\"\n",
-        WALL_CLOCK_CAP_S,
-        curl_config_escape(api_key)
-    );
-    let mut child = Command::new("curl")
-        .arg("--config")
-        .arg("-")
-        .arg("--data-binary")
-        .arg(format!("@{}", request_file.path().display()))
-        .arg(OPENROUTER_CHAT_COMPLETIONS)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("spawn curl for OpenRouter: {error}"))?;
-    {
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| "curl stdin was not available".to_owned())?;
-        stdin
-            .write_all(curl_config.as_bytes())
-            .map_err(|error| format!("write curl config: {error}"))?;
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("wait for OpenRouter response: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "OpenRouter provider-locked request failed: status={} stderr={} body={}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout)
-        ));
-    }
-    let body: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("parse OpenRouter response JSON: {error}"))?;
-    let content = body
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .and_then(|choice| choice.get("message"))
-        .and_then(|message| message.get("content"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("OpenRouter response missing assistant content: {body}"))?
-        .to_owned();
-    let tokens_total = body
-        .get("usage")
-        .and_then(|usage| usage.get("total_tokens"))
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or(0);
-    let generation_id = body
-        .get("id")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    Ok(ChatResponse {
-        content,
-        tokens_total,
-        generation_id,
-    })
-}
-
-fn curl_config_escape(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
-}
+pub(super) use super::provider::call_openrouter;
 
 pub(super) fn chat_message(role: &str, content: String) -> Value {
     json!({
@@ -301,14 +203,14 @@ pub(super) fn judge_browse_answer(
     citation_detail: Value,
     rep_index: u32,
     settings: &RunSettings,
-) -> Result<(f64, Value, u32, Option<String>), String> {
+) -> Result<(f64, Value, Option<ChatResponse>), String> {
     let GoldLabel::BrowseThenAnswer {
         topic,
         rubric,
         required_claim_ids,
     } = &task.gold
     else {
-        return Ok((citation_score, citation_detail, 0, None));
+        return Ok((citation_score, citation_detail, None));
     };
     let evidence = claim_evidence_block(fixture, required_claim_ids)?;
     let judge_answer = blind_judge_answer(answer);
@@ -337,6 +239,9 @@ pub(super) fn judge_browse_answer(
         &request_user,
         settings,
     )?;
+    if response.accounting.failure_cause.is_some() {
+        return Ok((citation_score, citation_detail, Some(response)));
+    }
     let parsed = serde_json::from_str::<Value>(&response.content).unwrap_or_else(|_| {
         json!({
             "coverage": 1,
@@ -359,13 +264,12 @@ pub(super) fn judge_browse_answer(
             "citation_score": citation_score,
             "normalized_score": final_accuracy,
             "combiner": "min(rubric_normalized_score,citation_score)",
-            "judge_tokens_total": response.tokens_total,
+            "judge_tokens_total": response.accounting.provider_tokens,
             "judge_generation_id": generation_id.as_deref(),
             "judge_prompt_version": BROWSE_JUDGE_PROMPT_VERSION,
             "citation_precheck": citation_detail
         }),
-        response.tokens_total,
-        generation_id,
+        Some(response),
     ))
 }
 
