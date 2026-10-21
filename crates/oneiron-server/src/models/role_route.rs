@@ -7,7 +7,8 @@
 //! serve exactly that model at exactly that route. A model it does not serve there is refused
 //! before any call leaves: a vault's route may narrow, never silently widen.
 //! Without a manifest the role's seat is the binding: the owner's `[models]`
-//! ladder, pinned the way a routed seat is.
+//! ladder, pinned the way a routed seat is. A manifest that leaves the
+//! optional browser planner unbound leaves it unseated, as no rung does.
 use std::sync::Arc;
 
 use oneiron::llm::manifest::ModelRole;
@@ -15,7 +16,7 @@ use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::{LlmRequest, ModelId, ModelLocality, ModelTierRef, Vault};
 
 use super::{ModelRuntime, OfferLadder, Seat};
-use crate::config::models::role_key;
+use crate::config::models::{role_key, unbound_row_is_no_seat};
 
 /// Why a role-bound call was refused before it left.
 #[derive(Debug)]
@@ -97,6 +98,12 @@ impl ModelRuntime {
                 seat_bound: true,
             });
         };
+        // A manifest with no row for the browser planner leaves it
+        // unseated, as no rung does, so its call takes the chat role (CUA
+        // E5). Any other role's missing row is refused below.
+        if unbound_row_is_no_seat(role) && !manifest.roles.contains_key(&role) {
+            return Err(RoleRefusal::NoSeat);
+        }
         let binding = manifest.binding(role).map_err(RoleRefusal::refused)?;
         let config =
             |reason: &str| RoleRefusal::refused(oneiron::Error::InvalidConfig(reason.into()));

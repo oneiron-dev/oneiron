@@ -20,6 +20,7 @@ use oneiron::{
 use oneiron_code_check::ShadowCheck;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::ai_host::browser_planner::BrowserPlannerRuns;
 use crate::models::{InjectedRuns, LoggedReceipts};
 
 /// The first-party component this repository builds and reviews, and the
@@ -104,6 +105,9 @@ pub struct McpQuickJsProvider {
     /// Builds each pinned child's compaction seat, its live admission bound
     /// to the pick as its calls are (Engine C5); none takes `compaction`.
     pinned_compaction: Option<RunCompactionSeat>,
+    /// The runs' browser planner states (CUA E5) this provider's backend
+    /// routes each step's call by; none routes every call as before.
+    browser_planner: Option<Arc<BrowserPlannerRuns>>,
 }
 
 /// A reader child's backend over the host-injected model: its calls are
@@ -200,6 +204,7 @@ impl McpQuickJsProvider {
             planned_route: None,
             planned_meter: None,
             pinned_compaction: None,
+            browser_planner: None,
         })
     }
 
@@ -240,6 +245,15 @@ impl McpQuickJsProvider {
     #[must_use]
     pub(crate) fn with_pinned_compaction(mut self, seat: RunCompactionSeat) -> Self {
         self.pinned_compaction = Some(seat);
+        self
+    }
+
+    /// Each run's browser planner state (CUA E5) lives in `runs`, the one
+    /// this provider's backend routes the run's step calls by; the run's
+    /// guest door binds it there.
+    #[must_use]
+    pub(crate) fn with_browser_planner(mut self, runs: Arc<BrowserPlannerRuns>) -> Self {
+        self.browser_planner = Some(runs);
         self
     }
 
@@ -349,6 +363,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn planner(&self) -> Option<&crate::config::models::PlannerSettings> {
         self.planner.as_ref()
+    }
+    fn browser_planner(&self) -> Option<&BrowserPlannerRuns> {
+        self.browser_planner.as_deref()
     }
     fn code_check(&self) -> Option<&ShadowCheck> {
         self.code_check.as_deref()

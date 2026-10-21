@@ -12,6 +12,12 @@
 //! is swapped by editing one string and no vendor appears in code. Absent
 //! `[models]`, the server runs every model-free path and reports each seat
 //! as unconfigured.
+//!
+//! Some roles are DETAILED only, so no shorthand fills them: the Coach's, the
+//! Local-vision seat's, and the browser planner's
+//! (`[models.roles.browser_planner]`, [`BROWSER_PLANNER_ROLE`]), which takes a
+//! code-mode browser subgoal's next step once a batch or library run of it
+//! ends `NEEDS_AGENT`. Without it those steps stay on `generative_reasoner`.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -19,6 +25,7 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron_code_check::{BackendKind, CheckMode};
 use serde::Deserialize;
 
+mod browser_planner;
 mod compaction;
 mod decision_read;
 mod decisions;
@@ -30,6 +37,7 @@ mod provider;
 mod tests;
 mod voice;
 
+pub use browser_planner::{BROWSER_PLANNER_ROLE, NEEDS_AGENT_BEFORE_CHAT, unbound_row_is_no_seat};
 pub use compaction::CompactionSettings;
 pub use decision_read::{
     DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal,

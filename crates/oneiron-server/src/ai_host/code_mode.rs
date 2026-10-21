@@ -4,6 +4,13 @@
 //! Bound when `[models]` fills that seat and `[models.code_mode]` names the
 //! prompt package the executor's wire prompt resolves from. Otherwise
 //! `execute_code` stays unlisted, as on a server with no model.
+//!
+//! A browser subgoal's step after a batch or library run of it ended
+//! `NEEDS_AGENT` runs on `[models.roles.browser_planner]` instead, as its
+//! own role-bound call, until the subgoal's second miss hands it back to
+//! the generative seat, and each miss's answer reaches the next step's call
+//! as host data (`browser_planner.rs`). A run's durable seat keeps its
+//! model and effort; a pinned planned child keeps every step on its pick.
 use std::sync::Arc;
 
 use oneiron::agent_dispatch::SpendScopeId;
@@ -13,6 +20,7 @@ use oneiron::engine_executor::{
     ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig, EngineExecutorLimits,
 };
 use oneiron::llm::BudgetDenied;
+use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::{
     BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, LlmGenerateFuture, LlmRequest,
@@ -24,6 +32,7 @@ use oneiron_code_check::{
 };
 
 use super::CHAT_ROLE;
+use super::browser_planner::{self, BrowserPlannerRuns};
 use super::compaction::{CodeModeCompaction, LiveAdmission};
 use super::status::StatusCell;
 use crate::config::models::{CodeCheckSettings, ModelsConfig};
@@ -90,12 +99,17 @@ pub(super) async fn bind(
             return server;
         }
     };
+    // Each run's browser planner state (CUA E5): its guest door finds it
+    // through the provider, and every backend and live admission below
+    // routes the run's step calls by it.
+    let browser = Arc::new(BrowserPlannerRuns::default());
     let backend = Arc::new(CodeModeBackend {
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
         guard: guard.clone(),
         payer: None,
         planned: None,
+        browser: Arc::clone(&browser),
     });
     // Each run's compaction seat reads the rung its step's call is admitted
     // on, at the breakpoint, through this same admission (FIX 4465 C).
@@ -103,6 +117,7 @@ pub(super) async fn bind(
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
         pinned: false,
+        browser: Arc::clone(&browser),
     });
     // A reader child's calls take the same admission: on its own child
     // scope's guard when its run spends under a scope, else on code mode's
@@ -111,6 +126,7 @@ pub(super) async fn bind(
     let reader_meter: crate::mcp::ReaderMeter = {
         let vault = Arc::clone(server.vault());
         let models = Arc::clone(runtime);
+        let browser = Arc::clone(&browser);
         Arc::new(move |guard: BudgetGuard, payer: Option<PayerPerson>| {
             Arc::new(CodeModeBackend {
                 vault: Arc::clone(&vault),
@@ -118,6 +134,7 @@ pub(super) async fn bind(
                 guard,
                 payer,
                 planned: None,
+                browser: Arc::clone(&browser),
             }) as Arc<dyn LlmBackend>
         })
     };
@@ -132,6 +149,7 @@ pub(super) async fn bind(
     let planned_meter: PlannedMeter = {
         let vault = Arc::clone(server.vault());
         let models = Arc::clone(runtime);
+        let browser = Arc::clone(&browser);
         Arc::new(
             move |guard: BudgetGuard, payer: Option<PayerPerson>, planned: &PlannedModel| {
                 Arc::new(CodeModeBackend {
@@ -140,6 +158,7 @@ pub(super) async fn bind(
                     guard,
                     payer,
                     planned: Some(planned.clone()),
+                    browser: Arc::clone(&browser),
                 }) as Arc<dyn LlmBackend>
             },
         )
@@ -161,6 +180,7 @@ pub(super) async fn bind(
             .with_clock_from_first_start()
             .with_reader_meter(reader_meter)
             .with_planned_models(planned_route, planned_meter)
+            .with_browser_planner(Arc::clone(&browser))
             .with_host_meter(guard)
             .with_reader_window_tokens(
                 super::dreamer::dream_windows(models)
@@ -202,6 +222,7 @@ pub(super) async fn bind(
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
         pinned: true,
+        browser,
     });
     let provider =
         provider.with_pinned_compaction(pinned_compaction(&compaction, embedder.clone(), pinned));
@@ -308,7 +329,9 @@ fn code_checker(settings: &CodeCheckSettings) -> Result<Arc<dyn CodeCheck>, Chec
 /// job's), on that model alone with no fallback; then sent as a run on code
 /// mode's own budget: each provider call takes its own
 /// permit and settles itself (its usage, or its reservation when it reports
-/// none or fails after it went out).
+/// none or fails after it went out). A browser subgoal's step takes the
+/// role its run's browser planner state picks, on the same budget, with
+/// the evidence that state holds (CUA E5).
 struct CodeModeBackend {
     vault: Arc<Vault>,
     models: Arc<ModelRuntime>,
@@ -319,6 +342,8 @@ struct CodeModeBackend {
     /// pinned, each runs its pick alone; else the role's live route, and
     /// one another model answers is marked on its receipts.
     planned: Option<PlannedModel>,
+    /// The runs' browser planner states each call is routed by (CUA E5).
+    browser: Arc<BrowserPlannerRuns>,
 }
 
 /// The run each code-mode call is admitted under, one run per call so the
@@ -327,15 +352,19 @@ const CODE_MODE_RUN: &str = "code-mode";
 
 /// A code-mode call's admission on the chat role, as every step's call is
 /// admitted: the model a durable seat bound when its envelope carries the
-/// seat's effort, else the role's live route. Says which. A planned child
-/// its host pinned to its pick (`pinned`, FIX 2310) is admitted on that one
-/// model as a seat-bound call is; when that admission refuses now, the call
-/// takes the role's live route as any other does, so nothing new refuses.
+/// seat's effort, else the role's live route. Says which. A browser
+/// subgoal's step its run's browser planner state sent to `role` (CUA E5)
+/// is its own call of that role, the seat untouched; with no rung for
+/// `role` it is admitted here as any other step. A planned child its host
+/// pinned to its pick (`pinned`, FIX 2310) is admitted on that one model as
+/// a seat-bound call is; when that admission refuses now, the call takes
+/// the role's live route as any other does, so nothing new refuses.
 fn admit_code_mode_call(
     models: &ModelRuntime,
     vault: &Vault,
     request: LlmRequest,
     pinned: bool,
+    role: ModelRole,
 ) -> Result<(RoleCall, bool), RoleRefusal> {
     let seat_bound = request.envelope.seat_effort.is_some();
     if pinned
@@ -343,6 +372,9 @@ fn admit_code_mode_call(
         && let Some(call) = pinned_call(models, vault, &request)
     {
         return Ok((call, true));
+    }
+    if let Some(admitted) = browser_planner::admit_browser_step(models, vault, role, &request) {
+        return admitted.map(|call| (call, false));
     }
     let call = if seat_bound {
         models.admit_seat_bound(vault, CHAT_ROLE, request)
@@ -368,19 +400,24 @@ fn pinned_call(models: &ModelRuntime, vault: &Vault, request: &LlmRequest) -> Op
 
 /// The live admission a run's compaction seat reads at a breakpoint (FIX
 /// 4465 C): the step's request admitted exactly as [`CodeModeBackend`]
-/// admits it, on the same role, before the call is sent. It sends nothing,
-/// spends nothing and keeps no request: the seat's capture holds the one
-/// copy, on its flight, under the run's own actor and meter.
+/// admits it, on the same role and with the same browser evidence, before
+/// the call is sent. It sends nothing, spends nothing, counts nothing and
+/// keeps no request: the seat's capture holds the one copy, on its flight,
+/// under the run's own actor and meter.
 struct LiveStepAdmission {
     vault: Arc<Vault>,
     models: Arc<ModelRuntime>,
     /// A pinned planned child's, admitted on its pick (Engine C5).
     pinned: bool,
+    /// The runs' browser planner states, read as the backend reads them.
+    browser: Arc<BrowserPlannerRuns>,
 }
 
 impl LiveAdmission for LiveStepAdmission {
     fn admit_live(&self, request: LlmRequest) -> Result<RoleCall, RoleRefusal> {
-        admit_code_mode_call(&self.models, &self.vault, request, self.pinned).map(|(call, _)| call)
+        let (role, request, _) = self.browser.route(request, self.pinned);
+        admit_code_mode_call(&self.models, &self.vault, request, self.pinned, role)
+            .map(|(call, _)| call)
     }
 }
 
@@ -388,8 +425,11 @@ impl LlmBackend for CodeModeBackend {
     fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
             let pinned = self.planned.as_ref().is_some_and(|planned| planned.exact);
+            // CUA E5: the role the run's browser planner state picks, and
+            // the evidence it holds, handed on once this call answers.
+            let (role, request, handoff) = self.browser.route(request, pinned);
             let (call, seat_bound) =
-                admit_code_mode_call(&self.models, &self.vault, request, pinned).map_err(
+                admit_code_mode_call(&self.models, &self.vault, request, pinned, role).map_err(
                     |refusal| {
                         tracing::warn!(%refusal, "a code-mode model call was refused");
                         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied)
@@ -398,7 +438,7 @@ impl LlmBackend for CodeModeBackend {
             let run = self
                 .models
                 .funded_run(CODE_MODE_RUN, self.guard.clone(), self.payer.clone());
-            if seat_bound {
+            let answered = if seat_bound {
                 call.ladder.generate_exact(&run, call.request, None).await
             } else if let Some(planned) = &self.planned {
                 // FIX 2310: the model that answered, marked when it is not
@@ -411,7 +451,11 @@ impl LlmBackend for CodeModeBackend {
                 Ok(response)
             } else {
                 call.ladder.generate(&run, call.request, None).await
+            };
+            if answered.is_ok() {
+                handoff.answered();
             }
+            answered
         })
     }
 
