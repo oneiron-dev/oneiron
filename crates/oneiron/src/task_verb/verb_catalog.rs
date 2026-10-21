@@ -11575,19 +11575,19 @@ impl AgentVerb {
                 "Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."
             }
             Self::VaultCodeOriginMirrorGet => {
-                "Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."
+                "Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner."
             }
             Self::VaultCodeOriginMirrorSet => {
-                "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me unless named; the same URL keeps its own); the token binding is checked in the setup write."
+                "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked."
             }
             Self::VaultCodeOriginMirrorStrategy => {
-                "Set one served origin mirror's sync strategy: ask_me sends nothing until an exact publish request is approved, schedule pushes every published ref on its cadence; it changes only the strategy and its revision."
+                "Set one served origin mirror's sync strategy: ask_me sends nothing until an exact request is approved, schedule pushes every published ref on its cadence, full_auto each new green head at once; unsent automatic work pauses."
             }
             Self::VaultCodeOriginMirrorClear => {
                 "Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."
             }
             Self::VaultCodeOriginMirrorPush => {
-                "Push one origin's published Git refs to its schedule mirror now, recording the real outcome (ask_me refuses publish_request_required); refs pushed are not readiness, which names the LFS objects the history needs."
+                "Push one origin's published refs to its schedule or full_auto mirror now as a reviewed, leased plan (full_auto: green heads only), recording the real outcome; ask_me refuses publish_request_required. Refs are not LFS readiness."
             }
             Self::VaultCodeOriginPublishRequest => {
                 "Ask to publish one exact commit to one branch of a served origin's mirror, once: the request leases the push on the branch tip an authenticated read saw and records a full-ancestry review of what it would expose."

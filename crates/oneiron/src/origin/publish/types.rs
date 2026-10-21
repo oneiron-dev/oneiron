@@ -241,6 +241,19 @@ pub enum OriginPublishReviewItem {
         /// Lossy UTF-8 of the stored path bytes; the digest reads the bytes.
         path: String,
     },
+    /// An object a whole ref names on its way to what it points at (FIX
+    /// 6866 part 2; an automatic mirror push only): an annotated tag, with
+    /// the object it names and its tag name, or a tree or blob the ref names
+    /// directly. The digest reads a tag's raw bytes, message included.
+    Object {
+        /// `tag`, `tree` or `blob`.
+        object_type: String,
+        object: String,
+        /// What a tag names; `None` for a tree or blob.
+        target: Option<String>,
+        /// A tag's name; `None` for a tree or blob.
+        name: Option<String>,
+    },
 }
 
 /// One stored page of a review.

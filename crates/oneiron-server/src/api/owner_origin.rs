@@ -15,9 +15,10 @@
 //! `POST /v1/owner/origin-mirror/push` pushes now.
 //!
 //! Each mirror carries a sync strategy (FIX 6866): `schedule` is that
-//! cadenced push; `ask_me`, the default, sends nothing whole, so its push
-//! refuses with `publish_request_required` and exact reviewed commits go out
-//! through `vault.code.origin.publish.*`. `POST
+//! cadenced push; `full_auto` pushes each new green head as soon as the
+//! published refs move; `ask_me`, the default, sends nothing whole, so its
+//! push refuses with `publish_request_required` and exact reviewed commits
+//! go out through `vault.code.origin.publish.*`. `POST
 //! /v1/owner/origin-mirror/strategy` changes the strategy alone.
 
 use std::sync::Arc;
@@ -177,8 +178,8 @@ struct SetOriginMirror {
     user: Option<String>,
     /// Seconds between pushes: the repository's RPO.
     every_secs: u64,
-    /// `ask_me` or `schedule`; absent, the same URL keeps its strategy and
-    /// a new one asks first.
+    /// `ask_me`, `schedule` or `full_auto`; absent, the same URL keeps its
+    /// strategy and a new one asks first.
     #[serde(default)]
     sync_strategy: Option<OriginMirrorSyncStrategy>,
 }
@@ -210,7 +211,7 @@ async fn set_origin_mirror(
 #[serde(deny_unknown_fields)]
 struct SetOriginMirrorStrategy {
     repo: String,
-    /// `ask_me` or `schedule`.
+    /// `ask_me`, `schedule` or `full_auto`.
     sync_strategy: OriginMirrorSyncStrategy,
 }
 

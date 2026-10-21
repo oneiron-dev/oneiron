@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1094 facade rows, 3767 declarations.
+Census: 1094 facade rows, 3771 declarations.
 Inputs: 1029 of 1094 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 981 of 1094 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -10448,7 +10448,26 @@ class OriginMirrorRun(TypedDict):
     deleted: int
     failure: NotRequired[str | None]
     readiness: NotRequired[OriginMirrorReadiness | None]
-OriginMirrorSyncStrategy = Literal["ask_me", "schedule"]
+OriginMirrorSyncStrategy = Literal["ask_me", "schedule", "full_auto"]
+OriginMirrorHoldCause = Literal["storage", "decode", "review", "remote_read"]
+class OriginMirrorHold(TypedDict):
+    cause: OriginMirrorHoldCause
+    error_kind: str
+    last_seen: int
+    times: int
+class OriginMirrorPendingCheck(TypedDict):
+    ref_name: str
+    head: str
+    sent: NotRequired[str | None]
+class OriginMirrorAutomation(TypedDict):
+    plan_id: NotRequired[EntityId | None]
+    plan_digest: NotRequired[str | None]
+    plan_settled: bool
+    review_unavailable: NotRequired[OriginMirrorHold | None]
+    reconcile_unavailable: NotRequired[OriginMirrorHold | None]
+    pending_checks: list[OriginMirrorPendingCheck]
+    remote_moved: list[str]
+    refused: list[str]
 class OriginMirrorTarget(TypedDict):
     repo: str
     url: str
@@ -10460,6 +10479,7 @@ class OriginMirrorTarget(TypedDict):
     sync_strategy: NotRequired[OriginMirrorSyncStrategy]
     strategy_revision: NotRequired[int]
     target_generation: NotRequired[EntityId | None]
+    automation: NotRequired[OriginMirrorAutomation | None]
 class OriginMirrorView(TypedDict):
     repo: str
     mirror: NotRequired[OriginMirrorTarget | None]
@@ -10555,7 +10575,13 @@ class OriginPublishReviewItemPath(TypedDict):
     mode: str
     object: NotRequired[str | None]
     path: str
-OriginPublishReviewItem = OriginPublishReviewItemCommit | OriginPublishReviewItemPath
+class OriginPublishReviewItemObject(TypedDict):
+    kind: Literal["object"]
+    object_type: str
+    object: str
+    target: NotRequired[str | None]
+    name: NotRequired[str | None]
+OriginPublishReviewItem = OriginPublishReviewItemCommit | OriginPublishReviewItemPath | OriginPublishReviewItemObject
 class OriginPublishReviewView(TypedDict):
     request_id: EntityId
     digest: str
