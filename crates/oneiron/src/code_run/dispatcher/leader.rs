@@ -239,6 +239,7 @@ impl HostSelfDispatcher<'_> {
             SelfAgentSpawnResult::Queued {
                 attempt_ref,
                 launch,
+                unapplied: Vec::new(),
             },
         ))
     }
