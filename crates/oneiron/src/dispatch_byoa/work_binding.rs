@@ -6,11 +6,12 @@
 //! Dreamer attempt to a runner seat in the caller's writer, under an id
 //! derived from that attempt and the step's key, so a parked and resumed
 //! parent finds the same work again. Every attempt of the work carries a
-//! [`RunnerWorkBinding`] of references only: the binding, the CLI attempt
-//! whose argv holds the task, the staged job, the checkout and its custody.
-//! No task text is copied. A CLI seat's task stays in its own argv, and a
-//! next seat re-reads it there, so a spent seat of any connector shape hands
-//! the work on from its durable row alone.
+//! [`RunnerWorkBinding`] of references only: the binding, the work's
+//! original request record ([`RunnerTaskSource`]), the staged job, the
+//! checkout and its custody. No task text is copied. A CLI seat's task
+//! stays in its own argv or its staged job, and a next seat re-reads it
+//! there, so a spent seat of any connector shape hands the work on from its
+//! durable row alone (`work_hand_off`).
 //!
 //! The binding's hops (which attempt carries the work on which seat, and
 //! the spend that stopped it there) are versions of the binding's own
@@ -19,31 +20,24 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,
-};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, AttemptState};
 use crate::checkout::CheckoutId;
 use crate::codebase::entity_id_from_hash_material;
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::llm::LlmUsage;
 
-use super::connector::{BYOA_ATTEMPT_KIND, ByoaAttemptPayload, ByoaConnectorSpec};
+use super::connector::{BYOA_ATTEMPT_KIND, ByoaConnectorSpec};
 use super::dispatcher::{ByoEndpointBackendFactory, ByoaDispatcher, ByoaEnqueue};
-use super::error::{ByoaResult, ERR_EXECUTION_CHECKOUT, invalid};
+use super::error::ByoaResult;
 use super::exhaust::{
     ByoaEgressPort, ByoaTerminalDisposition, ByoaTerminalReceipt, decode_byoa_exhaust,
     decode_byoa_record, parse_byoa_result_ref,
 };
 use super::provider::ProviderAdapterRegistry;
 use super::record::{append_record_in_txn, head_record};
-use super::repo_binding::{
-    ByoaRepoBinding, claim_successor_in_txn, repo_stale_lease_reason, successor_checkout,
-};
-use super::seat::{
-    RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeatPolicy, SeatRoute, SeatSpent, SkippedRunnerSeat,
-    runner_task,
-};
+use super::repo_binding::{ByoaRepoBinding, repo_stale_lease_reason};
+use super::seat::{RunnerSeatPolicy, SeatPassedOver, SeatSpent, SkippedRunnerSeat};
 use super::seat_quota::seat_quotas_in_txn;
 use super::staged_input::{StagedInputPin, carry_staged_input};
 
@@ -98,18 +92,36 @@ impl RunnerWorkBindingId {
     }
 }
 
+/// A bound work's original request record: where its task first landed,
+/// which an erase reaches (FIX 7449). A reference only: a CLI seat's task is
+/// re-read from it at each hand-off, never copied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RunnerTaskSource {
+    /// The work's first CLI runner attempt, whose argv holds the task after
+    /// its `--`.
+    CliAttempt([u8; 16]),
+    /// The work's staged job ([`RunnerWorkBinding::staged_input`]), when its
+    /// first seat dropped the task (an endpoint's or MCP's): a CLI seat is
+    /// handed a pointer to the file the job is staged as.
+    StagedJob,
+}
+
 /// What every attempt of a bound runner work carries, references only: the
-/// work's task stays where it already lives (a CLI seat's argv, a staged
+/// work's task stays where it first landed (a CLI seat's argv, a staged
 /// job), and no login or key is ever one of them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunnerWorkBinding {
     /// The binding's id ([`RunnerWorkBindingId`]).
     pub binding: [u8; 16],
-    /// The CLI runner attempt whose argv holds the work's task, its home:
-    /// the last CLI seat the work ran on before this attempt. `None` while
-    /// it ran on none before.
+    /// The work's original request record, set once: at bind for a staged
+    /// job behind a first seat that drops the task, else at the first CLI
+    /// seat's hand-off. `None` before that hand-off, and for work whose
+    /// first seats dropped a task no staged job holds: no record keeps it,
+    /// so a CLI seat is passed over.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_source: Option<[u8; 16]>,
+    pub task_source: Option<RunnerTaskSource>,
     /// The checkout the work names. A CLI successor of a bound checkout
     /// derives its own from the custody below.
     pub checkout: [u8; 16],
@@ -178,7 +190,8 @@ pub enum RunnerWorkBound {
     /// its hosted-only bound.
     NoSeat { skipped: Vec<SkippedRunnerSeat> },
     /// Every seat this runtime may run is spent. `back_at` is the first time
-    /// one is back; none waits for the owner.
+    /// one is back; none waits for the owner. Each seat passed over is named
+    /// with why.
     Exhausted {
         back_at: Option<u64>,
         skipped: Vec<SkippedRunnerSeat>,
@@ -256,17 +269,6 @@ struct TranscriptUsage {
     usage: LlmUsage,
 }
 
-/// What a spent attempt hands its next seat: the task's text read from its
-/// home, the checkout a successor starts from, the custody it claims from,
-/// the staged job, and the binding the successor carries on.
-struct HandOff {
-    task: Option<String>,
-    base: CheckoutId,
-    repo: Option<ByoaRepoBinding>,
-    staged: Option<StagedInputPin>,
-    work: Option<RunnerWorkBinding>,
-}
-
 /// A spent attempt's capture as the route hands it to the next seat.
 pub(super) struct SpentCapture {
     /// The capture.
@@ -277,84 +279,6 @@ pub(super) struct SpentCapture {
     pub(super) seat: usize,
     /// The capture's time.
     pub(super) now: u64,
-}
-
-impl HandOff {
-    /// `None` when `spent` carries neither a binding nor a CLI runner task:
-    /// an unbound endpoint or MCP seat's work parks, as before.
-    fn of(
-        vault: &Vault,
-        rtxn: &heed::RoTxn<'_>,
-        spent: &AttemptRecord,
-        payload: ByoaAttemptPayload,
-    ) -> ByoaResult<Option<Self>> {
-        let ByoaAttemptPayload {
-            connector,
-            repo_binding,
-            work,
-            ..
-        } = payload;
-        if let ByoaConnectorSpec::CliSandbox(ran) = connector {
-            // Only a CLI runner attempt carries its task (the argv after
-            // `--`); it is the task's home for every later seat.
-            let Some(task) = runner_task(&ran).map(str::to_owned) else {
-                return Ok(None);
-            };
-            let work = work.map(|work| RunnerWorkBinding {
-                task_source: Some(*spent.id.as_bytes()),
-                ..work
-            });
-            let repo = repo_binding.or_else(|| work.as_ref()?.repo_binding.clone());
-            return Ok(Some(Self {
-                task: Some(task),
-                base: ran.checkout_id,
-                repo,
-                staged: ran.staged_input,
-                work,
-            }));
-        }
-        let Some(work) = work else {
-            return Ok(None);
-        };
-        let task = match work.task_source {
-            Some(source) => source_task(vault, rtxn, source)?,
-            None => None,
-        };
-        Ok(Some(Self {
-            task,
-            base: CheckoutId::from_bytes(work.checkout)
-                .map_err(|_| invalid(ERR_EXECUTION_CHECKOUT))?,
-            repo: work.repo_binding.clone(),
-            staged: work.staged_input.clone(),
-            work: Some(work),
-        }))
-    }
-}
-
-/// The task the CLI attempt `source` was handed, re-read from its argv.
-/// `None` when that row is gone or names no task.
-fn source_task(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    source: [u8; 16],
-) -> ByoaResult<Option<String>> {
-    let Some(record) =
-        AttemptQueue::new(vault).get_in_txn(rtxn, AttemptId::from_bytes(&source)?)?
-    else {
-        return Ok(None);
-    };
-    let ByoaConnectorSpec::CliSandbox(spec) = decode_byoa_record(&record)?.connector else {
-        return Ok(None);
-    };
-    Ok(runner_task(&spec).map(str::to_owned))
-}
-
-fn park(receipt: ByoaTerminalReceipt, spent: SeatSpent, now: u64) -> SeatRoute {
-    SeatRoute::Park {
-        until: spent.back_at(now),
-        receipt,
-        spent,
-    }
 }
 
 fn seat_index(seat: u64) -> usize {
@@ -421,6 +345,31 @@ pub(super) fn note_spent_hop_in_txn(
     )
 }
 
+/// Notes, on bound work's record, that `attempt` on `seat` carries it now.
+///
+/// # Errors
+/// A binding id that does not decode; a store failure.
+pub(super) fn note_next_hop_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    work: &RunnerWorkBinding,
+    attempt: AttemptId,
+    seat: usize,
+    now: u64,
+) -> ByoaResult<()> {
+    append_hop_in_txn(
+        vault,
+        wtxn,
+        RunnerWorkBindingId::from_bytes(work.binding)?,
+        &RunnerWorkHop {
+            attempt: *attempt.as_bytes(),
+            seat: seat as u64,
+            spent: None,
+            observed_at: now,
+        },
+    )
+}
+
 impl<B, E> ByoaDispatcher<'_, B, E>
 where
     B: ByoEndpointBackendFactory,
@@ -434,7 +383,7 @@ where
     /// where the work stands without dispatching again. With
     /// [`RunnerSeatChoice::NextSeat`] a seat a hosted-only bound keeps off
     /// this runtime is passed over and named, and a spent seat is passed
-    /// over until it is back.
+    /// over and named until it is back (FIX 7453).
     ///
     /// # Errors
     ///
@@ -479,16 +428,33 @@ where
                     (Some(first), Some(next)) => Some(first.min(next)),
                     (first, next) => first.or(next),
                 };
+                skipped.push(SkippedRunnerSeat {
+                    seat: index,
+                    runner: seat.runner.clone(),
+                    reason: SeatPassedOver::Spent {
+                        back_at: quota.back_at,
+                    },
+                });
                 continue;
             }
             let connector = seat.connector(registry, request.task.clone(), request.checkout_id)?;
+            // A first seat that drops the task leaves the staged job as the
+            // work's original request record; a CLI one's own argv is, named
+            // at its hand-off (FIX 7449).
+            let task_source = match &connector {
+                ByoaConnectorSpec::CliSandbox(_) => None,
+                _ => request
+                    .staged_input
+                    .as_ref()
+                    .map(|_| RunnerTaskSource::StagedJob),
+            };
             let connector = carry_staged_input(connector, request.staged_input.as_ref());
             let context = registry.resolve(&seat.runner)?.placement_context();
             if let Some(bound) = self.seat_bound(seat.logs_in(), &connector, context)? {
                 skipped.push(SkippedRunnerSeat {
                     seat: index,
                     runner: seat.runner.clone(),
-                    bound,
+                    reason: SeatPassedOver::Hosted(bound),
                 });
                 continue;
             }
@@ -505,7 +471,7 @@ where
                     official_seat: context,
                     work: Some(RunnerWorkBinding {
                         binding: *binding.as_bytes(),
-                        task_source: None,
+                        task_source,
                         checkout: *request.checkout_id.as_bytes(),
                         staged_input: request.staged_input,
                         repo_binding: None,
@@ -536,94 +502,6 @@ where
         } else {
             RunnerWorkBound::NoSeat { skipped }
         })
-    }
-
-    /// The NextSeat route of a spent attempt (OF-137): the next seat in the
-    /// owner's order this runtime may run takes the work as a child of the
-    /// spent attempt, whatever shape either seat has. Its task is re-read
-    /// from its home (the spent CLI attempt's argv, else the CLI attempt
-    /// the bound work names), never copied. The work parks when no seat is
-    /// left, when the spent attempt is unbound and carries no CLI runner
-    /// task (an endpoint or MCP seat's), and when the next seat is a CLI
-    /// runner but no CLI seat behind the work holds its task. A seat a
-    /// hosted-only bound keeps off this runtime is passed over and named in
-    /// the receipt's `skipped_seats`.
-    pub(super) fn next_seat_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        registry: &ProviderAdapterRegistry,
-        policy: &RunnerSeatPolicy,
-        capture: SpentCapture,
-    ) -> ByoaResult<SeatRoute> {
-        let SpentCapture {
-            mut receipt,
-            spent,
-            seat,
-            now,
-        } = capture;
-        let vault = self.vault();
-        let payload = decode_byoa_record(&receipt.attempt)?;
-        let Some(hand) = HandOff::of(vault, wtxn, &receipt.attempt, payload)? else {
-            return Ok(park(receipt, spent, now));
-        };
-        let parent = *receipt.attempt.id.as_bytes();
-        for (index, next) in policy.seats.iter().enumerate().skip(seat + 1) {
-            let checkout =
-                successor_checkout(receipt.attempt.id, hand.base, hand.repo.as_ref(), index)?;
-            let task = hand.task.clone().unwrap_or_default();
-            let connector = next.connector(registry, task, checkout)?;
-            if hand.task.is_none() && matches!(connector, ByoaConnectorSpec::CliSandbox(_)) {
-                return Ok(park(receipt, spent, now));
-            }
-            let connector = carry_staged_input(connector, hand.staged.as_ref());
-            let context = registry.resolve(&next.runner)?.placement_context();
-            if let Some(bound) = self.seat_bound(next.logs_in(), &connector, context)? {
-                receipt.skipped_seats.push(SkippedRunnerSeat {
-                    seat: index,
-                    runner: next.runner.clone(),
-                    bound,
-                });
-                continue;
-            }
-            claim_successor_in_txn(vault, wtxn, hand.repo.as_ref(), checkout, now)?;
-            let outcome = self.enqueue_in_txn(
-                wtxn,
-                ByoaEnqueue {
-                    user_login: next.logs_in(),
-                    connector,
-                    task_ref: receipt.attempt.task_ref.clone(),
-                    parent_attempt: Some(parent),
-                    run_id: receipt.attempt.run_id.clone(),
-                    dedupe_key: Some(format!(
-                        "{RUNNER_SEAT_DEDUPE_PREFIX}{}:{index}",
-                        bytes_to_hex_lower(&parent)
-                    )),
-                    now,
-                    official_seat: context,
-                    work: hand.work.clone(),
-                },
-            )?;
-            if let Some(work) = &hand.work {
-                append_hop_in_txn(
-                    vault,
-                    wtxn,
-                    RunnerWorkBindingId::from_bytes(work.binding)?,
-                    &RunnerWorkHop {
-                        attempt: *outcome.status().attempt.id.as_bytes(),
-                        seat: index as u64,
-                        spent: None,
-                        observed_at: now,
-                    },
-                )?;
-            }
-            return Ok(SeatRoute::NextSeat {
-                receipt,
-                spent,
-                seat: index,
-                outcome,
-            });
-        }
-        Ok(park(receipt, spent, now))
     }
 }
 
