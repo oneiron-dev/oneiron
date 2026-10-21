@@ -391,7 +391,13 @@ impl SpaceProbeAuthor for ServerProbeAuthor<'_> {
             BudgetExhaustionPolicy::Suspend,
             vault.dreamer_authority()?,
         )?;
-        let run = self.server.ai.undeclared_run(run_id, guard);
+        // The probe's input is read from the document's own rows, and a
+        // transcript from the audio's (FIX 7001); unknown rows source nothing.
+        let run = self
+            .server
+            .ai
+            .undeclared_run(run_id, guard)
+            .sourced(document.source_rows.map(<[oneiron::EntityId]>::to_vec));
         let response = self
             .runtime
             .block_on(call.ladder.generate(&run, call.request, None))

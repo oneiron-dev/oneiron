@@ -199,12 +199,13 @@ fn text_indexes(image: &CheckpointImage, config: &VaultConfig, layout: PageLayou
             let Ok(codes) = rmp_serde::from_slice::<Vec<String>>(value) else {
                 continue;
             };
-            // Each code's posting holds the document's id; its forward row
-            // lists every code.
+            // Each code's posting, keyed by its digest (FIX 5340), holds the
+            // document's id; its forward row lists every code whole.
             let mut forward = 0_u64;
             for code in &codes {
                 let code = code.len() as u64;
-                layout.add(&mut trees[4], code, DOCUMENT_ID);
+                let key = crate::batch::PHONETIC_POSTING_KEY_LEN as u64;
+                layout.add(&mut trees[4], key, DOCUMENT_ID);
                 forward = forward.saturating_add(code.saturating_add(4));
             }
             layout.add(&mut trees[5], DOCUMENT_ID, forward);

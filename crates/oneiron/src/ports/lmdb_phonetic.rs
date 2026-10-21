@@ -26,7 +26,8 @@ impl<T: ManifestDbs> RetrievalIndexRead for T {
         let mut accumulators = HashMap::<EntityId, Accumulator>::new();
 
         for code in unique {
-            let Some(posting) = self.phonetic_index().get(rtxn, code.as_bytes())? else {
+            let key = crate::batch::phonetic_posting_key(&code);
+            let Some(posting) = self.phonetic_index().get(rtxn, &key)? else {
                 continue;
             };
 

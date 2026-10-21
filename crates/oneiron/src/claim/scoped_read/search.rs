@@ -302,9 +302,17 @@ impl ScopedRead<'_> {
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         // One held authority for every hit's checks in this txn (FIX 7462).
         let held = HeldAuthority::default();
+        // A withheld row counts only inside the key's own ceiling under both
+        // snapshots: a request or pinned projection excluded it. A row the
+        // key's baseline authority denies stays opaque (FIX 8670).
+        let ceiling = self.filter_under(policy, None)?;
+        let fresh_ceiling = self.filter_under(&fresh_policy, None)?;
+        let ceilings = [(policy, &ceiling), (&fresh_policy, &fresh_ceiling)];
+        let ceiling_held = HeldAuthority::for_request(None);
         let mut value = Vec::new();
         let mut suppressed = 0;
         for result in results {
+            let id = result.id;
             let admitted = self.admit_in(&txn, &result.id, || {
                 let allowed = self
                     .is_entity_retrievable_held_in(&txn, policy, filter, &result.id, &held)?
@@ -337,7 +345,11 @@ impl ScopedRead<'_> {
                     };
                 Ok(allowed.then_some(result))
             })?;
-            suppressed += admitted.suppression();
+            if admitted.suppression() > 0
+                && self.within_ceilings_in(&txn, &id, &ceilings, &ceiling_held)?
+            {
+                suppressed += 1;
+            }
             if let Some(row) = admitted.into_option()
                 && value.len() < limit
             {
@@ -430,14 +442,27 @@ impl ScopedRead<'_> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let held = HeldAuthority::for_request(requested);
+        // A withheld row counts only inside the key's own ceiling: with no
+        // request every withheld row is the key's own denial, which stays
+        // opaque (FIX 8670).
+        let ceiling = requested
+            .map(|_| self.filter_under(&policy, None))
+            .transpose()?;
+        let ceiling_held = HeldAuthority::for_request(None);
         let mut value = Vec::with_capacity(before);
         let mut suppressed = 0;
         for result in results {
+            let id = result.id;
             let admitted = self.admit_in(&txn, &result.id, || {
                 self.is_entity_retrievable_held_in(&txn, &policy, &filter, &result.id, &held)
                     .map(|visible| visible.then_some(result))
             })?;
-            suppressed += admitted.suppression();
+            if let Some(ceiling) = &ceiling
+                && admitted.suppression() > 0
+                && self.within_ceilings_in(&txn, &id, &[(&policy, ceiling)], &ceiling_held)?
+            {
+                suppressed += 1;
+            }
             if let Some(row) = admitted.into_option() {
                 observe(&txn, row.id);
                 value.push(row);
@@ -445,5 +470,25 @@ impl ScopedRead<'_> {
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
         Ok(ScopedReadResult { value, receipt })
+    }
+}
+
+impl<'v> ScopedRead<'v> {
+    /// Whether every `ceilings` snapshot of the key's own read, with no
+    /// request, admits `id`: only then is a row a ranked filter withheld a
+    /// request or projection exclusion its receipt counts (FIX 8670).
+    fn within_ceilings_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        ceilings: &[(&PolicyManifestResolution, &ResolvedRetrievalFilter)],
+        held: &HeldAuthority<'v>,
+    ) -> Result<bool> {
+        for (policy, ceiling) in ceilings {
+            if !self.is_entity_retrievable_held_in(txn, policy, ceiling, id, held)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }

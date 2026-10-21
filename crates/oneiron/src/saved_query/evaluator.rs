@@ -43,8 +43,12 @@ use super::support::{
 /// The verdict is the membership question through the host's ladder, the
 /// backend its first read.
 pub struct SavedQueryJudgeBinding<'a> {
-    /// Host-injected backend.
-    pub backend: &'a dyn LlmBackend,
+    /// Host-injected backend for one judge call, bound to the rows that
+    /// call's request is read from (FIX 7001): the saved query, the
+    /// candidate and each row its evidence came from. `None` when they are
+    /// not known whole; the host sources the call from them and refuses
+    /// nothing for an unknown set.
+    pub backend_for: &'a (dyn Fn(Option<Vec<EntityId>>) -> Box<dyn LlmBackend + 'a> + Sync),
     /// Budget admission token.
     pub lease: &'a BudgetLease,
     /// Host-owned call envelope. Model policy is the host's, not this module's.
@@ -116,6 +120,11 @@ pub(super) struct CollectedEvidence {
     pub(super) hidden: HiddenDependencies,
     pub(super) subject_vector: Option<Vec<f32>>,
     pub(super) exemplar_vectors: Vec<(EntityId, Option<Vec<f32>>)>,
+    /// Every row the evidence is read from (FIX 7001), outside its hash: the
+    /// candidate, each claim whose value it holds, each edge target, world
+    /// and facet it names, and each exemplar it compared. `None` when one is
+    /// not known.
+    pub(super) sources: Option<Vec<EntityId>>,
 }
 
 impl SavedQueryEvaluator<'_> {
@@ -356,6 +365,11 @@ impl SavedQueryEvaluator<'_> {
                     invalid("saved query judge requires an injected backend and budget lease")
                 })?;
                 let shell = judge_request(binding.envelope, model_id, rubric, evidence)?;
+                // The rubric is the saved query's own row.
+                let sources = crate::skill_optimize::union_source_rows([
+                    Some(&[query_ref][..]),
+                    collected.sources.as_deref(),
+                ]);
                 let (decision, receipt) = judge(
                     binding,
                     definition.owner_actor,
@@ -364,6 +378,7 @@ impl SavedQueryEvaluator<'_> {
                     rubric,
                     rubric_version,
                     evidence,
+                    sources,
                 )
                 .await?;
                 Ok((decision, Some(receipt)))
@@ -444,7 +459,7 @@ impl SavedQueryEvaluator<'_> {
     ) -> Result<CollectedEvidence> {
         let deps = filter_dependencies(&definition.filter, &definition.matcher);
         let mut hidden = HiddenDependencies::default();
-        let (claim_values, held) = self.relevant_claim_values(
+        let (claim_values, held, claim_rows) = self.relevant_claim_values(
             lane,
             entity_ref,
             &deps.claim_predicates,
@@ -463,8 +478,13 @@ impl SavedQueryEvaluator<'_> {
         };
         let mut exemplar_vectors = Vec::with_capacity(deps.semantic_exemplars.len());
         let mut semantic_inputs = Vec::with_capacity(deps.semantic_exemplars.len());
+        let mut rows = claim_rows;
+        rows.push(entity_ref);
+        rows.extend(edge_targets.iter().map(|(_, target)| *target));
+        rows.extend(scope_membership.worlds.iter().copied());
         for exemplar in &deps.semantic_exemplars {
             let against = if lane.is_ref_readable(exemplar)? {
+                rows.push(*exemplar);
                 self.vault.get_vector(exemplar)?
             } else {
                 hidden.exemplars = true;
@@ -476,6 +496,17 @@ impl SavedQueryEvaluator<'_> {
             ));
             exemplar_vectors.push((*exemplar, against));
         }
+        // A facet is spelled as its FACET entity's hex; one that does not
+        // parse leaves the set unknown.
+        let facets: Option<Vec<EntityId>> = scope_membership
+            .facets
+            .iter()
+            .map(|facet| EntityId::from_hex(facet).ok())
+            .collect();
+        let sources = facets.map(|facets| {
+            rows.extend(facets);
+            rows
+        });
         Ok(CollectedEvidence {
             evidence: RelevantEvidence {
                 entity_ref,
@@ -488,6 +519,7 @@ impl SavedQueryEvaluator<'_> {
             hidden,
             subject_vector,
             exemplar_vectors,
+            sources,
         })
     }
 
@@ -528,7 +560,8 @@ impl SavedQueryEvaluator<'_> {
         Ok(QueryScope { worlds, facets })
     }
 
-    /// The relevant values, and whether a relevant claim is held.
+    /// The relevant values, whether a relevant claim is held, and the claim
+    /// rows the values are read from.
     ///
     /// The claims about the entity are listed and read through the owner's
     /// lane; a claim it withholds marks the claims hidden. Each body is
@@ -543,9 +576,9 @@ impl SavedQueryEvaluator<'_> {
         definition: &SavedQueryDefinition,
         valid_at: u64,
         hidden: &mut HiddenDependencies,
-    ) -> Result<(Vec<(String, Value)>, bool)> {
+    ) -> Result<(Vec<(String, Value)>, bool, Vec<EntityId>)> {
         if predicates.is_empty() {
-            return Ok((Vec::new(), false));
+            return Ok((Vec::new(), false, Vec::new()));
         }
         let listed = lane.neighborhood_projected(
             &entity_ref,
@@ -563,7 +596,7 @@ impl SavedQueryEvaluator<'_> {
         )?;
         let Some(claim_refs) = listed.value else {
             hidden.claims = true;
-            return Ok((Vec::new(), false));
+            return Ok((Vec::new(), false, Vec::new()));
         };
         if listed.receipt.suppressed_count > 0 {
             hidden.claims = true;
@@ -577,9 +610,10 @@ impl SavedQueryEvaluator<'_> {
                 withheld.set(true);
                 Ok::<_, Error>(false)
             },
-            |txn, rows| -> Result<(Vec<(String, Value)>, bool)> {
+            |txn, rows| -> Result<(Vec<(String, Value)>, bool, Vec<EntityId>)> {
                 let mut values = Vec::new();
                 let mut held = false;
+                let mut sources = Vec::new();
                 for row in rows.into_iter().flatten() {
                     if row.entity_type != ENTITY_TYPE_CLAIM {
                         continue;
@@ -605,20 +639,21 @@ impl SavedQueryEvaluator<'_> {
                         continue;
                     }
                     values.push((body.predicate, rmpv_to_json(&body.value)));
+                    sources.push(row.id);
                 }
-                Ok((values, held))
+                Ok((values, held, sources))
             },
         )?;
         if withheld.get() {
             hidden.claims = true;
         }
-        let (mut values, held) = read.value;
+        let (mut values, held, sources) = read.value;
         // Claim discovery order is edge-index order; the hash must not depend
         // on it.
         values.sort_by(|left, right| {
             (&left.0, left.1.to_string()).cmp(&(&right.0, right.1.to_string()))
         });
-        Ok((values, held))
+        Ok((values, held, sources))
     }
 
     /// The targets of the entity's relevant edges, each edge admitted with

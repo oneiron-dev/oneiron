@@ -154,4 +154,58 @@ impl ScopedRead<'_> {
         result.receipt.add_suppressed(result.value.1);
         Ok(result.map(|(handles, _)| handles))
     }
+
+    /// The loop's frontier (FIX 7798): how many distinct one-hop graph
+    /// neighbours of the `observed` handles, along an edge either way, this
+    /// reader may retrieve now under `requested`, and are not themselves
+    /// observed. Each anchor and each neighbour passes the drill's own
+    /// admission (the exact edge pair and both endpoints, then the retrieval
+    /// floors) in one fresh read. Only the count leaves it.
+    pub(crate) fn retrieval_loop_frontier_size(
+        &self,
+        observed: &HashSet<EntityId>,
+        requested: &RetrievalFilter,
+    ) -> Result<usize> {
+        let txn = self.grant_read_txn()?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, Some(requested))?;
+        let store = self.store_read();
+        let mut frontier = HashSet::new();
+        for anchor in observed {
+            if !self.recall_candidate_in(&txn, &policy, &filter, anchor)? {
+                continue;
+            }
+            for direction in [EdgeDirection::Out, EdgeDirection::In] {
+                let edges = match direction {
+                    EdgeDirection::Out => self.out_edges_in(&txn, anchor, None)?,
+                    _ => store.port_edges(&txn, anchor, direction, None, None)?,
+                };
+                for edge in edges {
+                    let edge = edge?;
+                    let peer = edge.target;
+                    if observed.contains(&peer) || frontier.contains(&peer) {
+                        continue;
+                    }
+                    let (source, target) = match direction {
+                        EdgeDirection::Out => (*anchor, peer),
+                        _ => (peer, *anchor),
+                    };
+                    let admitted = super::edge_admission::admit_stored_edge_in(
+                        self.vault,
+                        &txn,
+                        source,
+                        target,
+                        edge,
+                        || Ok(super::admission::ReadAdmission::Visible(())),
+                        || self.admit_entity_in(&txn, &policy, &filter, &peer),
+                    )?;
+                    if admitted.visible()
+                        && self.recall_candidate_in(&txn, &policy, &filter, &peer)?
+                    {
+                        frontier.insert(peer);
+                    }
+                }
+            }
+        }
+        Ok(frontier.len())
+    }
 }

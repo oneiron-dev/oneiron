@@ -15,7 +15,7 @@ use crate::llm::decision::{
     GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep, HeldLadder, ProviderPin,
     Reversibility, cut_text, fit_state,
 };
-use crate::llm::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest, ResponseFormat};
+use crate::llm::{ContentPart, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest, ResponseFormat};
 use crate::retrieval_depth::RetrievalDeadline;
 
 use super::evaluator::{SavedQueryJudgeBinding, evidence_to_json, judge_failure};
@@ -74,7 +74,12 @@ struct Wording {
 /// `owner`, the judge's `shell` (the rubric and evidence as its messages) the first read,
 /// and the `why` the verdict keeps. A stronger rung reads the same rubric and evidence in
 /// the call's state, cut to the decision state's bound, with the query and the candidate as
-/// its evidence refs.
+/// its evidence refs. The first read and the why go through the binding's backend for
+/// `sources`, the rows the shell is read from (FIX 7001).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one judge call: its binding, owner, query, shell, rubric, evidence and their rows"
+)]
 pub(super) async fn judge(
     binding: &SavedQueryJudgeBinding<'_>,
     owner: EntityId,
@@ -83,9 +88,11 @@ pub(super) async fn judge(
     rubric: &Value,
     rubric_version: &str,
     evidence: &RelevantEvidence,
+    sources: Option<Vec<EntityId>>,
 ) -> Result<(MatchDecision, SavedQueryJudgeReceipt)> {
     let candidate = evidence.entity_ref;
     let decisions = binding.decisions;
+    let backend = (binding.backend_for)(sources);
     let rubric_hash = blake3::hash(&canonical_json_bytes(rubric)?);
     let question = SAVED_QUERY_MATCH.question(
         &[rubric_hash.as_bytes(), rubric_version.as_bytes()],
@@ -99,7 +106,7 @@ pub(super) async fn judge(
             model: shell.model.to_string(),
             version: shell.model.to_string(),
         },
-        backend: binding.backend,
+        backend: &*backend,
         step: GeneratedStep::Raw {
             lease: binding.lease,
         },
@@ -168,7 +175,7 @@ pub(super) async fn judge(
         }
     };
     let (why, why_generation) =
-        membership_why(binding, shell, verdict, &decisions.why_wording).await?;
+        membership_why(binding, &*backend, shell, verdict, &decisions.why_wording).await?;
     let mut generations: Vec<_> = steps
         .into_iter()
         .map(|(hash, usage)| SavedQueryGenerationReceipt {
@@ -187,11 +194,12 @@ pub(super) async fn judge(
     ))
 }
 
-/// The note a decided verdict keeps: the judge's backend, on the binding's lease, says why
+/// The note a decided verdict keeps: the judge's `backend`, on the binding's lease, says why
 /// `verdict` holds over the rubric and evidence in `request`. Generation; it cannot change
 /// the verdict.
 async fn membership_why(
     binding: &SavedQueryJudgeBinding<'_>,
+    backend: &dyn LlmBackend,
     mut request: LlmRequest,
     verdict: MatchVerdict,
     wording: &str,
@@ -213,8 +221,7 @@ async fn membership_why(
     let request_hash = request
         .canonical_hash_hex()
         .map_err(|_| invalid("saved query why request cannot be hashed"))?;
-    let response = binding
-        .backend
+    let response = backend
         .generate(request, binding.lease)
         .await
         .map_err(|error| judge_failure(error.to_string()))?;

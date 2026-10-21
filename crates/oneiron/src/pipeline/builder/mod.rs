@@ -147,7 +147,9 @@ impl<'a> PipelineBuilder<'a> {
             ppr_search: None,
             ppr_expand: None,
             community_session_usage: None,
-            recency_blend_enabled: false,
+            // Recency blends by default (ARCH-0031, FIX 7781), aged by the
+            // per-entity-type half-life table; `boost_recency` overrides it.
+            recency_blend_enabled: true,
             apply_salience: false,
             apply_confidence: false,
             apply_gravity: false,
@@ -629,11 +631,13 @@ impl<'a> PipelineBuilder<'a> {
         hash.finalize().into()
     }
 
-    /// Enables the recency signal for the retrieval blend.
+    /// Sets the recency signal for the retrieval blend, which a new plan
+    /// already blends (FIX 7781).
     ///
     /// `half_life_days` is retained as a compatibility toggle: finite
-    /// positive values enable recency, but the actual decay half-life comes
-    /// from the per-entity-type RET-010c contract table.
+    /// positive values enable recency, and zero, negative or non-finite
+    /// values turn it off. The actual decay half-life comes from the
+    /// per-entity-type RET-010c contract table.
     pub fn boost_recency(mut self, half_life_days: f32) -> Self {
         self.recency_blend_enabled = half_life_days.is_finite() && half_life_days > 0.0;
         self

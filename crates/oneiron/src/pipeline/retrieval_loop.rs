@@ -27,6 +27,10 @@ pub struct ReadOnlyRetrievalLoop<'r, 'v> {
     reader: &'r ScopedRead<'v>,
     plan: PipelineBuilder<'r>,
     observation: RetrievalLoopObservation,
+    /// Every handle any observation so far has held (FIX 7797): what the
+    /// loop has explored. Novelty is measured against it, and the frontier
+    /// is what lies one hop past it.
+    explored: HashSet<EntityId>,
 }
 
 impl<'r> PipelineBuilder<'r> {
@@ -76,11 +80,14 @@ impl<'r, 'v: 'r> ReadOnlyRetrievalLoop<'r, 'v> {
             last_narrowing: narrowing.clone(),
             narrowing,
         };
-        update_state(&mut observation, &[], 0);
+        let mut explored = HashSet::new();
+        let frontier = Self::frontier(reader, &observation, &mut explored)?;
+        update_state(&mut observation, &HashSet::new(), frontier, 0);
         Ok(Self {
             reader,
             plan,
             observation,
+            explored,
         })
     }
 
@@ -103,7 +110,6 @@ impl<'r, 'v: 'r> ReadOnlyRetrievalLoop<'r, 'v> {
         let mut next = self.observation.clone();
         next.status = RetrievalLoopStatus::Running;
         next.evidence.clear();
-        let previous: Vec<_> = next.handles.iter().map(|handle| handle.id).collect();
         let requested = next.narrowing.applied.as_filter();
         // Unknown ids are refused; a known handle that becomes unreadable is
         // instead removed under a receipt, allowing the planner to re-plan.
@@ -265,10 +271,26 @@ impl<'r, 'v: 'r> ReadOnlyRetrievalLoop<'r, 'v> {
         next.action = Some(action);
         next.narrowing.restrict_with(&receipt);
         next.last_narrowing = receipt;
-        update_state(&mut next, &previous, hops);
+        let mut explored = self.explored.clone();
+        let frontier = Self::frontier(self.reader, &next, &mut explored)?;
+        update_state(&mut next, &self.explored, frontier, hops);
         self.plan = plan;
         self.observation = next;
+        self.explored = explored;
         Ok(&self.observation)
+    }
+
+    /// Adds `observation`'s handles to `explored`, then counts the frontier
+    /// (FIX 7798): the one-hop graph neighbours of every explored handle
+    /// that the reader may retrieve now, under the observation's applied
+    /// request, and that no observation has held.
+    fn frontier(
+        reader: &ScopedRead<'_>,
+        observation: &RetrievalLoopObservation,
+        explored: &mut HashSet<EntityId>,
+    ) -> Result<usize> {
+        explored.extend(observation.handles.iter().map(|handle| handle.id));
+        reader.retrieval_loop_frontier_size(explored, &observation.narrowing.applied.as_filter())
     }
 
     /// Run one planner decision per observation. The planner gets the seed,
@@ -366,7 +388,14 @@ fn widen_temporal(plan: &mut PipelineBuilder<'_>, start: u64, end: u64, sigma: u
     Ok(())
 }
 
-fn update_state(observation: &mut RetrievalLoopObservation, previous: &[EntityId], hops: u8) {
+/// Publishes `observation`'s state: its novelty against every handle the
+/// loop `explored` before it (FIX 7797), and the `frontier` count.
+fn update_state(
+    observation: &mut RetrievalLoopObservation,
+    explored: &HashSet<EntityId>,
+    frontier: usize,
+    hops: u8,
+) {
     let scores: Vec<_> = observation
         .handles
         .iter()
@@ -389,14 +418,14 @@ fn update_state(observation: &mut RetrievalLoopObservation, previous: &[EntityId
         .action
         .as_ref()
         .map_or(0, RetrievalLoopAction::state_tag);
-    state.frontier_size = observation.handles.len().min(u32::MAX as usize) as u32;
+    state.frontier_size = frontier.min(u32::MAX as usize) as u32;
     state.novelty_vs_prior = if observation.handles.is_empty() {
         0.0
     } else {
         observation
             .handles
             .iter()
-            .filter(|handle| !previous.contains(&handle.id))
+            .filter(|handle| !explored.contains(&handle.id))
             .count() as f32
             / observation.handles.len() as f32
     };

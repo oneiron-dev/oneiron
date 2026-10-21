@@ -88,7 +88,9 @@ use self::gate_staging::stage_preflight_decision;
 pub(crate) use self::ops_pipeline::{
     BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode,
 };
-pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
+pub(crate) use self::phonetic_apply::{
+    PHONETIC_POSTING_KEY_LEN, delete_from_phonetic_postings, phonetic_posting_key,
+};
 use self::prepared_index::PreparedIndexWork;
 pub(crate) use self::put_apply::{delete_entity_index_rows, stage_entity_index_rows};
 pub use self::short_id::short_id_content_hash;
