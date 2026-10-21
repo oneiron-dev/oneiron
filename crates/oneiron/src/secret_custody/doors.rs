@@ -401,7 +401,11 @@ fn put_custody_body_in_txn(
     occurred_at: u64,
 ) -> Result<()> {
     let data = super::storage_seal::sealed_body_in_txn(write.store, wtxn, id, rec)?;
-    apply_custody_body_in_txn(write, wtxn, id, rec, data, occurred_at)
+    let at = TimeRange {
+        start: occurred_at,
+        end: occurred_at,
+    };
+    apply_custody_body_in_txn(write, wtxn, id, rec, data, (at, occurred_at))
 }
 
 /// Puts stored body `data` of `rec` (its value sealed, or none) as record
@@ -412,7 +416,7 @@ pub(super) fn apply_custody_body_in_txn(
     id: &EntityId,
     rec: &SecretCustodyRecord,
     data: Vec<u8>,
-    occurred_at: u64,
+    (occurred, occurred_at): (TimeRange, u64),
 ) -> Result<()> {
     apply_ops(
         write.store,
@@ -422,10 +426,7 @@ pub(super) fn apply_custody_body_in_txn(
         vec![BatchOp::Put {
             id: *id,
             entity_type: ENTITY_TYPE_SECRET_CUSTODY,
-            occurred: TimeRange {
-                start: occurred_at,
-                end: occurred_at,
-            },
+            occurred,
             learned_at: occurred_at,
             data,
             allow_maintenance: true,

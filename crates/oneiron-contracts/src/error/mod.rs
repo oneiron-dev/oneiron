@@ -273,6 +273,8 @@ pub enum ErrorKind {
     InvalidSecretCustodyBody,
     SecretNameInUse,
     SecretCustodyNotActive,
+    /// A credential's custody key does not read or open (KS-6).
+    CredentialLeafUnreadable,
     SecretBindingDenied,
     ManifestWidensFloor,
     SecretTierDenied,

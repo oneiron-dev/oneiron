@@ -343,8 +343,7 @@ impl KeptValues {
             };
             let mut values = Vec::new();
             for key in found.keys.iter().filter(|key| key.ruled_no_secret()) {
-                if let Some(mut rec) =
-                    super::storage_seal::read_opened_or_warn_in_txn(store, txn, &key.custody)?
+                if let Some(mut rec) = super::read_secret_custody_in_txn(store, txn, &key.custody)?
                 {
                     values.push(Zeroizing::new(std::mem::take(&mut rec.value_bytes)));
                 }

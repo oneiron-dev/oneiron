@@ -172,8 +172,8 @@ fn encode_stored_body(stored: &StoredCustody) -> Result<Vec<u8>> {
 /// and journaled before the row commits (CALLS `KS-6 leaf deposit`). An
 /// empty value is stored empty, under no key, so a revoke never waits on
 /// custody. A custody that cannot take the key (an archived vault's, or a
-/// fault) leaves the write on its path: the value rests as its carrier, as
-/// on main, warned with no byte (CALLS `KS-6 seal fault keeps carrier`).
+/// fault) refuses the write: a value never rests in the clear (Engine
+/// 10-21 19:1x, CALLS `KS-6 seal fault refuses`).
 pub(super) fn sealed_body_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -184,33 +184,23 @@ pub(super) fn sealed_body_in_txn(
         return encode_custody_map(rec, BodyValue::Sealed(Vec::new()));
     }
     match CUSTODY_SEAL_FAULT {
-        CustodySealFault::KeepCarrierWarned => {}
+        CustodySealFault::RefuseNeverClear => {}
     }
-    let leaf = match store.credential_value_leaf_in_txn(wtxn, id, rec.rotation_generation) {
-        Ok(leaf) => leaf,
-        Err(error) => {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "a credential's custody key could not be minted; its value rests as its carrier"
-            );
-            return encode_custody_map(rec, BodyValue::Plain(rec.value_bytes.clone()));
-        }
-    };
+    let leaf = store.credential_value_leaf_in_txn(wtxn, id, rec.rotation_generation)?;
     let sealed = seal_value(&leaf, id, rec.rotation_generation, &rec.value_bytes)?;
     encode_custody_map(rec, BodyValue::Sealed(sealed))
 }
 
 /// What a write does when custody cannot take a value's key (CALLS `KS-6
-/// seal fault keeps carrier`).
+/// seal fault refuses`, Engine 10-21 19:1x: keep the at-rest seal).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CustodySealFault {
-    /// The value rests as its carrier, as on main, warned: no write that
-    /// works today is refused for a custody it never needed. Part 2's erase
-    /// fence refuses a write at a retired generation first.
-    KeepCarrierWarned,
+    /// The write is refused with custody's error: no value rests in the
+    /// clear, and no carrier is kept beside a sealed one.
+    RefuseNeverClear,
 }
 
-const CUSTODY_SEAL_FAULT: CustodySealFault = CustodySealFault::KeepCarrierWarned;
+const CUSTODY_SEAL_FAULT: CustodySealFault = CustodySealFault::RefuseNeverClear;
 
 /// Opens `stored`'s value for record `id` into its record. The caller holds
 /// a writer, or took the custody read guard before its snapshot.
@@ -253,34 +243,29 @@ pub(super) fn read_opened_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SecretCustodyRecord>> {
-    read_stored_custody_in_txn(store, txn, id)?
-        .map(|stored| open_stored(store, id, stored))
-        .transpose()
-}
-
-/// [`read_opened_in_txn`] for a read whose caller has a path without the
-/// value: a key that does not open is warned, with no byte, and reads as no
-/// record, never as an empty value; a storage fault is the caller's as
-/// before. A kept (ruled no secret) value that does not open is masked as
-/// any value is.
-pub(crate) fn read_opened_or_warn_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<Option<SecretCustodyRecord>> {
     let Some(stored) = read_stored_custody_in_txn(store, txn, id)? else {
         return Ok(None);
     };
-    match open_stored(store, id, stored) {
-        Ok(record) => Ok(Some(record)),
-        Err(error) => {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "a credential's value did not open from custody; it is left out of this read"
-            );
-            Ok(None)
-        }
-    }
+    open_stored(store, id, stored)
+        .map(Some)
+        .map_err(|error| leaf_unreadable(store, txn, id, &error))
+}
+
+/// `credential_leaf_unreadable` for record `id` (Engine 10-21 19:1x): an
+/// integrity fault the caller answers typed, naming the credential's
+/// handle and the way out (re-enter or reissue it). Logged by key and kind,
+/// never a byte.
+fn leaf_unreadable(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId, error: &Error) -> Error {
+    tracing::warn!(
+        credential = %id.to_hex(),
+        kind = ?error.kind(),
+        "credential_leaf_unreadable: a credential's custody key did not open its value"
+    );
+    let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(store, txn, id)
+        .ok()
+        .flatten()
+        .map_or_else(|| id.to_hex(), |(name, hash)| format!("{name}:{hash:02x}"));
+    Error::Secret(crate::error::SecretError::CredentialLeafUnreadable { handle })
 }
 
 /// Record `id` with no value: every field a door reads but the value,
@@ -317,14 +302,68 @@ pub(crate) fn put_stored_custody_in_txn(
     occurred_at: u64,
 ) -> Result<()> {
     let data = encode_stored_body(stored)?;
+    let at = crate::temporal::TimeRange {
+        start: occurred_at,
+        end: occurred_at,
+    };
     super::doors::apply_custody_body_in_txn(
         &super::doors::CustodyWrite::of(vault),
         wtxn,
         id,
         &stored.record,
         data,
-        occurred_at,
+        (at, occurred_at),
     )
+}
+
+impl Vault {
+    /// Seals again, under this vault's custody, each credential row a
+    /// checkpoint image landed in the clear (KS-6 part 1: images carry the
+    /// opened value until part 2), in one writer, each row keeping its own
+    /// times: a restored value rests sealed as every other does. Returns
+    /// how many it sealed.
+    ///
+    /// # Errors
+    /// Custody's, for a key it cannot mint; storage faults.
+    pub(crate) fn reseal_credential_carriers(&self) -> Result<usize> {
+        self.with_write_txn(|wtxn| {
+            let ids = self
+                .store
+                .port_entity_ids_by_type(wtxn, ENTITY_TYPE_SECRET_CUSTODY, None)?
+                .collect::<Result<Vec<_>>>()?;
+            let write = super::doors::CustodyWrite::of(self);
+            let mut resealed = 0_usize;
+            for id in ids {
+                let Some(raw) = self.store.port_entity_raw_wiped(wtxn, &id)? else {
+                    continue;
+                };
+                let header = EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("secret custody entity header"))?;
+                let stored = decode_stored_custody_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+                let StoredValue::Carrier(value) = stored.value else {
+                    continue;
+                };
+                let mut record = stored.record;
+                record.value_bytes = value.to_vec();
+                let data = sealed_body_in_txn(&self.store, wtxn, &id, &record);
+                zeroize::Zeroize::zeroize(&mut record.value_bytes);
+                let occurred = crate::temporal::TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                };
+                super::doors::apply_custody_body_in_txn(
+                    &write,
+                    wtxn,
+                    &id,
+                    &record,
+                    data?,
+                    (occurred, header.learned_at),
+                )?;
+                resealed = resealed.saturating_add(1);
+            }
+            Ok(resealed)
+        })
+    }
 }
 
 /// A checkpoint image's form of entity row `value` under key `key`, when it

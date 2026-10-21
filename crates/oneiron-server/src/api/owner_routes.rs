@@ -384,6 +384,11 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
             oneiron::ErrorKind::InvalidSecretCustodyBody => {
                 ApiError::bad_request(error.to_string(), None)
             }
+            // KS-6: names the credential's handle and the way out (re-enter
+            // or reissue it), never a byte.
+            oneiron::ErrorKind::CredentialLeafUnreadable => {
+                ApiError::bad_request(error.to_string(), None)
+            }
             _ => core_engine_error("owner action failed", *error),
         },
         OwnerError::Host(error) => {

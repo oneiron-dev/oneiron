@@ -212,6 +212,14 @@ pub enum SecretError {
     /// root ids.
     #[error("the owner's go-ahead names another root than this kit's")]
     KitConfirmationStale { root: [u8; 32], confirmed: [u8; 32] },
+    /// The custody key a credential's value is sealed under does not read
+    /// or does not open (KS-6, Engine 10-21 19:1x): an integrity fault,
+    /// named by the credential's handle with the way out, never by a byte.
+    #[error(
+        "credential_leaf_unreadable: the value of credential `{handle}` does not open from this \
+         vault's key custody; re-enter or reissue that credential"
+    )]
+    CredentialLeafUnreadable { handle: String },
 }
 
 /// What the vault records of a kit seed's root.
@@ -261,6 +269,7 @@ impl SecretError {
             Self::KeystoreUnavailable(_) => ErrorKind::KeystoreUnavailable,
             Self::UnverifiedKitRestore { .. } => ErrorKind::UnverifiedKitRestore,
             Self::KitConfirmationStale { .. } => ErrorKind::KitConfirmationStale,
+            Self::CredentialLeafUnreadable { .. } => ErrorKind::CredentialLeafUnreadable,
         }
     }
 }
