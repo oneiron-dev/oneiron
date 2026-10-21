@@ -32,5 +32,7 @@ pub(crate) use self::revision_chain::{
 use self::parse::*;
 
 pub(crate) use self::decode::load_strict;
-pub(crate) use self::revision_facts::{RevisionFacts, analyze as analyze_revision_facts};
+pub(crate) use self::revision_facts::{
+    RevisionAnalysisError, RevisionFacts, analyze as analyze_revision_facts,
+};
 pub(crate) use self::walk::{catalog, chain, resolve, resolve_id};

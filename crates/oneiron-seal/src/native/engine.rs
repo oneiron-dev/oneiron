@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use crate::api::{
     PdfSealEngine, PreparedRevision, SealBackend, SealClock, SealConfig, SealFetcher, SealRequest,
-    SealedPdf, VerifyReport,
+    SealResourceLimits, SealedPdf, VerifyReport,
 };
 use crate::error::{FatalCode, SealError, SealStage};
 
@@ -22,6 +22,20 @@ pub struct NativeSealEngine {
 }
 
 impl NativeSealEngine {
+    /// A native engine reserves the memory its decodes take from a real
+    /// service (`SealResourceLimits::memory`, FIX 7654): without one it does
+    /// not start, and nothing is parsed.
+    fn require_memory(config: &SealConfig) -> Result<(), SealError> {
+        if config.resource_limits.memory.is_configured() {
+            Ok(())
+        } else {
+            Err(SealError::Fatal {
+                stage: SealStage::InputValidation,
+                code: FatalCode::InvalidConfiguration,
+            })
+        }
+    }
+
     /// Fail fast on unparsable trust-anchor material.
     fn validate_anchors(config: &SealConfig) -> Result<(), SealError> {
         for anchor in &config.trust_anchors_der {
@@ -40,13 +54,15 @@ impl NativeSealEngine {
     /// `config.fetch_policy`: a non-default policy is REJECTED instead of
     /// left as a silent dead knob. The wired alternative is
     /// `with_guarded_fetcher` (feature `network-fetch`), which builds the
-    /// SSRF-guarded fetcher FROM `config.fetch_policy`.
+    /// SSRF-guarded fetcher FROM `config.fetch_policy`. A config whose
+    /// `resource_limits.memory` names no service is refused first.
     pub fn new(
         config: SealConfig,
         backend: Arc<dyn SealBackend>,
         fetcher: Arc<dyn SealFetcher>,
         clock: Arc<dyn SealClock>,
     ) -> Result<Self, SealError> {
+        Self::require_memory(&config)?;
         Self::validate_anchors(&config)?;
         if config.fetch_policy != crate::api::FetchPolicy::default() {
             return Err(SealError::Fatal {
@@ -63,13 +79,15 @@ impl NativeSealEngine {
     }
 
     /// Engine whose fetcher is the SSRF-guarded HTTP client built from
-    /// `config.fetch_policy` — the wired policy path (§5).
+    /// `config.fetch_policy` — the wired policy path (§5). A config whose
+    /// `resource_limits.memory` names no service is refused first.
     #[cfg(feature = "network-fetch")]
     pub fn with_guarded_fetcher(
         config: SealConfig,
         backend: Arc<dyn SealBackend>,
         clock: Arc<dyn SealClock>,
     ) -> Result<Self, SealError> {
+        Self::require_memory(&config)?;
         Self::validate_anchors(&config)?;
         let fetcher: Arc<dyn SealFetcher> = Arc::new(super::fetch::SsrfGuardedHttpFetcher::new(
             config.fetch_policy.clone(),
@@ -114,13 +132,26 @@ impl NativeSealEngine {
     ) -> Result<SealedPdf, SealError> {
         // operation_id is validated before any signing or fetch work (§4).
         seal_request.validate_operation_id()?;
-        let prepared = pdf::validate_prepared(input_bytes, &self.config.resource_limits)?;
+        // One memory ledger for the whole seal: its parses, its profile's
+        // re-parses and its self-verification (FIX 7654).
+        let limits = self
+            .config
+            .resource_limits
+            .operation(SealStage::InputValidation)?;
+        let prepared = pdf::validate_prepared(input_bytes, &limits)?;
         // The same complete structural facts feed output classification;
         // unsigned originals may have fully framed anomalous revisions.
-        let facts = pdf::analyze_revision_facts(&prepared.bytes, &self.config.resource_limits)
-            .map_err(|_| SealError::InputInvalid {
-                code: crate::error::InputInvalidCode::MalformedXref,
-            })?;
+        let facts = match pdf::analyze_revision_facts(&prepared.bytes, &limits) {
+            Ok(facts) => facts,
+            Err(pdf::RevisionAnalysisError::Memory(refusal)) => {
+                return Err(refusal.seal_error(SealStage::InputValidation));
+            }
+            Err(_) => {
+                return Err(SealError::InputInvalid {
+                    code: crate::error::InputInvalidCode::MalformedXref,
+                });
+            }
+        };
         if facts.revisions.len() != 1 {
             return Err(SealError::InputInvalid {
                 code: crate::error::InputInvalidCode::MalformedXref,
@@ -128,6 +159,7 @@ impl NativeSealEngine {
         }
         let ctx = profile::SealContext {
             config: &self.config,
+            limits: &limits,
             backend: &self.backend,
             fetcher: &self.fetcher,
             clock_ms: self.clock.unix_time_ms(),
@@ -140,7 +172,7 @@ impl NativeSealEngine {
             seal_request.target_profile,
         )
         .await?;
-        let report = self.verify_sealed_pdf(&outcome.bytes)?;
+        let report = self.verify_under(&outcome.bytes, &limits)?;
         if !report.passes_self_verify() {
             return Err(SealError::VerifyFailed {
                 report: Box::new(report),
@@ -155,6 +187,21 @@ impl NativeSealEngine {
             self_verify_report: report,
         })
     }
+
+    /// Verification under `limits`, an operation's: a seal's
+    /// self-verification reserves under its seal's ledger.
+    fn verify_under(
+        &self,
+        sealed_bytes: &[u8],
+        limits: &SealResourceLimits,
+    ) -> Result<VerifyReport, SealError> {
+        let ctx = verify::VerifyCtx {
+            config: &self.config,
+            limits,
+            clock_ms: self.clock.unix_time_ms(),
+        };
+        verify::verify_document(sealed_bytes, &ctx)
+    }
 }
 
 #[async_trait]
@@ -168,11 +215,12 @@ impl PdfSealEngine for NativeSealEngine {
     }
 
     fn verify_sealed_pdf(&self, sealed_bytes: &[u8]) -> Result<VerifyReport, SealError> {
-        let ctx = verify::VerifyCtx {
-            config: &self.config,
-            clock_ms: self.clock.unix_time_ms(),
-        };
-        verify::verify_document(sealed_bytes, &ctx)
+        // A memory ledger of its own, opened before anything is parsed.
+        let limits = self
+            .config
+            .resource_limits
+            .operation(SealStage::Verification)?;
+        self.verify_under(sealed_bytes, &limits)
     }
 }
 

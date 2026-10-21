@@ -81,7 +81,7 @@ pub(super) fn append_dss(
     ctx: &SealContext<'_>,
     material: &DssMaterial,
 ) -> Result<Vec<u8>, SealError> {
-    let state = pdf::reparse_revision(bytes, &ctx.config.resource_limits)?;
+    let state = pdf::reparse_revision(bytes, ctx.limits)?;
     // A crafted trailer /Size pushing allocation past the object-number
     // space is invalid INPUT, not an internal invariant breach.
     let first_num = state

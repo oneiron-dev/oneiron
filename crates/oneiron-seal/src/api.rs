@@ -289,7 +289,8 @@ pub mod config {
     /// decoded DSS material, one stream's decoded bytes, nesting, reference
     /// chains, field trees, signature contents) it now counts in `observed`
     /// and serves whole; the host measures those counts against its
-    /// `[limits]` rows.
+    /// `[limits]` rows. What its decodes allocate it reserves first from
+    /// `memory`, which refuses only at the machine's floor or a deadline.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SealResourceLimits {
         /// Bytes of a PDF read or written, at most [`PDF_FORMAT_BYTES`].
@@ -298,6 +299,10 @@ pub mod config {
         pub max_pdf_objects: usize,
         /// Where this invocation's counts go.
         pub observed: SealObservations,
+        /// The memory service every native decode reserves its bytes from
+        /// before it allocates them (FIX 7654). Unconfigured by default: a
+        /// native engine refuses to start without one.
+        pub memory: crate::memory::SealMemoryProvider,
     }
 
     impl Default for SealResourceLimits {
@@ -306,6 +311,7 @@ pub mod config {
                 max_input_bytes: PDF_FORMAT_BYTES,
                 max_pdf_objects: PDF_FORMAT_OBJECTS,
                 observed: SealObservations::default(),
+                memory: crate::memory::SealMemoryProvider::default(),
             }
         }
     }
@@ -514,6 +520,10 @@ pub mod config {
         ResponseTooLarge,
         #[error("fetch response was invalid")]
         InvalidResponse,
+        /// The memory the response's bytes needed was not reserved
+        /// (FIX 7654).
+        #[error("fetch response memory: {0}")]
+        Memory(crate::memory::SealMemoryRefusal),
     }
 
     /// The one fetch door (GATE-1 amendment A4). Every AIA, OCSP, CRL, and TSA

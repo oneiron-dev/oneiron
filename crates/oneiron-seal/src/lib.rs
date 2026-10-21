@@ -11,6 +11,8 @@
 pub mod api;
 mod error;
 #[cfg(feature = "native")]
+mod memory;
+#[cfg(feature = "native")]
 mod native;
 #[cfg(all(unix, feature = "native"))]
 pub mod organ;
@@ -31,6 +33,8 @@ pub use api::{
     SealObservations, SealObserved, SealResourceLimits, TsaEndpoint,
 };
 pub use error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
+#[cfg(feature = "native")]
+pub use memory::{SealMemory, SealMemoryProvider, SealMemoryRefusal};
 
 #[cfg(feature = "native")]
 pub use native::NativeSealEngine;

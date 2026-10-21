@@ -9,8 +9,11 @@
 //! 1.1, for the signing identity (`seal.identity`), for the signature over
 //! the revision's signed attributes (`seal.sign`), and for every timestamp
 //! and CRL fetch (`net.fetch`, inside the allowlist the install grant
-//! names). Its clock is the engine's `now_ms` plus the time since the call
-//! began.
+//! names). Both verbs ask it for the memory their PDF decodes and their
+//! fetched bytes take, before they allocate it (`memory.grow`, FIX 7654):
+//! the engine's host leases it from the machine's memory floor and holds it
+//! until the call ends. Its clock is the engine's `now_ms` plus the time
+//! since the call began.
 //!
 //! Args, MessagePack with named fields:
 //! - `seal.pdf`: `{operation_id, profile, now_ms, config,
@@ -19,7 +22,7 @@
 //!   suffixes one after another as `application/octet-stream`. Revision
 //!   `id` is the PDF followed by its suffix.
 //! - `seal.verify`: `{now_ms, config}`, one `application/pdf` input. It
-//!   never asks.
+//!   asks only for memory: never a signature or a fetch.
 //! - `config`: `{trust_anchors: [bin], timestamp_authorities: [{url,
 //!   policy_oid?}]}`. The seal's only size limits are format bounds, its
 //!   own (`SealResourceLimits::default`); nothing on size is configured.
@@ -43,8 +46,9 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use oneiron_organ_protocol::{
-    ASK_NET_FETCH, Answer, AskCode, AskRefusal, AskReply, Asker, ByteBuf, CallContext, ErrorCode,
-    FetchAnswer, FetchAsk, Organ, OrganError, OrganIdentity, OutputBytes, VerbSpec,
+    ASK_MEMORY_GROW, ASK_NET_FETCH, Answer, AskCode, AskRefusal, AskReply, Asker, ByteBuf,
+    CallContext, ErrorCode, FetchAnswer, FetchAsk, MemoryAnswer, MemoryAsk, Organ, OrganError,
+    OrganIdentity, OutputBytes, VerbSpec,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -57,6 +61,7 @@ use crate::api::{
     SignatureAlgorithm, SigningIdentity, TsaEndpoint,
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
+use crate::memory::{SealMemory, SealMemoryProvider, SealMemoryRefusal};
 use crate::native::NativeSealEngine;
 
 mod report;
@@ -312,8 +317,9 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
 fn verify(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     let args: VerifyArgs = from_value(call.args, "verify args")?;
     let pdf = the_pdf(call)?;
-    // Verification never signs or fetches: an asker with no engine.
-    let (observed, engine) = engine(args.config, args.now_ms, began, Asker::default())?;
+    // Verification asks only for memory: its host gives it no signing or
+    // fetch handler.
+    let (observed, engine) = engine(args.config, args.now_ms, began, call.asker())?;
     let checked = engine.and_then(|engine| engine.verify_sealed_pdf(pdf));
     match checked {
         Ok(checked) => report(
@@ -337,23 +343,29 @@ fn the_pdf<'a>(call: &'a CallContext<'_>) -> Result<&'a [u8], OrganError> {
 
 /// The native engine over this call's asks, and where it counts. The outer
 /// error is the args; the inner one is the seal's own, which the reply
-/// carries.
+/// carries. Its memory is the engine host's: every decode reserves its
+/// bytes by ask first.
 fn engine(
     config: ConfigArgs,
     now_ms: u64,
     began: Instant,
     asker: Asker,
 ) -> Result<(SealObservations, Result<NativeSealEngine, SealError>), OrganError> {
-    let config = seal_config(config)?;
+    let mut config = seal_config(config)?;
     let observed = config.resource_limits.observed.clone();
     let asks = Arc::new(CallAsks { asker });
+    let memory = Arc::new(AskedMemory {
+        asks: Arc::clone(&asks),
+    });
+    let service: Arc<dyn SealMemory> = memory.clone();
+    config.resource_limits.memory = SealMemoryProvider::new(service);
     let engine = NativeSealEngine::new(
         config,
         Arc::new(AskedBackend {
             asks: Arc::clone(&asks),
             identity: Mutex::new(None),
         }),
-        Arc::new(AskedFetcher { asks }),
+        Arc::new(AskedFetcher { asks, memory }),
         Arc::new(CallClock { now_ms, began }),
     );
     Ok((observed, engine))
@@ -396,6 +408,50 @@ fn seal_config(args: ConfigArgs) -> Result<SealConfig, OrganError> {
         fetch_policy: FetchPolicy::default(),
         resource_limits,
     })
+}
+
+/// The call's memory, as asks (`memory.grow`): the engine's host leases each
+/// reservation from the machine's memory floor and holds it until the call
+/// ends, so nothing here gives memory back.
+struct AskedMemory {
+    asks: Arc<CallAsks>,
+}
+
+impl AskedMemory {
+    /// Reserves `bytes` with the engine's host, before they are allocated.
+    fn grow(&self, bytes: u64) -> Result<(), SealMemoryRefusal> {
+        let value = to_value(&MemoryAsk { bytes }).map_err(|_| SealMemoryRefusal::Failed)?;
+        let reply =
+            self.asks
+                .ask(ASK_MEMORY_GROW, value)
+                .map_err(|refusal| match refusal.code {
+                    // The call ended while the ask waited: its deadline passed,
+                    // or its grant was revoked.
+                    AskCode::Cancelled => SealMemoryRefusal::Cancelled,
+                    // No host here reserves memory: not granted, no handler, no
+                    // room, or a 1.0 engine.
+                    AskCode::NotGranted | AskCode::Unsupported | AskCode::BadRequest => {
+                        SealMemoryRefusal::Unavailable
+                    }
+                    _ => SealMemoryRefusal::Failed,
+                })?;
+        match from_value::<MemoryAnswer>(&reply.value, "memory") {
+            Ok(MemoryAnswer::Granted) => Ok(()),
+            Ok(MemoryAnswer::Floor { needed, available }) => {
+                Err(SealMemoryRefusal::Floor { needed, available })
+            }
+            Ok(MemoryAnswer::Deadline) => Err(SealMemoryRefusal::Deadline),
+            Err(_) => Err(SealMemoryRefusal::Failed),
+        }
+    }
+}
+
+impl SealMemory for AskedMemory {
+    fn reserve(&self, bytes: u64) -> Result<Box<dyn Send>, SealMemoryRefusal> {
+        self.grow(bytes)?;
+        // The host holds the bytes until the call ends: nothing to hold here.
+        Ok(Box::new(()))
+    }
 }
 
 /// The signer, as asks: the key never leaves the engine.
@@ -505,9 +561,11 @@ impl SealBackend for AskedBackend {
 
 /// Every fetch, as an ask: the engine's guarded fetch, inside the grant's
 /// allowlist. The seal fetches only timestamps and CRLs. A body comes back
-/// whole: the engine measures its size against its `[limits]` rows.
+/// whole: the engine measures its size against its `[limits]` rows, and the
+/// seal's own copy of it is reserved before it is made.
 struct AskedFetcher {
     asks: Arc<CallAsks>,
+    memory: Arc<AskedMemory>,
 }
 
 #[async_trait]
@@ -547,7 +605,14 @@ impl SealFetcher for AskedFetcher {
         if !(200..300).contains(&answer.status) {
             return Err(FetchError::InvalidResponse);
         }
-        let body = reply.data.map(|data| data.to_vec()).unwrap_or_default();
+        let body = match reply.data {
+            Some(data) => {
+                let len = u64::try_from(data.len()).unwrap_or(u64::MAX);
+                self.memory.grow(len).map_err(FetchError::Memory)?;
+                data.to_vec()
+            }
+            None => Vec::new(),
+        };
         Ok(FetchResponse {
             body,
             content_type: answer.content_type,
