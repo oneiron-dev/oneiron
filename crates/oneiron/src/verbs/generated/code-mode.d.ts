@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1187 code-mode rows (1147 host rows, 40 run rows), 4027 declarations.
+// Census: 1187 code-mode rows (1147 host rows, 40 run rows), 4031 declarations.
 // Replies: 1067 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -2490,7 +2490,8 @@ declare namespace Sdk {
   type TaskTypeTreeRead = { project_ref?: EntityId | null; tree_version?: number | null };
   type TaskTypeTreeReadReply = { project_ref?: EntityId | null; in_force_skill_ref?: EntityId | null; tree?: TaskTypeTreeView | null };
   type PlannedSpawnRead = { spawn_ref: EntityId };
-  type SpawnPhase = "planned" | "launched" | "refused";
+  type SpawnPhase = "planned" | "launched" | "refused" | "erased";
+  type SpawnErasure = "asker_erased" | "target_erased";
   type CoordinationPatternView = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type SkillRevisionView = { skill_ref: EntityId; version: string };
   type ProviderPinView = { rung: DecisionRung; model: string; version: string };
@@ -2508,10 +2509,10 @@ declare namespace Sdk {
   type DoorsLearningEvidenceView = { receipt_ref: string; at: number; anchor_kind: string; weight: number };
   type LearningObservation = { cell: DoorsLearningCellView; mean: number; own: boolean; own_runs: number; prior_origin: string; prior_weight_runs: number; borrowed_from?: BorrowedCellView | null; untested: boolean; window_half_life_secs: number; estimator_version: number; evidence: DoorsLearningEvidenceView[] };
   type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string };
-  type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
+  type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; erasure?: SpawnErasure | null; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
   type SpawnAskKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnIntentRequest = { intent_key: string; prompt: string; requested_type?: TypeStamp | null; need: string; care?: string | null; notes?: string | null; model?: SpawnAskKnob<string> | null; width?: SpawnAskKnob<number> | null; pattern?: SpawnAskKnob<string> | null; budget_cap_units?: SpawnAskKnob<number> | null };
-  type SpawnIntentReply = { intent_key: string; phase: SpawnPhase; placed?: TypeStamp | null; refusal?: string | null; root_attempt?: EntityId | null; member_attempts: EntityId[]; team_ref?: string | null; agent_def_ref?: EntityId | null; plan?: PlanObservation | null };
+  type SpawnIntentReply = { intent_key: string; phase: SpawnPhase; placed?: TypeStamp | null; refusal?: string | null; root_attempt?: EntityId | null; member_attempts: EntityId[]; team_ref?: string | null; agent_def_ref?: EntityId | null; plan?: PlanObservation | null; erasure?: SpawnErasure | null };
   type CancelForceRequest = { task_ref: EntityId; reason?: string | null };
   type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned" | "cancelled";
   type RunAskQuestion = { who: string; prompt: string; options: string[]; deadline?: number | null };
@@ -3062,7 +3063,7 @@ declare namespace Sdk {
   type OmittedNeighbor = { id: string; reason: SourceConflict };
   type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number; omitted?: OmittedNeighbor[] };
   type GraphAskDeclined = { unit: EntityId; decision: TypedDecision };
-  type GraphAskOutcome = { state: "done"; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] } | { state: "failed"; failed_unit?: EntityId | null; code: string; message: string; answers: AnswerRecord[]; abstained: EntityId[] };
+  type GraphAskOutcome = { state: "done"; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] } | { state: "failed"; failed_unit?: EntityId | null; code: string; message: string; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] };
   type GraphAdmitRequest = { question: DecisionQuestion; unit: EntityId; decision: TypedDecision };
   type DecisionDial = { first: DecisionRung; ceiling: DecisionRung; band: DecisionBand };
   type QuestionActivation = "one_off" | "standing";
@@ -3074,17 +3075,20 @@ declare namespace Sdk {
   type DecisionQuestionInput = { text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type QuestionDefinitionInput = QuestionDefinition<DecisionQuestionInput>;
   type QuestionCreateRequest = { definition: QuestionDefinitionInput };
-  type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number };
+  type QuestionAskerClass = "human" | "agent" | "system";
+  type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number; asker_class?: QuestionAskerClass | null };
   type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinitionInput };
   type QuestionPauseRequest = { id: EntityId; paused: boolean };
   type QuestionPaused = { id: EntityId; paused: boolean };
   type QuestionBackfillRequest = { id: EntityId; expected_version: number; at?: number | null };
   type ScheduledBackfill = { question: string; version: number; due_at: number };
   type QuestionReadRequest = { id: EntityId; version?: number | null };
-  type QuestionAnswersRequest = { id: EntityId };
+  type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; page_size?: number | null };
   type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" };
-  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding };
+  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
+  type QuestionAnswersPage = { answers: QuestionAnswer[]; next_cursor?: string | null };
+  type QuestionAnswersReply = QuestionAnswer[] | QuestionAnswersPage;
   type QuestionRefreshRequest = { id: EntityId };
   type QuestionOutcomesRequest = { id: EntityId };
   type QuestionOutcomes = { labels: OutcomeLabel[]; calibration: CalibrationPair[] };
@@ -4014,7 +4018,7 @@ declare namespace Sdk {
   type SpawnAskField = "need" | "care" | "notes" | "model" | "width" | "pattern";
   type SpawnUnappliedReason = "planner_unbound" | "agent_lease_unbound";
   type SpawnUnapplied = { field: SpawnAskField; reason: SpawnUnappliedReason };
-  type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null; unapplied?: SpawnUnapplied[] } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string; unapplied?: SpawnUnapplied[] };
+  type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null; unapplied?: SpawnUnapplied[] } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string; unapplied?: SpawnUnapplied[] } | { state: "target_erased"; kind: AgentSpawnKind };
   type WorkflowBoundDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref: EntityId };
   type LeaderAdviceInput = { top?: number | null };
   type LeaderPatternInput = { skill: string };
@@ -6151,7 +6155,8 @@ declare const vault: Sdk.VaultHost & {
     route_tradeoff(input: Sdk.ProjectTradeoffRouteRequest): Promise<Sdk.TaskAskReceipt | StoredResult>;
   };
   questions: {
-    answers(input: Sdk.QuestionAnswersRequest): Promise<Sdk.QuestionAnswer[] | StoredResult>;
+    /** Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each. */
+    answers(input: Sdk.QuestionAnswersRequest): Promise<Sdk.QuestionAnswersReply | StoredResult>;
     backfill(input: Sdk.QuestionBackfillRequest): Promise<Sdk.ScheduledBackfill | StoredResult>;
     create(input: Sdk.QuestionCreateRequest): Promise<Sdk.QuestionRecord | StoredResult>;
     edit(input: Sdk.QuestionEditRequest): Promise<Sdk.QuestionRecord | StoredResult>;

@@ -1,5 +1,7 @@
 //! Config-only contract for skill-driven campaigns. Execution, authority and
 //! budget spending remain at their existing gates, outside this schema.
+//! This `CampaignConfig` is the general schema; the fixed OF-366
+//! configuration lives in `super::config`.
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};

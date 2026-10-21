@@ -18,7 +18,8 @@ use crate::llm::ModelId;
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use crate::task_type::TaskTypeRef;
 use crate::team::{
-    PatternLaunchRunner, PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest, SpawnPhase,
+    PatternLaunchRunner, PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest, SpawnErasure,
+    SpawnPhase,
 };
 use crate::{EntityId, Vault};
 
@@ -130,6 +131,10 @@ pub struct SpawnIntentReply {
     /// refused.
     #[serde(default)]
     pub plan: Option<PlanObservation>,
+    /// Whose erase took the intent's text, its asker's or its target's;
+    /// `None` unless the phase is erased.
+    #[serde(default)]
+    pub erasure: Option<SpawnErasure>,
 }
 
 /// Launches, as the owner, the planned spawn `input` asks for under its
@@ -245,5 +250,6 @@ fn reply_view(view: PlannedIntentView) -> MemoryResult<SpawnIntentReply> {
         team_ref: view.team_ref,
         agent_def_ref: view.plan.as_ref().map(|plan| plan.plan.agent_def),
         plan: view.plan.as_ref().map(plan_view),
+        erasure: view.erasure,
     })
 }

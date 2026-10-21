@@ -222,9 +222,16 @@ pub(crate) fn erase_row_provenance_in_txn(
 ) -> Result<()> {
     erase_row_provenance_without_attempt_payloads_in_txn(store, txn, row, erase)?;
     // An erased dispatch target's instructions and briefing leave the attempt
-    // payloads that carry them, on every platform (FIX 7076).
+    // payloads that carry them, on every platform (FIX 7076), and each
+    // planned intent it asked or whose plan seats it keeps only its erased
+    // form (Engine 10-22).
     if erase {
         crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, row)?;
+        crate::agent_dispatch::AgentDispatcher::erase_planned_intent_content_in_txn(
+            store,
+            txn,
+            &std::collections::BTreeSet::from([*row]),
+        )?;
     }
     Ok(())
 }
