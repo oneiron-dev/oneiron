@@ -56,6 +56,12 @@ OUTBOX_WIRE_REVISION = 2
 # every cold boot of this image dials it first, so a host pairs only with an
 # image whose manifest names it.
 RESTORE_WIRE_REVISION = 1
+# The custody anchor exchange's and proxy's wire revisions
+# (oneiron_vault_contract::vm_anchor, FIX 6517), published together: every
+# serving cold boot of this image dials the exchange, so a host delivers the
+# anchor's credential only to an image whose manifest names both.
+ANCHOR_WIRE_REVISION = 1
+ANCHOR_PROXY_REVISION = 1
 
 
 def build_kernel(args):
@@ -198,6 +204,8 @@ def make_manifest(args):
                    "contract_version": 3, "provision_revision": PROVISION_REVISION,
                    "outbox_wire_revision": OUTBOX_WIRE_REVISION,
                    "restore_wire_revision": RESTORE_WIRE_REVISION,
+                   "anchor_wire_revision": ANCHOR_WIRE_REVISION,
+                   "anchor_proxy_revision": ANCHOR_PROXY_REVISION,
                    "artifacts": artifacts, "rootfs_files": receipt["files"]},
                   stream, indent=2, sort_keys=True)
         stream.write("\n")
