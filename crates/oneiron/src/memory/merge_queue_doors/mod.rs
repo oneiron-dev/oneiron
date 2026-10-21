@@ -16,6 +16,8 @@
 //!
 //! Authority is the owner's live proof alone (`Memory::merge_queue_owner`),
 //! checked before any id resolves, so a refusal is no existence oracle.
+//! The vault's review policy doors (`review_policy`, FIX 8268) also admit
+//! an agent under its own Grant that lists the verb.
 
 mod check_receipt;
 mod checker;
@@ -24,6 +26,7 @@ mod export;
 mod export_types;
 mod observation;
 mod operations;
+mod review_policy;
 mod types;
 
 pub use check_receipt::{
@@ -32,6 +35,10 @@ pub use check_receipt::{
 pub(crate) use checker::check_work_view;
 pub use checker_types::*;
 pub use export_types::*;
+pub use review_policy::{
+    QueueReviewMode, QueueReviewPolicyInput, QueueReviewPolicyProof, QueueReviewPolicySetRequest,
+    QueueReviewPolicyState, QueueReviewPolicyView,
+};
 pub use types::*;
 
 use std::path::Path;

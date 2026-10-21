@@ -28,10 +28,10 @@ const NO_PROGRESS: &str = "browser_no_progress";
 impl BatchStep {
     /// Whether the step counts toward [`NO_PROGRESS_STEPS`] (CUA E3, CALLS
     /// row): a step that acts on the page (open, click, type, select, key,
-    /// hotkey, scroll, and a routine step once its act ran). A wait, a check
-    /// and a screenshot only read it, so they neither count nor break a run
-    /// of steps that did; a routine step's own looks and NONE answers are
-    /// no steps.
+    /// hotkey, scroll, and a routine step or a Fill once its act ran). A
+    /// wait, a check and a screenshot only read it, so they neither count
+    /// nor break a run of steps that did; a routine step's own looks and
+    /// NONE answers, and a Fill's reads and choice, are no steps.
     #[must_use]
     pub const fn counts_for_progress(&self) -> bool {
         match self {
@@ -42,7 +42,8 @@ impl BatchStep {
             | Self::Key { .. }
             | Self::Hotkey { .. }
             | Self::Scroll { .. }
-            | Self::Decide(_) => true,
+            | Self::Decide(_)
+            | Self::Fill { .. } => true,
             Self::WaitFor { .. } | Self::Expect { .. } | Self::Screenshot { .. } => false,
         }
     }
