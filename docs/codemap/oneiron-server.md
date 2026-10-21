@@ -694,7 +694,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/models/voice.rs` | src | s | 1 struct · 3 crate-vis | VoiceSettings | `[models.voice]`: the server's own voice loop (OF-410) |
 | `src/config/native_mail.rs` | src | s | 1 struct · 1 enum · 2 crate-vis | NativeMailConfig, NativeMailMode | `[native_mail]`: the host's own mail server, a Stalwart instance serving one domain the owner controls… |
 | `src/config/oneironer.rs` | src | m | 4 struct · 3 enum · 9 fn · 1 re-export · 2 crate-vis | OneironerArgs, OneironerBackbone, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider, OneironerTier | The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity, native runtime and label table |
-| `src/config/oneironer/runtime.rs` | src | s | 1 enum · 1 fn | OneironerRuntime | The native runtime a local tagger runs on |
+| `src/config/oneironer/runtime.rs` | src | s | 1 enum · 1 fn | OneironerRuntime | The runtime setting a local tagger's workers are chosen by (FIX 6755, Engine call 4) |
 | `src/config/page_seal.rs` | src | s | 1 crate-vis | — | A sealed vault's page seal from this device's keystore (moved out of `server_config` whole) |
 | `src/config/privacy_tests.rs` | test | s | — | — | — |
 | `src/config/process_env_tests.rs` | test | s | — | — | — |
@@ -1000,17 +1000,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/bundle/mod.rs` | src | s | 11 crate-vis | — | The Oneironer bundle as every runtime reads it (FIX 6755): one manifest schema, one identity and one archive… |
 | `src/oneironer/bundle/platform.rs` | src | s | 9 crate-vis | — | The manifest's runtime rows (contract rev 3, B1-B2): the Core ML model and the MLX worker, one archive each |
 | `src/oneironer/dispatcher/capacity.rs` | src | s | 9 crate-vis | — | Room in the dispatcher's pending caps, as owned claims (FIX 6755) |
-| `src/oneironer/dispatcher/mod.rs` | src | m | 14 crate-vis | — | The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready… |
+| `src/oneironer/dispatcher/eligibility.rs` | src | s | 8 crate-vis | — | Which worker may run which call (FIX 6755 slice 2b) |
+| `src/oneironer/dispatcher/mod.rs` | src | m | 18 crate-vis | — | The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready… |
 | `src/oneironer/dispatcher/policy.rs` | src | s | 8 crate-vis | — | The dispatcher's policy (Engine 10-21, FIX 6755 rulings 3 and 4): the one definition of each hold, batch cap… |
-| `src/oneironer/dispatcher/worker.rs` | src | s | 8 crate-vis | — | One worker: a model loaded on one engine, or the one opaque endpoint, on its own thread |
+| `src/oneironer/dispatcher/worker.rs` | src | m | 19 crate-vis | — | One worker: a model loaded on one engine, or the one opaque endpoint, on its own thread |
 | `src/oneironer/endpoint.rs` | src | m | 12 crate-vis | — | The `endpoint` provider: a tagger server on this machine that speaks the slot's contract |
-| `src/oneironer/engines/calibration.rs` | src | m | 10 crate-vis | — | The bundle's reference cases, the bar an engine's answers must clear, the measurement of one engine against… |
+| `src/oneironer/engines/calibration.rs` | src | m | 13 crate-vis | — | The bundle's reference cases, the bar an engine's answers must clear, the measurement of one engine against… |
 | `src/oneironer/engines/mod.rs` | src | m | 15 crate-vis | — | The slot's engines, and which one serves on this machine (ARCH-0036, "Several engines, one default per… |
-| `src/oneironer/engines/rows.rs` | src | s | 15 crate-vis | — | This machine's measured engine rows: where they live, how they are read and written, and what keys them |
-| `src/oneironer/local.rs` | src | m | 9 crate-vis | — | Native extraction on candle, with no HTTP server or second runtime |
+| `src/oneironer/engines/rows.rs` | src | m | 17 crate-vis | — | This machine's measured engine rows: where they live, how they are read and written, and what keys them |
+| `src/oneironer/local.rs` | src | m | 13 crate-vis | — | Native extraction on candle, with no HTTP server or second runtime |
 | `src/oneironer/local/backbone.rs` | src | s | 5 crate-vis | — | Bidirectional extraction backbones |
 | `src/oneironer/local/heads.rs` | src | m | 9 crate-vis | — | The trained coreference ranker, turn-affect MLP and character edge head |
-| `src/oneironer/local/window.rs` | src | m | 19 crate-vis | — | One causal window with byte-accurate message coordinates |
+| `src/oneironer/local/window/mod.rs` | src | m | 11 crate-vis | — | One causal window with byte-accurate message coordinates |
+| `src/oneironer/local/window/ner.rs` | src | m | 10 crate-vis | — | The full decode of a bundle with a character head (`oneironer-decode-v1`): BIO, the DATE snap, character… |
 | `src/oneironer/mod.rs` | src | m | 25 crate-vis | — | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
 | `src/oneironer/release.rs` | src | m | 25 crate-vis | — | The shipped Oneironer releases, and the fetch that places one on this machine (FIX 6828) |
 | `src/oneironer/release/catalogue.rs` | src | s | 2 crate-vis | — | The shipped release catalogue (FIX 6755) |
