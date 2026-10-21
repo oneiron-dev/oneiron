@@ -12,6 +12,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// The inode allowance of a native session's `/tmp`. Boot mounts it with
+/// 1024 inodes; a session's scratch (a cargo dependency store and target
+/// dir) holds far more files than that.
+const NATIVE_SCRATCH_INODES: u32 = 1_048_576;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Start {
@@ -42,8 +47,11 @@ pub(crate) fn run() -> Result<()> {
     {
         return Err(Error::Protocol("native session bounds"));
     }
-    let data = std::ffi::CString::new(format!("size={}m,mode=1777", start.tmpfs_mib))
-        .map_err(|_| Error::Runtime("tmpfs size"))?;
+    let data = std::ffi::CString::new(format!(
+        "size={}m,nr_inodes={NATIVE_SCRATCH_INODES},mode=1777",
+        start.tmpfs_mib
+    ))
+    .map_err(|_| Error::Runtime("tmpfs size"))?;
     // SAFETY: remount only the guest's existing scratch tmpfs, with a valid
     // NUL-terminated data string. This runs as the trusted guest PID 1.
     if unsafe {

@@ -5,21 +5,35 @@
 //! check answers a configuration need naming its keys, and never runs on
 //! the host. `checker_backend = "host"` is the operator's explicit opt-in to
 //! run the trusted helper as a host child; an isolated attempt that fails
-//! never falls back to it. Resource values are optional overrides of the
-//! sandbox's existing defaults; no wall-time setting or timeout exists. The
+//! never falls back to it. Resource values are optional overrides of
+//! `QUEUE_CHECK_DEFAULT_LIMITS`; no wall-time setting or timeout exists. The
 //! config read validates shape only: a host that cannot run an isolated
 //! guest starts all the same, and its checks say what they need.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use oneiron::code_sandbox::microvm::ExecutionBudget;
 use oneiron::merge_queue::{DEFAULT_QUEUE_CHECK_CONCURRENCY, QueueCheckLimits};
 use serde::Deserialize;
 
 /// Where the trusted helper sits in the checker image (the image contract,
 /// crates/oneiron-container/guest/checker/README.md).
 pub(crate) const ISOLATED_CHECK_HELPER: &str = "/usr/local/bin/oneiron-queue-check";
+
+/// The guest limits a check runs under for each key the section leaves
+/// absent, sized for the seed plan's `cargo check --locked --workspace
+/// --all-features`. All of `/tmp/queue-check` (the source copy, the copied
+/// dependency store and the target dir) is guest tmpfs, so it counts against
+/// `memory_mib` as well as `tmpfs_mib`: the memory covers the compiler and a
+/// full scratch. `cpu_millis` is a four-CPU cgroup quota, which in a
+/// container also caps cargo's default job count. These are ceilings, not
+/// reservations or required keys: an explicit key wins.
+pub const QUEUE_CHECK_DEFAULT_LIMITS: QueueCheckLimits = QueueCheckLimits {
+    memory_mib: 32_768,
+    cpu_millis: 4000,
+    pids: 1024,
+    tmpfs_mib: 16_384,
+};
 
 /// Which executor runs a queue check.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -68,7 +82,7 @@ pub struct MergeQueueCheckerConfig {
     /// Immutable toolchain identities the image or host provides, by name.
     #[serde(default)]
     pub toolchain: BTreeMap<String, String>,
-    /// Optional guest overrides of the sandbox's default limits.
+    /// Optional guest overrides of `QUEUE_CHECK_DEFAULT_LIMITS`.
     pub memory_mib: Option<u32>,
     pub cpu_millis: Option<u32>,
     pub pids: Option<u32>,
@@ -115,18 +129,17 @@ impl MergeQueueCheckerConfig {
         Ok(())
     }
 
-    /// The guest limits a check runs under: each override, else the
-    /// sandbox's existing default budget mapped as the container backend
-    /// maps it (memory and tmpfs from the budget's memory, its pids, one
-    /// CPU). The one effective-limits hook; receipts carry what it returns.
+    /// The guest limits a check runs under: each override, else its
+    /// `QUEUE_CHECK_DEFAULT_LIMITS` value. The one effective-limits hook;
+    /// receipts carry what it returns.
     #[must_use]
     pub fn effective_limits(&self) -> QueueCheckLimits {
-        let budget = ExecutionBudget::default();
+        let defaults = QUEUE_CHECK_DEFAULT_LIMITS;
         QueueCheckLimits {
-            memory_mib: self.memory_mib.unwrap_or(budget.mem_mib),
-            cpu_millis: self.cpu_millis.unwrap_or(1000),
-            pids: self.pids.unwrap_or(budget.pids),
-            tmpfs_mib: self.tmpfs_mib.unwrap_or(budget.mem_mib),
+            memory_mib: self.memory_mib.unwrap_or(defaults.memory_mib),
+            cpu_millis: self.cpu_millis.unwrap_or(defaults.cpu_millis),
+            pids: self.pids.unwrap_or(defaults.pids),
+            tmpfs_mib: self.tmpfs_mib.unwrap_or(defaults.tmpfs_mib),
         }
     }
 
