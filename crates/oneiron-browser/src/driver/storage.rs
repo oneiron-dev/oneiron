@@ -22,7 +22,7 @@
 use super::state::utf16;
 use super::{CALL, CdpDriver};
 use crate::cdp::{Pipe, web_origin};
-use crate::session::storage::{Sample, StoreSample, switch_state_limits};
+use crate::session::storage::{Sample, Sink, StoreSample, switch_state_limits};
 use crate::{BrowserEngine, StoragePhase, SwitchLoss};
 use serde_json::{Value, json};
 use std::time::Instant;
@@ -256,6 +256,12 @@ impl CdpDriver {
         for tab in closed.iter().filter(|tab| **tab != self.target) {
             self.pipe.drop_snapshots(tab);
         }
+    }
+
+    /// Keeps this driver's pages' storage reads through `sink` from now on:
+    /// for a session that keeps snapshots from after its attach.
+    pub(crate) fn collect(&self, sink: Sink) {
+        self.pipe.collect(sink);
     }
 
     /// Keeps a read of the front tab's stores another step took: a

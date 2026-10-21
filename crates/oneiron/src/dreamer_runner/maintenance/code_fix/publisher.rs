@@ -155,16 +155,34 @@ pub struct EngineCandidateRun {
     pub state: EnginePairState,
 }
 
+/// When a pair kept not run on a lapsed pact is tried again (CALLS `FIX 7548
+/// code fix retry`, accepted by the Engine 10-21 22:4x).
+#[derive(Debug, Clone, Copy)]
+enum PactLapseRetry {
+    /// As a pair kept for want of a Grant: once a covering Grant of the
+    /// Coach's stands again, its pact included; never a terminal not-run.
+    WhenCoveringGrantStands,
+}
+
+const CODE_FIX_PACT_LAPSE_RETRY: PactLapseRetry = PactLapseRetry::WhenCoveringGrantStands;
+
 impl EngineCandidateRun {
     /// Whether the pair was kept not run for want of the Coach's read Grant
-    /// (FIX 6357): no live Grant of the Coach's read every world of the run.
+    /// (FIX 6357): no live Grant of the Coach's read every world of the run,
+    /// or, on a shared vault, the one that did lost its pact membership, at
+    /// either check (FIX 7548, [`CODE_FIX_PACT_LAPSE_RETRY`]).
     pub(super) fn waits_on_grant(&self) -> bool {
-        matches!(
-            self.state,
+        match self.state {
             EnginePairState::NotRun {
-                reason: EngineNotRun::Admission(EngineAdmission::NoGrant)
-            }
-        )
+                reason: EngineNotRun::Admission(EngineAdmission::NoGrant),
+            } => true,
+            EnginePairState::NotRun {
+                reason: EngineNotRun::Admission(EngineAdmission::PactStandingLapsed),
+            } => match CODE_FIX_PACT_LAPSE_RETRY {
+                PactLapseRetry::WhenCoveringGrantStands => true,
+            },
+            _ => false,
+        }
     }
 
     /// Whether the pair is tried again: kept not run at a shadow protocol
@@ -245,6 +263,10 @@ pub enum EngineAdmission {
     /// The Grant no longer reaches the run's worlds when the arms' bodies
     /// would be read.
     Lapsed,
+    /// On a shared vault, every Grant that would admit the pair has lost its
+    /// pact membership (FIX 7548), at either check: kept, and tried again
+    /// once a covering Grant stands.
+    PactStandingLapsed,
 }
 
 /// Which arm of a pair.

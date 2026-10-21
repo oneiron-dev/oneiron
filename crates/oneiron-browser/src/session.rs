@@ -24,7 +24,9 @@
 //!
 //! The host's replay library (OF-598) rides the session too: an `open`
 //! lists the site's library programs, and the library verbs check, replay
-//! and run programs through this session's own gated verbs.
+//! and run programs through this session's own gated verbs. A proposal's
+//! replay runs on a fresh guest the host starts for it (`fresh`), never on
+//! this session's page.
 //!
 //! A person can take the browser over (CUA-001), asked by the agent's
 //! `handover` or not, to sign in or pay inside the same guest. While the
@@ -61,11 +63,13 @@
 //! engine the session runs, and a destination refusal it gives answers the
 //! navigation or act it ended, or the host's own take (`request`).
 
+mod fresh;
 mod guest;
 mod request;
 pub(crate) mod storage;
 pub(crate) mod switch;
 
+pub use fresh::FreshGuest;
 pub use guest::{BrowserGuestStarter, StartedGuest};
 
 use self::guest::EngineGuest;
@@ -75,6 +79,7 @@ use crate::driver::CdpDriver;
 use crate::driver::pages::Base;
 use crate::request::{BrowserRequestHandler, Custody};
 use crate::retention::HandleRetention;
+use crate::stop::elapsed_ms;
 use crate::{
     AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserEngine, BrowserError,
     BrowserPersonInput, BrowserTab, ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE,
@@ -93,7 +98,7 @@ use oneiron_container::{
 };
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The longest reason a `handover` ask may give, in characters.
 const HANDOVER_REASON_CHARS: usize = 500;
@@ -169,6 +174,9 @@ pub struct BrowserSession {
     /// engine's pipe: its handler, if it gave one, and the refusal not yet
     /// delivered.
     custody: Custody,
+    /// How the host starts the fresh guest a proposal's replay runs on;
+    /// none where the host gave none, and a proposal is refused.
+    fresh: Option<Box<dyn FreshGuest>>,
 }
 
 impl BrowserSession {
@@ -220,6 +228,7 @@ impl BrowserSession {
             history: OriginHistory::default(),
             snapshots,
             custody,
+            fresh: None,
         })
     }
 
@@ -548,9 +557,10 @@ impl BrowserSession {
         press_for(&mut self.policy, class, row)
     }
 
-    /// Stamps `observation` with the receipt of the effect that made it.
-    /// The receipt's screenshot is best-effort: an effect that already
-    /// happened is receipted even when its evidence could not be captured.
+    /// Stamps `observation` with the receipt of the effect that made it,
+    /// which its verb entered at `started`. The receipt's screenshot is
+    /// best-effort: an effect that already happened is receipted even when
+    /// its evidence could not be captured.
     fn receipt(
         &mut self,
         verb: &str,
@@ -558,6 +568,7 @@ impl BrowserSession {
         effect_class: Option<&str>,
         press: PressMode,
         observation: &mut Observation,
+        started: Instant,
     ) {
         self.receipt_seq += 1;
         // Never compared: each receipt's screenshot is a capture of its own.
@@ -587,6 +598,8 @@ impl BrowserSession {
             engine: Some(self.driver.engine()),
             fact: observation.fact.clone(),
             engine_switch: None,
+            // Stamped before the host keeps the screenshot.
+            duration_ms: elapsed_ms(started),
         };
         // The pixels are kept before the receipt is stored, while the
         // session still holds them.
@@ -681,13 +694,21 @@ pub(crate) fn receipt_class(
 
 impl BrowserDriver for BrowserSession {
     fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         self.agent_has()?;
         if !web_page(&input.url) {
             return Err(BrowserError::Url(input.url));
         }
         let opened = self.live()?.open(input);
         let mut observation = self.crossed(opened)?;
-        self.receipt("open", None, None, PressMode::None, &mut observation);
+        self.receipt(
+            "open",
+            None,
+            None,
+            PressMode::None,
+            &mut observation,
+            started,
+        );
         self.undelivered()?;
         // Repeated work on a site tries the library first. A lookup that
         // fails leaves the page open without its programs.
@@ -716,6 +737,7 @@ impl BrowserDriver for BrowserSession {
     }
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         let target = self.live()?.resolve_target(&input.target)?;
         let class = effect_class(&target.row.name);
         let press = match class {
@@ -725,12 +747,20 @@ impl BrowserDriver for BrowserSession {
         let clicked = self.driver.click_target(&target, &Base::of(input.base));
         let mut observation = self.crossed(clicked)?;
         let class = receipt_class(class, Some(&target.row));
-        self.receipt("click", Some(&target.row), class, press, &mut observation);
+        self.receipt(
+            "click",
+            Some(&target.row),
+            class,
+            press,
+            &mut observation,
+            started,
+        );
         self.undelivered()?;
         Ok(observation)
     }
 
     fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         let (x, y) = self.live()?.point(&input)?;
         let row = self.driver.row_at(x, y)?;
         let class = row.as_ref().and_then(|row| effect_class(&row.name));
@@ -742,12 +772,20 @@ impl BrowserDriver for BrowserSession {
         let clicked = self.driver.click_point(x, y, row.as_ref(), &base);
         let mut observation = self.crossed(clicked)?;
         let class = receipt_class(class, row.as_ref());
-        self.receipt("click_at", row.as_ref(), class, press, &mut observation);
+        self.receipt(
+            "click_at",
+            row.as_ref(),
+            class,
+            press,
+            &mut observation,
+            started,
+        );
         self.undelivered()?;
         Ok(observation)
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         let target = self.live()?.resolve_target(&input.target)?;
         let base = Base::of(input.base);
         let typed = self
@@ -760,12 +798,14 @@ impl BrowserDriver for BrowserSession {
             None,
             PressMode::None,
             &mut observation,
+            started,
         );
         self.undelivered()?;
         Ok(observation)
     }
 
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
         let target = self.live()?.resolve_target(&input.target)?;
         let base = Base::of(input.base);
         let selected = self.driver.select_target(&target, &input.option, &base);
@@ -776,6 +816,7 @@ impl BrowserDriver for BrowserSession {
             None,
             PressMode::None,
             &mut observation,
+            started,
         );
         self.undelivered()?;
         Ok(observation)
@@ -830,13 +871,10 @@ impl BrowserDriver for BrowserSession {
 
     fn library_propose(&mut self, input: ProposeInput) -> Result<ProposeOutput, BrowserError> {
         self.agent_has()?;
-        let mut output = self.with_library(|session, library, decider| {
-            crate::library::propose(session, library, decider, input)
-        })?;
-        if let Some(replay) = output.replay.as_mut() {
-            self.page_batch(replay);
-        }
-        Ok(output)
+        let mut library = self.library.take().ok_or_else(no_library)?;
+        let output = self.propose(library.as_mut(), input);
+        self.library = Some(library);
+        output
     }
 
     fn library_run(&mut self, input: LibraryRunInput) -> Result<LibraryRunOutput, BrowserError> {

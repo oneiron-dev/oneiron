@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1127 facade rows, 3885 declarations.
+Census: 1127 facade rows, 3900 declarations.
 Inputs: 1062 of 1127 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1014 of 1127 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -3774,6 +3774,21 @@ class WeaveSectionInput(TypedDict):
     edge_kinds: NotRequired[list[str]]
 class WeaveReportRequest(TypedDict):
     sections: list[WeaveSectionInput]
+class WeaveSieveDiscoveryView(TypedDict):
+    start: int
+    end: int
+    kind: str
+    confidence: int
+class WeaveSieveFindingView(TypedDict):
+    expectation: str
+    window_ref: str
+    turn_ref: str
+    source_ref: str
+    start: int
+    end: int
+    discovered: list[WeaveSieveDiscoveryView]
+    agrees: bool
+    audited_at: int
 class WeaveItemViewClaim(TypedDict):
     item: Literal["claim"]
     claim: ClaimView
@@ -3813,6 +3828,10 @@ class WeaveItemViewSieveAudit(TypedDict):
     confidence: int
     agrees: bool
     audited_at: int
+class WeaveItemViewSieveWindowAudit(TypedDict):
+    item: Literal["sieve_window_audit"]
+    attempt_ref: str
+    finding: WeaveSieveFindingView
 class WeaveItemViewLoopDecision(TypedDict):
     item: Literal["loop_decision"]
     decision_ref: str
@@ -3825,7 +3844,7 @@ class WeaveItemViewLoopDecision(TypedDict):
     claim_ref: NotRequired[str | None]
     actor_ref: NotRequired[str | None]
     evidence_refs: list[str]
-WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit | WeaveItemViewLoopDecision
+WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit | WeaveItemViewSieveWindowAudit | WeaveItemViewLoopDecision
 class WeaveSieveScoreView(TypedDict):
     sampled: int
     agreeing: int
@@ -4231,6 +4250,7 @@ class WeaveDigestSettingChange(TypedDict):
     undone_generation: NotRequired[int | None]
     created_at: int
     settled_at: NotRequired[int | None]
+    grant_omitted: NotRequired[str | None]
 class WeaveDigestSettingAnswer(TypedDict):
     change_ref: str
     accept: bool
@@ -18045,9 +18065,12 @@ class WakeRecipePolicy(TypedDict):
     rung_retry_secs: int
     audit_percent: int
     audit_spans: int
+    audit_window_share: int
+    audit_window_bytes: int
     novelty_instruction: str
     typing_instruction: str
     narrative_instruction: str
+    audit_window_instruction: str
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
 class SieveLeaseRequest(TypedDict):
@@ -19341,6 +19364,14 @@ class EffectReceipt(TypedDict):
     engine: NotRequired[BrowserEngine | None]
     fact: NotRequired[ActionFact | None]
     engine_switch: NotRequired[EngineSwitchRecord | None]
+    duration_ms: int
+RecentCounts = TypedDict("RecentCounts", {"pass": int, "miss": int, "repair": int, "of": int})
+class WorkflowSeed(TypedDict):
+    pack: str
+    pinned_ref: str
+    path: str
+    digest: str
+    license: str
 class LibraryCard(TypedDict):
     workflow: str
     site: str
@@ -19348,6 +19379,13 @@ class LibraryCard(TypedDict):
     params: list[str]
     runs: int
     failures: int
+    recent: RecentCounts
+    held_out: bool
+    supersedes: NotRequired[str | None]
+    seed: NotRequired[WorkflowSeed | None]
+    filed_at: int
+    last_run_at: NotRequired[int | None]
+    strict_misses: int
 class PartialTree(TypedDict):
     reason: str
     visited: int
@@ -19537,6 +19575,54 @@ class BatchInput(TypedDict):
     until_ms: NotRequired[int | None]
     no_model: NotRequired[bool]
 SubgoalStatus = Literal["done", "NEEDS_AGENT", "NEEDS_YOU"]
+StrictDenial = Literal["rule_abstained", "no_rule", "image"]
+class AskUpReasonAsked(TypedDict):
+    why: Literal["asked"]
+    ladder: NotRequired[str | None]
+class AskUpReasonLooks(TypedDict):
+    why: Literal["looks"]
+class AskUpReasonNoAnswer(TypedDict):
+    why: Literal["no_answer"]
+class AskUpReasonWrongAnswer(TypedDict):
+    why: Literal["wrong_answer"]
+class AskUpReasonStrict(TypedDict):
+    why: Literal["strict"]
+    denied: StrictDenial
+AskUpReason = AskUpReasonAsked | AskUpReasonLooks | AskUpReasonNoAnswer | AskUpReasonWrongAnswer | AskUpReasonStrict
+ClockScope = Literal["wait", "navigation", "decision"]
+class BatchStopCausePostconditionUnmet(TypedDict):
+    cause: Literal["postcondition_unmet"]
+class BatchStopCauseLocatorMissing(TypedDict):
+    cause: Literal["locator_missing"]
+class BatchStopCauseIncompleteObservation(TypedDict):
+    cause: Literal["incomplete_observation"]
+class BatchStopCauseDeciderAskedUp(TypedDict):
+    cause: Literal["decider_asked_up"]
+    reason: AskUpReason
+class BatchStopCauseClock(TypedDict):
+    cause: Literal["clock"]
+    scope: ClockScope
+class BatchStopCausePressNeeded(TypedDict):
+    cause: Literal["press_needed"]
+class BatchStopCauseTakenOver(TypedDict):
+    cause: Literal["taken_over"]
+class BatchStopCauseFieldText(TypedDict):
+    cause: Literal["field_text"]
+class BatchStopCauseNoProgress(TypedDict):
+    cause: Literal["no_progress"]
+class BatchStopCauseBrowser(TypedDict):
+    cause: Literal["browser"]
+    code: str
+BatchStopCause = BatchStopCausePostconditionUnmet | BatchStopCauseLocatorMissing | BatchStopCauseIncompleteObservation | BatchStopCauseDeciderAskedUp | BatchStopCauseClock | BatchStopCausePressNeeded | BatchStopCauseTakenOver | BatchStopCauseFieldText | BatchStopCauseNoProgress | BatchStopCauseBrowser
+class CheckReceipt(TypedDict):
+    expect: ExpectInput
+    observed: ExpectOutput
+class FailedStepReceipt(TypedDict):
+    step: NotRequired[int | None]
+    stop_cause: BatchStopCause
+    missed: NotRequired[list[CheckReceipt]]
+    observation: NotRequired[Observation2 | None]
+    error: NotRequired[str | None]
 class StepRebound(TypedDict):
     step: int
     rebound: Rebound
@@ -19545,6 +19631,9 @@ class BatchOutput(TypedDict):
     completed: int
     failed_step: NotRequired[int | None]
     error: NotRequired[str | None]
+    stop_cause: NotRequired[BatchStopCause | None]
+    failed_receipt: NotRequired[FailedStepReceipt | None]
+    elapsed_ms: int
     observation: NotRequired[Observation2 | None]
     receipts: NotRequired[list[EffectReceipt]]
     decisions: NotRequired[list[Any]]
@@ -19565,13 +19654,41 @@ class ProposeInput(TypedDict):
     steps: list[BatchStep]
     postcondition: list[ExpectInput]
     args: NotRequired[dict[str, str]]
-WorkflowCheck = Literal["solved", "replay"]
+    replay_args: NotRequired[dict[str, str]]
+    supersedes: NotRequired[str | None]
+    seed: NotRequired[WorkflowSeed | None]
+WorkflowCheck = Literal["solved", "replay", "held_out", "fresh_guest", "supersedes"]
+SupersedeRefusal = Literal["malformed", "not_on_site", "same_record", "not_filer"]
+class AdmissionRefusalHeldOut(TypedDict):
+    cause: Literal["held_out"]
+    used: list[str]
+    missing: list[str]
+    unknown: list[str]
+    same: list[str]
+class AdmissionRefusalFreshGuest(TypedDict):
+    cause: Literal["fresh_guest"]
+    stage: SwitchStage
+    code: str
+    detail: str
+class AdmissionRefusalSupersedes(TypedDict):
+    cause: Literal["supersedes"]
+    workflow: str
+    why: SupersedeRefusal
+AdmissionRefusal = AdmissionRefusalHeldOut | AdmissionRefusalFreshGuest | AdmissionRefusalSupersedes
+class ReplayGuest(TypedDict):
+    engine: BrowserEngine
+    carried: list[SwitchCarried]
+    not_carried: list[SwitchNotCarried]
+SupersedeOutcome = Literal["retired", "linked", "dropped"]
 class ProposeOutput(TypedDict):
     admitted: bool
     workflow: NotRequired[str | None]
     refused_by: NotRequired[WorkflowCheck | None]
+    refusal: NotRequired[AdmissionRefusal | None]
     unmet: NotRequired[list[int]]
     replay: NotRequired[BatchOutput | None]
+    replay_guest: NotRequired[ReplayGuest | None]
+    superseded: NotRequired[SupersedeOutcome | None]
 BrowserLibraryProposeOutput = BrowserAnswer[ProposeOutput]
 class LibraryRetireInput(TypedDict):
     workflow: str
@@ -19589,13 +19706,18 @@ class LibraryRetiredOutput(TypedDict):
     site: str
     retired: list[RetiredCard]
 BrowserLibraryRetiredOutput = BrowserAnswer[LibraryRetiredOutput]
+LibraryRunMode = Literal["strict", "assisted"]
 class LibraryRunInput(TypedDict):
     workflow: str
     args: NotRequired[dict[str, str]]
     base: NotRequired[ObservationBase | None]
+    mode: NotRequired[LibraryRunMode | None]
 class LibraryRunOutput(TypedDict):
     workflow: str
     status: SubgoalStatus
+    mode: LibraryRunMode
+    model_free: bool
+    model_free_unproven: NotRequired[int | None]
     unmet: NotRequired[list[int]]
     batch: BatchOutput
 BrowserLibraryRunOutput = BrowserAnswer[LibraryRunOutput]

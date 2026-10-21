@@ -251,6 +251,12 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Read,
     ),
     ("organ-dir", |args| args.organ_dir.is_some(), ArgvUse::Read),
+    // The organ builds the supervisor vouches for as first party (FIX 7644).
+    (
+        "trusted-organ-build",
+        |args| !args.trusted_organ_builds.is_empty(),
+        ArgvUse::Read,
+    ),
     ("mesh-bind", |args| args.mesh_bind.is_some(), ArgvUse::Read),
     (
         "mesh-relays",

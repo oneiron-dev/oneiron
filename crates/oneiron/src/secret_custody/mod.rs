@@ -166,9 +166,11 @@ pub use self::types::{
     SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
 pub use self::use_handle::{
-    SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS,
-    SECRET_USE_REASON, SecretBindRequest, SecretBound, SecretUseDecision, SecretUseOperation,
-    SecretUseOutcome, SecretUseReceipt, SecretUseSend,
+    KeptSentValue, SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_CLEAR_VALUE_SOURCE,
+    SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SecretBindRequest,
+    SecretBound, SecretClearValueSource, SecretReleasePolicy, SecretUseDecision,
+    SecretUseOperation, SecretUseOutcome, SecretUseReceipt, SecretUseSend, SentPresentation,
+    SentValue,
 };
 pub(crate) use self::use_handle::{SecretUseConsumed, SecretUser, handle_record_in_txn};
 // The holder's manifest judgment an enacted register's result signs (FIX

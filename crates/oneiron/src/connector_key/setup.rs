@@ -23,13 +23,15 @@ use super::record::ConnectorKeyStatus;
 use super::txn::read_connector_key_in_txn;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::error::{Error, Result};
-use crate::secret_lease::{SecretGrantRef, SecretGrantTarget};
 use crate::skill_hub::pack_catalog::{
     MAX_SETUP_PERMISSIONS, PackSetupAuth, PackSetupCheckRecord, PackSetupConnection,
     PackSetupGrantRef, PackSetupKeyRef, PackSetupPermission, PackSetupSecret, PackSetupSession,
     PackSetupView, live_custody_in_txn, pin_connection_custody_in_txn,
 };
 use crate::{EntityId, Vault};
+
+// `self.use`'s own checks, cleared inside the door (FIX 7647).
+mod sent_check;
 
 /// The actor class every pack-connection grant is narrowed to.
 pub const PACK_CONNECTION_ACTOR_CLASS: &str = "pack-connection";
@@ -700,50 +702,6 @@ impl ProviderConnectionChecks {
 }
 
 impl ProviderConnectionChecks {
-    /// [`PackConnectionVerifier::verify`] for a credential a secret grant
-    /// holds (FIX 4491): the grant is redeemed for `target` at the real send
-    /// ([`Vault::redeem_secret_grant_at_door`], which counts that one send
-    /// and refuses a grant the record rotated past since it was admitted),
-    /// and the reply is read, and every text in the answer or the failure
-    /// cleared by `scrub`, with the SAME value inside the door, before it
-    /// leaves. The outer error is the redemption's own refusal: nothing was
-    /// sent. A connector call redeems its grant at each send the same way.
-    pub(crate) fn verify_granted(
-        &self,
-        vault: &Vault,
-        check: &PackConnectionCheck<'_>,
-        grant: &SecretGrantRef,
-        target: &SecretGrantTarget,
-        scrub: &dyn Fn(&mut String, &[u8]),
-    ) -> Result<std::result::Result<PackConnectionEvidence, String>> {
-        let (method, url) = match provider_call(check.check) {
-            Ok(call) => call,
-            Err(failure) => return Ok(Err(failure)),
-        };
-        let mut answer = None;
-        vault.redeem_secret_grant_at_door(grant, target, &mut |value: &[u8]| {
-            let mut checked = self
-                .send(check.check, &method, url, value)
-                .map_err(|error| error.to_string())
-                .and_then(|reply| evidence_of(check.check, reply));
-            match &mut checked {
-                Ok(evidence) => {
-                    scrub(&mut evidence.account, value);
-                    if let Some(provider_account) = evidence.provider_account.as_mut() {
-                        scrub(provider_account, value);
-                    }
-                    for scope in &mut evidence.scopes {
-                        scrub(scope, value);
-                    }
-                }
-                Err(failure) => scrub(failure, value),
-            }
-            answer = Some(checked);
-            Ok(())
-        })?;
-        Ok(answer.unwrap_or_else(|| Err("the check did not run".to_owned())))
-    }
-
     /// The one read-only provider call `check` names, with `value` as its
     /// credential: the reply's status, its reported scopes and its body,
     /// read within the bound.

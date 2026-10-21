@@ -26,7 +26,8 @@
 //! each with the step's screenshot handed in the same way.
 //!
 //! The vault's replay library (OF-598) rides the run's browser: the session
-//! checks and replays a solved run's program, and the vault files it.
+//! checks a solved run's program, replays it on a fresh guest the host
+//! starts for the same run ([`RunFreshGuest`]), and the vault files it.
 //!
 //! A desktop row (`self.desktop.*`) takes the same door to the run's own
 //! desktop guest, a Linux desktop the `[desktop]` section names, under the
@@ -53,8 +54,8 @@ use crate::decision_verdict::{HELD_IMAGE, HELD_PREFIX, HeldImage};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, try_registered_surface};
 use crate::server::SyncServer;
 use oneiron::browser_library::{
-    Retired, RetiredWorkflow, WorkflowRecord, file_workflow, record_workflow_run, retire_workflow,
-    retired_workflows, site_workflows,
+    Filing, Retired, RetiredWorkflow, WorkflowRecord, file_workflow, record_workflow_run,
+    retire_workflow, retired_workflows, site_workflows,
 };
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
@@ -62,7 +63,7 @@ use oneiron::code_run::{
     SelfAgentVerbCall, SelfEffect,
 };
 use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
-use oneiron::llm::decision::{AnswerContract, DecisionRung, RoutineOutcome};
+use oneiron::llm::decision::{AnswerContract, DecisionRung, HumanAskReason, RoutineOutcome};
 use oneiron::memory::{HostWriteOrigin, Memory};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::runtime_hooks::InvocationId;
@@ -70,9 +71,11 @@ use oneiron::task_verb::sdk::{
     AgentVerb, AiVerdict, AiVerdictRequest, AiVerdictReversibility, RunVerb,
 };
 use oneiron_browser::{
-    BrowserDriver, BrowserError, BrowserGuest, BrowserSession, DesktopGuest, DesktopSession,
-    EFFECT_CLASSES, GuestLimits, LibraryCard, PressMode, RetiredCard, RoutineAnswer, RoutineAsk,
-    RoutineDecider, RoutineReply, SendPolicy, WorkflowLibrary, WorkflowProgram, WorkflowProof,
+    Admitted, BrowserDriver, BrowserEngine, BrowserError, BrowserGuest, BrowserRequestHandler,
+    BrowserSession, DesktopGuest, DesktopSession, EFFECT_CLASSES, FiledWorkflow, FreshGuest,
+    GuestLimits, HandleRetention, LibraryCard, PressMode, RetiredCard, RoutineAnswer, RoutineAsk,
+    RoutineDecider, RoutineReply, RunOutcome, SendPolicy, StrictDenial, StrictDenied,
+    SupersedeRefusal, WorkflowLibrary, WorkflowProgram, WorkflowProof,
 };
 use oneiron_container::{EgressRelay, SessionManifest, SessionTransport};
 use serde_json::Value;
@@ -331,8 +334,27 @@ pub(crate) enum VerdictAsker {
     ),
 }
 
+/// A strict run's step no rung answered, with no model asked (CUA E2
+/// strict denial, CALLS row): it goes up at zero tokens, its decision a
+/// [`StrictDenied`] record, and the subgoal's clock as it was.
+fn strict_denied(denial: StrictDenial, question: &str, until_ms: Option<u64>) -> RoutineReply {
+    RoutineReply {
+        answer: RoutineAnswer::Denied { denial },
+        screenshot: false,
+        until_ms,
+        decision: StrictDenied::decision(denial, question),
+    }
+}
+
 impl RoutineDecider for LadderDecider {
     fn decide(&mut self, ask: RoutineAsk<'_>) -> Result<RoutineReply, BrowserError> {
+        let (strict, until_ms) = (ask.no_model, ask.until_ms);
+        // Strict: a screenshot is read only from the Local-vision rung up,
+        // so the step goes up before any rung is asked or admitted.
+        if strict && ask.image.is_some() {
+            return Ok(strict_denied(StrictDenial::Image, ask.question, until_ms));
+        }
+        let question = ask.question.to_owned();
         // A step with no candidates finds its target in the screenshot.
         let contract = if ask.options.is_empty() {
             AnswerContract::Box
@@ -342,7 +364,7 @@ impl RoutineDecider for LadderDecider {
             }
         };
         let request = AiVerdictRequest {
-            question: ask.question.to_owned(),
+            question: question.clone(),
             contract,
             evidence: Vec::new(),
             state: Some(ask.state),
@@ -405,10 +427,21 @@ impl RoutineDecider for LadderDecider {
                 });
             }
         }
-        let (output, _) = receiver
+        let answered = receiver
             .recv()
-            .map_err(|_| BrowserError::Decider("the ladder did not answer".to_owned()))?
-            .map_err(|error| BrowserError::Decider(format!("{}: {}", error.kind, error.message)))?;
+            .map_err(|_| BrowserError::Decider("the ladder did not answer".to_owned()))?;
+        let (output, _) = match answered {
+            // Strict: no rung up to the rule ceiling takes the question, as
+            // the ladder finds before it runs any.
+            Err(error) if strict && error.kind == "model_unavailable" => {
+                return Ok(strict_denied(StrictDenial::NoRule, &question, until_ms));
+            }
+            Err(error) => {
+                let detail = format!("{}: {}", error.kind, error.message);
+                return Err(BrowserError::Decider(detail));
+            }
+            Ok(answered) => answered,
+        };
         let verdict: AiVerdict = serde_json::from_value(output.clone())
             .map_err(|e| BrowserError::Decider(e.to_string()))?;
         let answer = match verdict.outcome {
@@ -416,6 +449,15 @@ impl RoutineDecider for LadderDecider {
             Some(RoutineOutcome::Point { x, y, .. }) => RoutineAnswer::Point { x, y },
             Some(RoutineOutcome::None) => RoutineAnswer::None,
             Some(RoutineOutcome::Reobserve) => RoutineAnswer::Reobserve,
+            // The subgoal's clock cut the call: the step stops on it.
+            Some(RoutineOutcome::AskUp {
+                reason: Some(HumanAskReason::Deadline),
+            }) => RoutineAnswer::Deadline,
+            // Strict: the rule rung ran and gave no answer; its receipt
+            // stands as the decision.
+            Some(RoutineOutcome::AskUp { reason: Some(_) }) if strict => RoutineAnswer::Denied {
+                denial: StrictDenial::RuleAbstained,
+            },
             Some(RoutineOutcome::AskUp { reason }) => RoutineAnswer::AskUp {
                 reason: reason
                     .and_then(|reason| serde_json::to_value(reason).ok())
@@ -460,13 +502,16 @@ impl WorkflowLibrary for VaultLibrary {
             .collect())
     }
 
-    fn program(&mut self, workflow: &str) -> Result<Option<WorkflowProgram>, BrowserError> {
+    fn program(&mut self, workflow: &str) -> Result<Option<FiledWorkflow>, BrowserError> {
         let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
             return Ok(None);
         };
         Ok(oneiron::browser_library::workflow(&self.server.vault, id)
             .map_err(library_failed)?
-            .map(|record| record.program))
+            .map(|record| FiledWorkflow {
+                program: record.program,
+                proof: record.proof,
+            }))
     }
 
     fn admit(
@@ -474,13 +519,17 @@ impl WorkflowLibrary for VaultLibrary {
         site: &str,
         program: &WorkflowProgram,
         proof: &WorkflowProof,
-    ) -> Result<String, BrowserError> {
+        supersedes: Option<&str>,
+    ) -> Result<Admitted, BrowserError> {
+        let Ok(supersedes) = supersedes.map(oneiron::EntityId::from_hex).transpose() else {
+            return Ok(Admitted::Refused(SupersedeRefusal::Malformed));
+        };
         let deadline = RetrievalDeadline::hard(Instant::now(), PLACEMENT_BUDGET);
         let decisions = self
             .server
             .decision_host()
             .placement_decisions(self.by, &deadline);
-        file_workflow(
+        let filing = file_workflow(
             &self.server.vault,
             self.by,
             site,
@@ -488,19 +537,27 @@ impl WorkflowLibrary for VaultLibrary {
             proof,
             self.server.vault.now_recorded_at(),
             Some(&decisions),
+            supersedes,
         )
-        .map(|id| id.to_hex())
-        .map_err(library_failed)
+        .map_err(library_failed)?;
+        Ok(match filing {
+            Filing::Filed { id, superseded } => Admitted::Filed {
+                workflow: id.to_hex(),
+                superseded,
+            },
+            Filing::Refused(why) => Admitted::Refused(why),
+        })
     }
 
-    fn record_run(&mut self, workflow: &str, met: bool) -> Result<(), BrowserError> {
+    fn record_run(&mut self, workflow: &str, outcome: &RunOutcome) -> Result<(), BrowserError> {
         let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
             return Ok(());
         };
         record_workflow_run(
             &self.server.vault,
             id,
-            met,
+            outcome,
+            self.by,
             self.server.vault.now_recorded_at(),
         )
         .map_err(library_failed)
@@ -540,6 +597,57 @@ impl WorkflowLibrary for VaultLibrary {
     }
 }
 
+/// The fresh browser a proposal's replay runs on (CUA E1): a new guest for
+/// the same run, started on the run browser's own path
+/// ([`browser_guest::start_run_browser`]), so it has its own proved fence,
+/// the run's egress door and grants, and its own live-handle charge; on the
+/// engine the proposing browser runs, in its request custody, with its own
+/// decider and keeper of receipt screenshots for the same call. It takes
+/// nothing of the proposing page here: the session carries its sign-ins
+/// into it, and runs the replay.
+struct RunFreshGuest {
+    vault: Arc<oneiron::Vault>,
+    run_id: oneiron::EntityId,
+    guest: BrowserGuest,
+    handles: crate::server::HandleLine,
+    decider: LadderDecider,
+    invocation: Option<InvocationId>,
+}
+
+impl FreshGuest for RunFreshGuest {
+    fn start(
+        &mut self,
+        engine: BrowserEngine,
+        requests: Option<Arc<dyn BrowserRequestHandler>>,
+    ) -> Result<BrowserSession, BrowserError> {
+        let guest = BrowserGuest {
+            engine,
+            ..self.guest.clone()
+        };
+        let mut session = browser_guest::start_run_browser(
+            &self.vault,
+            self.run_id,
+            &guest,
+            &self.handles,
+            requests,
+        )?;
+        let writer = ReceiptWriter::new(
+            &self.decider.server,
+            self.decider.asker.clone(),
+            &self.decider.origin,
+            self.invocation,
+            self.run_id,
+        );
+        session.set_decider(Box::new(self.decider.clone()));
+        session.set_receipt_sink(Box::new(writer));
+        Ok(session)
+    }
+
+    fn state_charge(&self) -> Box<dyn HandleRetention> {
+        self.handles.charge()
+    }
+}
+
 impl RunBrowser {
     /// The browser the host gives run `run_id`, under the press policy the
     /// vault's standing grants set, when it has a `[browser]` guest.
@@ -558,6 +666,23 @@ impl RunBrowser {
         })
     }
 
+    /// The fresh guest this run's proposals replay on, for one call of
+    /// `decider`'s caller (`invocation`).
+    fn fresh_guest(
+        &self,
+        decider: LadderDecider,
+        invocation: Option<InvocationId>,
+    ) -> RunFreshGuest {
+        RunFreshGuest {
+            vault: Arc::clone(&self.vault),
+            run_id: self.run_id,
+            guest: self.guest.clone(),
+            handles: self.handles.clone(),
+            decider,
+            invocation,
+        }
+    }
+
     fn call(
         &self,
         verb: AgentVerb,
@@ -565,6 +690,7 @@ impl RunBrowser {
         decider: LadderDecider,
         library: VaultLibrary,
         writer: ReceiptWriter,
+        fresh: RunFreshGuest,
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
@@ -586,6 +712,7 @@ impl RunBrowser {
         driver.set_decider(Box::new(decider));
         driver.set_library(Box::new(library));
         driver.set_receipt_sink(Box::new(writer));
+        driver.set_fresh_guest(Box::new(fresh));
         // While a person is asked or holds the browser, the session refuses
         // the verb `browser_taken_over`; the first answer after they hand it
         // back carries the takeover's record as `takeover`. An answer after
@@ -808,7 +935,9 @@ impl RunGuests {
                     server: Arc::clone(server),
                     by,
                 };
-                run.call(call.verb, call.input.clone(), decider, library, writer)
+                let fresh = run.fresh_guest(decider.clone(), memory.invocation());
+                let input = call.input.clone();
+                run.call(call.verb, input, decider, library, writer, fresh)
             }
             _ => Err(BrowserError::Unbound),
         };
