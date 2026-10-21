@@ -5507,7 +5507,7 @@ export type SkillPackOutcomeProjection = { receipt: LateCreditReceipt; persisted
 /** `oneiron::task_verb::sdk_skill_execution::SkillPackCreditRequest` */
 export type SkillPackCreditRequest = { receipt_id: string }
 /** `oneiron::llm::manifest::ModelRole` */
-export type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach"
+export type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach" | "browser_planner"
 /** `oneiron_model::llm::call::ModelTierRef` */
 export type ModelTierRef = string
 /** `oneiron::llm::manifest::ModelDisposition` */

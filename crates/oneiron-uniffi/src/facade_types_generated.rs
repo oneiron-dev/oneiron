@@ -43020,6 +43020,8 @@ pub enum ModelRole {
     LocalVision,
     #[serde(rename = "coach")]
     Coach,
+    #[serde(rename = "browser_planner")]
+    BrowserPlanner,
 }
 
 /// `oneiron::llm::manifest::doors::ModelRoleRead`.
