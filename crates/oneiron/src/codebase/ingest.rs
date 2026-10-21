@@ -14,6 +14,7 @@ use crate::secret_custody::SecretSight;
 use gix::bstr::ByteSlice;
 use gix::object::tree::EntryKind;
 use std::fmt;
+use std::io::Read;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,27 +291,80 @@ pub(super) fn read_asset_blob(
     vault: &Vault,
     content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
 ) -> Result<Vec<u8>> {
+    // A file holding these bytes is named by their hash: pinned before the
+    // snapshot that finds its row opens (FIX 5399).
+    let _body = vault.pin_result_body(*content_hash);
     let txn = vault.store.env.read_txn()?;
     read_asset_blob_in_txn(vault, &txn, content_hash)
 }
 
 /// The stored bytes of the snapshot ASSET named `content_hash`, checked
-/// against it. A body kept in its ASSET's file is read once through the
-/// checked reader, which verifies its length and BLAKE3, against the hash
-/// the manifest names (FIX 6557); an inline body is its row's, as before.
+/// against it: [`with_asset_blob_reader_in_txn`] read whole, for a reader
+/// that holds a file's bytes (FIX 5399). A body kept in its ASSET's file is
+/// read once through the checked reader, which verifies its length and
+/// BLAKE3, against the hash the manifest names (FIX 6557); an inline body is
+/// its row's, as before.
 pub(crate) fn read_asset_blob_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
 ) -> Result<Vec<u8>> {
+    with_asset_blob_reader_in_txn(vault, txn, content_hash, |body| {
+        let mut bytes = Vec::new();
+        body.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    })
+}
+
+/// The stored bytes of the snapshot ASSET named `content_hash` as they
+/// stream, for a reader that must not hold a large file whole (FIX 5399):
+/// `read` runs over them, unmasked. A body kept in its ASSET's file is read
+/// through the checked reader once its manifest names `content_hash`, and
+/// whatever `read` leaves is read too, so its length and BLAKE3 are checked
+/// whether or not `read` reaches its end; an inline body is checked against
+/// `content_hash` before `read` sees it. The file is pinned while it is
+/// read; a caller that found the snapshot in a transaction it opened
+/// earlier pins the body before it opened.
+///
+/// # Errors
+///
+/// [`Error::EntityNotFound`] for no ASSET, [`Error::CorruptedIndex`] for
+/// bytes of another hash, [`CodeError::InvalidCodebaseSnapshotBody`] for a
+/// row of another type, `read`'s errors and the checked reader's.
+pub(crate) fn with_asset_blob_reader_in_txn<T>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
+    read: impl FnOnce(&mut dyn Read) -> Result<T>,
+) -> Result<T> {
     let asset_id = codebase_asset_entity_id(content_hash)?;
+    let mut read = Some(read);
     // The stored bytes: the sight that reads them unmasked.
-    if let Some(bytes) =
-        vault.sighted_body_file_in_txn(txn, &asset_id, content_hash, SecretSight::Owner)?
+    if let Some(row) =
+        crate::ports::EntityStoreRead::port_entity_record(&vault.store, txn, &asset_id)?
+        && row.entity_type == ENTITY_TYPE_ASSET
+        && let Some(manifest) =
+            crate::store::asset_file_in_txn(&vault.store, txn, &asset_id, &row.body)?
     {
-        return Ok(bytes);
+        if manifest.facts.blake3 != *content_hash {
+            return Err(Error::CorruptedIndex("blob content hash"));
+        }
+        let streamed =
+            vault.with_asset_body_reader_in_txn(txn, &asset_id, |body| match read.take() {
+                Some(read) => read(body),
+                None => Err(read_twice()),
+            })?;
+        if let Some(value) = streamed {
+            return Ok(value);
+        }
     }
-    inline_asset_blob_in_txn(vault, txn, &asset_id, content_hash)
+    let bytes = inline_asset_blob_in_txn(vault, txn, &asset_id, content_hash)?;
+    let read = read.take().ok_or_else(read_twice)?;
+    read(&mut bytes.as_slice())
+}
+
+fn read_twice() -> Error {
+    Error::InvariantViolation("an asset blob reader ran twice")
 }
 
 /// [`read_asset_blob_in_txn`] as `sight` reads it, as the hosted door reads

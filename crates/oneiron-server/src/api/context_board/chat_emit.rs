@@ -392,7 +392,7 @@ fn keep_chat_history(
         .map_err(|_| "the answer's TURN was not read")?;
     if body.as_deref().and_then(turn_author) != Some(answered.agent) {
         tracing::debug!(
-            "the answer's TURN carries no author byline; its board history waits for the agent-author ruling"
+            "the answer's TURN does not carry its agent's byline; it keeps no board history"
         );
         return Ok(());
     }

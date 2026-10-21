@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1144 code-mode rows (1106 host rows, 38 run rows), 3861 declarations.
-// Replies: 1024 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1163 code-mode rows (1123 host rows, 40 run rows), 3871 declarations.
+// Replies: 1043 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2309,6 +2309,43 @@ declare namespace Sdk {
   type GitPushGrantMintOutput = { grant: GitPushGrantView; act_ref: string };
   type GitPushGrantRevokeInput = { grant_ref: EntityId; seen?: string | null };
   type GitPushGrantRevokeOutput = { grant_ref: EntityId; changed: boolean; member?: EntityId | null; act_ref?: string | null };
+  type RepoAnchorBindInput = { repo: string; project: EntityId };
+  type RepoAnchorBindOutput = { repo: string; anchor: GitPushRepo; changed: boolean };
+  type RepoSnapshotsGetInput = { repo: EntityId; ref: string; snapshot: string };
+  type RepoSnapshotView = { repo: EntityId; ref: string; commit: string; snapshot: string; artifact: EntityId; files: CodeSnapshotFile[] };
+  type RepoSnapshotsGetOutput = RepoSnapshotView;
+  type RepoSnapshotsReadInput = { repo: EntityId; ref: string; snapshot: string; path: string };
+  type RepoSnapshotsReadOutput = { repo: EntityId; ref: string; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string };
+  type RepoSymbolsDefinitionsInput = { repo: EntityId; ref: string; snapshot: string; name: string };
+  type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapshot: string; definitions: CodeSnapshotDefinition[] };
+  type RepoViewsGetInput = { work: EntityId };
+  type RepoWorkFile = { path: string; content_hash_blake3: string };
+  type RepoWorkView = { work: EntityId; repo: EntityId; ref: string; base_green: string; base_snapshot: string; fork_hash: string; files: RepoWorkFile[] };
+  type RepoViewsGetOutput = RepoWorkView;
+  type RepoViewsReadInput = { work: EntityId; path: string };
+  type RepoViewsReadOutput = { work: EntityId; path: string; bytes: number[]; sha256: string };
+  type RepoMergeQueueObserveInput = { work: EntityId };
+  type RepoQueueEntryView = { batch: string; work: EntityId; proposals: EntityId[]; declaration?: EntityId | null; state: BatchState; base_green: string; expected_head: string; landed_head?: string | null; blockers: EntityId[] };
+  type RepoMergeQueueObserveOutput = { work: EntityId; repo: EntityId; ref: string; base_green: string; head_commit: string; green_commit: string; green_moved: boolean; entries: RepoQueueEntryView[] };
+  type RepoSnapshotsIngestInput = { repo: EntityId; ref: string };
+  type RepoSnapshotsIngestOutput = RepoSnapshotView;
+  type RepoWorkOpenInput = { repo: EntityId; ref: string };
+  type RepoWorkOpenOutput = RepoWorkView;
+  type RepoSymbolsDeclareInput = { work: EntityId; symbols: EntityId[]; ttl_seconds: number };
+  type RepoSymbolDeclarationView = { work: EntityId; declaration: EntityId; task: EntityId; symbols: EntityId[]; expires_at: number; held: boolean; blockers: EntityId[] };
+  type RepoSymbolsDeclareOutput = RepoSymbolDeclarationView;
+  type RepoSymbolsRenewInput = { work: EntityId; declaration: EntityId };
+  type RepoSymbolsRenewOutput = RepoSymbolDeclarationView;
+  type RepoSymbolsReleaseInput = { work: EntityId; declaration: EntityId };
+  type RepoSymbolsReleaseOutput = { work: EntityId; declaration: EntityId; task: EntityId };
+  type RepoProposalSubmitInput = { work: EntityId; path: string; content: number[]; message: string; declaration?: EntityId | null };
+  type RepoProposalSubmitOutput = { proposal: EntityId; work: EntityId; path: string; base_green: string; base_snapshot: string; session: EntityId; provenance_claim: EntityId; declaration?: EntityId | null; status: RepoProposalStatus };
+  type RepoMergeQueueEnqueueInput = { work: EntityId; proposals: EntityId[]; declaration?: EntityId | null };
+  type RepoMergeQueueEnqueueOutput = RepoQueueEntryView;
+  type RepoCheckoutBindInput = { repo: EntityId; ref: string; checkout: string; epoch: number; endpoint?: string | null };
+  type RepoCheckoutBindOutput = { repo: EntityId; ref: string; checkout: string; epoch: number; remote_url?: string | null };
+  type RepoExportInput = { repo: EntityId; ref: string; checkout: string; epoch: number; revision: EntityId; expected_old_oid?: string | null };
+  type RepoExportOutput = { repo: EntityId; ref: string; revision: EntityId; git_commit: string; receipt: EntityId; status: OriginPublicationState; grant: EntityId; ref_was_already_applied: boolean; wire_replayed: boolean; wire_rejected: boolean };
   type BaseAgentPrincipal = { name: string; id: EntityId };
   type BaseAgentList = { agents: BaseAgentPrincipal[] };
   type StandingBlockConfigureRequest = { agent_ref: EntityId; world_ref: EntityId; name: string; token_floor: number };
@@ -2536,7 +2573,7 @@ declare namespace Sdk {
   type TaskAskLaunchHold = { launch_ref: EntityId; plan_digest: string; surface_ref: string; denied: boolean };
   type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[]; launch?: TaskAskLaunchHold | null };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
-  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch" | "RepoSnapshotsGet" | "RepoSnapshotsRead" | "RepoSymbolsDefinitions" | "RepoViewsGet" | "RepoViewsRead" | "RepoMergeQueueObserve" | "RepoSnapshotsIngest" | "RepoWorkOpen" | "RepoSymbolsDeclare" | "RepoSymbolsRenew" | "RepoSymbolsRelease" | "RepoProposalSubmit" | "RepoMergeQueueEnqueue";
+  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch" | "RepoSnapshotsGet" | "RepoSnapshotsRead" | "RepoSymbolsDefinitions" | "RepoViewsGet" | "RepoViewsRead" | "RepoMergeQueueObserve" | "RepoSnapshotsIngest" | "RepoWorkOpen" | "RepoSymbolsDeclare" | "RepoSymbolsRenew" | "RepoSymbolsRelease" | "RepoProposalSubmit" | "RepoMergeQueueEnqueue" | "RepoCheckoutBind" | "RepoExport";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait } | { WorldPrivacyReady: WorldPrivacyWaitResult };
@@ -3424,10 +3461,14 @@ declare namespace Sdk {
   type ProgramResultAvailability = "readable" | "withheld" | "absent";
   type SettledProgramStepView = { root: string; attempt: string; actor: EntityId; code_run: string; step_ref: string; issue: ProgramStepIssueView; settled_at: number; result_digest: string; result_ref?: string | null; availability: ProgramResultAvailability; model_step?: SettledStepView | null; body_base64?: string | null };
   type ProgramCheckpointRequest = { root: string; cursor?: string | null; limit?: number | null };
-  type ProgramCheckpointWaitView = { row: number; wait_id: string; generation: number; delivered: boolean };
+  type ProgramCheckpointConsentView = { binding_digest: string; effect_digest: string; state: string; ask?: string | null; choice?: string | null; word?: string | null; answer_receipt?: string | null; outcome?: string | null; settlement_receipt?: string | null; consumption_receipt?: string | null; settlement_facts_digest?: string | null; consumption_facts_digest?: string | null };
+  type ProgramCheckpointWaitView = { row: number; wait_id: string; generation: number; delivered: boolean; consent?: ProgramCheckpointConsentView | null };
   type ProgramCheckpointHeadView = { committed_by: string; content_hash: string; contract_digest: string; entries: number; entry_start: number; bridge_calls: number; state_hash: string; applied: number; injected: number; wait?: ProgramCheckpointWaitView | null; at: number };
   type ProgramCheckpointCallView = { index: number; result_ref: string; row: number; request_digest: string; answered_by_wait?: string | null; injected: boolean };
   type ProgramCheckpointView = { root: string; actor: EntityId; code_run: string; definition?: ProgramRecipePin | null; checkpoint?: ProgramCheckpointHeadView | null; frontier?: ProgramFrontierView | null; calls: ProgramCheckpointCallView[]; next_cursor?: string | null; withheld: string[] };
+  type ProgramHoldReleaseAction = "stop" | "resume_validated";
+  type ReleaseTurnProgramHoldRequest = { attempt: string; reason: string; parked_at: number; action: ProgramHoldReleaseAction; note?: string | null };
+  type ProgramHoldReleaseView = { attempt: string; action: ProgramHoldReleaseAction; released: string; state: string; effected: boolean };
   type ConsolidationHomeNode = { node_id: string; class: string; elected_at: number };
   type ConsolidationHomeCandidate = { node_id: string; class?: string | null; cloud: boolean; attached: boolean; always_on_local: boolean; primary_device: boolean };
   type ConsolidationHomePickHead = { act_ref: string; machine: EntityId; node_id?: string | null; at: number };
@@ -3522,7 +3563,7 @@ declare namespace Sdk {
   type FreeTimeCycleRequest = { agent: string; cycle: string };
   type FreeTimeKind = "for_human" | "own_time";
   type FreeTimeItemOutcome = "completed" | "rested" | "failed" | "cancelled";
-  type FreeTimeItemReceiptView = { outcome: FreeTimeItemOutcome; policy_revision: number; attempt?: string | null; proposal?: string | null; at: number };
+  type FreeTimeItemReceiptView = { outcome: FreeTimeItemOutcome; policy_revision: number; attempt?: string | null; proposal?: string | null; context_unread?: string | null; at: number };
   type FreeTimeItemView = { item: string; kind: FreeTimeKind; purpose: string; attempt?: string | null; spend_scope?: string | null; receipt?: FreeTimeItemReceiptView | null };
   type FreeTimeNoteView = { author: string; at: number; text: string };
   type FreeTimeLabelSpend = { purpose?: string | null; settlements: RunRungSettlement[] };
@@ -3819,37 +3860,6 @@ declare namespace Sdk {
   type LaunchStatement = { agent_count: number; expected: ExpectedSpend; unit: LeaseUnit; cap_units?: number | null; available_units?: number | null; hard: boolean; reserved_units: number; scope?: SpendScopeId | null; parent_scope?: SpendScopeId | null; stated_at: number };
   type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string };
   type WorkflowBoundDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref: EntityId };
-  type RepoSnapshotsGetInput = { repo: EntityId; ref: string; snapshot: string };
-  type RepoSnapshotView = { repo: EntityId; ref: string; commit: string; snapshot: string; artifact: EntityId; files: CodeSnapshotFile[] };
-  type RepoSnapshotsGetOutput = RepoSnapshotView;
-  type RepoSnapshotsReadInput = { repo: EntityId; ref: string; snapshot: string; path: string };
-  type RepoSnapshotsReadOutput = { repo: EntityId; ref: string; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string };
-  type RepoSymbolsDefinitionsInput = { repo: EntityId; ref: string; snapshot: string; name: string };
-  type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapshot: string; definitions: CodeSnapshotDefinition[] };
-  type RepoViewsGetInput = { work: EntityId };
-  type RepoWorkFile = { path: string; content_hash_blake3: string };
-  type RepoWorkView = { work: EntityId; repo: EntityId; ref: string; base_green: string; base_snapshot: string; fork_hash: string; files: RepoWorkFile[] };
-  type RepoViewsGetOutput = RepoWorkView;
-  type RepoViewsReadInput = { work: EntityId; path: string };
-  type RepoViewsReadOutput = { work: EntityId; path: string; bytes: number[]; sha256: string };
-  type RepoMergeQueueObserveInput = { work: EntityId };
-  type RepoQueueEntryView = { batch: string; work: EntityId; proposals: EntityId[]; declaration?: EntityId | null; state: BatchState; base_green: string; expected_head: string; landed_head?: string | null; blockers: EntityId[] };
-  type RepoMergeQueueObserveOutput = { work: EntityId; repo: EntityId; ref: string; base_green: string; head_commit: string; green_commit: string; green_moved: boolean; entries: RepoQueueEntryView[] };
-  type RepoSnapshotsIngestInput = { repo: EntityId; ref: string };
-  type RepoSnapshotsIngestOutput = RepoSnapshotView;
-  type RepoWorkOpenInput = { repo: EntityId; ref: string };
-  type RepoWorkOpenOutput = RepoWorkView;
-  type RepoSymbolsDeclareInput = { work: EntityId; symbols: EntityId[]; ttl_seconds: number };
-  type RepoSymbolDeclarationView = { work: EntityId; declaration: EntityId; task: EntityId; symbols: EntityId[]; expires_at: number; held: boolean; blockers: EntityId[] };
-  type RepoSymbolsDeclareOutput = RepoSymbolDeclarationView;
-  type RepoSymbolsRenewInput = { work: EntityId; declaration: EntityId };
-  type RepoSymbolsRenewOutput = RepoSymbolDeclarationView;
-  type RepoSymbolsReleaseInput = { work: EntityId; declaration: EntityId };
-  type RepoSymbolsReleaseOutput = { work: EntityId; declaration: EntityId; task: EntityId };
-  type RepoProposalSubmitInput = { work: EntityId; path: string; content: number[]; message: string; declaration?: EntityId | null };
-  type RepoProposalSubmitOutput = { proposal: EntityId; work: EntityId; path: string; base_green: string; base_snapshot: string; session: EntityId; provenance_claim: EntityId; declaration?: EntityId | null; status: RepoProposalStatus };
-  type RepoMergeQueueEnqueueInput = { work: EntityId; proposals: EntityId[]; declaration?: EntityId | null };
-  type RepoMergeQueueEnqueueOutput = RepoQueueEntryView;
   type LeaderAdviceInput = { top?: number | null };
   type LeaderPatternInput = { skill: string };
   type LeaderPatternFile = { path: string; text: string };
@@ -4129,6 +4139,10 @@ declare namespace self {
     land(input: Sdk.BudgetLandRequest): Promise<Sdk.PartialResultHold | StoredResult>;
   };
   const code: {
+    checkout: {
+      bind(input: Sdk.RepoCheckoutBindInput): Promise<Sdk.RepoCheckoutBindOutput | StoredResult>;
+    };
+    export(input: Sdk.RepoExportInput): Promise<Sdk.RepoExportOutput | StoredResult>;
     merge_queue: {
       enqueue(input: Sdk.RepoMergeQueueEnqueueInput): Promise<Sdk.RepoMergeQueueEnqueueOutput | StoredResult>;
       observe(input: Sdk.RepoMergeQueueObserveInput): Promise<Sdk.RepoMergeQueueObserveOutput | StoredResult>;
@@ -5959,11 +5973,57 @@ declare const vault: Sdk.VaultHost & {
   /** Commits one claim through the gate, the same as vault.claims.upsert. */
   remember(input: Sdk.ClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
   repo: {
+    anchor: {
+      /** The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing. */
+      bind(input: Sdk.RepoAnchorBindInput): Promise<Sdk.RepoAnchorBindOutput | StoredResult>;
+    };
+    checkout: {
+      /** Materializes the attached run's own live checkout lease of an admitted served repo, for its TASK, with its lease-route remote when a door base is named; no lease is minted and no host path is shown. */
+      bind(input: Sdk.LiveRunRequest<Sdk.RepoCheckoutBindInput>): Promise<Sdk.RepoCheckoutBindOutput | StoredResult>;
+    };
+    /** Exports one finalized, promoted revision from the attached run's own checkout when one Grant lists publish over the revision's paths; otherwise it holds with a typed code. git_push never implies an export. */
+    export(input: Sdk.LiveRunRequest<Sdk.RepoExportInput>): Promise<Sdk.RepoExportOutput | StoredResult>;
     git_push: {
       /** The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it. */
       mint(input: Sdk.GitPushGrantMintInput): Promise<Sdk.GitPushGrantMintOutput | StoredResult>;
       /** The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing. */
       revoke(input: Sdk.GitPushGrantRevokeInput): Promise<Sdk.GitPushGrantRevokeOutput | StoredResult>;
+    };
+    merge_queue: {
+      /** Queues the attached run's own stored proposals of one work as one batch, under the declaration they were made under. */
+      enqueue(input: Sdk.LiveRunRequest<Sdk.RepoMergeQueueEnqueueInput>): Promise<Sdk.RepoMergeQueueEnqueueOutput | StoredResult>;
+      /** Reads the merge queue the attached run's own work is pinned under, with its own entries and what each waits behind. */
+      observe(input: Sdk.LiveRunRequest<Sdk.RepoMergeQueueObserveInput>): Promise<Sdk.RepoMergeQueueObserveOutput | StoredResult>;
+    };
+    /** Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept. */
+    proposal_submit(input: Sdk.LiveRunRequest<Sdk.RepoProposalSubmitInput>): Promise<Sdk.RepoProposalSubmitOutput | StoredResult>;
+    snapshots: {
+      /** Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease. */
+      get(input: Sdk.LiveRunRequest<Sdk.RepoSnapshotsGetInput>): Promise<Sdk.RepoSnapshotsGetOutput | StoredResult>;
+      /** Imports the commit an admitted repo's full ref names now, readable paths only, for the attached run. */
+      ingest(input: Sdk.LiveRunRequest<Sdk.RepoSnapshotsIngestInput>): Promise<Sdk.RepoSnapshotsIngestOutput | StoredResult>;
+      /** Reads one file of such a snapshot on a path the attached run's Grant reads. */
+      read(input: Sdk.LiveRunRequest<Sdk.RepoSnapshotsReadInput>): Promise<Sdk.RepoSnapshotsReadOutput | StoredResult>;
+    };
+    symbols: {
+      /** Declares current symbols of the attached run's own work on paths its Grant edits, for its TASK; an overlap waits, never refused. */
+      declare(input: Sdk.LiveRunRequest<Sdk.RepoSymbolsDeclareInput>): Promise<Sdk.RepoSymbolsDeclareOutput | StoredResult>;
+      /** Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads. */
+      definitions(input: Sdk.LiveRunRequest<Sdk.RepoSymbolsDefinitionsInput>): Promise<Sdk.RepoSymbolsDefinitionsOutput | StoredResult>;
+      /** Removes the attached run's own symbol declaration. */
+      release(input: Sdk.LiveRunRequest<Sdk.RepoSymbolsReleaseInput>): Promise<Sdk.RepoSymbolsReleaseOutput | StoredResult>;
+      /** Extends the attached run's own symbol declaration by its declared lifetime. */
+      renew(input: Sdk.LiveRunRequest<Sdk.RepoSymbolsRenewInput>): Promise<Sdk.RepoSymbolsRenewOutput | StoredResult>;
+    };
+    views: {
+      /** Reads the attached run's own work, as it was opened. */
+      get(input: Sdk.LiveRunRequest<Sdk.RepoViewsGetInput>): Promise<Sdk.RepoViewsGetOutput | StoredResult>;
+      /** Reads one file of the attached run's own work. */
+      read(input: Sdk.LiveRunRequest<Sdk.RepoViewsReadInput>): Promise<Sdk.RepoViewsReadOutput | StoredResult>;
+    };
+    work: {
+      /** Opens a fresh private working set of an admitted repo at its queue's green commit for the attached run, readable paths only. */
+      open(input: Sdk.LiveRunRequest<Sdk.RepoWorkOpenInput>): Promise<Sdk.RepoWorkOpenOutput | StoredResult>;
     };
   };
   reports: {
@@ -6202,6 +6262,10 @@ declare const vault: Sdk.VaultHost & {
     program(input: Sdk.ProgramRunRequest): Promise<Sdk.ProgramRunView | null | StoredResult>;
     /** Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it. */
     program_checkpoint(input: Sdk.ProgramCheckpointRequest): Promise<Sdk.ProgramCheckpointView | null | StoredResult>;
+    program_hold: {
+      /** The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out. */
+      release(input: Sdk.ReleaseTurnProgramHoldRequest): Promise<Sdk.ProgramHoldReleaseView | StoredResult>;
+    };
     /** Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body. */
     program_step(input: Sdk.SettledProgramStepRequest): Promise<Sdk.SettledProgramStepView | null | StoredResult>;
     /** Resumes one paused branch of a run by its attempt id: the vault owner resumes any branch, any other caller only a branch of a TASK it owns. A repeat answers already_resumed. */
