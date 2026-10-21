@@ -110,7 +110,10 @@ fn release_pin_in_txn(
             .iter()
             .filter_map(|body| body.state.held().map(|held| held.blake3))
             .collect();
-        Some((asset, held))
+        // The inline instance it binds, captured before the teardown may
+        // settle it (FIX 8502).
+        let owed = crate::store::INLINE_ASSETS.get(store, txn, &asset)?;
+        Some((asset, held, owed))
     } else {
         None
     };
@@ -128,9 +131,12 @@ fn release_pin_in_txn(
     // The bytes another version, artifact or claim still holds keep their
     // ASSET and binding; the erase owes their retirement.
     #[cfg(unix)]
-    if let Some((asset, held)) = custody {
+    if let Some((asset, held, owed)) = custody {
         let kept = row_retained(store, txn, &asset, crate::registry::ENTITY_TYPE_ASSET)?;
         crate::store::erase_bodies_for_owner_in_txn(store, txn, claim, &asset, &held, kept)?;
+        // A teardown that settled the instance leaves this final eraser's
+        // receipt naming it too.
+        crate::store::note_settled_inline_in_txn(store, txn, claim, &asset, owed)?;
     }
     Ok(())
 }

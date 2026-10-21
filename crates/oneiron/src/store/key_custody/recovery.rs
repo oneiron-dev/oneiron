@@ -32,6 +32,7 @@ use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because
 use crate::store::Store;
 
 use super::anchor::{anchor_record, anchored_position, verified_position};
+use super::body_history::{HistoryRows, merge_history_into_rows};
 use super::files::{EntryState, LocalCustody, container, make_new_dir};
 use super::folder::FolderTarget;
 use super::fork::ForkedCustodyDir;
@@ -175,6 +176,8 @@ pub(crate) struct AdmittedCustody {
     /// The released escrow recipients the lineage retired, by fingerprint:
     /// the head's, and the log's after it (LC FIX 5384/5385).
     recipients: BTreeMap<[u8; 32], RecipientRetirement>,
+    /// The lineage's body history: the head's, and the log's after it.
+    history: HistoryRows,
 }
 
 impl AdmittedCustody {
@@ -315,6 +318,7 @@ pub(crate) fn admit_recovery(
             .into_iter()
             .map(|fact| (fact.fingerprint, fact))
             .collect(),
+        history: opened.history,
     };
     if let Some(record) = record {
         let anchored =
@@ -351,6 +355,7 @@ pub(crate) fn admit_recovery(
                     LogEntry::RetireRecipient(fact) => {
                         admitted.recipients.insert(fact.fingerprint, fact);
                     }
+                    LogEntry::BodyHistory(rows) => admitted.history.extend(rows),
                     LogEntry::PublicationPolicy(_) => {}
                 }
             }
@@ -452,6 +457,7 @@ pub(crate) fn land_recovery(
         let control = Control::taken_over(admitted.control.clone(), &admitted.position)?;
         let journal = custody.journal()?;
         journal.install(&control)?;
+        journal.put_history_base(&control, &admitted.position, &admitted.history)?;
         // The released recipients the lineage retired stay retired in it.
         for fact in admitted.recipients.values() {
             journal.put_recipient_fact(fact)?;
@@ -712,6 +718,12 @@ pub(crate) fn route_custody(
         });
     };
     if super::custody_present(bound.root())? {
+        // The image takes its lineage's latest body history (FIX 6229); a
+        // journal that does not fold restores as before, warned.
+        match LocalCustody::at(&bound).body_history() {
+            Ok(history) => merge_history_into_rows(rows, &history),
+            Err(error) => tracing::warn!(kind = ?error.kind(), "body history did not fold"),
+        }
         return Ok(CustodyRoute::Local);
     }
     let Some(source) = source else {
@@ -762,6 +774,7 @@ pub(crate) fn route_custody(
     }
     let binding = bound.rebind_to(root);
     let landed = land_recovery(&admitted, &binding).map_err(landing)?;
+    merge_history_into_rows(rows, &admitted.history);
     let landing = Box::new(CustodyLanding {
         landed: Some(landed),
         admitted,

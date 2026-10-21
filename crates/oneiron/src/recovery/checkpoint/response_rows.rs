@@ -156,7 +156,8 @@ fn row_in_txn(
 /// Binds `instance` to the response the row `carrier` names holds now, in
 /// the binding pass's writer, with an obligation for each owner its stamps
 /// name; unless the row holds none any longer, or an instance was bound to
-/// its bytes since: then `instance` is debris.
+/// its bytes since: then `instance` is debris. Returns the obligation rows
+/// the writer journals before it commits.
 ///
 /// # Errors
 ///
@@ -166,22 +167,22 @@ pub(super) fn bind_in_txn(
     txn: &mut heed::RwTxn<'_>,
     carrier: &[u8],
     instance: [u8; 16],
-) -> Result<()> {
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
     let Some((db, key)) = carrier_row(carrier) else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let Some(value) = row_in_txn(store, txn, db, key)? else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let Some(family) = ResponseFamily::of_row(db, key, &value) else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let Some(carriage) = family.carriage(&value) else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let digest = *blake3::hash(&value[carriage.keep..]).as_bytes();
     if response_binding_in_txn(store, txn, carrier)?.is_some_and(|bound| bound.digest == digest) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let owners = family.owners(store, txn, key, &value)?;
     bind_response_in_txn(
@@ -238,17 +239,18 @@ pub(super) fn retire_carried(
     image: &mut CheckpointImage,
     retired: &BTreeSet<[u8; 16]>,
 ) -> Result<()> {
-    let gone: Vec<(String, Vec<u8>, usize)> = image
+    let gone: Vec<(String, Vec<u8>, usize, [u8; 16])> = image
         .inline_bodies
         .iter()
         .filter(|carried| !carried.superseded && retired.contains(&carried.instance))
         .filter_map(|carried| {
-            carried
-                .retired
-                .map(|keep| (carried.database.clone(), carried.key.clone(), keep as usize))
+            carried.retired.map(|keep| {
+                let (database, key) = (carried.database.clone(), carried.key.clone());
+                (database, key, keep as usize, carried.instance)
+            })
         })
         .collect();
-    for (database, key, keep) in gone {
+    for (database, key, keep, instance) in gone {
         let rows = image.databases.get_mut(&database).ok_or_else(codec_error)?;
         let value = row_mut(rows, &key)?;
         if value.len() < keep {
@@ -258,9 +260,39 @@ pub(super) fn retire_carried(
         let family = ResponseDb::of_name(&database)
             .and_then(|db| ResponseFamily::of_row(db, &key, value))
             .ok_or_else(codec_error)?;
+        // A keyed entry its own caller's erase retired goes, as that erase
+        // dropped it live; any other owner's erase leaves its erased form
+        // (FIX 7470). The erase's receipt rows name who erased it.
+        let caller = (family == ResponseFamily::Http)
+            .then(|| crate::store::http_erase_drop_caller(value))
+            .flatten();
+        if let Some(caller) = caller
+            && erased_by(&image.databases, &caller, &instance)
+        {
+            if let Some(rows) = image.databases.get_mut(&database) {
+                rows.retain(|(row, _)| row.as_slice() != key.as_slice());
+            }
+            continue;
+        }
         family.retire_in_rows(&mut image.databases, &key)?;
     }
     Ok(())
+}
+
+/// Whether the image `databases` hold `owner`'s erase receipt row for
+/// `instance`: that erase retired it.
+fn erased_by(
+    databases: &std::collections::BTreeMap<String, CanonicalRows>,
+    owner: &crate::EntityId,
+    instance: &[u8; 16],
+) -> bool {
+    let mut key = crate::side_table::PROVENANCE_BODY_ERASED.prefix.to_vec();
+    key.extend_from_slice(owner.as_bytes());
+    key.extend_from_slice(instance);
+    databases.get("vault_meta").is_some_and(|rows| {
+        rows.binary_search_by(|(row, _)| row.as_slice().cmp(&key))
+            .is_ok()
+    })
 }
 
 /// Marks each carried response whose row a restore over `current` keeps as

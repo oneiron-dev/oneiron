@@ -307,16 +307,19 @@ impl Store {
                 }
             }
             let released = journal.recipient_facts()?;
+            let history = journal.head_history(&control, &position, &census)?;
             sealed.push(Some(
-                seal_head(&position, &control, entries, retired, released, recipients)
-                    .map(|head| CustodyBatch {
-                        position,
-                        head,
-                        set_revision: revision,
-                        journal: journal.dir().to_path_buf(),
-                        data_key: recipients.data_key.is_some(),
-                    })
-                    .map_err(|error| error.to_string()),
+                seal_head(
+                    &position, &control, entries, retired, released, &history, recipients,
+                )
+                .map(|head| CustodyBatch {
+                    position,
+                    head,
+                    set_revision: revision,
+                    journal: journal.dir().to_path_buf(),
+                    data_key: recipients.data_key.is_some(),
+                })
+                .map_err(|error| error.to_string()),
             ));
         }
         Ok(Sealed::At(position, sealed))

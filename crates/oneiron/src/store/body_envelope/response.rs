@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
 
-use super::retention::stage_erase;
+use super::retention::{ErasedNotes, stage_erase};
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -260,8 +260,9 @@ impl ResponseFamily {
     }
 
     /// What the erased disposition of the retired row `key` takes beside the
-    /// row itself, in raw image rows: a claim's step-index rows, and its
-    /// soft-delete marker and fence, as an erase leaves them.
+    /// row itself, in raw image rows: a claim's step-index rows and its
+    /// projection rows go, and its soft-delete marker and fence are left, as
+    /// an erase leaves them (FIX 6661); a retired clip's row goes.
     ///
     /// # Errors
     ///
@@ -351,7 +352,8 @@ pub(crate) fn response_binding_in_txn<D: SideTableDbs>(
 
 /// Binds the row `carrier` names to `binding` in `wtxn`, with an
 /// obligation for each of `owners`. A binding the row held before is
-/// replaced; its instance's obligations stay.
+/// replaced; its instance's obligations stay. Returns the obligation rows,
+/// which the writer journals in custody before it commits (FIX 6229).
 ///
 /// # Errors
 ///
@@ -362,12 +364,19 @@ pub(crate) fn bind_response_in_txn<D: SideTableDbs>(
     carrier: &[u8],
     binding: ResponseBinding,
     owners: &[EntityId],
-) -> Result<()> {
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
     RESPONSE_BINDINGS.put(dbs, wtxn, &carrier.to_vec(), &binding.encode())?;
+    let carrier = carrier.to_vec();
+    let mut history = Vec::with_capacity(owners.len());
     for owner in owners {
-        RESPONSE_OWNERS.put(dbs, wtxn, &(*owner, binding.instance), &carrier.to_vec())?;
+        let key = (*owner, binding.instance);
+        RESPONSE_OWNERS.put(dbs, wtxn, &key, &carrier)?;
+        history.push((
+            RESPONSE_OWNERS.key_bytes(&key),
+            RESPONSE_OWNERS.encode_value(&carrier)?,
+        ));
     }
-    Ok(())
+    Ok(history)
 }
 
 /// Drops the binding of the row `carrier` names, when it no longer holds
@@ -409,8 +418,9 @@ pub(crate) fn erase_response_owner_in_txn<D: ManifestDbs + SideTableDbs>(
             owed.push((instance, carrier));
         }
     }
+    let mut notes = ErasedNotes::default();
     for (instance, carrier) in owed {
-        stage_erase(dbs, wtxn, Some(owner), &instance)?;
+        stage_erase(dbs, wtxn, (Some(owner), &mut notes), &instance)?;
         RESPONSE_OWNERS.delete(dbs, wtxn, &(*owner, instance))?;
         if response_binding_in_txn(dbs, wtxn, &carrier)
             .ok()
@@ -419,6 +429,57 @@ pub(crate) fn erase_response_owner_in_txn<D: ManifestDbs + SideTableDbs>(
         {
             release_response_in_txn(dbs, wtxn, &carrier)?;
         }
+    }
+    notes.journal(dbs)
+}
+
+/// Every instance a response binding names in `txn`: `None` when one does
+/// not decode, so the instance it names is not known (FIX 6022).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn bound_instances_in_txn<D: SideTableDbs>(
+    dbs: &D,
+    txn: &RoTxn<'_>,
+) -> Result<Option<std::collections::BTreeSet<[u8; 16]>>> {
+    let mut bound = std::collections::BTreeSet::new();
+    for row in RESPONSE_BINDINGS.iter_raw_from(dbs, txn, &[])? {
+        let Ok(binding) = ResponseBinding::of_row(&row?.1) else {
+            return Ok(None);
+        };
+        bound.insert(binding.instance);
+    }
+    Ok(Some(bound))
+}
+
+/// Expires every obligation naming one of `instances`, in `wtxn`: each is
+/// retiring by retention, which no image, holder or hold needs any longer
+/// (FIX 6228). The custody fold drops them once their instances are
+/// retired.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn forget_obligations_in_txn<D: SideTableDbs>(
+    dbs: &D,
+    wtxn: &mut RwTxn<'_>,
+    instances: &std::collections::BTreeSet<[u8; 16]>,
+) -> Result<()> {
+    if instances.is_empty() {
+        return Ok(());
+    }
+    let mut gone = Vec::new();
+    for row in RESPONSE_OWNERS.iter_raw_from(dbs, wtxn, &[])? {
+        let (key, _) = row?;
+        if let Some(key) = <(EntityId, [u8; 16]) as SideKey>::decode_key(&key)
+            && instances.contains(&key.1)
+        {
+            gone.push(key);
+        }
+    }
+    for key in gone {
+        RESPONSE_OWNERS.delete(dbs, wtxn, &key)?;
     }
     Ok(())
 }

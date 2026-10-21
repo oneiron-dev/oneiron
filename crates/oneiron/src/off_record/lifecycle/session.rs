@@ -975,6 +975,13 @@ impl OffRecordSession<'_> {
         self.vault.pin_result_body(digest)
     }
 
+    /// The custody read guard of this session's vault, for a body read that
+    /// opens an instance's key: taken before its snapshot and held through
+    /// the key's last use (FIX 6019), as a vault read takes it.
+    pub(crate) fn custody_read_guard(&self) -> Result<std::sync::RwLockReadGuard<'_, ()>> {
+        self.vault.store.gate_custody_read_guard()
+    }
+
     /// Where a result body this session reads may be: its own body
     /// directory, then the vault's.
     pub(crate) fn body_dirs(&self) -> Result<Vec<crate::store::BodyDir>> {

@@ -496,7 +496,9 @@ impl Journal {
                     cause,
                 } => obligation_name(&subject, through, cause),
                 LogEntry::RetireRecipient(fact) => fact.obligation_name(),
-                LogEntry::Mint(_) | LogEntry::PublicationPolicy(_) => continue,
+                LogEntry::Mint(_) | LogEntry::PublicationPolicy(_) | LogEntry::BodyHistory(_) => {
+                    continue;
+                }
             };
             let at = CustodyPosition {
                 vault: header.vault,

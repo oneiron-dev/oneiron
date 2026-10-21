@@ -130,6 +130,14 @@ pub(crate) fn produce(
         return Err(Unproduced::Landing(error.into()));
     }
     sync_dir(&plan.dir).map_err(Unproduced::Landing)?;
+    // Its bodies' holder is named by where it landed, which a prune
+    // releases it by once it is gone (FIX 6022); one not named stays kept.
+    if let Err(error) = vault.name_backup_copy(&receipt.image_digest, &path) {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "a backup's body holder was not named; its bodies stay kept"
+        );
+    }
     Ok(Produced {
         file,
         path,

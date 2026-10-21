@@ -489,6 +489,10 @@ side_tables! {
     /// KS-2A: an inline ASSET body's instance, bound by the first checkpoint that carries it.
     /// Key: id16 (entity); value: bytes16 (instance).
     PROVENANCE_BODY_INLINE: VaultMeta b"provenance:body_inline:v1:" Raw;
+    /// KS-2A (FIX 6023): every instance a body digest was ever bound under, its current one and
+    /// each one an inline/file switch displaced, so a last-holder erase retires every image's
+    /// copy. Ids only. Key: bytes32 (BLAKE3) + bytes16 (instance); value: empty.
+    PROVENANCE_BODY_INSTANCE: VaultMeta b"provenance:body_instance:v1:" Raw;
     /// A body's instance row (FIX 5348, KS-2A): its instance, format and logical length, and
     /// whether it rests inline; never a key or a wrap of one. Key: bytes32 (BLAKE3).
     PROVENANCE_BODY_KEY: VaultMeta b"provenance:body_key:v1:" Named;

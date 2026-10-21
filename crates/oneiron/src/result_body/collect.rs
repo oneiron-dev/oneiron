@@ -63,6 +63,9 @@ impl Vault {
         if limit > 0 {
             report.orphans = self.sweep_orphan_result_bodies(&self.store.body_dir()?, limit)?;
         }
+        // Unnamed debris and expired history go by the one retention policy
+        // (FIX 6022, 6228), warning-only.
+        self.sweep_body_retention_after_commit();
         self.finish_body_custody_retirements_after_commit();
         Ok(report)
     }

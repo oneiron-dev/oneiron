@@ -138,6 +138,8 @@ pub(super) fn close_clean_in_txn(
 /// in the transaction that closes them.
 pub(super) fn review(vault: &Vault) -> Result<()> {
     let due = {
+        // Every result body is pinned before the snapshot opens (FIX 7201).
+        let _bodies = vault.pin_all_result_bodies();
         let txn = vault.store.env.read_txn()?;
         let mut due = Vec::new();
         for row in PROPOSALS.iter_raw_from(&vault.store, &txn, &[])? {

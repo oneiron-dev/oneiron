@@ -175,13 +175,25 @@ impl SessionBinding<'_> {
             self.session
                 .routed_side_txn(&self.route, |txn, read, write| {
                     if let (Some(key), Some(dir)) = (finished.key.as_ref(), dir.as_ref()) {
-                        let kept = match BODY_KEYS.get(&read, txn, key.digest())? {
-                            Some(held) => key.keeps(&held, dir)?,
+                        let held = BODY_KEYS.get(&read, txn, key.digest())?;
+                        let kept = match &held {
+                            Some(held) => key.keeps(held, dir)?,
                             None => false,
                         };
                         if !kept {
                             if let crate::side_table::RoutedDbs::Base(vault) = &write {
                                 crate::store::pin_body_custody_in_txn(&vault.store, txn)?;
+                                // The instance it replaces stays the digest's (FIX 6023).
+                                if let Some(held) =
+                                    held.filter(|held| held.is_vault() && key.row().is_vault())
+                                {
+                                    crate::store::remember_body_instances_in_txn(
+                                        &vault.store,
+                                        txn,
+                                        key.digest(),
+                                        &[held.instance, key.row().instance],
+                                    )?;
+                                }
                             }
                             BODY_KEYS.put(&write, txn, key.digest(), key.row())?;
                         }
@@ -213,6 +225,8 @@ impl SessionBinding<'_> {
     pub(super) fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
         let _pin = self.session.pin_result_body(output.raw_blake3);
+        // Before the snapshot, through the key's last use (FIX 6019).
+        let _custody = self.session.custody_read_guard()?;
         let Some((body, key)) = self.answered(|| {
             self.session.read_composed(|view, rtxn| {
                 let Some(body) = RAW_OUTPUTS.get(view, rtxn, &output.handle)? else {
@@ -238,6 +252,7 @@ impl SessionBinding<'_> {
     ) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
         let _pin = self.session.pin_result_body(output.raw_blake3);
+        let _custody = self.session.custody_read_guard()?;
         self.answered(|| {
             self.session.read_composed(|view, rtxn| {
                 let Some(row) = RAW_OUTPUTS.get_borrowed(view, rtxn, &output.handle)? else {

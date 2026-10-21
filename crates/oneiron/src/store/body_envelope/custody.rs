@@ -31,7 +31,9 @@ use zeroize::Zeroizing;
 use super::frames::FileKey;
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::SideTableDbs;
-use crate::store::key_custody::{CustodyBinding, CustodyId, CustodyKind, EntryState, LocalCustody};
+use crate::store::key_custody::{
+    BodyLease, CustodyBinding, CustodyId, CustodyKind, EntryState, InstanceLeases, LocalCustody,
+};
 use crate::store::{ManifestDbs, Store};
 
 /// The scope byte of a vault's body instance, the one scope custody holds.
@@ -101,9 +103,12 @@ fn file_key(binding: &CustodyBinding, instance: [u8; 16], secret: &[u8]) -> Resu
 }
 
 /// One body instance whose key custody holds: published, its Mint
-/// journaled and synced, before any row names it.
+/// journaled and synced, before any row names it. Its lease keeps it from
+/// retention until the writer that names it is done (FIX 6022); a spill
+/// carries it on.
 pub(crate) struct BodyInstance {
     key: Arc<FileKey>,
+    pub(super) lease: Option<BodyLease>,
 }
 
 impl BodyInstance {
@@ -121,9 +126,10 @@ impl BodyInstance {
 #[derive(Clone)]
 pub(crate) struct BodyMint {
     binding: CustodyBinding,
-    /// Instances minted before a writer opened, which [`Self::mint`] takes
-    /// in turn inside it rather than mint one there.
-    reserve: Option<Arc<Mutex<VecDeque<[u8; 16]>>>>,
+    /// Instances minted before a writer opened, each leased, which
+    /// [`Self::mint`] takes in turn inside it rather than mint one there.
+    reserve: Option<Arc<Mutex<VecDeque<([u8; 16], BodyLease)>>>>,
+    leases: Arc<InstanceLeases>,
 }
 
 impl BodyMint {
@@ -137,20 +143,26 @@ impl BodyMint {
     pub(crate) fn mint(&self) -> Result<BodyInstance> {
         let custody = LocalCustody::at(&self.binding);
         if let Some(reserve) = &self.reserve {
-            let instance = reserve
+            let (instance, lease) = reserve
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .pop_front()
                 .ok_or(Error::InvariantViolation(
                     "a writer's reserve of body instances ran out",
                 ))?;
-            return body_key_in(&self.binding, &instance).map(|key| BodyInstance { key });
+            return body_key_in(&self.binding, &instance).map(|key| BodyInstance {
+                key,
+                lease: Some(lease),
+            });
         }
         let mut instance = [0u8; 16];
         crate::world_keys::os_fill(&mut instance)?;
+        // Leased before its entry is published (FIX 6022).
+        let lease = self.leases.lease(instance);
         let secret = custody.get_or_create(&instance_id(&self.binding, &instance)?)?;
         Ok(BodyInstance {
             key: file_key(&self.binding, instance, secret.expose())?,
+            lease: Some(lease),
         })
     }
 
@@ -164,16 +176,20 @@ impl BodyMint {
     pub(crate) fn reserve(&self, count: usize) -> Result<Self> {
         let mut reserved = VecDeque::with_capacity(count);
         for _ in 0..count {
-            let instance = Self {
+            let minted = Self {
                 binding: self.binding.clone(),
                 reserve: None,
+                leases: Arc::clone(&self.leases),
             }
             .mint()?;
-            reserved.push_back(*instance.instance());
+            let instance = *minted.instance();
+            let lease = minted.lease.unwrap_or_else(|| self.leases.lease(instance));
+            reserved.push_back((instance, lease));
         }
         Ok(Self {
             binding: self.binding.clone(),
             reserve: Some(Arc::new(Mutex::new(reserved))),
+            leases: Arc::clone(&self.leases),
         })
     }
 }
@@ -197,6 +213,7 @@ pub(crate) fn body_mint_in<D: ManifestDbs + SideTableDbs>(
     Ok(BodyMint {
         binding: custody.binding().clone(),
         reserve: None,
+        leases: dbs.key_custody().leases(),
     })
 }
 

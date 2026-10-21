@@ -25,12 +25,18 @@ use super::custody::{body_key_in, pin_body_custody_in_txn};
 use super::frames::{FORMAT_VERSION, FileKey};
 use super::{BodyDir, BodySeal, DirSeal, KeyScope, StagedBodyKey};
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, SideTable, SideTableDbs};
+use crate::side_table::{self, Named, Raw, SideTable, SideTableDbs};
 use crate::store::ManifestDbs;
 
 /// The instance rows, by the body's BLAKE3.
 pub(crate) const BODY_KEYS: SideTable<[u8; 32], BodyKeyRow, Named> =
     SideTable::new(&side_table::PROVENANCE_BODY_KEY);
+
+/// Every instance a digest was bound under that its row no longer names, or
+/// may stop naming: one an inline/file switch displaced, its successor, and
+/// one the collector released (FIX 6023). Ids only.
+pub(crate) const BODY_INSTANCES: SideTable<([u8; 32], [u8; 16]), Vec<u8>, Raw> =
+    SideTable::new(&side_table::PROVENANCE_BODY_INSTANCE);
 
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 const EPOCH: u64 = 1;
@@ -144,6 +150,12 @@ impl BodyKeyRow {
         })
     }
 
+    /// Whether this is a vault row, whose instance custody holds: an
+    /// off-record row's never reaches the vault's history.
+    pub(crate) fn is_vault(&self) -> bool {
+        self.wrapped.is_none()
+    }
+
     /// Whether this row is `scope`'s: a vault row wraps nothing, an
     /// off-record one its key for that scope, as its envelope says before it
     /// opens.
@@ -247,13 +259,71 @@ pub(crate) fn bind_body_key_in_txn<D: ManifestDbs + SideTableDbs>(
     dir: &BodyDir,
     staged: &StagedBodyKey,
 ) -> Result<()> {
-    if let Some(held) = BODY_KEYS.get(dbs, txn, &staged.digest)?
-        && staged.keeps(&held, dir)?
+    let held = BODY_KEYS.get(dbs, txn, &staged.digest)?;
+    if let Some(held) = &held
+        && staged.keeps(held, dir)?
     {
         return Ok(());
     }
     pin_body_custody_in_txn(dbs, txn)?;
+    if let Some(held) = held
+        && held.is_vault()
+        && staged.row.is_vault()
+    {
+        // The instance it replaces stays the digest's (FIX 6023).
+        remember_body_instances_in_txn(
+            dbs,
+            txn,
+            &staged.digest,
+            &[held.instance, staged.row.instance],
+        )?;
+    }
     BODY_KEYS.put(dbs, txn, &staged.digest, &staged.row)
+}
+
+/// Remembers each of `instances` as one the body `digest` was bound under,
+/// in `wtxn`, journaling the rows it adds in custody before the writer
+/// commits (FIX 6023, 6229): a last-holder erase of the digest retires each,
+/// so no copy an older image carries under a displaced or released instance
+/// outlives it. A delete and the collector keep them; an aborted writer
+/// leaves the journal a row more, never one less.
+///
+/// # Errors
+///
+/// Storage and custody errors.
+pub(crate) fn remember_body_instances_in_txn<D: ManifestDbs + SideTableDbs>(
+    dbs: &D,
+    wtxn: &mut RwTxn<'_>,
+    digest: &[u8; 32],
+    instances: &[[u8; 16]],
+) -> Result<()> {
+    let mut journaled = Vec::new();
+    for instance in instances {
+        let key = (*digest, *instance);
+        if !BODY_INSTANCES.contains(dbs, wtxn, &key)? {
+            BODY_INSTANCES.put(dbs, wtxn, &key, &Vec::new())?;
+            journaled.push((BODY_INSTANCES.key_bytes(&key), Vec::new()));
+        }
+    }
+    dbs.key_custody().journal_body_history(journaled)
+}
+
+/// Every instance [`remember_body_instances_in_txn`] holds for the body
+/// `digest`, in id order.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn remembered_body_instances_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    digest: &[u8; 32],
+) -> Result<Vec<[u8; 16]>> {
+    Ok(BODY_INSTANCES
+        .scan_keys(dbs, txn, digest)?
+        .into_iter()
+        .map(|(_, instance)| instance)
+        .collect())
 }
 
 /// Deletes the instance row of the body `digest`, in the collector or erase
@@ -263,8 +333,8 @@ pub(crate) fn bind_body_key_in_txn<D: ManifestDbs + SideTableDbs>(
 /// # Errors
 ///
 /// Storage errors, and a row that does not decode.
-pub(crate) fn retire_body_key_in_txn(
-    dbs: &impl SideTableDbs,
+pub(crate) fn retire_body_key_in_txn<D: ManifestDbs + SideTableDbs>(
+    dbs: &D,
     txn: &mut RwTxn<'_>,
     digest: &[u8; 32],
 ) -> Result<Option<[u8; 16]>> {
@@ -272,5 +342,10 @@ pub(crate) fn retire_body_key_in_txn(
         return Ok(None);
     };
     BODY_KEYS.delete(dbs, txn, digest)?;
+    // The released instance stays the digest's, so a later body of the same
+    // bytes and its erase reach the copies older images keep (FIX 6023).
+    if row.is_vault() {
+        remember_body_instances_in_txn(dbs, txn, digest, &[row.instance])?;
+    }
     Ok(Some(row.instance))
 }
