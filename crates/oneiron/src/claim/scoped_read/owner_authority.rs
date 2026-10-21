@@ -17,10 +17,34 @@
 //! already the owner's or is held to a host action or an owner proof. It
 //! only ever adds a row: a store, fold or decode failure admits nothing and
 //! leaves the read's answer, counted in a warning that names no content.
+//!
+//! FIX 7661: a row only this alternative admitted keeps the owner lane that
+//! admitted it ([`OwnAdmission::ByOwner`]), so its full-row entry may read
+//! what the row was written from as that same lane does, once today's source
+//! check refused it. Nothing stores it and no caller outside this lane sees
+//! it.
 
 use super::access_gate::HeldAuthority;
 use super::agent_grants::{AskedFilter, as_request};
 use super::*;
+
+/// Which alternative admitted a row's own admission (FIX 7661): read by the
+/// full-row entry alone, never stored and never public.
+pub(super) enum OwnAdmission<'v> {
+    /// Every alternative refused the row.
+    Refused,
+    /// B, or one of the reader's own Grants, admitted it.
+    Admitted,
+    /// Only the reader's own owner authority admitted it, under this lane.
+    ByOwner(Box<ScopedRead<'v>>),
+}
+
+impl OwnAdmission<'_> {
+    /// Whether any alternative admitted the row.
+    pub(super) fn admitted(&self) -> bool {
+        !matches!(self, Self::Refused)
+    }
+}
 
 impl<'v> ScopedRead<'v> {
     /// This lane, a question's own locally built reader, opted into its
@@ -35,15 +59,15 @@ impl<'v> ScopedRead<'v> {
     }
 
     /// The owner alternative for the row `raw` of `id`, tried only once B
-    /// and the reader's own Grants refused it: whether this opted-in lane's
-    /// reader, a live owner of this vault now, reads it under its owner key.
-    /// `filter` is the one B judged it under, `asked` what the read asked
-    /// beyond its key's floor.
+    /// and the reader's own Grants refused it: the owner lane that reads it,
+    /// when this opted-in lane's reader, a live owner of this vault now,
+    /// reads it under its owner key; `None` otherwise. `filter` is the one B
+    /// judged it under, `asked` what the read asked beyond its key's floor.
     #[expect(
         clippy::too_many_arguments,
         reason = "the owner alternative judges the row B judged, under B's filter and request"
     )]
-    pub(super) fn own_row_readable_by_owner_in(
+    pub(super) fn own_row_owner_lane_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
@@ -52,15 +76,13 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         authority: &HeldAuthority<'v>,
         asked: &AskedFilter,
-    ) -> bool {
-        let Some(owner) = self.owner_reader() else {
-            return false;
-        };
+    ) -> Option<ScopedRead<'v>> {
+        let owner = self.owner_reader()?;
         let request = match asked {
             AskedFilter::Known(request) => request.clone(),
             // B's own filter, met with the owner's floor: never wider than
             // the caller asked. One that reads nothing leaves nothing.
-            AskedFilter::Unknown if filter.deny_all => return false,
+            AskedFilter::Unknown if filter.deny_all => return None,
             AskedFilter::Unknown => Some(as_request(filter)),
         };
         self.own_row_as_owner_in(rtxn, policy, id, raw, request.as_ref(), authority, owner)
@@ -70,7 +92,7 @@ impl<'v> ScopedRead<'v> {
                     "a reader's own owner authority admitted nothing it could not judge; the read \
                      keeps its own answer (FIX 7461)"
                 );
-                false
+                None
             })
     }
 
@@ -93,7 +115,8 @@ impl<'v> ScopedRead<'v> {
 
     /// The row under `owner`'s own key, once `owner` is a live owner of this
     /// vault in `rtxn`: its whole admission under the owner's floor, met with
-    /// `request` as the read met its own.
+    /// `request` as the read met its own, and the owner lane that admitted
+    /// it.
     #[expect(
         clippy::too_many_arguments,
         reason = "the row's admission as its live owner takes the row, its request and authority"
@@ -107,15 +130,17 @@ impl<'v> ScopedRead<'v> {
         request: Option<&RetrievalFilter>,
         authority: &HeldAuthority<'v>,
         owner: EntityId,
-    ) -> Result<bool> {
+    ) -> Result<Option<ScopedRead<'v>>> {
         if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, rtxn, &owner)? {
-            return Ok(false);
+            return Ok(None);
         }
         let lane = self.as_owner(owner)?;
         let floor = policy.retrieval_floor_for_actor(Some(&lane.actor_key));
         let filter = crate::gate::narrow_retrieval_filter(&floor, request)?
             .under_credential_of(&lane.actor_key);
-        lane.own_row_readable_in(rtxn, policy, id, raw, &filter, authority, None)
+        Ok(lane
+            .own_row_readable_in(rtxn, policy, id, raw, &filter, authority, None)?
+            .then_some(lane))
     }
 
     /// This lane read by `owner`, its own reader, under the owner's key: the
@@ -151,6 +176,7 @@ impl<'v> ScopedRead<'v> {
             recall_authority: Mutex::new(None),
             room_peer: self.room_peer,
             own_owner_authority: false,
+            records_cover: self.records_cover.clone(),
         })
     }
 }

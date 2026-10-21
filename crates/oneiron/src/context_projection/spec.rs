@@ -198,6 +198,15 @@ pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
 
 // ── helpers ────────────────────────────────────────────────────────────
 
+/// Whether the memory domain `outer` contains `inner` (FIX 7751, 7752): the
+/// same domain, or one under it at a dot boundary. `goal.career` contains
+/// `goal.career` and `goal.career.pm`, never `goal.careers` or `goal`.
+pub(super) fn domain_contains(outer: &str, inner: &str) -> bool {
+    inner
+        .strip_prefix(outer)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+}
+
 fn normalize_tokens(tokens: Vec<String>) -> Vec<String> {
     let mut out: Vec<String> = Vec::with_capacity(tokens.len());
     for token in tokens {

@@ -54,6 +54,7 @@ impl<'v> ScopedRead<'v> {
             .scoped_read(self.actor_key.clone())
             .with_claim_status(ClaimReadStatus::Recorded);
         lane.own_owner_authority = self.own_owner_authority;
+        lane.records_cover = self.records_cover.clone();
         Ok(lane)
     }
 }
@@ -145,7 +146,7 @@ impl<'v> ScopedRead<'v> {
                 return Ok(false);
             }
         }
-        if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {
+        if !self.credential_allows_row_in(rtxn, id) || !self.proof_live_in(rtxn)? {
             return Ok(false);
         }
         let causal_admitted = {

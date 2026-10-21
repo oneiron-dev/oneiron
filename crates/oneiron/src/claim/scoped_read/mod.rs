@@ -79,6 +79,7 @@ pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_r
 mod actor_key;
 mod agent_grants;
 mod owner_authority;
+mod records_cover;
 pub use actor_key::{CallerLocality, ScopedReadActorKey};
 #[cfg(feature = "sync")]
 mod residence;
@@ -123,6 +124,11 @@ pub struct ScopedRead<'a> {
     /// admission and its reader's own Grants refuse is judged again, whole,
     /// under that reader's live owner authority.
     own_owner_authority: bool,
+    /// The artifacts whose own version rows a records caveat naming them
+    /// covers, for the records check alone (FIX 8245;
+    /// `ScopedRead::with_artifact_records_cover`). Empty unless a typed
+    /// artifact door opts in.
+    records_cover: records_cover::ArtifactRecordsCover,
 }
 
 mod admission;
