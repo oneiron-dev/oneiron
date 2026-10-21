@@ -17519,10 +17519,20 @@
      "purpose": "Guided pack setup's grants and connection checks (OF-378)",
      "surface": {
       "const": 8,
-      "crate-vis": 6,
+      "crate-vis": 5,
       "fn": 6,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/setup/sent_check.rs",
+     "purpose": "`self.use`'s own provider checks (OF-560, FIX 4491, FIX 7647): the same read-only provider call a pack setup…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -43792,6 +43802,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound_consent/connector_call_output.rs",
+     "purpose": "A connector call's reply after its send (FIX 7646, FIX 7647): the host that sent it cleared it of the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound_consent/connector_call_pending.rs",
      "purpose": "Expiry of held and pending-delivery connector calls (ONE-2510)",
      "surface": {
@@ -50942,7 +50962,7 @@
       "crate-vis": 9,
       "enum": 2,
       "fn": 2,
-      "re-export": 1,
+      "re-export": 2,
       "static": 1,
       "struct": 3
      }
@@ -50970,6 +50990,26 @@
      "purpose": "`self.use` under a secret grant (FIX 4313): the holder names a grant in place of a handle",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "KeptSentValue",
+      "SecretClearValueSource",
+      "SecretReleasePolicy",
+      "SentPresentation",
+      "SentValue"
+     ],
+     "path": "src/secret_custody/use_handle/output.rs",
+     "purpose": "What comes back from a send that presented a custody value, cleared of that value (FIX 7646, FIX 7647)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 9,
+      "struct": 3
      }
     },
     {
@@ -69116,7 +69156,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69683,7 +69723,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69921,7 +69961,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70301,7 +70341,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4465,
+   "source_files": 4468,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90274,6 +90314,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/connector_call_host/presenting.rs",
+     "purpose": "What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/connector_call_settle.rs",
      "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…",
      "surface": {
@@ -96034,7 +96084,7 @@
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
     "connector_call_host": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -96393,7 +96443,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1049,
+   "source_files": 1050,
    "test_files": 182
   },
   "oneiron-spawn": {
