@@ -5794,11 +5794,14 @@ class Oneiron:
             """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
             return json.loads(_translate(lambda: self._client.connector_schema(json.dumps(spec))))
         def call_status(self, spec):
-            """Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."""
+            """Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."""
             return json.loads(_translate(lambda: self._client.connector_call_status(json.dumps(spec))))
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs":
             return Oneiron._ConnectorOutboundVerbs(self._client)
+        def answer(self, spec):
+            """Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."""
+            return json.loads(_translate(lambda: self._client.connector_answer(json.dumps(spec))))
     class _ConnectorOutboundVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -197,14 +197,17 @@ impl CoachNotes<'_> {
             "confidence": answer.confidence,
             "floor": request.floor,
         });
+        // The call cites the rows its request was read from (FIX 7101);
+        // `None` is unknown and refuses nothing.
         let written = self
             .models
-            .generate(
+            .generate_sourced(
                 self.models.coach(),
                 vec![
                     message(LlmMessageRole::System, NOTE_SYSTEM.to_owned()),
                     message(LlmMessageRole::User, data.to_string()),
                 ],
+                request.sources.map(<[_]>::to_vec),
             )
             .unwrap_or_else(|error| {
                 tracing::debug!(kind = ?error.kind(), "a Coach attribution note was not written");

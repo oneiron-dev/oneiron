@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1135 facade rows, 3967 declarations.
-Inputs: 1070 of 1135 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1022 of 1135 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 109; unread shapes: 0.
+Census: 1136 facade rows, 3970 declarations.
+Inputs: 1070 of 1136 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1022 of 1136 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 110; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -14858,10 +14858,11 @@ class ConnectorCallReplyPendingDelivery(TypedDict):
 class ConnectorCallReplyAwaitingInput(TypedDict):
     outcome: Literal["awaiting_input"]
     handle: str
+    call_ref: NotRequired[str | None]
     source: str
     foreign: bool
     questions: list[ConnectorQuestion]
-    expires_at_ms: int
+    live_until_ms: int
     reasons: NotRequired[list[str]]
 ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
 class LiveVoiceToolReply(TypedDict):
@@ -15617,7 +15618,16 @@ class ConnectorCallStatusSettled(TypedDict):
     name: str
     tool: str
     reply: ConnectorCallReply
-ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled
+class ConnectorCallStatusAwaitingInput(TypedDict):
+    state: Literal["awaiting_input"]
+    call_ref: str
+    name: str
+    tool: str
+    generation: int
+    asked: int
+    uncertain: NotRequired[bool]
+    reply: ConnectorCallReply
+ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled | ConnectorCallStatusAwaitingInput
 class ScopedCommitRequest(TypedDict):
     claims: list[ScopedClaimInput]
 RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
@@ -19667,6 +19677,14 @@ class IdentityPairProposals(TypedDict):
     b: EntityId
     proposals: list[EntityId]
     distinct_claims: list[EntityId]
+ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
+class ConnectorQuestionAnswer(TypedDict):
+    key: str
+    action: ConnectorAnswerAction
+    content: NotRequired[Any | None]
+class ConnectorAnswerRequest(TypedDict):
+    handle: str
+    answers: list[ConnectorQuestionAnswer]
 class OpenInput(TypedDict):
     url: str
 class TakeoverRecord(TypedDict):

@@ -160,13 +160,14 @@ pub struct ConnectorQuestion {
 }
 
 /// The questions a connector answered a call with, as its host keeps them
-/// for the caller: the live continuation's handle, the questions, and when
-/// they lapse unanswered (unix ms).
+/// for the caller: the live continuation's handle, the questions, and the
+/// end of the round's live lease (unix ms): how long a synchronous answer
+/// waits, never an expiry (FIX 3837).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConnectorAwaitingInput {
     pub handle: String,
     pub questions: Vec<ConnectorQuestion>,
-    pub expires_at_ms: u64,
+    pub live_until_ms: u64,
 }
 
 /// Who the next send runs for and under which standing grant, as the engine
@@ -217,9 +218,12 @@ pub enum ConnectorCallOutcome {
         reasons: Vec<String>,
     },
     /// The connector received the call and asked for input before it would
-    /// finish it. The send is delivered; the questions live with the host
-    /// until they are answered or lapse.
+    /// finish it. The send is delivered; the call's row `call_ref` keeps
+    /// the round (never the questions' text) until the connector answers
+    /// the call, and its caller polls it there (FIX 3837). A replay from the
+    /// row carries no questions.
     AwaitingInput {
+        call_ref: EntityId,
         intent: Option<[u8; 32]>,
         input: ConnectorAwaitingInput,
     },
@@ -263,6 +267,17 @@ pub trait ConnectorCallHost: OutboundResultSender {
     fn take_awaiting_input(&mut self) -> Option<ConnectorAwaitingInput> {
         None
     }
+
+    /// Ends the live questions `handle` names, which no caller will hold:
+    /// the send's ledger step did not reach Done, or the call's row could
+    /// not keep the questions (FIX 3844). Their worker cancels them now. A
+    /// host that keeps no questions ignores it.
+    fn abandon_awaiting_input(&mut self, _handle: &str) {}
+
+    /// The live questions `handle` names are kept on the call `call_ref`'s
+    /// row (FIX 3837): the host keeps that row current as the exchange goes
+    /// on. A host that keeps no questions ignores it.
+    fn bind_awaiting_call(&mut self, _handle: &str, _call_ref: EntityId) {}
 
     /// Takes the custody record the last `send` presented, as its door
     /// resolved it (FIX 5455): an empty list when it presented none, `None`
@@ -353,6 +368,13 @@ pub(super) struct PendingConnectorCall {
         deserialize_with = "super::approval::tolerant_approval"
     )]
     pub(super) approval: Option<super::approval::ConnectorCallApproval>,
+    /// The round of questions the call's connector asked once the call was
+    /// sent (FIX 3837): its handle, generation and count, never the text;
+    /// kept until the connector answers the call, and beside its delivery
+    /// after. A row with it is never resumed or expired: the send was
+    /// delivered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) input: Option<super::connector_call_input::PendingConnectorInput>,
     /// This pass's code consent context (`connector_call_code`); never
     /// stored.
     #[serde(skip)]
@@ -654,6 +676,7 @@ impl Vault {
             code_consent_wait: None,
             source_rows: Some(Vec::new()),
             approval: None,
+            input: None,
             code: None,
         };
         let Some(named) = named else {
@@ -680,6 +703,16 @@ impl Vault {
                     reasons: vec![CONNECTOR_CALL_INVOCATION_CONFLICT.to_owned()],
                 },
                 Some(Vec::new()),
+            )),
+            // A call whose connector asked for input answers from its row:
+            // its send was delivered, and nothing is sent again (FIX 3837).
+            Some(held) if held.input.is_some() => Ok((
+                held.input_outcome(call_ref)
+                    .unwrap_or(ConnectorCallOutcome::Delivered {
+                        intent: None,
+                        result: None,
+                    }),
+                held.source_rows,
             )),
             Some(held) if held.code_consent_wait.is_some() => {
                 self.resume_code_owned_connector_call(&call_ref, held, host, false)
@@ -739,6 +772,11 @@ impl Vault {
                 Some(Vec::new()),
             ));
         };
+        // A call whose connector asked for input answers from its row
+        // (FIX 3837).
+        if let Some(outcome) = pending.input_outcome(*call_ref) {
+            return Ok((outcome, pending.source_rows));
+        }
         // A call a code consent wait owns settles that wait too, and an
         // answered one runs only on its host's answered pass.
         if pending.code_consent_wait.is_some() {
@@ -754,7 +792,9 @@ impl Vault {
     }
 
     /// Every held or pending-delivery call's row, settled ones included, for
-    /// a settler that resumes each and answers its wait.
+    /// a settler that resumes each and answers its wait. A call whose
+    /// connector asked for input is not one: its send was delivered, and its
+    /// row is its caller's to poll (FIX 3837).
     pub fn pending_connector_calls(
         &self,
     ) -> Result<Vec<PendingConnectorCallRef>, IntentLedgerError> {
@@ -762,6 +802,7 @@ impl Vault {
         Ok(PENDING_CALLS
             .scan(&self.store, &txn)?
             .into_iter()
+            .filter(|(_, pending)| pending.input.is_none())
             .map(|(call_ref, pending)| PendingConnectorCallRef {
                 call_ref,
                 name: pending.name,
@@ -773,14 +814,15 @@ impl Vault {
 
     /// Drops a settled call's row once the wait reply that carries its
     /// outcome has committed; `true` when it dropped one. A held or
-    /// retryable row stays for its next resume.
+    /// retryable row stays for its next resume, and a row that keeps a
+    /// connector's questions stays for its caller's polls (FIX 3837).
     pub fn ack_connector_call_delivery(
         &self,
         call_ref: &EntityId,
     ) -> Result<bool, IntentLedgerError> {
         Ok(
             self.with_write_txn(|txn| match PENDING_CALLS.get(&self.store, txn, call_ref)? {
-                Some(pending) if pending.settled.is_some() => {
+                Some(pending) if pending.settled.is_some() && pending.input.is_none() => {
                     PENDING_CALLS.delete(&self.store, txn, call_ref)
                 }
                 _ => Ok(false),
@@ -886,11 +928,32 @@ impl Vault {
                 settle(call_ref, SettledConnectorCall::Delivered { intent })?;
                 ConnectorCallOutcome::Delivered { intent, result }
             }
-            // The call reached the connector: its row keeps the delivery,
-            // receipt-only. The questions live with the host, never here.
+            // The call reached the connector, which asked for input: the
+            // call's row, kept for a first call too, holds the round for its
+            // caller to poll, and the host keeps it current (FIX 3837).
+            // A row that cannot keep them leaves no caller to answer them.
             Step::AwaitingInput { intent, input } => {
-                settle(call_ref, SettledConnectorCall::Delivered { intent })?;
-                ConnectorCallOutcome::AwaitingInput { intent, input }
+                let row = PendingConnectorCall {
+                    held_reasons: Vec::new(),
+                    input: Some(super::connector_call_input::PendingConnectorInput::kept(
+                        intent, &input,
+                    )),
+                    ..pending.clone()
+                };
+                match keep(call_ref, &row) {
+                    Ok(call_ref) => {
+                        host.bind_awaiting_call(&input.handle, call_ref);
+                        ConnectorCallOutcome::AwaitingInput {
+                            call_ref,
+                            intent,
+                            input,
+                        }
+                    }
+                    Err(error) => {
+                        host.abandon_awaiting_input(&input.handle);
+                        return Err(error);
+                    }
+                }
             }
             Step::Refused {
                 decision_ref,
@@ -1079,9 +1142,12 @@ impl Vault {
             grant_id,
             name: pending.name.clone(),
         }));
-        // A reply left from an earlier send is never this call's.
+        // A reply or questions left from an earlier send are never this
+        // call's, and no caller holds such questions (FIX 3844).
         drop(host.take_result());
-        drop(host.take_awaiting_input());
+        if let Some(left) = host.take_awaiting_input() {
+            host.abandon_awaiting_input(&left.handle);
+        }
         let dispatch = prepared.execute(
             self,
             &authority,
@@ -1093,9 +1159,7 @@ impl Vault {
             now_ms(),
             &mut *host,
         )?;
-        let reply = host.take_result();
-        let awaiting = host.take_awaiting_input();
-        Ok(step_from_dispatch(&dispatch, reply, awaiting))
+        Ok(step_from_host(&dispatch, host))
     }
 
     /// The principal's grant for `server` and `tool`, the governing key it
@@ -1237,11 +1301,30 @@ impl Vault {
     }
 }
 
+/// Maps one execute onto a step, with the reply and the questions `host`
+/// kept for its send. Questions a step that is not Done leaves behind have
+/// no caller to answer them, so the host ends them at once (FIX 3844).
+pub(super) fn step_from_host<H: ConnectorCallHost>(
+    dispatch: &ScopedMcpDispatchResult,
+    host: &mut H,
+) -> Step {
+    let reply = host.take_result();
+    let awaiting = host.take_awaiting_input();
+    let handle = awaiting.as_ref().map(|input| input.handle.clone());
+    let step = step_from_dispatch(dispatch, reply, awaiting);
+    if let Some(handle) = handle
+        && !matches!(step, Step::AwaitingInput { .. })
+    {
+        host.abandon_awaiting_input(&handle);
+    }
+    step
+}
+
 /// Maps one execute onto a step. AutoFire alone proves nothing: only a Done
 /// ledger row is delivery, and the gate's own outcome tells a hold from a
 /// denial. A delivered send whose connector asked for input carries its
 /// questions in place of a reply.
-pub(super) fn step_from_dispatch(
+fn step_from_dispatch(
     dispatch: &ScopedMcpDispatchResult,
     reply: Option<UntrustedToolResult>,
     awaiting: Option<ConnectorAwaitingInput>,
@@ -1385,7 +1468,7 @@ pub(crate) fn held_connector_call_in_txn(
 ) -> crate::Result<Option<(String, String, String)>> {
     Ok(PENDING_CALLS
         .get(store, txn, call_ref)?
-        .filter(|row| row.settled.is_none())
+        .filter(|row| row.settled.is_none() && row.input.is_none())
         .map(|row| (row.principal_ref, row.name, row.tool)))
 }
 
@@ -1432,6 +1515,9 @@ pub struct ConnectorCallState {
     /// releases exactly the call as it was prepared. `None` once settled,
     /// and for a call no approvable hold asked about.
     pub approval_digest: Option<String>,
+    /// The round of questions its connector asked once it was sent
+    /// (FIX 3837), kept on its row: unanswered while `settled` is `None`.
+    pub input: Option<super::connector_call_input::ConnectorCallInput>,
 }
 
 impl Vault {
@@ -1450,6 +1536,7 @@ impl Vault {
         let txn = self.store.env.read_txn().map_err(Error::from)?;
         if let Some(pending) = PENDING_CALLS.get(&self.store, &txn, call_ref)? {
             return Ok(Some(ConnectorCallState {
+                input: pending.input.as_ref().map(|input| input.view()),
                 settled: pending.settled.as_ref().map(SettledConnectorCall::outcome),
                 approval_digest: super::approval::ConnectorCallApproval::current_digest(
                     pending.approval.as_ref(),
@@ -1477,6 +1564,7 @@ impl Vault {
                 acknowledged: true,
                 source_rows: None,
                 approval_digest: None,
+                input: None,
             }))
     }
 
@@ -1494,7 +1582,7 @@ impl Vault {
     ) -> Result<bool, IntentLedgerError> {
         Ok(
             self.with_write_txn(|txn| match PENDING_CALLS.get(&self.store, txn, call_ref)? {
-                Some(pending) if pending.settled.is_some() => {
+                Some(pending) if pending.settled.is_some() && pending.input.is_none() => {
                     let caller = AcknowledgedConnectorCall {
                         principal_ref: pending.principal_ref,
                         name: pending.name,

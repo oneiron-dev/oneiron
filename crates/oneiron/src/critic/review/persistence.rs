@@ -338,6 +338,41 @@ pub(crate) fn declared_critiques_in_txn(
     }
     Ok((found, unread))
 }
+
+/// The verdict claim of the stored review holding each in-scope critique,
+/// keyed by the critique's branch and artifact id, read in the caller's
+/// snapshot (FIX 6380): the way back from a critique found on its branch to
+/// the review that wrote it. A critique two reviews hold names the first in
+/// stored order. One line names each review whose verdict ref does not read;
+/// a review that does not decode is skipped here, as
+/// [`declared_critiques_in_txn`] names it. A storage fault fails the pass.
+pub(crate) fn critique_review_refs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(BTreeMap<([u8; 16], String), EntityId>, Vec<String>)> {
+    let mut refs = BTreeMap::new();
+    let mut unread = Vec::new();
+    for row in RESULT.iter_raw_from(&vault.store, txn, &[])? {
+        let (_, value) = row?;
+        let Ok(stored) = RESULT.decode_value(&value) else {
+            continue;
+        };
+        let Ok(verdict) = EntityId::from_hex(&stored.verdict) else {
+            unread.push(format!(
+                "review {} keeps a verdict ref that does not read, so its critiques name no review",
+                stored.verdict
+            ));
+            continue;
+        };
+        for artifact in stored.artifacts {
+            if !artifact.out_of_scope {
+                refs.entry((*artifact.branch_attempt.as_bytes(), artifact.artifact_id))
+                    .or_insert(verdict);
+            }
+        }
+    }
+    Ok((refs, unread))
+}
 /// Calibration is node-local derived state, like the private critic artifacts it folds.
 /// A synced or raw claim is not a calibration event and cannot train this projector.
 pub(super) fn trusted_claim(

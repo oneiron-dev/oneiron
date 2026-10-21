@@ -338,6 +338,7 @@ pub(super) fn classify_amendment_traced(
         evidence: &probe,
         hunks,
         floor,
+        sources: None,
     };
     match settled {
         Some(class) => {

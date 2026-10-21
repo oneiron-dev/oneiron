@@ -1,6 +1,21 @@
 //! The live half of the call host: the worker that owns an exchange once its
 //! send returned, and the reply readers both halves share.
+//!
+//! The worker receipts each answer it sends at its POST, and each round it
+//! ends unanswered, on the gate ledger (FIX 3840): receipt-only, ids,
+//! digests and dispositions, never an answer. A receipt that cannot be
+//! written is logged; the answer has gone or not either way.
+//!
+//! The worker keeps the call's row current (FIX 3837): each next round (its
+//! generation and count, never the questions' text), the delivery once the
+//! connector answers the call, and, when the exchange ends unanswered, the
+//! round standing with its delivery uncertain. A round never lapses: the worker waits for its answer as long
+//! as the exchange lives.
 
+use oneiron::outbound_consent::{
+    ConnectorElicitationReceipt, ElicitationDisposition, ElicitationEgress,
+};
+use oneiron::outbound_intent_ledger::IntentLedgerError;
 use zeroize::Zeroizing;
 
 use super::*;
@@ -31,7 +46,12 @@ pub(super) fn hand_over(
     let awaiting = ConnectorAwaitingInput {
         handle: registered.handle.clone(),
         questions,
-        expires_at_ms: registered.expires_at_ms,
+        live_until_ms: registered.live_until_ms,
+    };
+    let receipts = AnswerReceipts {
+        vault: Arc::downgrade(declared.vault),
+        binding: declared.binding.clone(),
+        question_set: *blake3::hash(registered.handle.as_bytes()).as_bytes(),
     };
     let worker = Worker {
         session,
@@ -39,10 +59,11 @@ pub(super) fn hand_over(
         commands: registered.commands,
         registry: Arc::downgrade(declared.registry),
         handle: registered.handle,
-        deadline: registered.deadline,
         generation: 0,
+        asked: awaiting.questions.len(),
         kept,
         aliases,
+        receipts,
     };
     let started = std::thread::Builder::new()
         .name("connector-elicitation".to_owned())
@@ -102,6 +123,71 @@ pub(super) enum Posted {
     Refused,
     Unsent,
     Uncertain,
+}
+
+impl Posted {
+    /// What an answer's receipt says of this POST.
+    fn egress(&self) -> ElicitationEgress {
+        match self {
+            Self::Accepted => ElicitationEgress::Accepted,
+            Self::Refused => ElicitationEgress::Refused,
+            Self::Unsent => ElicitationEgress::Unsent,
+            Self::Uncertain => ElicitationEgress::Uncertain,
+        }
+    }
+}
+
+/// Where a worker receipts each answer it sends, and each round it ends
+/// unanswered (FIX 3840): the call's binding, the vault held weakly, and
+/// the digest of the question set's handle, never the handle.
+pub(super) struct AnswerReceipts {
+    vault: Weak<Vault>,
+    binding: QuestionBinding,
+    question_set: [u8; 32],
+}
+
+impl AnswerReceipts {
+    /// Receipts round `generation`: each question's disposition, the exact
+    /// `responses` sent (or none) and how their POST went.
+    fn record(
+        &self,
+        generation: u64,
+        dispositions: &[ElicitationDisposition],
+        responses: &BTreeMap<String, Value>,
+        egress: ElicitationEgress,
+    ) {
+        let Some(vault) = self.vault.upgrade() else {
+            return;
+        };
+        let binding = self.binding.authority();
+        let text = Value::Object(responses.clone().into_iter().collect()).to_string();
+        let receipt = ConnectorElicitationReceipt {
+            binding: &binding,
+            parent_intent: self.binding.parent_intent,
+            question_set: self.question_set,
+            generation,
+            dispositions,
+            answer_digest: *blake3::hash(text.as_bytes()).as_bytes(),
+            egress,
+        };
+        if let Err(error) = vault.append_connector_elicitation_receipt(&receipt) {
+            tracing::warn!(%error, "connector answer receipt not written");
+        }
+    }
+}
+
+/// Each answer's disposition, in the order of its key, as `responses` say.
+fn dispositions(responses: &BTreeMap<String, Value>) -> Vec<ElicitationDisposition> {
+    responses
+        .values()
+        .map(
+            |response| match response.get(wire::ACTION).and_then(Value::as_str) {
+                Some("accept") => ElicitationDisposition::Accept,
+                Some("decline") => ElicitationDisposition::Decline,
+                _ => ElicitationDisposition::Cancel,
+            },
+        )
+        .collect()
 }
 
 impl LiveSession {
@@ -216,7 +302,7 @@ pub(super) enum Next {
 }
 
 /// The thread that owns one live exchange once its send returned: it waits
-/// for an answer to each round until the round's deadline, sends it, and
+/// for an answer to each round as long as the exchange lives, sends it, and
 /// reads what the connector says next.
 pub(super) struct Worker {
     session: LiveSession,
@@ -226,24 +312,29 @@ pub(super) struct Worker {
     /// every question set's channel.
     registry: Weak<ConnectorElicitationRegistry>,
     handle: String,
-    deadline: Instant,
     generation: u64,
+    /// How many questions the current round asks.
+    asked: usize,
     /// The value the send presented, kept as the session keeps its header:
     /// each later question and the terminal reply are cleared of it.
     kept: Option<KeptSentValue>,
     /// The current round's aliases: its answer goes on the wire under the
     /// connector's own keys (FIX 8051).
     aliases: KeyAliases,
+    /// Where each answer and each round ended unanswered is receipted.
+    receipts: AnswerReceipts,
 }
 
 impl Worker {
     fn run(mut self) {
+        // The connector answered the call: its row keeps the delivery.
+        let mut delivered = false;
         loop {
-            let left = self.deadline.saturating_duration_since(Instant::now());
-            // A round that lapsed, or a server going away, cancels the
-            // questions.
-            let Ok(command) = self.commands.recv_timeout(left) else {
-                self.cancel();
+            // A server going away, or a call that left no one to answer
+            // (FIX 3844), cancels the questions. A round never lapses
+            // (FIX 3837).
+            let Ok(command) = self.commands.recv() else {
+                self.cancel(ElicitationDisposition::Cancel);
                 break;
             };
             match self.answer(&command.responses) {
@@ -255,31 +346,59 @@ impl Worker {
                         None => KeyAliases::default(),
                     };
                     self.generation += 1;
+                    self.asked = questions.len();
                     let advanced = self.registry.upgrade().and_then(|registry| {
                         registry.advance(&self.handle, self.generation, &questions)
                     });
-                    let Some((deadline, expires_at_ms)) = advanced else {
+                    let Some((live_until_ms, call_ref)) = advanced else {
                         let _ = command.reply.send(WorkerEvent::Failed {
                             sent: true,
-                            reason: "connector_question_lapsed",
+                            reason: "connector_question_gone",
                         });
-                        self.cancel();
+                        self.cancel(ElicitationDisposition::Cancel);
                         break;
                     };
-                    self.deadline = deadline;
+                    // The row keeps the round before its caller sees it.
+                    let (handle, generation, asked) =
+                        (self.handle.as_str(), self.generation, questions.len());
+                    self.keep_row(call_ref, |vault, call_ref| {
+                        vault.keep_connector_input_round(
+                            call_ref,
+                            handle,
+                            generation,
+                            asked,
+                            live_until_ms,
+                        )
+                    });
                     let _ = command.reply.send(WorkerEvent::Question {
                         questions,
-                        expires_at_ms,
+                        live_until_ms,
                     });
                 }
                 Next::Over(mut event) => {
                     if let Some(kept) = &self.kept {
                         clear_event(&mut event, &kept.sent());
                     }
+                    if matches!(event, WorkerEvent::Result(_)) {
+                        let call_ref = self.bound_call();
+                        let handle = self.handle.as_str();
+                        self.keep_row(call_ref, |vault, call_ref| {
+                            vault.settle_connector_input(call_ref, handle)
+                        });
+                        delivered = true;
+                    }
                     let _ = command.reply.send(event);
                     break;
                 }
             }
+        }
+        // An exchange that ended unanswered leaves the questions standing,
+        // their delivery uncertain (FIX 3837).
+        if !delivered {
+            let (call_ref, handle) = (self.bound_call(), self.handle.as_str());
+            self.keep_row(call_ref, |vault, call_ref| {
+                vault.mark_connector_input_uncertain(call_ref, handle)
+            });
         }
         self.session.end();
         if let Some(registry) = self.registry.upgrade() {
@@ -287,20 +406,52 @@ impl Worker {
         }
     }
 
-    /// Sends one frozen answer and reads what the connector says next.
+    /// The call whose row keeps this exchange's questions, once bound.
+    fn bound_call(&self) -> Option<EntityId> {
+        self.registry
+            .upgrade()
+            .and_then(|registry| registry.call_ref(&self.handle))
+    }
+
+    /// Writes the call `call_ref`'s row through `write`, when the row is
+    /// bound and the vault still stands; a write that fails is logged.
+    fn keep_row(
+        &self,
+        call_ref: Option<EntityId>,
+        write: impl FnOnce(&Vault, &EntityId) -> Result<bool, IntentLedgerError>,
+    ) {
+        let (Some(vault), Some(call_ref)) = (self.receipts.vault.upgrade(), call_ref) else {
+            return;
+        };
+        if let Err(error) = write(&vault, &call_ref) {
+            tracing::warn!(%error, "connector call questions not kept");
+        }
+    }
+
+    /// Sends one frozen answer and reads what the connector says next. The
+    /// answer is receipted at its POST (FIX 3840).
     fn answer(&mut self, responses: &BTreeMap<String, Value>) -> Next {
+        let (generation, answered) = (self.generation, dispositions(responses));
         match &mut self.continuation {
             Continuation::Stream { stream, request_id } => {
                 let Some(result) = self.aliases.response(responses, wire::STREAM_KEY) else {
+                    self.receipts.record(
+                        generation,
+                        &answered,
+                        responses,
+                        ElicitationEgress::NotSent,
+                    );
                     return Next::Over(WorkerEvent::Failed {
                         sent: false,
                         reason: "connector_answer_unmatched",
                     });
                 };
-                match self
+                let posted = self
                     .session
-                    .respond(&request_id.value(), "result", result.clone())
-                {
+                    .respond(&request_id.value(), "result", result.clone());
+                self.receipts
+                    .record(generation, &answered, responses, posted.egress());
+                match posted {
                     Posted::Accepted => {}
                     Posted::Refused | Posted::Unsent => {
                         return Next::Over(WorkerEvent::Failed {
@@ -349,6 +500,19 @@ impl Worker {
                     .post(&call, Some(CALL_TIMEOUT))
                     .headers(tool_headers.clone())
                     .send();
+                let egress = match &posted {
+                    Ok(response) if response.status().is_success() => ElicitationEgress::Accepted,
+                    Ok(response) if response.status().is_server_error() => {
+                        ElicitationEgress::Uncertain
+                    }
+                    Ok(_) => ElicitationEgress::Refused,
+                    Err(error) if error.is_connect() || error.is_builder() => {
+                        ElicitationEgress::Unsent
+                    }
+                    Err(_) => ElicitationEgress::Uncertain,
+                };
+                self.receipts
+                    .record(generation, &answered, responses, egress);
                 let message = match posted {
                     Ok(response) => read_retry_reply(&self.session, response, id),
                     Err(error) if error.is_connect() || error.is_builder() => {
@@ -376,12 +540,26 @@ impl Worker {
     }
 
     /// Cancels the current round: a stream request is answered `cancel`; a
-    /// result that asked for input takes no reply.
-    fn cancel(&self) {
-        if let Continuation::Stream { request_id, .. } = &self.continuation {
-            let cancel = elicitation_response(ConnectorAnswerAction::Cancel, None);
-            let _ = self.session.respond(&request_id.value(), "result", cancel);
-        }
+    /// result that asked for input takes no reply. Each of its questions is
+    /// receipted `disposition` (FIX 3840).
+    fn cancel(&self, disposition: ElicitationDisposition) {
+        let mut sent = BTreeMap::new();
+        let egress = match &self.continuation {
+            Continuation::Stream { request_id, .. } => {
+                let cancel = elicitation_response(ConnectorAnswerAction::Cancel, None);
+                sent.insert(wire::STREAM_KEY.to_owned(), cancel.clone());
+                self.session
+                    .respond(&request_id.value(), "result", cancel)
+                    .egress()
+            }
+            Continuation::Retry { .. } => ElicitationEgress::NotSent,
+        };
+        self.receipts.record(
+            self.generation,
+            &vec![disposition; self.asked],
+            &sent,
+            egress,
+        );
     }
 }
 
