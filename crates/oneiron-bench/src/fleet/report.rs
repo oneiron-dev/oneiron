@@ -9,12 +9,25 @@ use super::{Result, configuration::Plan};
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct Metric {
     pub completed: usize,
-    pub elapsed_seconds: f64,
-    pub throughput_per_second: f64,
-    pub p99_ms: f64,
+    pub measurement_status: String,
+    pub measurement_reason: Option<String>,
+    pub elapsed_seconds: Option<f64>,
+    pub throughput_per_second: Option<f64>,
+    pub p99_ms: Option<f64>,
     pub samples_ms: Vec<f64>,
 }
 impl Metric {
+    pub(super) fn not_measured(completed: usize, reason: &str) -> Self {
+        Self {
+            completed,
+            measurement_status: "not_measured".into(),
+            measurement_reason: Some(reason.into()),
+            elapsed_seconds: None,
+            throughput_per_second: None,
+            p99_ms: None,
+            samples_ms: Vec::new(),
+        }
+    }
     pub(super) fn new(mut samples_ms: Vec<f64>, elapsed_seconds: f64) -> Result<Self> {
         if samples_ms.is_empty()
             || !elapsed_seconds.is_finite()
@@ -28,9 +41,11 @@ impl Metric {
         let p99_ms = samples_ms[(completed * 99).div_ceil(100) - 1];
         Ok(Self {
             completed,
-            elapsed_seconds,
-            throughput_per_second: completed as f64 / elapsed_seconds,
-            p99_ms,
+            measurement_status: "measured".into(),
+            measurement_reason: None,
+            elapsed_seconds: Some(elapsed_seconds),
+            throughput_per_second: Some(completed as f64 / elapsed_seconds),
+            p99_ms: Some(p99_ms),
             samples_ms,
         })
     }
@@ -112,9 +127,11 @@ pub(super) struct Optimization {
     pub route: String,
     pub equivalent_pairs: usize,
     pub result_blake3: String,
-    pub incremental_speedup: f64,
-    pub preparation_seconds: f64,
-    pub preparation_included_speedup: f64,
+    pub measurement_status: String,
+    pub measurement_reason: Option<String>,
+    pub incremental_speedup: Option<f64>,
+    pub preparation_seconds: Option<f64>,
+    pub preparation_included_speedup: Option<f64>,
 }
 
 pub(super) fn write_new(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -136,10 +153,23 @@ pub(super) fn table(receipt: &Receipt) -> std::io::Result<()> {
     )?;
     writeln!(output, "|---|---:|---:|---:|")?;
     for (name, metric) in &receipt.metrics {
+        let display = |value: Option<f64>| {
+            value.map_or_else(
+                || {
+                    format!(
+                        "not_measured ({})",
+                        metric.measurement_reason.as_deref().unwrap_or("no timing")
+                    )
+                },
+                |value| format!("{value:.3}"),
+            )
+        };
         writeln!(
             output,
-            "| {name} | {} | {:.3} | {:.3} |",
-            metric.completed, metric.throughput_per_second, metric.p99_ms
+            "| {name} | {} | {} | {} |",
+            metric.completed,
+            display(metric.throughput_per_second),
+            display(metric.p99_ms)
         )?;
     }
     writeln!(
@@ -150,12 +180,25 @@ pub(super) fn table(receipt: &Receipt) -> std::io::Result<()> {
         receipt.verified_writes,
         receipt.verified_recalls
     )?;
-    writeln!(
-        output,
-        "PPR resume speedup: {:.3}x incremental, {:.3}x including preparation ({} equal pairs).",
+    match (
         receipt.optimization.incremental_speedup,
         receipt.optimization.preparation_included_speedup,
-        receipt.optimization.equivalent_pairs
-    )?;
+    ) {
+        (Some(incremental), Some(inclusive)) => writeln!(
+            output,
+            "PPR resume speedup: {incremental:.3}x incremental, {inclusive:.3}x including preparation ({} equal pairs).",
+            receipt.optimization.equivalent_pairs
+        )?,
+        _ => writeln!(
+            output,
+            "PPR resume speedup: not_measured ({}); {} equal pairs.",
+            receipt
+                .optimization
+                .measurement_reason
+                .as_deref()
+                .unwrap_or("no timing"),
+            receipt.optimization.equivalent_pairs
+        )?,
+    }
     Ok(())
 }

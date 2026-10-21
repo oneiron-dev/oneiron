@@ -6169,6 +6169,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "connector.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectorAnswerRequest,
+                >(),
+            ),
+            (
                 "self.browser.open",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserOpenInput>,
@@ -6376,12 +6382,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "self.skills.call",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::code_run::SkillCallInput>,
-                >(),
-            ),
-            (
-                "connector.answer",
-                crate::code_run::vault_read::request_schema::<
-                    crate::task_verb::sdk::ConnectorAnswerRequest,
                 >(),
             ),
             (
@@ -17432,6 +17432,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "connector.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.browser.open" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21408,6 +21415,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.identity.proposals.for_pair" => {
             let _input: crate::task_verb::sdk::IdentityPairRequest = decode(value.clone())?;
         }
+        "connector.answer" => {
+            let _input: crate::task_verb::sdk::ConnectorAnswerRequest = decode(value.clone())?;
+        }
         "self.browser.open" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<
                 crate::task_verb::sdk::BrowserOpenInput,
@@ -23705,6 +23715,7 @@ pub fn invoke(
         "vault.identity.proposals.for_pair" => {
             encode(vault_identity_proposals_for_pair(memory, decode(value)?)?)
         }
+        "connector.answer" => encode(connector_answer(memory, decode(value)?)?),
         "self.browser.open" => encode(self_browser_open(memory, decode(value)?)?),
         "self.browser.observe" => encode(self_browser_observe(memory, decode(value)?)?),
         "self.browser.find" => encode(self_browser_find(memory, decode(value)?)?),
@@ -33339,6 +33350,12 @@ pub fn vault_identity_proposals_for_pair(
     input: crate::task_verb::sdk::IdentityPairRequest,
 ) -> MemoryResult<crate::task_verb::sdk::IdentityPairProposals> {
     crate::task_verb::sdk::host_only(memory, "vault.identity.proposals.for_pair", &input)
+}
+pub fn connector_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectorAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorCallReply> {
+    crate::task_verb::sdk::host_only(memory, "connector.answer", &input)
 }
 pub fn self_browser_open(
     memory: &Memory<'_>,
