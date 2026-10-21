@@ -88794,7 +88794,7 @@
      "purpose": "Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 3,
       "re-export": 1,
@@ -88831,7 +88831,7 @@
      "path": "src/managed/args/vm_transport.rs",
      "purpose": "A vault VM's cold restore handoff (FIX 6584): `--vm-restore-revision`, which only the image's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -89332,7 +89332,7 @@
      "path": "src/managed/vm_guest.rs",
      "purpose": "Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -89348,8 +89348,22 @@
      "surface": {
       "enum": 1,
       "fn": 15,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VmAnchorHostIo"
+     ],
+     "path": "src/managed/vm_host/anchor.rs",
+     "purpose": "The host's half of a vault VM's custody anchor channels (FIX 6517, [`oneiron_vault_contract::vm_anchor`])",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -89387,7 +89401,7 @@
      "path": "src/managed/vm_host/restore.rs",
      "purpose": "The host's half of a vault VM's restore channel (FIX 6584, [`oneiron_vault_contract::vm_restore`]): every…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 3
      }
@@ -89413,6 +89427,16 @@
      "purpose": "A vault VM's root bootstrap, `oneiron-vm-init` (FIX 6308): the step between the image's shell init, which…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init/anchor.rs",
+     "purpose": "The bootstrap's half of a vault VM's custody anchor channels (FIX 6517…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -89452,7 +89476,7 @@
      "path": "src/managed/vm_init/restore.rs",
      "purpose": "The bootstrap's half of the restore channel (FIX 6584, [`oneiron_vault_contract::vm_restore`]): the boot's…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -90671,7 +90695,17 @@
      "path": "src/owner/backup/custody/anchor_credentials.rs",
      "purpose": "The owner credential a custody anchor door admits (FIX 5788), handed to the process that calls the door on a…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/custody/anchor_transport.rs",
+     "purpose": "A vault VM's way to its custody anchor door (FIX 6517): the guest has no network, so its bootstrap serves a…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -92916,7 +92950,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 68,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92951,7 +92985,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93072,7 +93106,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 989,
+   "source_files": 992,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -97566,7 +97600,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 20,
+      "mod": 21,
       "re-export": 9
      }
     },
@@ -97874,9 +97908,29 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 16,
+      "const": 18,
       "enum": 2,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VmAnchorHeader",
+      "VmAnchorProxyHello",
+      "VmAnchorProxyRefusal",
+      "VmAnchorProxyReply",
+      "VmAnchorRefusal",
+      "VmAnchorReply"
+     ],
+     "path": "src/lib/vm_anchor.rs",
+     "purpose": "A vault VM's custody anchor channels (FIX 6517): the owner credential a custody anchor door admits, carried…",
+     "surface": {
+      "const": 6,
+      "enum": 4,
+      "fn": 8,
+      "struct": 2
      }
     },
     {
@@ -97976,7 +98030,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -97985,7 +98039,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 45,
+   "source_files": 46,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
