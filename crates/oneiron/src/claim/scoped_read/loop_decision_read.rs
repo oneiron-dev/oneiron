@@ -330,10 +330,12 @@ impl ScopedRead<'_> {
         if record.outcome == PENDING_OUTCOME && !LOOP_DECISION_PENDING {
             return None;
         }
-        let named = match record
-            .claim_id
-            .and_then(|bytes| EntityId::from_bytes(bytes).ok())
-        {
+        // A stored claim id that is no EntityId is this item's error.
+        let claim_id = answered(
+            record.claim_id.map(EntityId::from_bytes).transpose(),
+            "claim id",
+        )?;
+        let named = match claim_id {
             Some(id) => answered(self.loop_entity_in(txn, read, id), "entity floor")?
                 .map(|about| (id, about)),
             None => None,
