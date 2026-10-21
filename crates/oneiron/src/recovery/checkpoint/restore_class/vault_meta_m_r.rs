@@ -175,6 +175,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PROVENANCE_BODY_ERASE, LIVE),
     (&t::PROVENANCE_BODY_ERASED, LIVE),
     (&t::PROVENANCE_BODY_INLINE, CONTENT),
+    // A digest's instance history is custody state (FIX 6023): the current vault's is kept.
+    (&t::PROVENANCE_BODY_INSTANCE, LIVE),
     (&t::PROVENANCE_BODY_KEY, CONTENT),
     (&t::PROVENANCE_BODY_RELEASED, LIVE),
     // A row-held response's binding follows its row (KS-2B1); the obligations are custody
