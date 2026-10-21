@@ -11,7 +11,9 @@
 //! then the clip's WAV, and the worker answers with a header for the same
 //! target and mono PCM16. Nothing is refused for its size (Rule 5): text
 //! past the worker's per-render `max_text_bytes` goes as several renders,
-//! in order, and their PCM is handed back as one WAV.
+//! in order, and their PCM is handed back as one WAV. Each render is one
+//! physical request, with its own inference receipt naming the worker as
+//! far as `/ready` proves it (FIX 8314, [`WarmTarget::worker`]).
 use std::collections::BTreeMap;
 
 use oneiron::llm::media::wav::pcm16_wav;
@@ -105,23 +107,27 @@ impl VoxCpm2Speech {
         });
         let max = usize::try_from(warm.limits.max_text_bytes).unwrap_or(usize::MAX);
         let mut pcm = Vec::new();
+        let mut receipts = Vec::new();
         for piece in speakable_pieces(&text, max) {
             pcm.extend(
                 self.render(&warm, &target, piece, &transcript, &audio)
                     .await?,
             );
+            receipts.push(warm.render_receipt(&request.model));
         }
         // A WAV's 32-bit lengths are the one bound on the joined audio.
         let wav = pcm16_wav(warm.sample_rate, 1, &pcm).ok_or(FatalLlmError::EmptyResponse)?;
+        let mut usage = MediaUsage {
+            characters: u64::try_from(text.chars().count()).unwrap_or(u64::MAX),
+            ..MediaUsage::default()
+        };
+        usage.put_inference_calls(&receipts);
         Ok(MediaResponse {
             parts: vec![MediaPart::Audio {
                 media_type: "audio/wav".into(),
                 bytes: wav,
             }],
-            usage: MediaUsage {
-                characters: u64::try_from(text.chars().count()).unwrap_or(u64::MAX),
-                ..MediaUsage::default()
-            },
+            usage,
             model: request.model,
         })
     }

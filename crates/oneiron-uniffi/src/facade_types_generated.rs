@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1132 facade rows, 3926 generated types.
+// UniFFI census: 1132 facade rows, 3930 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1084.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -4434,6 +4434,8 @@ pub enum StrictDenial {
     NoRule,
     #[serde(rename = "image")]
     Image,
+    #[serde(rename = "field_generation_requires_model")]
+    FieldGenerationRequiresModel,
 }
 
 /// `oneiron_browser::stop::AskUpReason`.
@@ -4456,6 +4458,8 @@ pub enum AskUpReason {
         #[serde(rename = "denied")]
         denied: StrictDenial,
     },
+    #[serde(rename = "reobserve")]
+    Reobserve,
 }
 
 /// `oneiron_browser::stop::ClockScope`.
@@ -4467,6 +4471,55 @@ pub enum ClockScope {
     Navigation,
     #[serde(rename = "decision")]
     Decision,
+}
+
+/// `oneiron_browser::field::TextSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TextSource {
+    #[serde(rename = "supplied")]
+    Supplied,
+    #[serde(rename = "reference")]
+    Reference,
+    #[serde(rename = "template")]
+    Template,
+    #[serde(rename = "generated")]
+    Generated,
+}
+
+/// `oneiron_browser::field::FieldTextReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "why")]
+pub enum FieldTextReason {
+    #[serde(rename = "no_text")]
+    NoText,
+    #[serde(rename = "missing_slot")]
+    MissingSlot {
+        #[serde(rename = "slot")]
+        slot: String,
+    },
+    #[serde(rename = "unclosed_slot")]
+    UnclosedSlot,
+    #[serde(rename = "not_an_option")]
+    NotAnOption {
+        #[serde(rename = "source")]
+        source: TextSource,
+    },
+    #[serde(rename = "secret_field")]
+    SecretField,
+    #[serde(rename = "writer_unavailable")]
+    WriterUnavailable,
+    #[serde(rename = "writer_refused")]
+    WriterRefused,
+    #[serde(rename = "writer_failed")]
+    WriterFailed,
+    #[serde(rename = "checked_no")]
+    CheckedNo,
+    #[serde(rename = "check_abstained")]
+    CheckAbstained,
+    #[serde(rename = "check_failed")]
+    CheckFailed,
+    #[serde(rename = "page_rejected")]
+    PageRejected,
 }
 
 /// `oneiron_browser::stop::BatchStopCause`.
@@ -4494,7 +4547,10 @@ pub enum BatchStopCause {
     #[serde(rename = "taken_over")]
     TakenOver,
     #[serde(rename = "field_text")]
-    FieldText,
+    FieldText {
+        #[serde(rename = "reason")]
+        reason: FieldTextReason,
+    },
     #[serde(rename = "no_progress")]
     NoProgress,
     #[serde(rename = "browser")]
@@ -60590,6 +60646,14 @@ pub struct EffectReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub engine_switch: Option<EngineSwitchRecord>,
+    #[serde(
+        rename = "text_source",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub text_source: Option<TextSource>,
+    #[serde(rename = "text_ref", default, skip_serializing_if = "Option::is_none")]
+    pub text_ref: Option<String>,
     #[serde(rename = "duration_ms")]
     pub duration_ms: u64,
 }
@@ -61250,6 +61314,46 @@ pub struct DecideStep {
     pub option: Option<String>,
 }
 
+/// `oneiron_browser::field::TextReference`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TextReference {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron_browser::field::FieldSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FieldSpec {
+    #[serde(rename = "supplied", default, skip_serializing_if = "Option::is_none")]
+    pub supplied: Option<String>,
+    #[serde(
+        rename = "references",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub references: Option<Vec<TextReference>>,
+    #[serde(rename = "template", default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    #[serde(rename = "generate", default, skip_serializing_if = "Option::is_none")]
+    pub generate: Option<bool>,
+    #[serde(
+        rename = "instruction",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub instruction: Option<String>,
+    #[serde(
+        rename = "enum_values",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub enum_values: Option<Vec<String>>,
+}
+
 /// `oneiron_browser::BatchStep`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "step")]
@@ -61342,6 +61446,13 @@ pub enum BatchStep {
     },
     #[serde(rename = "decide")]
     Decide(DecideStep),
+    #[serde(rename = "fill")]
+    Fill {
+        #[serde(rename = "ref")]
+        r#ref: String,
+        #[serde(rename = "field")]
+        field: FieldSpec,
+    },
 }
 
 /// `oneiron_browser::BatchInput`.
