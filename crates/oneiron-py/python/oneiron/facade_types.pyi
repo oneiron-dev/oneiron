@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1132 facade rows, 3950 declarations.
-Inputs: 1067 of 1132 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1019 of 1132 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1133 facade rows, 3951 declarations.
+Inputs: 1068 of 1133 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1020 of 1133 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -2311,6 +2311,9 @@ class TaskUpdateReceipt(TypedDict):
     acked: bool
     report: NotRequired[TaskCallReceipt | None]
 class TaskAccept(TypedDict):
+    task_ref: EntityId
+    intent_key: str
+class TaskRedo(TypedDict):
     task_ref: EntityId
     intent_key: str
 WitnessAuthor = Literal["user", "companion", "system"]
@@ -18435,6 +18438,9 @@ class WakeRecipePolicy(TypedDict):
     follower_instruction: str
     follower_keyframe_instruction: str
     follower_sizing_bytes_per_token: int
+    thing_child_code_mode: bool
+    thing_child_instruction: str
+    thing_child_input_window_divisor: int
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
 class SieveLeaseRequest(TypedDict):
