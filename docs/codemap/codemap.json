@@ -3774,7 +3774,7 @@
      "path": "src/authority/principal_standing.rs",
      "purpose": "FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -21044,7 +21044,7 @@
      "path": "src/deletion/gate.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -29134,6 +29134,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/archive_delete.rs",
+     "purpose": "Who may delete one record the cleanup archived (ARCH-0073 §7, OF-449 L4), judged from the vault's own rows…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -29420,7 +29430,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "mod": 2,
       "re-export": 19
      }
@@ -37718,6 +37728,32 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArchiveDeleteBatchResult",
+      "ArchiveDeleteConfirmEntry",
+      "ArchiveDeleteConfirmOutcome",
+      "ArchiveDeleteConfirmRequest",
+      "ArchiveDeleteError",
+      "ArchiveDeleteExpectation",
+      "ArchiveDeleteItem",
+      "ArchiveDeletePreviewEntry",
+      "ArchiveDeletePreviewOutcome",
+      "ArchiveDeletePreviewRequest",
+      "ArchiveDeletePreviewRow",
+      "ArchiveDeletePreviewView",
+      "ArchiveDeleteReceiptView"
+     ],
+     "path": "src/memory/archive_delete_wire.rs",
+     "purpose": "The served archive delete (ARCH-0073 §7, OF-449 L4): `vault.archive.delete.preview` and…",
+     "surface": {
+      "enum": 2,
+      "fn": 2,
+      "struct": 11
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -37725,8 +37761,9 @@
       "ArchivePurgePreview"
      ],
      "path": "src/memory/archive_purge.rs",
-     "purpose": "Owner-only archive impact preview and confirmed ARCH-0038 delete",
+     "purpose": "Archive impact preview and confirmed ARCH-0038 delete: the owner's door, and its checked siblings for every…",
      "surface": {
+      "crate-vis": 6,
       "fn": 4,
       "struct": 2
      }
@@ -38123,7 +38160,7 @@
      "path": "src/memory/claims/lifecycle.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6
      }
     },
@@ -38782,7 +38819,7 @@
      "path": "src/memory/entity_delete.rs",
      "purpose": "Owner-bound preview and one-call unshare-before-delete confirmation",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -39304,7 +39341,7 @@
      "surface": {
       "crate-vis": 21,
       "mod": 27,
-      "re-export": 55
+      "re-export": 56
      }
     },
     {
@@ -63154,7 +63191,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1164
+      "fn": 1166
      }
     },
     {
@@ -70784,7 +70821,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71008,7 +71045,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 248,
+     "files": 249,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71689,7 +71726,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4575,
+   "source_files": 4577,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82112,7 +82149,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1133
+      "fn": 1135
      }
     },
     {
@@ -83373,7 +83410,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1134
+      "fn": 1136
      }
     },
     {
@@ -98978,6 +99015,19 @@
       "ArchiveCampaignProgramRequest",
       "ArchiveCell",
       "ArchiveCellJudgment",
+      "ArchiveDeleteBatchResult",
+      "ArchiveDeleteConfirmEntry",
+      "ArchiveDeleteConfirmOutcome",
+      "ArchiveDeleteConfirmRequest",
+      "ArchiveDeleteError",
+      "ArchiveDeleteExpectation",
+      "ArchiveDeleteItem",
+      "ArchiveDeletePreviewEntry",
+      "ArchiveDeletePreviewOutcome",
+      "ArchiveDeletePreviewRequest",
+      "ArchiveDeletePreviewRow",
+      "ArchiveDeletePreviewView",
+      "ArchiveDeleteReceiptView",
       "ArchiveDescriptor",
       "ArchiveOutputRef",
       "ArchiveOutputScore",
@@ -102776,8 +102826,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 955,
-      "struct": 2978
+      "enum": 957,
+      "struct": 2989
      }
     },
     {
