@@ -1,4 +1,4 @@
-# CUA PR1: S2 runner and S3 checkers
+# CUA: S2 runner, S3 checkers and S5 drift protocol
 
 This is harness source, not a collected direction screen. On this head
 `BrowserConfig::guest()` has no dynamic S1 transport. Linux `run` therefore
@@ -13,12 +13,14 @@ operator boolean or a standalone CDP guest.
 oneiron-bench cua taskgen --manifest crates/oneiron-bench/fixtures/cua/manifest.json --seed 20261021 --out /srv/cua/frozen
 oneiron-bench cua run --plan /srv/cua/frozen/plan.json --server /srv/bin/oneiron --pinned-config /srv/cua/pins.json --out /srv/cua/results
 oneiron-bench cua report --in /srv/cua/results/rows.jsonl --out /srv/cua/report
-oneiron-bench cua drift
+oneiron-bench cua drift --plan /srv/cua/frozen/s5.json --programs /srv/cua/submissions.json --out /srv/cua/drift
 ```
 
 `run` refuses non-Linux hosts with `linux_execution_required` in its CLI parser.
-`drift` emits typed `not_implemented`, phase S5, PR2. No PR2 replay or repair is
-aliased to a fresh solve. Use prebuilt binaries on a booked, isolated Linux host.
+`drift` now freezes S5 assignments and emits terminal unavailable rows on this
+head. Its live Engine adapter is still blocked by FIX 8061. See `CUA-S5.md`
+for the protocol, input schema, lifecycle/repair state machine and limitations.
+No replay or repair is aliased to a fresh solve. Use prebuilt binaries on a booked, isolated Linux host.
 No Cargo dependency was added. No tests are part of this change.
 
 `taskgen` freezes 51 fresh cells: B15/C15/C+6/D15. It pairs three evaluation seeds
@@ -58,16 +60,17 @@ Unknown fields are rejected. All digest fields used for file pins are BLAKE3.
 | `cash_ledger`, `campaign_id` | Absolute persistent campaign ledger path and deployment's campaign identity. Changing output directories does not reset this ledger. |
 
 Each arm has `models_body` (absolute path), `models_digest`, `routes`,
-`role:"generative_reasoner"`, `thinking_evidence:{path,digest}`,
+`role:"browser_planner"`, `thinking_evidence:{path,digest}`,
 `decision_recipe_digest` (null or engine native recipe fingerprint), and
 `deployment_evidence` (null or `{path,digest}`). `models_body` is the body of a
-`[models]` table, without the outer prefix: use `[roles.generative_reasoner]`,
+`[models]` table, without the outer prefix: use `[roles.browser_planner]`,
 `[providers.NAME]`, etc. The shipped engine's `ModelsConfig::from_toml` parses it.
 Use absolute file paths throughout this runtime body; deployed prompt text stays
 in runtime files/packages. Multiline TOML string literals are refused by the
 small table-prefix writer. Dreamer/workflow backgrounds must be disabled.
-Generative transport fallback ladders are refused: these are diagnostic arms,
-not a harness implementation of E5's semantic handoff.
+The browser planner must have one exact pinned rung. E5 now supplies semantic
+handoff to the separately configured generative/chat seat; the harness does
+not implement that miss counter or hot-swap model configuration.
 
 Thinking evidence is JSON with `attested:true`, exact `requested_model` and
 `effort` (D requires `medium`). Deployment evidence binds `models_digest`.
@@ -97,8 +100,10 @@ this separate pinned deployment attestation; a chat reply without an exact
 model is always `model_id_unattested`. A different returned ID is
 `model_id_mismatch` and is withheld before the engine can execute generated code.
 B must use exact `-sub` slugs. Noncash routes must be subscription or separately
-attested owned models. C/C+/D remain labelled diagnostic approximations on
-`generative_reasoner`; no `browser_planner` binding is invented.
+attested owned models. B/C/C+/D now pin `browser_planner`; configured roles are
+recorded per run, separately from observed role receipts. House model aliases
+`oneiron-llama/<epoch>/<manifest digest>` map to the attested owned route's pin;
+the provider ledger retains the raw alias, epoch and manifest digest.
 
 A cash route supplies `tariff` with `version`,
 `input_microusd_per_million`, `output_microusd_per_million`,
@@ -159,9 +164,10 @@ F5 600s/60. F5 inherits S1's research cap assumption. Setup/candidate/drain/tota
 elapsed times are separate. Reports show observed medians, missing counts and
 successful-run medians separately, never p95 or success-only all-assigned latency.
 
-E6 field provenance is `unavailable_e6`; E4 TASK-before-planner is
-`unavailable_e4`; E3 monitoring is unavailable; E5 ratified planner routing is
-unavailable. Physical attempts and raw usage are archived, but incomplete public
+E6 field provenance is `unavailable_e6`; E3 monitoring is `unavailable_e3`.
+E4 TASK-before-planner and E5 browser-planner routing are present. A direct
+library call or configured role alone does not prove whole-TASK model freedom
+or complete observed role coverage. Physical attempts and raw usage are archived, but incomplete public
 rung/stage joins stay unavailable. Engine units are not dollars. GPU kernel
 seconds, actual billing, S4 author yield and N=1/5/20 amortisation stay unavailable
 without their own evidence. No model-free whole-task claim or direction-screen
