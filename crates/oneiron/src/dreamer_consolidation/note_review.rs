@@ -193,7 +193,7 @@ impl ConsolidationExecutor<'_> {
         let request =
             match Self::note_request(&call, note.id, &note.markdown, note.sealed_pad, &scope) {
                 Ok(request) => request,
-                Err(error) => return Ok(Some(charges.park(&error.to_string()))),
+                Err(error) => return Ok(Some(charges.park_on_error(&error))),
             };
         let mut request =
             match ctx
@@ -201,13 +201,18 @@ impl ConsolidationExecutor<'_> {
                 .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &call.inference)
             {
                 Ok(request) => request.into_request(),
-                Err(error) => return Ok(Some(charges.park(&error.to_string()))),
+                Err(error) => return Ok(Some(charges.park_on_error(&error))),
             };
         if let Err(error) = super::roles::bind_reasoning(ctx.vault, call.backend, &mut request) {
-            return Ok(Some(charges.park(&error.to_string())));
+            return Ok(Some(charges.park_on_error(&error)));
         }
         let Ok(hash) = request.canonical_hash() else {
-            return Ok(Some(charges.park("note review request hash failed")));
+            // It waits on no owner act: it resumes after its retry delay
+            // (OF-193a).
+            return Ok(Some(charges.park_for(
+                "note review request hash failed",
+                DreamerParkCause::Retry,
+            )));
         };
         let step = DurableStepContext {
             vault: ctx.vault,
@@ -279,7 +284,7 @@ impl ConsolidationExecutor<'_> {
         }
         let reply = match extraction_reply(&response) {
             Ok(reply) => reply,
-            Err(error) => return Ok(Some(charges.park(&error.to_string()))),
+            Err(error) => return Ok(Some(charges.park_on_error(&error))),
         };
         let importance = reply
             .importance

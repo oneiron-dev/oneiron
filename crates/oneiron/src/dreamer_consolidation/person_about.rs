@@ -637,7 +637,12 @@ impl<E> PersonAboutExecutor<'_, E> {
                 usize::MAX,
             );
             if text.is_empty() {
-                return Ok(charges.park("the model wrote an empty about line"));
+                // An empty line waits on no owner act: it resumes after its
+                // retry delay (OF-193a).
+                return Ok(charges.park_for(
+                    "the model wrote an empty about line",
+                    DreamerParkCause::Retry,
+                ));
             }
             lines.push(AboutLine { band, text });
             below = Some(band_digest);

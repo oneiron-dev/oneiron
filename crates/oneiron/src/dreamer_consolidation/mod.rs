@@ -52,6 +52,7 @@ mod partition;
 mod persistence;
 mod person_about;
 mod provenance;
+mod recipe_failure;
 pub(crate) mod redirty;
 mod residency;
 mod resident_dream;

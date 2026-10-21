@@ -46,7 +46,7 @@ mod compaction_check;
 mod free_time;
 mod run_log;
 use super::skill_author::CoachSkillAuthor;
-use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
+use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
 use crate::decision_host::DecisionHost;
 use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, RunBackend, Seat};
@@ -1283,13 +1283,21 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             status.dreamer.state = WorkState::Working;
             status.dreamer.started += 1;
         });
+        // The kind of an attempt that ends without its work because the host
+        // lends no resident instruction: it still ends (a park would strand
+        // the nightly item, a Retry would loop every pass), but the status
+        // says why instead of counting it completed (Engine 10-21, ruling a).
+        let mut unserved = None;
         let outcome = if attempt.status.payload.attempt_type
             == oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
         {
             match self.resident {
                 Some(lend) => lend.dream(attempt, ctx).await,
                 // Without the host's instruction no resident dreams tonight.
-                None => Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+                None => {
+                    unserved = Some(oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND);
+                    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                }
             }
         } else if attempt.status.payload.attempt_type
             == oneiron::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
@@ -1299,7 +1307,11 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             // voice, and its item ends without its work.
             match self.resident {
                 Some(lend) => lend.dream(attempt, ctx).await,
-                None => Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+                None => {
+                    unserved =
+                        Some(oneiron::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND);
+                    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                }
             }
         } else if attempt.status.payload.attempt_type
             == oneiron::dreamer_runner::DREAMER_TASK_REALIZE_ATTEMPT_KIND
@@ -1335,10 +1347,26 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         } else {
             self.inner.execute(attempt, ctx).await
         };
+        if let Some(attempt_kind) = unserved {
+            tracing::info!(
+                code = "dreamer_no_host_instruction",
+                attempt_kind,
+                "a resident's attempt ended unserved: the host lends no resident instruction"
+            );
+        }
         self.status.update(|status| {
             status.dreamer.state = WorkState::Waiting;
             match &outcome {
-                Ok(DreamerAttemptExecution::Completed { .. }) => status.dreamer.completed += 1,
+                Ok(DreamerAttemptExecution::Completed { .. }) => match unserved {
+                    Some(kind) => {
+                        status.dreamer.unserved += 1;
+                        status.dreamer.last_unserved = Some(UnservedNote {
+                            reason: UnservedReason::NoHostInstruction,
+                            attempt_kind: kind.to_owned(),
+                        });
+                    }
+                    None => status.dreamer.completed += 1,
+                },
                 Ok(other) => {
                     status.dreamer.last_error = Some(format!("{other:?}"));
                 }

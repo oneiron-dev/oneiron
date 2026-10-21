@@ -268,7 +268,13 @@ impl ConsolidationExecutor<'_> {
             );
             let locality = match call.inference.selected_locality() {
                 Some(locality) => locality,
-                None => return Ok(charges.park("nightly narrative needs locality")),
+                // A missing locality, a request that did not hash and an
+                // empty narrative wait on no owner act: each resumes after
+                // its retry delay (OF-193a).
+                None => {
+                    return Ok(charges
+                        .park_for("nightly narrative needs locality", DreamerParkCause::Retry));
+                }
             };
             let mut scope = Scope::default();
             scope.world = first.world;
@@ -327,15 +333,19 @@ impl ConsolidationExecutor<'_> {
                 &call.inference,
             ) {
                 Ok(request) => request.into_request(),
-                Err(error) => return Ok(charges.park(&error.to_string())),
+                Err(error) => return Ok(charges.park_on_error(&error)),
             };
             if let Err(error) = super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)
             {
-                return Ok(charges.park(&error.to_string()));
+                return Ok(charges.park_on_error(&error));
             }
             let hash = match request.canonical_hash() {
                 Ok(hash) => hash,
-                Err(_) => return Ok(charges.park("nightly narrative hash failed")),
+                Err(_) => {
+                    return Ok(
+                        charges.park_for("nightly narrative hash failed", DreamerParkCause::Retry)
+                    );
+                }
             };
             let step = DurableStepContext {
                 vault: ctx.vault,
@@ -397,7 +407,7 @@ impl ConsolidationExecutor<'_> {
                 })
                 .collect();
             if narrative.trim().is_empty() {
-                return Ok(charges.park("empty nightly narrative"));
+                return Ok(charges.park_for("empty nightly narrative", DreamerParkCause::Retry));
             }
             let candidate = ClaimCandidate::new(
                 "dreamer.arc.summary",
@@ -490,7 +500,9 @@ impl ConsolidationExecutor<'_> {
             Ok(()) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
             }),
-            Err(error) => Ok(charges.park(&error.to_string())),
+            // A proposal that moved before the merge commits again on resume;
+            // a gate only an owner act opens keeps the private park.
+            Err(error) => Ok(charges.park_on_error(&error)),
         }
     }
 }

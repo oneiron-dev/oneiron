@@ -214,7 +214,9 @@ pub async fn run_task_realize(
         .collect();
     let answer = answer.trim();
     if answer.is_empty() {
-        return Ok(charges.park("the model wrote an empty answer"));
+        // An empty answer waits on no owner act: it resumes after its retry
+        // delay (OF-193a).
+        return Ok(charges.park_for("the model wrote an empty answer", DreamerParkCause::Retry));
     }
     let mut notes = Vec::new();
     for part in super::note_parts::parts(answer, crate::note::MAX_NOTE_BYTES) {

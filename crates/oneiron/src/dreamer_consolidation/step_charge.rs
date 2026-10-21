@@ -1,11 +1,12 @@
 //! Attempt-local step spend due to the shared wake ledger after memo replay.
 
+use super::recipe_failure::RecipeFailure;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{DreamerParkCause, DreamerRunnerStore};
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::{LlmResponse, LlmUsage, Vault};
 
 /// A checkpoint charges only steps without a durable paid receipt. An earlier
@@ -22,9 +23,20 @@ impl StepChargeTally {
         self.park_for(DREAMER_HARD_CUT_PARK_REASON, DreamerParkCause::Checkpoint)
     }
 
-    /// Parks with `reason` and settles what the attempt already spent.
+    /// Parks with `reason` and settles what the attempt already spent, in a
+    /// private park no later pass resumes.
     pub(super) fn park(&self, reason: &str) -> DreamerAttemptExecution {
         self.park_for(reason, DreamerParkCause::Other)
+    }
+
+    /// Parks on an engine `error` a recipe step met, with its text as the
+    /// reason as before: privately when only an owner act clears it, else as
+    /// a Retry a later pass resumes (OF-193a, [`RecipeFailure`]).
+    pub(super) fn park_on_error(&self, error: &Error) -> DreamerAttemptExecution {
+        self.park_for(
+            &error.to_string(),
+            RecipeFailure::of_error(error).park_cause(),
+        )
     }
 
     /// [`Self::park`] with a typed cause, for a failed model call or step.
