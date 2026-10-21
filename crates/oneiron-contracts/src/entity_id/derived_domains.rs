@@ -234,9 +234,15 @@ pub const ASSET_BODY_FILE: &[u8] = b"oneiron/asset-body-file/v1";
 /// bytes) and its length (u64 big-endian).
 pub const ASSET_BODY_HELD: &[u8] = b"oneiron/asset-body-held/v1";
 
+/// One mark of a key a retained repository blob holds (`origin::secret_marks`,
+/// FIX 7608). Parts: schema (u16be), operation, store identity, tagged source,
+/// blob OID, tagged path, detector reason, content kind, tagged placement. No
+/// key byte, custody id, handle or time is a part.
+pub const REPO_SECRET_MARK: &[u8] = b"oneiron:repo-secret-mark:v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 54] = [
+pub(crate) const ALL: [&[u8]; 55] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -291,4 +297,5 @@ pub(crate) const ALL: [&[u8]; 54] = [
     FOREIGN_WORLD,
     ASSET_BODY_FILE,
     ASSET_BODY_HELD,
+    REPO_SECRET_MARK,
 ];

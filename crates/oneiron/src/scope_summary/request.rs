@@ -62,6 +62,12 @@ pub enum ScopeSummaryTarget {
     Session {
         session: EntityId,
     },
+    /// A conversation's arc (FIX 7509 P8): written from the summary lines
+    /// of the closed sittings below `scope`, never from its own earlier
+    /// body. It lands on no turn.
+    Arc {
+        scope: ScopeSelector,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +102,8 @@ pub(crate) struct ScopeSummaryPlan {
     pub(crate) editor_text: Option<String>,
     pub(crate) editor_frontier: Option<Vec<u8>>,
     pub(crate) policy_frontier: [u8; 32],
+    /// An Arc's sittings, their summary lines and its source set (P8).
+    pub(crate) arc: Option<super::arc_sources::ArcSources>,
 }
 
 impl ScopeSummaryPlan {
@@ -133,6 +141,9 @@ impl ScopeSummaryPlan {
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
     ) -> Result<ScopeSummaryEvidence> {
+        if let Some(arc) = &self.arc {
+            return crate::dreamer_consolidation::arc_evidence_in_txn(vault, txn, arc);
+        }
         scope_summary_evidence_in_txn(vault, txn, &self.sources, self.session.is_some())
     }
 
@@ -177,7 +188,7 @@ pub(super) fn enqueue_in_txn(
     )
 }
 
-fn enqueue_with_lineage_in_txn(
+pub(super) fn enqueue_with_lineage_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     input: Value,
@@ -227,6 +238,10 @@ pub(super) fn plan_in_txn(
     let editor_frontier = previous
         .map(|id| crate::entity_doc::summary_frontier_in_txn(vault, txn, &id))
         .transpose()?;
+    if let ScopeSummaryTarget::Arc { scope } = &request.target {
+        let options = (purpose, previous, keep, editor_frontier);
+        return super::arc_sources::plan_in_txn(vault, txn, input, &request, scope, options);
+    }
     let session = match &request.target {
         ScopeSummaryTarget::Session { session } => Some(*session),
         _ => None,
@@ -258,6 +273,7 @@ pub(super) fn plan_in_txn(
             (Some(scope), Some(trunk), false, None)
         }
         ScopeSummaryTarget::Session { .. } => (None, None, false, None),
+        ScopeSummaryTarget::Arc { .. } => return Err(invalid("an arc plans from its sittings")),
     };
     if as_record && land_on.is_none() {
         return Err(invalid("as_record requires land_on"));
@@ -306,6 +322,7 @@ pub(super) fn plan_in_txn(
         editor_frontier,
         policy_frontier: crate::gate::resolve_policy_manifest(&vault.store, txn)?
             .read_frontier_hash()?,
+        arc: None,
     })
 }
 
@@ -342,6 +359,7 @@ impl Vault {
                 ..
             } => "sub_agent_merge_artifact",
             ScopeSummaryTarget::Sources { scope: None, .. } => NOTE_SET_PURPOSE,
+            ScopeSummaryTarget::Arc { .. } => super::arc::ARC_PURPOSE,
             _ => "session_recap",
         };
         let previous = derivation::current_in_txn(self, txn, request, purpose)?;
@@ -462,6 +480,7 @@ impl Vault {
             };
             super::status::record_result_in_txn(self, txn, attempt, summary, landed.as_ref())?;
             derivation::register_in_txn(self, txn, &derivation::decode(&plan.input)?, summary)?;
+            super::arc::landed_in_txn(self, txn, plan, evidence, summary)?;
             Ok((true, reply))
         });
         settle_header(&requester, outcome)
@@ -498,6 +517,7 @@ impl Vault {
                 )
                 .into());
             }
+            super::arc_validation::validate_landing(plan, composed)?;
             let now = self.store.clock.now_recorded_at();
             mint_in_txn(
                 self,
@@ -531,7 +551,8 @@ impl Vault {
                     generated_keep_hash: *blake3::hash(composed.keep.as_bytes()).as_bytes(),
                     source_set: plan
                         .session
-                        .map(|session| super::session::source_set_id(&session, &plan.sources)),
+                        .map(|session| super::session::source_set_id(&session, &plan.sources))
+                        .or_else(|| plan.arc.as_ref().map(|arc| arc.source_set)),
                     line_sources: composed.line_sources.clone(),
                 },
             };
@@ -543,6 +564,7 @@ impl Vault {
                 .unzip();
             super::status::record_result_in_txn(self, txn, attempt, id, landed.as_ref())?;
             derivation::register_in_txn(self, txn, &input, id)?;
+            super::arc::landed_in_txn(self, txn, plan, evidence, id)?;
             Ok(((id, landed), reply.flatten()))
         });
         settle_header(&requester, outcome)
@@ -636,6 +658,9 @@ pub(super) fn encode_request(request: &ScopeSummaryRequest) -> Value {
         }
         // Encoded above, with no requester.
         ScopeSummaryTarget::Session { .. } => {}
+        ScopeSummaryTarget::Arc { scope } => {
+            entries.push((Value::from(super::arc::ARC_KEY), scope_value(scope)));
+        }
     }
     Value::Map(entries)
 }
@@ -730,6 +755,9 @@ pub(super) fn decode_target(input: &Value) -> Result<ScopeSummaryTarget> {
             ScopeSummaryTarget::Session {
                 session: declared_id(Some(session))?,
             }
+        }
+        (None, None, None, None) if field(super::arc::ARC_KEY).is_some() => {
+            super::arc::decode_target(field(super::arc::ARC_KEY))?
         }
         _ => return Err(invalid("summary request names no target")),
     };
