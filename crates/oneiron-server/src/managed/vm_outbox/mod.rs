@@ -34,7 +34,7 @@ pub(super) use self::endpoint::{
     companion_revision, park_companion, register_backup, resume_companion,
 };
 pub use self::guest::run_vm_outbox;
-pub use self::host::{VmOutboxAttachment, VmOutboxHostRoots};
+pub use self::host::{VmOutboxAttachment, VmOutboxHostRoots, read_vm_backup_label};
 
 use self::local::Owner;
 use self::store::Store;
@@ -59,6 +59,11 @@ trait Roots: Send {
     /// Whether this end carries `member` of `kind` (a guest carries only its
     /// registered backup label's).
     fn takes(&self, kind: VmOutboxKind, member: &str) -> bool;
+    /// The backup label this end's engine registered, which the guest names
+    /// to the host each turn; `None` before a registration, and on the host.
+    fn backup_label(&self) -> Option<String> {
+        None
+    }
 }
 
 /// One end of the carrier: its side, whose tree it writes, its roots, its
