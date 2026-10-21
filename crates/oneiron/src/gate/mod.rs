@@ -147,9 +147,10 @@ pub(crate) use self::doors::check_federated_claim_admission;
 pub(crate) use self::doors::{
     ClaimGateWrite, GateWriteMode, RecordedClaimGateDecision, check_claim_policy_for_write,
     check_claim_policy_for_write_with_preflight_decision, check_claim_policy_for_write_with_record,
-    check_edge_provenance_claim_policy, check_reserved_claim_policy,
-    check_unattributed_claim_lineage, claim_consent_binding_parts, claim_source_trust_admits_auto,
-    external_effect_decision_on, standing_outbound_grant_binding_parts, validate_write_envelope,
+    check_claim_policy_for_write_with_record_with_reader, check_edge_provenance_claim_policy,
+    check_reserved_claim_policy, check_unattributed_claim_lineage, claim_consent_binding_parts,
+    claim_source_trust_admits_auto, external_effect_decision_on,
+    standing_outbound_grant_binding_parts, validate_write_envelope,
 };
 pub(crate) use self::foreign_agent::{
     introduced_foreign_agents, resolve as resolve_foreign_agent_ceiling,
@@ -218,7 +219,7 @@ pub(crate) use self::share::check_share_create_policy;
 pub(crate) use self::share::share_create_effect;
 pub(crate) use self::skill_edit_goal_policy::SkillEditGoalPolicy;
 pub(crate) use self::skill_tradeoff_policy::{SkillTradeoffLimits, skill_tradeoff_limits_in_txn};
-pub(crate) use self::voice_serving::VoiceServingLimits;
+pub(crate) use self::voice_serving::VoiceServingPolicyReceipt;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{

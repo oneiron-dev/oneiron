@@ -126,6 +126,7 @@ pub fn run_attribution_audit_with_decisions(
             evidence: &fixture.evidence,
             hunks: &[],
             floor,
+            sources: None,
         };
         let (split, trace) = classify_split_traced(decisions, &request, &[])?;
         let answer = split

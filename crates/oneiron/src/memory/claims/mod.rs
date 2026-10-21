@@ -17,7 +17,7 @@ use crate::claim::{
 use crate::deletion::{DeleteReason, DeletionGateContext};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{Error, ErrorKind};
+use crate::error::Error;
 use crate::serialize::msgpack_value_to_json;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor};

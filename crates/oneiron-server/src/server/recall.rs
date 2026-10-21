@@ -64,8 +64,7 @@ impl SyncServer {
         let effort = input.effort.map_or(Effort::Medium, RecallEffort::level);
         let rerank = self.door_rerank(effort, actor, class)?;
         let media = self.recall_media(&input)?;
-        let refused = Mutex::new(None);
-        let embed = self.recall_embed_media(input.effort, media, &refused, payer);
+        let embed = self.recall_embed_media(input.effort, media, payer);
         let arrived = Instant::now();
         let (_, budget) = oneiron::memory::resolve_recall_dial(
             input.effort,
@@ -81,9 +80,7 @@ impl SyncServer {
             rerank: rerank.engine(),
             ..RecallDoor::now()
         };
-        let pack = oneiron::task_verb::sdk::recall_at_door_seeded(memory, input, embed, &door);
-        media_refused(refused)?;
-        pack
+        oneiron::task_verb::sdk::recall_at_door_seeded(memory, input, embed, &door)
     }
 
     /// A recall's `media` (OF-370), decoded before any work, as the context
@@ -111,29 +108,23 @@ impl SyncServer {
     /// [`Self::recall_embed`] plus the request's decoded `media`, embedded
     /// into its declared space through the context pack's shared seed
     /// embedding once the request is admitted, as the query is. A refused
-    /// embedding is kept in `refused` for the door to answer with: the recall
-    /// never answers without its media. Each call bills `payer`.
+    /// embedding is the recall's answer at once, before any list runs: the
+    /// recall never answers without its media (FIX 2160). Each call bills
+    /// `payer`.
     fn recall_embed_media<'a>(
         &'a self,
         effort: Option<RecallEffort>,
         media: Option<DecodedMediaQuery>,
-        refused: &'a Mutex<Option<MemoryError>>,
         payer: Option<&'a PayerPerson>,
-    ) -> impl FnOnce(&str) -> RecallQueryVectors + 'a {
+    ) -> impl FnOnce(&str) -> MemoryResult<RecallQueryVectors> + 'a {
         let embed = self.recall_embed(effort, payer);
         move |query| {
             let mut vectors = embed(query);
             if let Some(media) = media {
-                match self.recall_media_vectors(media, payer) {
-                    Ok(seeds) => vectors.media.extend(seeds),
-                    Err(refusal) => {
-                        if let Ok(mut slot) = refused.lock() {
-                            *slot = Some(refusal);
-                        }
-                    }
-                }
+                let seeds = self.recall_media_vectors(media, payer)?;
+                vectors.media.extend(seeds);
             }
-            vectors
+            Ok(vectors)
         }
     }
 
@@ -365,19 +356,16 @@ impl SyncServer {
                     rerank: rerank.engine(),
                     hyde: hyde.as_ref().map(|hyde| hyde.binding()),
                 };
-                let refused = Mutex::new(None);
                 // A door's own recall is the owner's: no run funds it.
-                let embed = server.recall_embed_media(input.effort, media, &refused, None);
-                let answer = match room {
+                let embed = server.recall_embed_media(input.effort, media, None);
+                match room {
                     Some(room) => memory
                         .for_room_turn(room)?
                         .recall_at_door_seeded(input, embed, &door),
                     None => {
                         oneiron::task_verb::sdk::recall_at_door_seeded(&memory, input, embed, &door)
                     }
-                };
-                media_refused(refused)?;
-                answer
+                }
             });
             let joined = match budget {
                 None => task.await,
@@ -500,12 +488,6 @@ impl SyncServer {
             }
         }
     }
-}
-
-/// The refusal a recall's media embedding kept, which the door answers with
-/// in place of the pack.
-fn media_refused(refused: Mutex<Option<MemoryError>>) -> MemoryResult<()> {
-    refused.into_inner().ok().flatten().map_or(Ok(()), Err)
 }
 
 /// A media query's refusal in the facade's vocabulary: the caller's mistake
