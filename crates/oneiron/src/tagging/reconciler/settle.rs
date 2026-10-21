@@ -6,7 +6,9 @@ use super::call::Called;
 use super::claim::PreparedCall;
 use super::coordinator::{PreparedTagging, TaggingReconciler};
 use crate::EntityId;
-use crate::attempt_queue::{AttemptQueue, AttemptRecord, CompleteAttempt, FailAttempt, RetryAttempt};
+use crate::attempt_queue::{
+    AttemptQueue, AttemptRecord, CompleteAttempt, FailAttempt, RetryAttempt,
+};
 use crate::error::Result;
 use crate::memory::extraction::EncoderOutput;
 use crate::tagging::history;
@@ -14,7 +16,9 @@ use crate::tagging::input::{TurnInput, turn_text_in_txn};
 use crate::tagging::marker::{TaggingMode, retry_marker_in_txn};
 use crate::tagging::save::{self, Answer};
 use crate::tagging::tags::tagged_messages_absent_in_txn;
-use crate::tagging::trace::{SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace, attempt_hex};
+use crate::tagging::trace::{
+    SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace, attempt_hex,
+};
 
 /// Failure reason of a marker whose payload this build cannot read.
 const UNREADABLE_MARKER: &str = "unreadable_tagging_marker";
@@ -122,9 +126,8 @@ impl TaggingReconciler {
         prior_retries: u32,
         trace: TaggingTrace,
     ) -> Result<TaggingTrace> {
-        self.vault.try_with_write_txn_grouped(|txn| {
-            self.defer_in_txn(txn, record, prior_retries, trace)
-        })
+        self.vault
+            .try_with_write_txn_grouped(|txn| self.defer_in_txn(txn, record, prior_retries, trace))
     }
 
     /// [`Self::defer`], in the caller's transaction.
