@@ -8,13 +8,16 @@
 //! Every TURN a line cites is read and pinned as any summary's source is,
 //! with each MESSAGE it was read from; only those read in place of a line
 //! are shown. Each sitting's summary is pinned beside them. A TURN the Arc
-//! must read that its Dreamer may not is named, and the Arc stays owed.
+//! must read that its Dreamer may not, or one a MESSAGE of which its read
+//! withholds (FIX 8059), is named, and the Arc stays owed: typed
+//! `arc_source_unavailable`, never an executor error.
 
 use super::super::call_labels::{CallLabelMap, LabelKind};
 use super::super::resources::document_version;
 use super::super::turn_text::{TurnText, dreamer_read};
 use super::arc_claims::ArcClaimEntry;
-use super::{ScopeSummaryEvidence, scope_summary_evidence_in_txn, source_pin};
+use super::arc_output::{Inherited, inherit};
+use super::{ScopeSummaryEvidence, evidence_in_txn, source_pin};
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::error::Result;
 use crate::scope_summary::ArcSources;
@@ -35,6 +38,9 @@ pub(super) struct ArcView {
     pub(super) claims: String,
     /// The TURNs whose words the call already shows.
     pub(super) opened: BTreeSet<EntityId>,
+    /// How the sittings' lines shown whole cite each TURN they name, whole
+    /// or by the slices each line recorded (FIX 8289).
+    pub(super) inherited: BTreeMap<EntityId, Inherited>,
     /// Each claim shown, which the Arc depends on once it lands.
     pub(super) claim_ids: Vec<EntityId>,
     /// Each claim shown, by label and words, for an Arc composed in parts
@@ -64,7 +70,7 @@ pub(crate) fn arc_evidence_in_txn(
     txn: &heed::RoTxn<'_>,
     arc: &ArcSources,
 ) -> Result<ScopeSummaryEvidence> {
-    let mut evidence = scope_summary_evidence_in_txn(vault, txn, &arc.turns, true)?;
+    let mut evidence = evidence_in_txn(vault, txn, &arc.turns, true, true)?;
     let read: BTreeSet<String> = evidence
         .source_versions
         .iter()
@@ -74,7 +80,7 @@ pub(crate) fn arc_evidence_in_txn(
     let unavailable = arc
         .turns
         .iter()
-        .find(|turn| !read.contains(&turn.to_hex()))
+        .find(|turn| !read.contains(&turn.to_hex()) || evidence.withheld.contains(turn))
         .copied();
     let words: BTreeMap<EntityId, String> = evidence
         .turns
@@ -108,6 +114,9 @@ pub(crate) fn arc_evidence_in_txn(
             if line.whole {
                 view.lines
                     .push_str(&format!("- {} [{}]\n", line.words, refs.join(", ")));
+                for turn in &line.turns {
+                    inherit(&mut view.inherited, *turn, &line.source_spans);
+                }
                 continue;
             }
             // A line not the Arc's whole is its TURNs, read again.
