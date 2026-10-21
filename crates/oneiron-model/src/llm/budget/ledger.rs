@@ -41,8 +41,8 @@ pub(super) struct ReserveAllocation {
 #[derive(Debug)]
 pub(super) enum ReservePlan {
     Admit(ReserveAllocation),
-    /// A matched row cap refuses the call. Deliberate policy, never capacity:
-    /// this denial is final and never yields a local-continuation lease.
+    /// A matched row cap refuses the call. Deliberate policy, never capacity.
+    /// Free local work never reaches it: its lease is unmetered.
     DeniedByCap,
     /// Global, shared-slice, or floor-headroom capacity refuses the call.
     DeniedByCapacity,
