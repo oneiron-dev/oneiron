@@ -21,10 +21,12 @@ use std::sync::Arc;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
+mod client;
 mod door;
 mod egress;
 mod ladder;
 
+pub use client::{build_single_hop_client, build_web_fetch_client};
 pub use door::{WebCrawlRequest, WebFetchRequest};
 pub use egress::{HOSTED_INFRASTRUCTURE_REASON, HostedEgressGuard, HostedInfrastructureRefusal};
 mod render;
@@ -244,10 +246,11 @@ pub trait HeadlessRenderer: Send + Sync {
     /// [`Self::render_html`] on a managed (hosted) node (SCAN C447,
     /// FIX 6101): a browser that sees its own traffic checks every
     /// navigation, redirect and request it makes, by the address it connects
-    /// to ([`HostedEgressGuard::refuses`]), and fails a refused one with
-    /// [`RendererError::hosted_infrastructure`]. The default navigates
-    /// unchecked; the engine then checks only the requested URL and the
-    /// browser-final URL.
+    /// to ([`HostedEgressGuard::check_request`]), and fails a refused one with
+    /// [`RendererError::hosted_infrastructure`]; a host that performs each
+    /// request itself can send it with [`build_single_hop_client`]. The
+    /// default navigates unchecked; the engine then checks only the requested
+    /// URL and the browser-final URL.
     fn render_html_guarded(
         &self,
         url: &str,
@@ -510,6 +513,10 @@ pub struct NativeReadabilityRenderer {
 }
 
 impl NativeReadabilityRenderer {
+    /// On a managed (hosted) node, a host that builds its own ladder builds
+    /// `client` with [`build_web_fetch_client`]`(Some(guard))`, so every
+    /// redirect hop it follows is checked too (FIX 7123). A client built
+    /// otherwise is used as handed in: this rung does not rebuild it.
     #[must_use]
     pub fn new(client: reqwest::blocking::Client) -> Self {
         Self {
@@ -612,7 +619,10 @@ pub struct WebFetcher {
 
 impl WebFetcher {
     /// The readability rung is always present. Optional fallbacks stay visible
-    /// as `Unavailable` attempt records when escalation reaches them.
+    /// as `Unavailable` attempt records when escalation reaches them. A host
+    /// that supplies this ladder on a managed node builds the readability
+    /// rung's client with [`build_web_fetch_client`] (see
+    /// [`NativeReadabilityRenderer::new`]).
     ///
     /// # Errors
     /// Returns [`WebFetchError::InvalidRendererSlot`] when the renderer does not

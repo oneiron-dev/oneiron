@@ -59,7 +59,7 @@ impl Vault {
         let (fork, source, home) = match custody {
             Custody::Keep | Custody::NewHost => (false, None, None),
             Custody::Replace(home, _) => (false, None, Some(home)),
-            Custody::Fork(source) => (true, source, None),
+            Custody::Fork(source) => (true, source.map(|(live, _)| live), None),
         };
         let candidacy = match custody {
             Custody::Replace(_, candidacy) => candidacy,
@@ -90,6 +90,11 @@ impl Vault {
                 .ok_or_else(codec_error)?,
             gate_custody.plan_mut(),
         )?;
+        // Every world key pad a row names, through the same plan (KS-5, FIX
+        // 5686 part 2): one its custody retired since takes its row out, a
+        // live one forks with the rest, and a bare reference rests again
+        // once the rows land.
+        let pads = super::pad_custody::require(&mut image, gate_custody.plan_mut(), custody)?;
         let body_custody = gate_custody.plan_mut().source().cloned();
         if fork {
             crate::store::refuse_custody_beside(destination)?;
@@ -216,6 +221,10 @@ impl Vault {
             #[cfg(test)]
             fail_at(RestoreStep::ReceiptCheck)?;
         }
+        // Each pad a row names by reference rests again with the pad its
+        // custody holds, or is withheld by its world's setting; any other is
+        // refused before the vault is kept (KS-5).
+        let pad_notes = super::pad_custody::land(&vault, pads)?;
         room.admit_derived(destination)?;
         let (rebuilt_entities, rebuilt_text_documents, pending_embeddings) =
             rebuild::rebuild(&vault)?;
@@ -253,6 +262,7 @@ impl Vault {
             custody_note: None,
             training_note: vault.training_link_restore_notice(),
             home_table_notes: Vec::new(),
+            pad_notes,
         };
         Ok((made, forked, vault, report))
     }

@@ -14,7 +14,9 @@
 //! A world erase stages one erase intent for every pad of the world custody
 //! holds here, a row or none, in the purge's own transaction, and the
 //! finisher retires them after the commit once the world's destroyed fact
-//! stands. A world delete retires nothing.
+//! stands. A hard erase of one pad row alone stages that key's (FIX 7192).
+//! A world delete retires nothing. A restore plans each pad its image names
+//! through the restore's one plan ([`plan_world_pad`], FIX 5686 part 2).
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
@@ -23,8 +25,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::store::key_custody::{
-    CustodyBinding, CustodyKind, CustodySecret, CustodySubject, EntryState, RetireCause,
-    RetirementIntent, custody_present, stage_retirement_in_txn,
+    CustodyBinding, CustodyKind, CustodyPlan, CustodySecret, CustodySubject, EntryState,
+    Requirement, RetireCause, RetirementIntent, custody_present, stage_retirement_in_txn,
 };
 
 /// A pad's custody item: its key's full id, world (16) | generation (8,
@@ -43,6 +45,37 @@ pub(crate) enum WorldPadCustody {
     Live(Zeroizing<[u8; 32]>),
     /// A retirement reached it: it is never published again.
     Retired,
+}
+
+/// What a restore's plan finds for a pad its image names (KS-5, FIX 5686
+/// part 2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlannedPad {
+    /// The custody the restore takes holds it: a fork copies it.
+    Live,
+    /// Destroyed there, or committed to be: the erase stands.
+    Retired,
+    /// No custody the restore takes holds it.
+    Missing,
+}
+
+/// Plans `item`'s pad through `plan`, the restore's one plan with its claim
+/// keys, bodies and history, so one fork copies them all. A missing pad is
+/// never refused here: what its row needs decides.
+///
+/// # Errors
+///
+/// Custody faults.
+pub(crate) fn plan_world_pad(plan: &mut CustodyPlan, item: &WorldPadItem) -> Result<PlannedPad> {
+    let id = match plan.source() {
+        Some(source) => pad_subject(source, item)?.at(0),
+        None => return Ok(PlannedPad::Missing),
+    };
+    Ok(match plan.require_present(&id)? {
+        Some(Requirement::Live) => PlannedPad::Live,
+        Some(Requirement::Retired) => PlannedPad::Retired,
+        None => PlannedPad::Missing,
+    })
 }
 
 fn pad_subject(binding: &CustodyBinding, item: &WorldPadItem) -> Result<CustodySubject> {
@@ -251,6 +284,74 @@ impl Store {
         }
         for (subject, state) in self.world_pad_subjects(item)? {
             if state != EntryState::Retired {
+                let intent = RetirementIntent {
+                    subject,
+                    through: 0,
+                    cause: RetireCause::Erase,
+                };
+                stage_retirement_in_txn(self, wtxn, &intent)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A local hard erase of one pad row, `item` its key's (FIX 7192):
+    /// stages exactly that subject's retirement in the custody bound here,
+    /// with no census of what custody holds and no read of any state. The
+    /// finisher carries it out after the commit, an entry missing or retired
+    /// already included, and keeps one it cannot carry out yet pending.
+    ///
+    /// # Errors
+    ///
+    /// Custody and storage faults.
+    pub(crate) fn stage_world_pad_key_retirement_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        item: &WorldPadItem,
+    ) -> Result<()> {
+        if self.core.gate_custody_archived() {
+            return Ok(());
+        }
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(());
+        };
+        if !custody_present(custody.binding().root())? {
+            return Ok(());
+        }
+        let intent = RetirementIntent {
+            subject: pad_subject(custody.binding(), item)?,
+            through: 0,
+            cause: RetireCause::Erase,
+        };
+        stage_retirement_in_txn(self, wtxn, &intent)
+    }
+
+    /// [`Self::stage_world_pad_key_retirement_in_txn`] for the pad row `row`
+    /// whose body names no key: a soft-erased pad's header-only shell, hard
+    /// erased (FIX 7192). The one pad custody names whose key derives that
+    /// row id is staged, found by its subjects' names alone: never another
+    /// of its world's, and no other key's state is read.
+    ///
+    /// # Errors
+    ///
+    /// Custody and storage faults.
+    pub(crate) fn stage_world_pad_row_erase_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        row: &EntityId,
+    ) -> Result<()> {
+        if self.core.gate_custody_archived() {
+            return Ok(());
+        }
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(());
+        };
+        if !custody_present(custody.binding().root())? {
+            return Ok(());
+        }
+        for subject in custody.subjects_with_prefix(CustodyKind::WorldPad, &[])? {
+            let derived = crate::world_keys::pad_row_of_item(subject.item());
+            if matches!(derived, Ok(Some(found)) if found == *row) {
                 let intent = RetirementIntent {
                     subject,
                     through: 0,
