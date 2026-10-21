@@ -184,13 +184,15 @@ pub(crate) use body_envelope::{
     SealingStream, SpilledBody, StagedBodyKey, bind_body_key_in_txn, body_instances_in_rows,
     body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable, erase_bodies_in_txn,
     instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
-    prune_retired_bodies_in_rows, release_body_in_txn, require_body_instances,
-    retire_body_key_in_txn, sealed_body_file_name,
+    prune_retired_bodies_in_rows, release_body_in_txn, remember_body_instances_in_txn,
+    require_body_instances, retire_body_key_in_txn, sealed_body_file_name,
 };
 // FIX 6225: a step response's ASSET under its claim's erase, and the debt
 // a shared one's final teardown settles.
 #[cfg(unix)]
-pub(crate) use body_envelope::{erase_bodies_for_owner_in_txn, settle_inline_asset_in_txn};
+pub(crate) use body_envelope::{
+    erase_bodies_for_owner_in_txn, note_settled_inline_in_txn, settle_inline_asset_in_txn,
+};
 // KS-2B1: row-held responses under body custody.
 #[cfg(unix)]
 pub(crate) use body_envelope::{
@@ -258,8 +260,8 @@ pub(crate) use sync_responses::media_job_put_fenced_in_txn;
 #[doc(hidden)]
 pub use sync_responses::{IdempotencyEntry, ResponseStamps, media_job_erased_state};
 pub(crate) use sync_responses::{
-    MediaKey, erase_sync_response_owner_in_txn, http_carriage, http_owners, media_job_carriage,
-    media_job_owners, media_key, media_part_carriage,
+    MediaKey, erase_sync_response_owner_in_txn, http_carriage, http_erase_drop_caller, http_owners,
+    media_job_carriage, media_job_owners, media_key, media_part_carriage,
 };
 #[cfg(test)]
 pub(crate) use test_hooks::TestHooks;
