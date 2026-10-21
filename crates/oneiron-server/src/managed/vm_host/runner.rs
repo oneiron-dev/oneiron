@@ -1,7 +1,7 @@
 //! `oneiron-server host vm`'s runner: one vault VM behind one unix socket.
 
 use super::provision;
-use super::{API_TIMEOUT, STOP_GRACE, SleepOutcome, VaultVm, VaultVmConfig};
+use super::{API_TIMEOUT, STOP_GRACE, SleepOutcome, VaultVm, VaultVmConfig, VmRestoreFds};
 use crate::managed::listener::bind_unix_socket;
 use crate::managed::vault_gates::read_managed_credentials;
 use crate::managed::vm_schedule::VmWakeSchedule;
@@ -21,7 +21,9 @@ use tokio::net::UnixStream;
 
 /// `oneiron-server host vm`: one vault VM behind one unix socket. It starts
 /// the VM on the first connection or a due wake, proxies HTTP into it, takes
-/// its ledger pushes, and sleeps it after `idle` without traffic.
+/// its ledger pushes, and sleeps it after `idle` without traffic. With
+/// `restore` it starts the VM at once with a cold restore (FIX 6584), and
+/// binds its socket only once the restored vault is ready.
 pub struct VaultVmRun {
     pub config: PathBuf,
     pub vault_name: String,
@@ -30,6 +32,9 @@ pub struct VaultVmRun {
     /// Carries exactly the vault's 64-byte fscrypt key; read once, and sent
     /// to the guest on each cold boot.
     pub fscrypt_key_fd: std::os::fd::RawFd,
+    /// A cold restore's two pipes (`--restore`); the credential frame then
+    /// follows the restore's input.
+    pub restore: Option<VmRestoreFds>,
     pub idle: Duration,
 }
 
@@ -76,12 +81,28 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
         run.fscrypt_key_fd != run.credentials_fd,
         "--fscrypt-key-fd and --credentials-fd name one descriptor"
     );
-    let credentials = read_managed_credentials(run.credentials_fd)?;
+    // A restore's pipes are proven and taken over before any descriptor is
+    // read, and its credential frame follows its input: the VM starts on the
+    // fscrypt key alone.
+    let restore = run
+        .restore
+        .map(|fds| fds.adopt(run.credentials_fd, run.fscrypt_key_fd))
+        .transpose()?;
+    let credentials = match restore {
+        Some(_) => None,
+        None => Some(read_managed_credentials(run.credentials_fd)?),
+    };
     let fscrypt_key = provision::read_fscrypt_key(run.fscrypt_key_fd)?;
-    let token = TokenHex::from_token(&credentials.token);
     let mut vm = VaultVm::prepare(config, run.vault_name.clone())?;
-    let front = bind_unix_socket(&run.listen)?;
     let ledger = bind_unix_socket(&vm.ledger_socket())?;
+    let credentials = match (restore, credentials) {
+        (Some(io), _) => vm.start_restore(io, &fscrypt_key, API_TIMEOUT).await?,
+        (None, credentials) => {
+            credentials.ok_or_else(|| anyhow::anyhow!("no credential frame was read"))?
+        }
+    };
+    let token = TokenHex::from_token(&credentials.token);
+    let front = bind_unix_socket(&run.listen)?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let open = Arc::new(AtomicUsize::new(0));
     let mut last_activity = Instant::now();

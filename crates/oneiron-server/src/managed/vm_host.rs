@@ -19,21 +19,28 @@
 //! runs this driver; the guest's UID is the one its provision binding names.
 //! A profile with an `outbox` binds the outbox carrier's attachment before
 //! the VMM starts (FIX 5235, `VmOutboxAttachment`): parked before a
-//! snapshot, opened on each start, drained on a stop.
+//! snapshot, opened on each start, drained on a stop. Every cold boot opens
+//! with the guest's restore channel, which names the boot's mode before
+//! anything is provisioned: an ordinary open, a cold restore of a plan the
+//! supervisor streams in, or an inspection of the disk's restore commit
+//! marker (FIX 6584, [`restore`]).
 
 mod provision;
+mod restore;
 mod runner;
 
+pub use self::restore::{VaultVmInspect, VmRestoreFds, VmRestoreHostIo, inspect_vault_vm};
 pub use self::runner::{VaultVmRun, run_vault_vm};
 use super::listener::bind_unix_socket;
 use super::vm_outbox::{VmOutboxAttachment, VmOutboxHostRoots};
 use super::vm_schedule::VmWakeSchedule;
 use oneiron_vault_contract::vm::{
     MAX_VM_FRAME, VM_ARTIFACT_PORT, VM_BOOT_PORT, VM_CTL_PORT, VM_GUEST_CID, VM_HTTP_PORT,
-    VM_LEDGER_PORT, VM_OUTBOX_PORT, VM_VOICE_PORT, VmGuestFrame, VmHostFrame, decode_vm_frame,
-    encode_vm_frame, guest_initiated_socket, host_connect_line,
+    VM_LEDGER_PORT, VM_OUTBOX_PORT, VM_RESTORE_PORT, VM_VOICE_PORT, VmGuestFrame, VmHostFrame,
+    decode_vm_frame, encode_vm_frame, guest_initiated_socket, host_connect_line,
 };
 use oneiron_vault_contract::vm_provision::{VmFscryptKey, VmProvisionBinding};
+use oneiron_vault_contract::vm_restore::VmRestoreBoot;
 use oneiron_vault_contract::{
     CREDENTIALS_LEN, Credentials, CtlRequest, CtlResponse, DEK_LEN, MAX_CTL_LINE, READY_BYTE,
     UnixTs, valid_vault_name,
@@ -110,6 +117,14 @@ pub struct VaultVmConfig {
     /// bound, and the guest keeps its outbox work, deferred.
     #[serde(default)]
     pub outbox: Option<VmOutboxHostRoots>,
+    /// A cold restore's source drive (FIX 6584): a read-only ext4 image the
+    /// supervisor stages with the sealed artifact and its keyless custody
+    /// head, never a secret or unsealed bytes. Only a restore's boot attaches
+    /// it, after the drives above, and the guest mounts it at `/restore`,
+    /// below which the plan names its paths. Without it the plan's sources
+    /// are ones the guest already reads.
+    #[serde(default)]
+    pub restore_source_disk: Option<PathBuf>,
 }
 fn default_boot_args() -> String {
     "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro init=/sbin/oneiron-vault-init".into()
@@ -122,7 +137,8 @@ pub enum SleepOutcome {
     Busy,
     /// RAM is on disk and the VMM is gone. The next start restores it.
     Snapshotted { next_wake: Option<UnixTs> },
-    /// An off-record stretch was open, so the vault stopped instead.
+    /// An off-record stretch was open, or the VM's boot attached a cold
+    /// restore's source drive, so the vault stopped instead.
     Stopped { next_wake: Option<UnixTs> },
 }
 
@@ -136,6 +152,13 @@ pub struct VaultVm {
     config: VaultVmConfig,
     vault: String,
     boot: UnixListener,
+    /// The restore channel's host socket, every cold boot's first dial.
+    restore: UnixListener,
+    /// The running generation's boot attached the restore's source drive,
+    /// so it never takes a RAM snapshot: a snapshot loads its drives again
+    /// from their host paths, and the staged source may be gone by then, so
+    /// a sleep stops it instead.
+    source_attached: bool,
     child: Option<tokio::process::Child>,
     lifecycle: Option<Lifecycle>,
     schedule: VmWakeSchedule,
@@ -143,9 +166,10 @@ pub struct VaultVm {
 }
 
 impl VaultVm {
-    /// Makes the state directory and binds the boot port's host socket, and
-    /// the outbox carrier's when the profile names its roots, all before any
-    /// VMM runs, so a guest never dials an unbound port.
+    /// Makes the state directory and binds the boot port's and the restore
+    /// channel's host sockets, and the outbox carrier's when the profile
+    /// names its roots, all before any VMM runs, so a guest never dials an
+    /// unbound port.
     pub fn prepare(config: VaultVmConfig, vault: String) -> anyhow::Result<Self> {
         anyhow::ensure!(valid_vault_name(&vault), "invalid vault name");
         if let Err(fault) = config.provision.validate() {
@@ -157,6 +181,7 @@ impl VaultVm {
         let schedule = VmWakeSchedule::load(config.state_dir.join("wake-ledger.json"), &vault)?;
         let vsock = config.state_dir.join("vsock.sock");
         let boot = bind_unix_socket(&guest_initiated_socket(&vsock, VM_BOOT_PORT))?;
+        let restore = bind_unix_socket(&guest_initiated_socket(&vsock, VM_RESTORE_PORT))?;
         let outbox = config
             .outbox
             .clone()
@@ -169,6 +194,8 @@ impl VaultVm {
             config,
             vault,
             boot,
+            restore,
+            source_attached: false,
             child: None,
             lifecycle: None,
             schedule,
@@ -290,6 +317,20 @@ impl VaultVm {
         fscrypt_key: &VmFscryptKey,
         timeout: Duration,
     ) -> anyhow::Result<()> {
+        self.boot_vmm(false).await?;
+        // An ordinary boot's restore channel says only that it opens.
+        drop(self.answer_hello(&VmRestoreBoot::Open, timeout).await?);
+        self.provision(fscrypt_key, timeout).await?;
+        let mut stream = self.send_credentials(credentials, timeout).await?;
+        let ready = tokio::time::timeout(timeout, stream.read_u8()).await??;
+        anyhow::ensure!(ready == READY_BYTE, "vault VM sent a wrong ready byte");
+        self.accept_join(timeout).await
+    }
+
+    /// A fresh VMM, its kernel, drives, machine and vsock device set, and
+    /// started. `with_source` attaches the profile's restore source drive
+    /// read-only after the others, when it names one.
+    async fn boot_vmm(&mut self, with_source: bool) -> anyhow::Result<()> {
         self.spawn_vmm().await?;
         let config = &self.config;
         let mut boot_args = config.boot_args.clone();
@@ -346,6 +387,18 @@ impl VaultVm {
             )
             .await?;
         }
+        // After them, `/dev/vdc` or `/dev/vdd` in the guest.
+        if let Some(source) = config.restore_source_disk.as_ref().filter(|_| with_source) {
+            self.api(
+                "PUT",
+                "/drives/restore",
+                json!({
+                    "drive_id": "restore", "path_on_host": source,
+                    "is_root_device": false, "is_read_only": true,
+                }),
+            )
+            .await?;
+        }
         self.api(
             "PUT",
             "/machine-config",
@@ -363,20 +416,23 @@ impl VaultVm {
         )
         .await?;
         self.api("PUT", "/actions", json!({ "action_type": "InstanceStart" }))
-            .await?;
-        self.provision(fscrypt_key, timeout).await?;
+            .await
+    }
 
-        // The credential connection: the frame, a half-close for the guest's
-        // EOF check, then the ready byte back.
+    /// The credential connection: the frame and a half-close for the
+    /// guest's EOF check. The ready byte comes back on the stream returned.
+    async fn send_credentials(
+        &mut self,
+        credentials: &Credentials,
+        timeout: Duration,
+    ) -> anyhow::Result<UnixStream> {
         let (mut stream, _) = tokio::time::timeout(timeout, self.boot.accept()).await??;
         let mut frame = Zeroizing::new([0u8; CREDENTIALS_LEN]);
         frame[..DEK_LEN].copy_from_slice(&credentials.dek);
         frame[DEK_LEN..].copy_from_slice(&credentials.token);
         stream.write_all(&frame[..]).await?;
         stream.shutdown().await?;
-        let ready = tokio::time::timeout(timeout, stream.read_u8()).await??;
-        anyhow::ensure!(ready == READY_BYTE, "vault VM sent a wrong ready byte");
-        self.accept_join(timeout).await
+        Ok(stream)
     }
 
     async fn accept_join(&mut self, timeout: Duration) -> anyhow::Result<()> {
@@ -502,7 +558,7 @@ impl VaultVm {
                 break (next_wake, snapshot_ok);
             }
         };
-        if !snapshot_ok {
+        if !snapshot_ok || self.source_attached {
             self.stop(STOP_GRACE).await?;
             return Ok(SleepOutcome::Stopped { next_wake });
         }
@@ -578,6 +634,7 @@ impl VaultVm {
         }
         self.child = None;
         self.lifecycle = None;
+        self.source_attached = false;
         Ok(())
     }
 
@@ -586,5 +643,6 @@ impl VaultVm {
             let _ = child.kill().await;
         }
         self.lifecycle = None;
+        self.source_attached = false;
     }
 }

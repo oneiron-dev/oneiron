@@ -4,7 +4,7 @@ use std::os::fd::RawFd;
 
 use crate::config::ServeArgs;
 
-use super::{ManagedError, require_fd};
+use super::{ManagedError, require_fd, vm_transport};
 
 /// How a managed process starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,9 +18,10 @@ pub enum ManagedStartMode {
 
 impl ManagedStartMode {
     /// The start mode argv names: a cold restore with both its pipes, or
-    /// the ordinary open. Its pipes alone, or a restore in a vault VM, which
-    /// inherits no descriptors, are refused.
+    /// the ordinary open. Its pipes alone are refused, and so is a restore
+    /// in a vault VM unless its bootstrap handed it over (FIX 6584).
     pub(super) fn of(args: &ServeArgs) -> Result<Self, ManagedError> {
+        let handoff = vm_transport::restore_handoff(args)?;
         if !args.restore {
             if args.restore_input_fd.is_some() || args.restore_result_fd.is_some() {
                 return Err(ManagedError::RestoreFlagsRejected {
@@ -29,15 +30,22 @@ impl ManagedStartMode {
             }
             return Ok(Self::Open);
         }
-        if args.vsock_guest {
+        if args.vsock_guest && !handoff {
             return Err(ManagedError::ConflictingFlag {
                 flag: "restore",
-                reason: "a vault VM inherits no descriptors, and its vsock boot channel carries no restore pipes",
+                reason: "a vault VM takes restore pipes only from its bootstrap's restore channel (--vm-restore-revision)",
             });
         }
+        let (input_fd, result_fd) = (
+            require_fd(args.restore_input_fd, "restore-input-fd")?,
+            require_fd(args.restore_result_fd, "restore-result-fd")?,
+        );
+        if handoff {
+            vm_transport::refuse_pipe_alias(input_fd, result_fd)?;
+        }
         Ok(Self::Restore {
-            input_fd: require_fd(args.restore_input_fd, "restore-input-fd")?,
-            result_fd: require_fd(args.restore_result_fd, "restore-result-fd")?,
+            input_fd,
+            result_fd,
         })
     }
 }

@@ -15,6 +15,8 @@ use super::listener::HYPNOS_LISTEN_FD;
 
 mod policy;
 mod start_mode;
+/// A vault VM's cold restore handoff (FIX 6584).
+mod vm_transport;
 
 pub use self::start_mode::ManagedStartMode;
 

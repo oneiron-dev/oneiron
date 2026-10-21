@@ -29,6 +29,7 @@ impl fmt::Debug for ServeArgs {
             .field("restore_input_fd", &self.restore_input_fd)
             .field("restore_result_fd", &self.restore_result_fd)
             .field("vsock_guest", &self.vsock_guest)
+            .field("vm_restore_revision", &self.vm_restore_revision)
             .field("keystore_dir", &self.keystore_dir)
             .field("escrow_recipient_file", &self.escrow_recipient_file)
             .field(

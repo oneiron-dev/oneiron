@@ -144,6 +144,14 @@ pub struct ServeArgs {
     #[arg(long = "vsock-guest")]
     pub vsock_guest: bool,
 
+    /// A vault VM's cold restore handoff (FIX 6584), which only the image's
+    /// `oneiron-vm-init` passes: the revision of the restore channel its
+    /// host answered on, beside `--restore` and the two pipes the bootstrap
+    /// made and carries over that channel. With it a `--vsock-guest` start
+    /// takes `--restore`; without it the pair stays refused.
+    #[arg(long = "vm-restore-revision", requires_all = ["vsock_guest", "restore"])]
+    pub vm_restore_revision: Option<u32>,
+
     /// This install's key directory, an absolute path outside the vault: where
     /// the this-device-only keystore keeps the machine encryption seed. Managed
     /// mode installs a keystore only from this flag; unmanaged serve reads it

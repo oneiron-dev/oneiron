@@ -1026,7 +1026,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     crate::replay_judge::register(&sync_server, config.skills.live_pulls_per_axis);
 
     // Adoption stays here, after the gates: the listener was only resolved
-    // above, and `bind` is what takes the descriptor over.
+    // above, and `bind` is what takes the descriptor over. A vault VM's cold
+    // restore binds its vsock bridges here too, now its vault is kept.
+    host.activate_service_bridges_after_keep()?;
     let http = http.bind().await?;
     let http_owned_path = http.owned_path().map(Path::to_path_buf);
     let ctl = ManagedCtl::bind(&managed.ctl_socket)?;
