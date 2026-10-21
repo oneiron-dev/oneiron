@@ -21,6 +21,7 @@
 //! declared, never by the name again at the door
 //! (CONNECTOR_PRESENT_BY_RECORD_ID).
 
+use oneiron::limit_ask::EngineLimit;
 use zeroize::Zeroizing;
 
 use super::*;
@@ -182,23 +183,28 @@ pub(super) struct KeptRound {
 
 impl Declared<'_> {
     /// Keeps `questions` in the registry under this send's binding, each
-    /// cleared first of the value the send presented, if it presented one;
-    /// `None` when the registry is full.
+    /// cleared first of the value the send presented, if it presented one.
+    /// It never refuses them: past the `[limits]` row of live question sets
+    /// the row asks whether everything is okay (FIX 3895).
     pub(super) fn keep_questions(
         &self,
         mut questions: Vec<ConnectorQuestion>,
         value: Option<&SentValue<'_>>,
-    ) -> Option<KeptRound> {
+    ) -> KeptRound {
         let aliases = match value {
             Some(value) => clear_questions(&mut questions, value),
             None => KeyAliases::default(),
         };
-        let registered = self.registry.register(self.binding.clone(), &questions)?;
-        Some(KeptRound {
+        let registered = self.registry.register(self.binding.clone(), &questions);
+        let live = u64::try_from(registered.live).unwrap_or(u64::MAX);
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::ConnectorLiveQuestions, live);
+        KeptRound {
             registered,
             questions,
             aliases,
-        })
+        }
     }
 }
 

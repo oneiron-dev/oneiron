@@ -27,7 +27,10 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::write_envelope::WriteActor;
 
 mod actor_erase;
+mod sourced;
+mod subject;
 pub(crate) use actor_erase::{erase_setting_actor_in_txn, names_no_actor};
+pub(crate) use sourced::setting_value_sourced_in_txn;
 
 /// One learned knob: its key, its bounds and the value it ships with.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -713,8 +716,21 @@ fn cached_fit(
 /// A row that does not decode; storage errors.
 pub fn list_setting_rows(vault: &Vault) -> Result<Vec<(SettingScope, SettingRow, String)>> {
     let rtxn = vault.store.env.read_txn()?;
+    list_setting_rows_in_txn(vault, &rtxn)
+}
+
+/// [`list_setting_rows`] in the caller's snapshot, for a reader whose other
+/// rows must be read beside the same owner rows (FIX 8358).
+///
+/// # Errors
+///
+/// As [`list_setting_rows`].
+pub(crate) fn list_setting_rows_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<(SettingScope, SettingRow, String)>> {
     let mut out = Vec::new();
-    for (stored_key, stored) in SETTING.scan(&vault.store, &rtxn)? {
+    for (stored_key, stored) in SETTING.scan(&vault.store, rtxn)? {
         let Some((key, mode, scope)) = parse_row_key(&stored_key) else {
             continue;
         };
@@ -824,25 +840,7 @@ pub fn record_setting_check(
     check: &SettingCheck,
     now: u64,
 ) -> Result<Option<crate::learning::Estimate>> {
-    let spec = setting_spec(&check.key).ok_or(invalid("no learned setting has this key"))?;
-    if !check.observed.is_finite() || check.observed < spec.min || check.observed > spec.max {
-        return Err(invalid(
-            "a fitting check's value lies within its catalog bounds",
-        ));
-    }
-    let cell = crate::learning::LearningCell::new(
-        crate::learning::LearningPredicate::Setting,
-        check.subject,
-    )
-    .setting_key(spec.key)
-    .type_ref(check.type_ref.clone());
-    let evidence = crate::learning::LearningEvidence::anchored(
-        check.receipt.clone(),
-        check.at,
-        check.anchor,
-        crate::learning::Observation::Magnitude(check.observed),
-    );
-    crate::learning::record_evidence(vault, &cell, &evidence, now)
+    vault.with_write_txn_grouped(|wtxn| record_setting_check_in_txn(vault, wtxn, check, now))
 }
 
 /// The one subject `key`'s vault-wide fit is learned on: an id derived from
@@ -878,6 +876,19 @@ pub(crate) fn record_setting_check_in_txn(
         return Err(invalid(
             "a fitting check's value lies within its catalog bounds",
         ));
+    }
+    // A vault-wide fit is learned on its knob's ASSET (FIX 8079). One not
+    // ready passes the check over, and the write that carries it goes on.
+    if check.subject == global_setting_subject(spec.key)?
+        && let Err(reason) =
+            subject::ensure_global_setting_subject_in_txn(vault, wtxn, spec.key, &check.subject)
+    {
+        tracing::warn!(
+            ?reason,
+            key = spec.key,
+            "a vault-wide setting check was not recorded: its subject is not ready"
+        );
+        return Ok(None);
     }
     let cell = crate::learning::LearningCell::new(
         crate::learning::LearningPredicate::Setting,
