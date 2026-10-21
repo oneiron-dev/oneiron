@@ -187,7 +187,11 @@ pub(crate) fn authority_instant_secs_for_store_in_txn(
     let persisted_floor = AUTHORITY_FIRST_SEEN
         .get_lenient(store, txn, &authority_first_seen_clock_key())?
         .unwrap_or(0);
-    Ok(authority_observation_secs(store, persisted_floor, store.clock.now_recorded_at()))
+    Ok(authority_observation_secs(
+        store,
+        persisted_floor,
+        store.clock.now_recorded_at(),
+    ))
 }
 
 /// Production writes go through [`AUTHORITY_FIRST_SEEN`]'s typed door (`u64`'s

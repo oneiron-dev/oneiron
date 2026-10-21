@@ -228,8 +228,10 @@ impl<'a> Reader<'a> {
         body: &ClaimBody,
         facets: &[EntityId],
     ) -> Result<bool> {
-        Ok(crate::gate::scoped_read_claim_allowed(policy, &self.key, body, facets)
-            || self.own_claim_allowed_in_txn(txn, policy, body, facets)?)
+        Ok(
+            crate::gate::scoped_read_claim_allowed(policy, &self.key, body, facets)
+                || self.own_claim_allowed_in_txn(txn, policy, body, facets)?,
+        )
     }
 
     /// The positive CLAIM gate under this reader's own authority alone: the
