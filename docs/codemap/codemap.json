@@ -35421,7 +35421,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/execute.rs",
@@ -68158,7 +68158,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 184,
+   "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 4292,
    "test_files": 902
@@ -89878,7 +89878,7 @@
      "path": "src/managed/vm_init/config_drive.rs",
      "purpose": "The vault VM's config drive as the root bootstrap reads it: only the typed files the contract names below…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -89929,6 +89929,16 @@
      "purpose": "The outbox companion beside the engine (FIX 5235, FIX 5467): the bootstrap starts `oneiron-vm-outbox` as its…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init/profile.rs",
+     "purpose": "The vault's managed profile as the config drive carries it into a VM (FIX 6809): five typed files, one value…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -93442,7 +93452,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 74,
+     "files": 75,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -93598,7 +93608,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1000,
+   "source_files": 1001,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -98454,7 +98464,7 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 21,
+      "const": 27,
       "enum": 2,
       "fn": 4,
       "re-export": 1
