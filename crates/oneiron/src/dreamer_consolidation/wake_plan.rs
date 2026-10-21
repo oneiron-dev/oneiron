@@ -12,6 +12,8 @@ use crate::scan_check::{EngineScan, ScanCount};
 use crate::{EntityId, Result, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod chunks;
+
 /// One immutable branch contract selected from a single wake revision.
 /// Source bytes are shared by the owning `PreparedWake`; only exact version
 /// identities and bounded input/scope belong to the individual plan.
@@ -28,7 +30,8 @@ pub struct PreparedConsolidationAttempt {
     /// The known entities its turns name, read at the wake's snapshot.
     neighbourhood: super::neighbourhood::Neighbourhood,
     /// A selection retry whose source budget left admissible sources out:
-    /// it runs every original and the oldest others that fit; more exist.
+    /// it runs every original and the oldest others that fit; more exist,
+    /// owed as sibling chunks of the same size (`chunks`).
     sources_truncated: bool,
 }
 
@@ -167,6 +170,19 @@ impl PreparedWake {
         caller_scope: Option<&Scope>,
         only_attempt: Option<AttemptId>,
     ) -> Result<Self> {
+        let (wake, owed) = Self::read_matching(vault, scope, caller_scope, only_attempt)?;
+        // The read transaction has closed: each retry's overflow is owed in
+        // its own commit, before any branch of this wake runs.
+        chunks::owe(vault, scope, owed);
+        Ok(wake)
+    }
+
+    fn read_matching(
+        vault: &Vault,
+        scope: crate::dreamer_runner::DreamerConsolidationScope,
+        caller_scope: Option<&Scope>,
+        only_attempt: Option<AttemptId>,
+    ) -> Result<(Self, Vec<chunks::WakePreparationChunks>)> {
         use crate::ports::EdgeDirection;
         // Witnessed TURN text is read under live relationship grants.
         let txn = super::turn_text::snapshot(vault)?;
@@ -282,7 +298,15 @@ impl PreparedWake {
                     Some(ENTITY_TYPE_TURN),
                 )?;
                 ids.extend(peers.iter().copied());
-                retries.push((*attempt.id.as_bytes(), partition, turns, watermark, peers));
+                retries.push((
+                    *attempt.id.as_bytes(),
+                    partition,
+                    turns,
+                    watermark,
+                    peers,
+                    payload.parent_attempt,
+                    attempt.run_id.clone(),
+                ));
             }
             if let Some(bound) = effective_scope {
                 for resource in bound.readable.iter().chain(&bound.writable) {
@@ -307,12 +331,15 @@ impl PreparedWake {
             }
         }
         if ids.is_empty() {
-            return Ok(Self {
-                attempts,
-                left,
-                preparations,
-                ..Self::default()
-            });
+            return Ok((
+                Self {
+                    attempts,
+                    left,
+                    preparations,
+                    ..Self::default()
+                },
+                Vec::new(),
+            ));
         }
         let actor = vault.dreamer_authority()?;
         let key = ScopedReadActorKey::with_actor_class(
@@ -338,8 +365,8 @@ impl PreparedWake {
             .filter_map(|(id, row)| row.map(|body| (id, body)))
             .collect();
         // Resolve each prepared retry only against the frozen source pool.
-
-        for (attempt, partition, original, watermark, peers) in retries {
+        let mut owed = Vec::new();
+        for (attempt, partition, original, watermark, peers, parent, run_id) in retries {
             let Some(parent) = sources.get(&partition.conversation_ref) else {
                 preparations.insert(
                     attempt,
@@ -419,37 +446,38 @@ impl PreparedWake {
                 );
                 continue;
             }
-            // The source budget truncates, never refuses: every original runs,
-            // with the oldest other sources that fit; the newest wait for the
-            // ordinary passes, and the plan says more exist.
+            // The source budget sizes chunks, never refuses or drops (Rule 5,
+            // L02-38): every original runs, with the oldest other sources
+            // that fit; the newer rest is owed as sibling chunks of the same
+            // size, and the plan says more exist.
             let optional = limit.saturating_sub(original.len());
             let mut kept_optional = 0_usize;
-            let admissible = turns.len();
-            turns.retain(|(_, _, id, _)| {
-                original.contains(id) || {
+            let mut working_set = Vec::with_capacity(turns.len());
+            let mut overflow = Vec::new();
+            for (learned_at, _, turn_id, carrier) in turns {
+                let facts = decode_turn_body(&sources[&turn_id].2);
+                let turn = super::WorkingSetTurn {
+                    turn_id,
+                    role: dreamer_turn_role(
+                        facts.speaker.as_deref(),
+                        &vault.config.assistant_display_names,
+                    ),
+                    learned_at,
+                    carrier,
+                    conversation: Some(partition.conversation_ref),
+                };
+                let kept = original.contains(&turn_id) || {
                     kept_optional += 1;
                     kept_optional <= optional
+                };
+                if kept {
+                    working_set.push(turn);
+                } else {
+                    overflow.push(turn);
                 }
-            });
-            let sources_truncated = turns.len() < admissible;
-            let working_set: Vec<super::WorkingSetTurn> = turns
-                .into_iter()
-                .map(|(learned_at, _, turn_id, carrier)| {
-                    let facts = decode_turn_body(&sources[&turn_id].2);
-                    super::WorkingSetTurn {
-                        turn_id,
-                        role: dreamer_turn_role(
-                            facts.speaker.as_deref(),
-                            &vault.config.assistant_display_names,
-                        ),
-                        learned_at,
-                        carrier,
-                        conversation: Some(partition.conversation_ref),
-                    }
-                })
-                .collect();
+            }
             if let Some(AttemptPreparation::Ready(plan)) = preparations.get_mut(&attempt) {
-                plan.sources_truncated = sources_truncated;
+                plan.sources_truncated = !overflow.is_empty();
                 plan.turn_ids = working_set.iter().map(|turn| turn.turn_id).collect();
                 plan.input = super::partition::encode_partition_payload(
                     &super::ConsolidationPartitionPlan {
@@ -459,6 +487,9 @@ impl PreparedWake {
                     },
                 );
             }
+            owed.extend(chunks::WakePreparationChunks::split(
+                attempt, partition, parent, run_id, &overflow, limit,
+            ));
         }
         // Witnessed TURN text lives on MESSAGE children: pin them in THIS
         // snapshot. A child set that cannot be read refuses only its branches.
@@ -581,14 +612,17 @@ impl PreparedWake {
         for (id, row) in known_rows {
             sources.entry(id).or_insert(row);
         }
-        Ok(Self {
-            sources,
-            texts,
-            attempts,
-            left,
-            preparations,
-            read_receipt: Some(read_receipt),
-        })
+        Ok((
+            Self {
+                sources,
+                texts,
+                attempts,
+                left,
+                preparations,
+                read_receipt: Some(read_receipt),
+            },
+            owed,
+        ))
     }
 
     /// Only work known at the wake's single revision may execute on it.
