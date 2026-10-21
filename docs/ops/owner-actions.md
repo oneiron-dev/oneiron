@@ -1248,7 +1248,44 @@ evidence and triages it as its own job. A note's findings land as Proposed
 `coach.feedback_triage.finding` claims citing that note; an empty answer counts as done. A job
 that fails (no skill bound, no Coach seat, a bad answer) leaves the note open, and the next sweep
 tries it again. `GET /v1/owner/feedback/triage/status?attempt=<id>` shows the sweep, its cursor,
-each note's job and result, and the holds: `skill_unbound`, and every note still open.
+each note's job and result, and the holds: `skill_unbound`, and every note still open. With no
+skill bound, a sweep (nightly or run-now) completes and does nothing: it reads no source, queues
+nothing and keeps every cursor, and its status shows `skill_unbound`.
+
+The same sweep runs every night on the Coach's wake, and it can read GitHub issues too. Bind
+each repository in the server config, by its exact issues endpoint; none is read until you do:
+
+```toml
+[feedback.triage]
+github_sources = ["https://api.github.com/repos/<owner>/<repo>/issues"]
+```
+
+(GitHub Enterprise: `https://<host>/api/v3/repos/<owner>/<repo>/issues`.) The sweep reads every
+issue and pull request in every state, oldest first, and triages each new revision; an edit or a
+reopen is a new revision. A repository on your `github_issue` feedback destination's host is read
+with `ONEIRON_FEEDBACK_TOKEN`; every other is read without a token, so a private one shows
+`auth_unavailable`. A rate limit shows `rate_limited` with its `retry_after`, and the next sweep
+resumes where it stopped. The status's `continuations` list each source's state.
+
+## Send issue signatures to publishers
+
+A report about a shipped skill can reach its publisher as a content-free issue signature: the
+issue category, the skill and its version, the model stack, outcome counts and a pattern hash.
+No text and no deltas leave this way. A report's text still needs your own approved send.
+
+Bind the publisher first. `PUT /v1/owner/feedback/delivery/binding` with
+`{"publisher_ref": "<publisher>", "bound": true}` binds it to this server's `[feedback]`
+destination (`"bound": false` unbinds). Signatures go only to a publisher you bound, and only
+while "Help improve Oneiron" and the publisher dial are both on. A GitHub issue destination
+takes no signatures.
+
+The Coach sends them nightly. `POST /v1/owner/feedback/delivery/run` with `{}` runs it now and
+returns `{attempt}`. `GET /v1/owner/feedback/delivery/status?issue_ref=<id>` shows one report's
+signature, where it goes, its receipt and outcome, and what holds it: `metadata_unresolved`
+(the report's subject is not a run whose skill, version and model resolve exactly),
+`endpoint_unbound`, `destination_unsupported`, `changed_binding` (bind again; nothing is
+redirected) or `withheld` (a switch is off). A delivered signature, or one that may have landed,
+is never sent again.
 
 ## Share failure signals
 

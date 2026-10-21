@@ -99,6 +99,9 @@ pub(crate) enum PreparedAuthorization {
         principal_ref: String,
         prepared: Box<PreparedToolCall>,
     },
+    /// A content-free publisher issue signature (OF-420): admission and
+    /// every live retry recheck the delivery's custody under the writer.
+    PublisherSignature(Box<crate::outbound::PublisherSignatureAuthorization>),
 }
 
 /// Fully frozen new-effect input. No transport object can change these axes.

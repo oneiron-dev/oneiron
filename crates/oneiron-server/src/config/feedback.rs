@@ -2,7 +2,11 @@
 //! `/v1/owner/feedback` has nowhere to send and says so. The destination's
 //! credential never sits in the file: `serve` reads it from
 //! `ONEIRON_FEEDBACK_TOKEN`. Its `[feedback.inbox]` table opens this vault's
-//! own keyless inbox (ARCH-0056 #open-inbox), off unless enabled.
+//! own keyless inbox (ARCH-0056 #open-inbox), off unless enabled. Its
+//! `[feedback.triage]` table binds the GitHub repositories the Coach's
+//! feedback sweep reads; none by default.
+
+use std::collections::BTreeSet;
 
 use serde::Deserialize;
 
@@ -18,6 +22,8 @@ pub struct FeedbackConfig {
     pub endpoint: Option<String>,
     /// `[feedback.inbox]`: the open inbox this server keeps.
     pub inbox: FeedbackInboxConfig,
+    /// `[feedback.triage]`: the repositories the feedback sweep reads.
+    pub triage: FeedbackTriageConfig,
 }
 
 /// Where a vault our cloud hosts sends feedback unless told otherwise:
@@ -47,6 +53,19 @@ impl Default for FeedbackInboxConfig {
     }
 }
 
+/// The `[feedback.triage]` table (ARCH-0056: "GitHub issues still work. We
+/// sweep both on a schedule with the triage skill"). Each GitHub repository
+/// the Coach's feedback sweep reads is bound by its exact issues endpoint.
+/// Empty, the default, sends no request anywhere: only a repository named
+/// here is read. One on the `github_issue` destination's own origin is read
+/// with that destination's credential; every other goes without.
+#[derive(Clone, Default, Eq, PartialEq)]
+pub struct FeedbackTriageConfig {
+    /// `https://<host>/repos/<owner>/<repo>/issues`, or the same under
+    /// GitHub Enterprise's `/api/v3`: one per repository.
+    pub github_sources: Vec<String>,
+}
+
 impl FeedbackConfig {
     /// The default for a vault our cloud hosts: sends go to our own inbox.
     #[must_use]
@@ -55,6 +74,7 @@ impl FeedbackConfig {
             destination: Some(FeedbackDestination::Collector),
             endpoint: Some(CLOUD_FEEDBACK_ENDPOINT.to_owned()),
             inbox: FeedbackInboxConfig::default(),
+            triage: FeedbackTriageConfig::default(),
         }
     }
 
@@ -84,12 +104,31 @@ impl FeedbackConfig {
                 self.inbox.notes_per_hour = value;
             }
         }
+        // A layer that names the list names all of it: it is replaced whole.
+        if let Some(triage) = over.triage
+            && let Some(sources) = triage.github_sources
+        {
+            self.triage.github_sources = sources;
+        }
     }
 
     pub(super) fn validate(&self) -> anyhow::Result<()> {
         // A zero count would shed every note: an inbox that is on but closed.
         if self.inbox.notes_per_sender == 0 || self.inbox.notes_per_hour == 0 {
             anyhow::bail!("feedback.inbox.notes_per_sender and notes_per_hour must be at least 1");
+        }
+        let mut bound = BTreeSet::new();
+        for endpoint in &self.triage.github_sources {
+            let Some(source) = github_issue_source(endpoint) else {
+                anyhow::bail!(
+                    "each feedback.triage.github_sources entry must be a repository's exact \
+                     issues endpoint, https://<host>[/api/v3]/repos/<owner>/<repo>/issues (HTTP \
+                     only on loopback), with no credentials, query or fragment"
+                );
+            };
+            if !bound.insert(source) {
+                anyhow::bail!("feedback.triage.github_sources binds one repository twice");
+            }
         }
         match (&self.destination, &self.endpoint) {
             (None, None) => Ok(()),
@@ -104,6 +143,40 @@ impl FeedbackConfig {
     }
 }
 
+/// The name the feedback sweep gives the repository a bound issues endpoint
+/// names: `github:<owner>/<repo>`, in lower case. `None` for anything but
+/// `https://<host>/repos/<owner>/<repo>/issues`, or the same under GitHub
+/// Enterprise's `/api/v3`, HTTPS (HTTP only on loopback) with no
+/// credentials, query or fragment.
+pub(crate) fn github_issue_source(endpoint: &str) -> Option<String> {
+    check_endpoint(endpoint).ok()?;
+    let url = reqwest::Url::parse(endpoint).ok()?;
+    let segments: Vec<&str> = url.path_segments()?.collect();
+    let rest = match segments.as_slice() {
+        ["api", "v3", rest @ ..] => rest,
+        rest => rest,
+    };
+    let &["repos", owner, repo, "issues"] = rest else {
+        return None;
+    };
+    (github_name(owner) && github_name(repo)).then(|| {
+        format!(
+            "{}{}/{}",
+            oneiron::feedback::FEEDBACK_TRIAGE_GITHUB_PREFIX,
+            owner.to_ascii_lowercase(),
+            repo.to_ascii_lowercase()
+        )
+    })
+}
+
+/// An owner or repository name as GitHub spells one.
+fn github_name(part: &str) -> bool {
+    !part.is_empty()
+        && part
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
 /// One layer's `[feedback]` keys.
 #[derive(Clone, Default, Deserialize, Eq, PartialEq)]
 #[serde(default, deny_unknown_fields)]
@@ -111,6 +184,7 @@ pub(super) struct FeedbackConfigOverride {
     pub(super) destination: Option<FeedbackDestination>,
     pub(super) endpoint: Option<String>,
     pub(super) inbox: Option<FeedbackInboxOverride>,
+    pub(super) triage: Option<FeedbackTriageOverride>,
 }
 
 /// One layer's `[feedback.inbox]` keys.
@@ -120,6 +194,13 @@ pub(super) struct FeedbackInboxOverride {
     pub(super) enabled: Option<bool>,
     pub(super) notes_per_sender: Option<u32>,
     pub(super) notes_per_hour: Option<u32>,
+}
+
+/// One layer's `[feedback.triage]` keys.
+#[derive(Clone, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct FeedbackTriageOverride {
+    pub(super) github_sources: Option<Vec<String>>,
 }
 
 pub(super) fn lookup_feedback_override(
@@ -143,6 +224,7 @@ pub(super) fn lookup_feedback_override(
                 ..FeedbackInboxOverride::default()
             }
         }),
+        triage: None,
     };
     Ok((over != FeedbackConfigOverride::default()).then_some(over))
 }
@@ -155,6 +237,15 @@ impl std::fmt::Debug for FeedbackConfig {
             .field("destination", &self.destination)
             .field("endpoint_host", &endpoint_host(self.endpoint.as_deref()))
             .field("inbox", &self.inbox)
+            .field("triage", &self.triage)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for FeedbackTriageConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FeedbackTriageConfig")
+            .field("github_source_hosts", &endpoint_hosts(&self.github_sources))
             .finish()
     }
 }
@@ -165,6 +256,14 @@ impl std::fmt::Debug for FeedbackConfigOverride {
             .field("destination", &self.destination)
             .field("endpoint_host", &endpoint_host(self.endpoint.as_deref()))
             .field("inbox", &self.inbox)
+            .field(
+                "triage_github_source_hosts",
+                &self
+                    .triage
+                    .as_ref()
+                    .and_then(|triage| triage.github_sources.as_deref())
+                    .map(endpoint_hosts),
+            )
             .finish()
     }
 }
@@ -173,4 +272,11 @@ fn endpoint_host(endpoint: Option<&str>) -> Option<String> {
     endpoint
         .and_then(|endpoint| reqwest::Url::parse(endpoint).ok())
         .and_then(|url| url.host_str().map(str::to_owned))
+}
+
+fn endpoint_hosts(endpoints: &[String]) -> Vec<Option<String>> {
+    endpoints
+        .iter()
+        .map(|endpoint| endpoint_host(Some(endpoint)))
+        .collect()
 }

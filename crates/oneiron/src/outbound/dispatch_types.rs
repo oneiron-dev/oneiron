@@ -178,6 +178,11 @@ pub struct OutboundDispatchRequest {
     /// reads only this context's autonomy row; `None` keeps its rule that
     /// exactly one unpinned context on the sender row may release.
     pub send_autonomy: Option<SendAutonomyContext>,
+    /// OF-420: the typed authorization of a content-free publisher issue
+    /// signature, minted in-process by the publisher delivery and checked
+    /// again under the outbound writer. In memory only, never persisted;
+    /// `None` everywhere else.
+    pub publisher_signature: Option<super::PublisherSignatureAuthorization>,
 }
 
 impl OutboundDispatchRequest {
@@ -221,6 +226,7 @@ impl OutboundDispatchRequest {
             reply_thread_ref: None,
             facet_ref: None,
             send_autonomy: None,
+            publisher_signature: None,
         }
     }
 
