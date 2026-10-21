@@ -50,7 +50,7 @@ const BRIEF_RECORD_SLOTS: &[&str] = &[
 ];
 
 /// Fixed-width byte strings travel as lowercase hex on every wire.
-pub(super) fn decode_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
+pub(crate) fn decode_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
     if text.len() != N * 2 {
         return None;
     }
@@ -63,7 +63,7 @@ pub(super) fn decode_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
 }
 
 /// Serde for a 32-byte digest as 64 hex characters.
-pub(super) mod hex32 {
+pub(crate) mod hex32 {
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub(crate) fn serialize<S: Serializer>(

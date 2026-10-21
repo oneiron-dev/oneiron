@@ -399,6 +399,11 @@ pub(super) fn parse_run_flags(args: &[String]) -> Result<(PathBuf, RunSettings),
         }
     }
 
+    settings.campaign_budget = oneiron::BudgetGuard::new(
+        CAMPAIGN_ID,
+        u64::from(settings.full_token_ceiling()),
+        oneiron::BudgetExhaustionPolicy::Suspend,
+    );
     // Resolved AFTER the flag loop so a later `--model` is honored by the
     // coverage check. With the flag absent nothing below runs and behavior is
     // byte-identical to an unpinned run.

@@ -31,7 +31,6 @@ use oneiron::memory::{
     Effort, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
     RecallRerank, RecallRerankHost, RerankDocument, RerankEgress, RerankScores,
 };
-use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, EdgeActorClass, EntityId, LlmError,
     ModelLocality, Vault, WriteActor,
@@ -168,7 +167,7 @@ impl RecallRerankHost for ServedRerank {
         let run = self
             .ai
             .undeclared_run(self.run_id.clone(), self.meter.clone())
-            .sourced(sent_rows(&self.vault, documents));
+            .sourced(sent_rows(documents));
         // The vault's model policy places the call: its manifest's binding
         // for the role when it has one, the role's seat otherwise.
         let call = self
@@ -241,22 +240,18 @@ fn payload_units(query: &str, documents: &[&str]) -> u64 {
     u64::try_from(pairs).unwrap_or(u64::MAX)
 }
 
-/// The rows a rerank call reads (FIX 6935): each document it sends with
-/// words, each read from its own row. `None` when one is not: a TURN's words
-/// are its messages', which no document names, and a row whose type does not
-/// read is unknown. A document sent empty is read from no row.
-fn sent_rows(vault: &Vault, documents: &[RerankDocument<'_>]) -> Option<Vec<EntityId>> {
-    let mut rows = Vec::new();
-    for document in documents {
-        if document.text.is_empty() {
-            continue;
-        }
-        match vault.get_entity_type(&document.id) {
-            Ok(Some(kind)) if kind != ENTITY_TYPE_TURN => rows.push(document.id),
-            _ => return None,
-        }
-    }
-    oneiron::skill_optimize::union_source_rows([Some(rows)])
+/// The rows a rerank call reads (FIX 6935, FIX 7001): the union of the rows
+/// each document it sends with words is read from, a TURN's messages
+/// included, as the reader captured them beside the text. `None` when one
+/// such document's set is not known whole. A document sent empty is read
+/// from no row.
+fn sent_rows(documents: &[RerankDocument<'_>]) -> Option<Vec<EntityId>> {
+    oneiron::skill_optimize::union_source_rows(
+        documents
+            .iter()
+            .filter(|document| !document.text.is_empty())
+            .map(|document| document.sources),
+    )
 }
 
 /// The server's runtime for rerank calls, and the one-space preset's query

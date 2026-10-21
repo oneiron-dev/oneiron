@@ -17,6 +17,7 @@ use crate::skill::SkillRecord;
 use crate::temporal::TimeRange;
 
 use super::codec::invalid;
+use super::equivalent::redirect_equivalent_subjects_in_txn;
 use super::posterior::SkillReliabilityPosterior;
 use super::priors::read_cell_in_txn;
 use super::projector::PREDICATE_SKILL_RELIABILITY;
@@ -147,14 +148,30 @@ pub(super) fn posterior_from_estimate(estimate: &Estimate) -> Result<SkillReliab
     Ok(posterior)
 }
 
+/// The reliability head [`resolved_estimate_in_txn`] selected: its CLAIM and
+/// the estimate it stores, so a reader can name the row it showed (FIX 3515).
+/// It may stand on a shell merged into the skill (FIX 7815).
+pub(super) struct ResolvedEstimate {
+    pub(super) claim_id: EntityId,
+    pub(super) estimate: Estimate,
+}
+
 pub(super) fn resolved_estimate_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill: &EntityId,
     executor: Option<&str>,
-) -> Result<Option<Estimate>> {
-    let mut resolved: Option<Estimate> = None;
-    for (id, body, _) in active_reliability_heads_in_txn(vault, txn, skill, executor)? {
+) -> Result<Option<ResolvedEstimate>> {
+    let mut resolved: Option<ResolvedEstimate> = None;
+    // The richest head over the skill and the shells merged into it (FIX
+    // 7815): each head keeps its stored subject, and none is pooled.
+    let mut heads = Vec::new();
+    for subject in redirect_equivalent_subjects_in_txn(vault, txn, skill)? {
+        heads.extend(active_reliability_heads_in_txn(
+            vault, txn, &subject, executor,
+        )?);
+    }
+    for (id, body, _) in heads {
         if !claim_consolidation_eligible_in_txn(
             &vault.store,
             txn,
@@ -169,9 +186,12 @@ pub(super) fn resolved_estimate_in_txn(
         }
         if resolved
             .as_ref()
-            .is_none_or(|held| estimate.runs > held.runs)
+            .is_none_or(|held| estimate.runs > held.estimate.runs)
         {
-            resolved = Some(estimate);
+            resolved = Some(ResolvedEstimate {
+                claim_id: id,
+                estimate,
+            });
         }
     }
     Ok(resolved)
@@ -184,8 +204,7 @@ pub(super) fn resolved_reliability_posterior_in_txn(
     executor: Option<&str>,
 ) -> Result<Option<SkillReliabilityPosterior>> {
     resolved_estimate_in_txn(vault, txn, skill, executor)?
-        .as_ref()
-        .map(posterior_from_estimate)
+        .map(|head| posterior_from_estimate(&head.estimate))
         .transpose()
 }
 
