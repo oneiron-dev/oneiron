@@ -1,8 +1,8 @@
-//! Read-only neighbourhood fan-out, followed by one parent-owned merge.
-use std::future::{Future, poll_fn};
-use std::pin::Pin;
+//! Read-only neighbourhood fan-out, followed by one parent-owned merge. The
+//! fan-out is the child's extraction port (OF-498a,
+//! `NeighbourhoodExtractionPort`): by default its slices on the extraction
+//! role, side by side.
 use std::sync::Arc;
-use std::task::Poll;
 
 use rmpv::Value;
 
@@ -12,58 +12,14 @@ use super::failure_rules::{self, Stage};
 use super::partition::decode_partition_payload;
 use super::resources::{BranchResources, FallbackOutputPin};
 use super::roles::DREAMER_EXTRACTION_ROLE;
+use super::sieve_ports::{NeighbourhoodExtraction, SliceCall, SliceStep};
 use super::step_charge::StepChargeTally;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::dreamer_wake::WakeAttemptContext;
 use crate::llm::{
     DurableStepContext, DurableStepError, DurableStepResult, StepEffectBinding, StepOutcome,
-    call_as_step_checked,
 };
-
-/// Poll at most `width` children together. A ready error is just a slot
-/// value: every admitted sibling drains, and outputs retain spawn order.
-async fn ordered_slots<F: Future>(jobs: Vec<F>, width: usize) -> Vec<F::Output> {
-    let count = jobs.len();
-    let mut queued = jobs.into_iter().enumerate();
-    let mut active: Vec<(usize, Pin<Box<F>>)> = Vec::new();
-    let mut slots: Vec<Option<F::Output>> = (0..count).map(|_| None).collect();
-    let mut completed = 0;
-    poll_fn(|cx| {
-        loop {
-            while active.len() < width {
-                let Some((index, job)) = queued.next() else {
-                    break;
-                };
-                active.push((index, Box::pin(job)));
-            }
-            let mut progress = false;
-            let mut index = 0;
-            while index < active.len() {
-                match active[index].1.as_mut().poll(cx) {
-                    Poll::Ready(value) => {
-                        let (slot, _) = active.remove(index);
-                        slots[slot] = Some(value);
-                        completed += 1;
-                        progress = true;
-                    }
-                    Poll::Pending => index += 1,
-                }
-            }
-            if completed == count {
-                return Poll::Ready(());
-            }
-            if !progress {
-                return Poll::Pending;
-            }
-        }
-    })
-    .await;
-    slots
-        .into_iter()
-        .map(|slot| slot.expect("completed extraction slot"))
-        .collect()
-}
 
 impl ConsolidationExecutor<'_> {
     pub(super) async fn run_partition_attempt(
@@ -120,25 +76,6 @@ impl ConsolidationExecutor<'_> {
             axes.facet_ref,
             resources.scope().relationship,
         );
-        let mut requests = Vec::with_capacity(slices.len());
-        for slice in &slices {
-            let mut request = Self::extraction_request(
-                &call,
-                &slice.transcript,
-                &slice.labels,
-                &slice.scope,
-                &namespace,
-            )?;
-            if let Some(rules) = &rules {
-                rules.bind(Stage::Extraction, &mut request);
-            }
-            let mut request = ctx
-                .vault
-                .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &call.inference)?
-                .into_request();
-            super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
-            requests.push((request.canonical_hash()?, request));
-        }
         // Each child's reply check reads the citations its candidates would
         // carry into verification against the branch's own pinned text: a
         // range verification refuses the whole partition over refuses the
@@ -146,23 +83,36 @@ impl ConsolidationExecutor<'_> {
         let citations = Arc::new(extraction::CitationCheck::new(
             resources, axes, attempt_id, ctx.now_ms, namespace,
         ));
-        let checks: Vec<_> = slices
-            .iter()
-            .map(|slice| {
-                let citations = Arc::clone(&citations);
-                let scope = slice.scope.clone();
-                let labels = slice.labels.clone();
-                move |response: &crate::LlmResponse| citations.check(response, &scope, &labels)
+        let steps = self
+            .roles
+            .extraction_ports()
+            .neighbourhood_extraction()
+            .extract(NeighbourhoodExtraction {
+                step: &step_ctx,
+                guard: self.guard,
+                call,
+                slices: slices
+                    .iter()
+                    .map(|slice| SliceCall {
+                        transcript: &slice.transcript,
+                        labels: &slice.labels,
+                        scope: &slice.scope,
+                    })
+                    .collect(),
+                namespace,
+                rules: rules.as_ref(),
+                citations,
+                width,
             })
-            .collect();
-        let jobs = requests
-            .iter()
-            .zip(&checks)
-            .map(|((_, request), check)| {
-                call_as_step_checked(&step_ctx, call.backend, self.guard, request.clone(), check)
-            })
-            .collect();
-        let outcomes = ordered_slots(jobs, width).await;
+            .await?;
+        // A port answers every slice, in order: another count is a fault,
+        // never a shorter pairing.
+        if steps.len() != slices.len() {
+            return Err(crate::Error::InvariantViolation(
+                "a child extraction port answered another number of slices",
+            )
+            .into());
+        }
 
         // Account for ALL terminal siblings before examining any failure.
         // Successful replies are durable memos, so a failed slot can resume
@@ -171,15 +121,15 @@ impl ConsolidationExecutor<'_> {
         let mut refused = None;
         let mut trapped = false;
         let mut checkpoint = false;
-        for ((slice, (step_hash, _)), outcome) in slices.iter().zip(&requests).zip(outcomes) {
+        for (slice, SliceStep { step_hash, outcome }) in slices.iter().zip(steps) {
             match outcome {
                 Ok(StepOutcome::Finished {
                     response,
                     failure_policy,
                     ..
                 }) => {
-                    charges.record_terminal(ctx.vault, attempt_id, *step_hash, &response.usage)?;
-                    replies.push((slice, *step_hash, response, failure_policy));
+                    charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
+                    replies.push((slice, step_hash, response, failure_policy));
                 }
                 Ok(StepOutcome::Trapped { .. }) => trapped = true,
                 Err(DurableStepError::SpentFinalizeRefused { usage }) => {
