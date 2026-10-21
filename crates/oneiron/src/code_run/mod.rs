@@ -26,6 +26,7 @@ mod dispatcher;
 mod payload;
 mod reader;
 mod reader_brief;
+mod reader_clock;
 mod reader_fold;
 mod replay;
 mod replay_capsule;
@@ -173,9 +174,12 @@ pub(crate) use self::reader::{
     summary_memo_key, summary_task_id, valid_reader_key, vault_ref,
 };
 pub use self::reader_brief::reader_task_brief;
+pub(crate) use self::reader_clock::{reader_job_cutoff, reader_wait_cutoff};
 pub use self::reader_fold::{summarize_input, summarize_prompt};
+pub(crate) use self::scoped_child::scoped_child_read_refusal;
 pub use self::scoped_child::{
-    SCOPED_CHILD_AUTHORITY_LAPSED, SCOPED_CHILD_PORT_NOT_LENT, SCOPED_CHILD_SERVICE_UNBOUND,
+    SCOPED_CHILD_AUTHORITY_LAPSED, SCOPED_CHILD_PARENT_LEASE_LOST,
+    SCOPED_CHILD_PORT_EXCEEDS_PARENT, SCOPED_CHILD_PORT_NOT_LENT, SCOPED_CHILD_SERVICE_UNBOUND,
     ScopedChildCallContext, ScopedChildLoan, ScopedChildPorts, ScopedChildSpec, ScopedInputRead,
     scoped_child_authority,
 };

@@ -13,13 +13,18 @@
 //! constructs one, and it carries no credential. Its authority is its parent
 //! actor's own standing (a live person, or a live agent one live Grant of
 //! the owner's stands for), re-resolved at every port call and every read of
-//! what it was lent ([`scoped_child_authority`]), never where anyone runs.
+//! what it was lent ([`scoped_child_authority`]), never where anyone runs. A
+//! loan may also borrow the lease of the attempt its parent runs as
+//! ([`ScopedChildLoan::with_parent_attempt`], FIX 7507 PR3): its child then
+//! lives only while that lease holds, and a host attempt's child stands on
+//! that lease in place of a Grant (FIX 7732).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use super::dispatcher::ReaderChildBinding;
+use crate::attempt_queue::{AttemptQueue, AttemptRecord, BorrowedAttemptLease};
 use crate::code_run::{
     AgentVerbAnswer, AgentVerbRefusal, DelegatedSource, HostSelfDispatcher, ReaderJob, ReaderRoute,
     SelfAgentVerbCall, valid_reader_key, vault_ref,
@@ -28,7 +33,7 @@ use crate::llm::Scope;
 use crate::memory::HostWriteOrigin;
 use crate::runtime_hooks::InvocationId;
 use crate::task_verb::sdk::AgentVerb;
-use crate::{EntityId, Error, Result, Vault, WriteActor};
+use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
 /// The name a reader child, read or scoped, reads its primary input by.
 pub(crate) const READER_SOURCE_NAME: &str = "src";
@@ -45,6 +50,16 @@ pub const SCOPED_CHILD_SERVICE_UNBOUND: &str = "scoped_child_service_unbound";
 /// The refusal every call of a scoped child gets once its parent actor no
 /// longer stands (`scoped_child_authority`).
 pub const SCOPED_CHILD_AUTHORITY_LAPSED: &str = "scoped_child_authority_lapsed";
+
+/// Why a scoped child that borrowed its parent attempt's lease settles, and
+/// every call of it is refused, once that lease no longer holds
+/// (`scoped_parent_lease_holds`); and why a loan is refused a lease that is
+/// absent or stale when it is lent.
+pub const SCOPED_CHILD_PARENT_LEASE_LOST: &str = "scoped_child_parent_lease_lost";
+
+/// A loan that lends a port its parent attempt may not call itself (FIX
+/// 7732): a child never exceeds its parent.
+pub const SCOPED_CHILD_PORT_EXCEEDS_PARENT: &str = "scoped_child_port_exceeds_parent";
 
 /// A loan whose resource scope is wider than the bound its parent holds.
 const SCOPED_CHILD_SCOPE_WIDENS: &str = "scoped_child_scope_widens";
@@ -88,15 +103,16 @@ impl ScopedChildSpec {
 }
 
 /// A host's loan to one scoped child: the parent run and actor it is lent
-/// from, the route the parent runs on, and the spec it validated. Only
-/// [`Self::from_parent`] makes one; it is never serialized and carries no
-/// credential.
+/// from, the route the parent runs on, the spec it validated, and the parent
+/// attempt's lease it borrowed, if any. Only [`Self::from_parent`] makes one;
+/// it is never serialized and carries no credential.
 #[derive(Debug, Clone)]
 pub struct ScopedChildLoan {
     pub(super) parent_run: EntityId,
     pub(super) actor: WriteActor,
     pub(super) route: ReaderRoute,
     pub(super) spec: ScopedChildSpec,
+    pub(super) parent_lease: Option<BorrowedAttemptLease>,
 }
 
 impl ScopedChildLoan {
@@ -104,7 +120,10 @@ impl ScopedChildLoan {
     /// makes of `requested`, under the resource `bound` and the ports
     /// `allowed` its host holds for it. The actor and route are the
     /// dispatcher's own, never an argument's. It holds only while:
-    /// - the parent actor stands (`scoped_child_authority`);
+    /// - the parent actor stands (`scoped_child_authority`), or, for a host
+    ///   attempt's (System) parent, which holds no Grant, once it borrows
+    ///   that attempt's lease ([`Self::with_parent_attempt`]); it spawns
+    ///   nothing before;
     /// - every requested port is an SDK verb named in `allowed`;
     /// - the requested scope narrows `bound` ([`Scope::attenuate`]);
     /// - `src` is among the inputs, and every input is one of `parent_run`'s
@@ -130,7 +149,7 @@ impl ScopedChildLoan {
             ));
         }
         let actor = parent.actor();
-        if !principal_stands(vault, actor)? {
+        if actor.actor_class() != EdgeActorClass::System && !principal_stands(vault, actor)? {
             return Ok(Err(SCOPED_CHILD_AUTHORITY_LAPSED));
         }
         let lent = requested
@@ -182,7 +201,59 @@ impl ScopedChildLoan {
                 participant: parent.participant(),
             },
             spec: requested,
+            parent_lease: None,
         }))
+    }
+
+    /// This loan, borrowing the lease of `leased`, the attempt its parent
+    /// runs as, as its host holds it now (FIX 7507, FIX 7732). Its child then
+    /// lives only while that lease holds, and a host attempt's (System)
+    /// child stands on it in place of a Grant; a person's or an agent's keeps
+    /// its Grant check too. `parent_ports` is what the parent attempt itself
+    /// may call, as its host runs it: every port the loan lends must be one.
+    /// Nothing renews the lease. The answer's `Err` is
+    /// `scoped_child_parent_lease_lost` for a record that is not leased or a
+    /// lease that no longer holds, or `scoped_child_port_exceeds_parent`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when `vault` is not the vault the loan's
+    /// route is on; the queue's own read errors.
+    pub fn with_parent_attempt(
+        mut self,
+        vault: &Vault,
+        leased: &AttemptRecord,
+        parent_ports: &BTreeSet<String>,
+    ) -> Result<std::result::Result<Self, &'static str>> {
+        if self.route.vault != vault_ref(vault.vault_id()) {
+            return Err(Error::InvalidConfig(
+                "a scoped loan's vault is not its parent's".to_owned(),
+            ));
+        }
+        let Some(lease) = BorrowedAttemptLease::of(leased) else {
+            return Ok(Err(SCOPED_CHILD_PARENT_LEASE_LOST));
+        };
+        let txn = vault.store.env.read_txn()?;
+        if !lease.holds_in(&AttemptQueue::new(vault), &txn)? {
+            return Ok(Err(SCOPED_CHILD_PARENT_LEASE_LOST));
+        }
+        if !self.spec.ports.is_subset(parent_ports) {
+            return Ok(Err(SCOPED_CHILD_PORT_EXCEEDS_PARENT));
+        }
+        self.parent_lease = Some(lease);
+        Ok(Ok(self))
+    }
+
+    /// The run the loan is lent from.
+    #[must_use]
+    pub const fn parent_run(&self) -> EntityId {
+        self.parent_run
+    }
+
+    /// The parent attempt's lease the loan borrowed, if any.
+    #[must_use]
+    pub const fn parent_lease(&self) -> Option<&BorrowedAttemptLease> {
+        self.parent_lease.as_ref()
     }
 }
 
@@ -319,11 +390,15 @@ impl ScopedChildCallContext<'_, '_> {
         {
             return Ok(Err("tainted"));
         }
-        if !matches!(
-            self.dispatcher.withholds_retained(source.rows.as_deref()),
-            Ok(false)
-        ) {
-            return Ok(Err("result_withheld"));
+        match self.dispatcher.withholds_retained(source.rows.as_deref()) {
+            Ok(false) => {}
+            Ok(true) => return Ok(Err("result_withheld")),
+            // A lapsed authority or a lost parent lease names itself (FIX 7734).
+            Err(refusal) => {
+                return Ok(Err(
+                    scoped_child_read_refusal(&refusal.code).unwrap_or("result_withheld")
+                ));
+            }
         }
         let len = usize::try_from(end - start)
             .map_err(|_| Error::ArithmeticOverflow("scoped input length"))?;
@@ -395,6 +470,12 @@ pub(crate) fn scoped_child_input<'s>(
 /// [`SCOPED_CHILD_AUTHORITY_LAPSED`], never an open default. Where the
 /// actor or the vault runs is never asked.
 ///
+/// A job that borrowed its parent attempt's lease stands only while that
+/// lease holds in the same snapshot, else [`SCOPED_CHILD_PARENT_LEASE_LOST`].
+/// Then a host attempt's (System) child stands on the lease, with the loan's
+/// exact inputs and ports (FIX 7732, the lease-held authority for host
+/// attempt parents); a person's or an agent's keeps its Grant check.
+///
 /// # Errors
 ///
 /// A store, fold or clock failure of the standing check.
@@ -406,19 +487,46 @@ pub fn scoped_child_authority(
         return Ok(Err(SCOPED_CHILD_AUTHORITY_LAPSED));
     }
     let actor = job.binding.actor.write_actor()?;
-    Ok(if principal_stands(vault, actor)? {
+    let txn = vault.store.env.read_txn()?;
+    if let Some(lease) = job.scoped_parent_lease() {
+        if !lease.holds_in(&AttemptQueue::new(vault), &txn)? {
+            return Ok(Err(SCOPED_CHILD_PARENT_LEASE_LOST));
+        }
+        if actor.actor_class() == EdgeActorClass::System {
+            return Ok(Ok(()));
+        }
+    }
+    Ok(if principal_stands_in(vault, &txn, actor)? {
         Ok(())
     } else {
         Err(SCOPED_CHILD_AUTHORITY_LAPSED)
     })
 }
 
+/// The refusal a read of a scoped child answers when its door refused it
+/// with `code` on its authority (FIX 7734): `scoped_child_authority_lapsed`
+/// or `scoped_child_parent_lease_lost`, per read, as a refusal the child
+/// sees, never an error that ends its run. `None` for any other code.
+pub(crate) fn scoped_child_read_refusal(code: &str) -> Option<&'static str> {
+    [
+        SCOPED_CHILD_AUTHORITY_LAPSED,
+        SCOPED_CHILD_PARENT_LEASE_LOST,
+    ]
+    .into_iter()
+    .find(|known| *known == code)
+}
+
 /// Whether `actor` stands in `vault` now for a scoped child's reads.
 fn principal_stands(vault: &Vault, actor: WriteActor) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
+    principal_stands_in(vault, &txn, actor)
+}
+
+/// [`principal_stands`] in the caller's snapshot `txn`.
+fn principal_stands_in(vault: &Vault, txn: &heed::RoTxn<'_>, actor: WriteActor) -> Result<bool> {
     Ok(crate::authority::principal_standing_in_txn(
         vault,
-        &txn,
+        txn,
         actor.entity_ref(),
         actor.actor_class(),
         SCOPED_CHILD_AUTHORITY_VERB,

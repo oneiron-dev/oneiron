@@ -12,13 +12,16 @@ use crate::server::SyncServer;
 /// refusal alike: `structuredContent.meta.receipt_ref` on a result,
 /// `error.data.receipt_ref` on a refusal. A call inside an anonymous
 /// off-record session records nothing and states `receipt_ref: null` with
-/// `no_record: true`.
+/// `no_record: true`. `attempt` is what the call's collector held (OF-568
+/// L4), never read from its arguments.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn mcp_call_receipt(
     server: &SyncServer,
     actor: &McpResolvedActor,
     tool: String,
     request_digest: String,
     inputs: Option<oneiron::receipt::ActionInputs>,
+    attempt: Option<oneiron::receipt::CallAttemptWitness>,
     anonymous: bool,
     called: Result<Value, McpGatewayError>,
 ) -> Result<Value, McpGatewayError> {
@@ -58,6 +61,7 @@ pub(super) fn mcp_call_receipt(
             request_digest,
             result_digest,
             inputs,
+            attempt,
             served: Vec::new(),
         },
     );

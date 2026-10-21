@@ -104,6 +104,14 @@ impl HostBinding {
         self.run_id
     }
 
+    /// The witness a call receipt states of the try this binding sealed
+    /// (OF-568 L4): its attempt and lease generation, from the sealed
+    /// fields, so a call that held this binding's run names that attempt.
+    #[must_use]
+    pub const fn call_attempt_witness(&self) -> crate::receipt::CallAttemptWitness {
+        crate::receipt::CallAttemptWitness::sealed(self.parent, self.attempt_count)
+    }
+
     /// The try this binding sealed, read live in `vault`: still leased, by
     /// the same owner, at the same generation. A lapsed lease lends nothing.
     ///
