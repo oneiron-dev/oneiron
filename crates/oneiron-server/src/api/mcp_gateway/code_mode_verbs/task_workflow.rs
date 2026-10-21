@@ -35,10 +35,6 @@ use crate::mcp::EngineRunError;
 const PREFLIGHT_UNSTATED: &str = "library_run_unstated";
 
 /// What a TASK-bound program's strict try came to.
-#[allow(
-    dead_code,
-    reason = "resident_pump's run_bound, its caller, lands in L09's CUA E4 TASK-side PR"
-)]
 #[derive(Debug, Clone)]
 pub(crate) enum WorkflowPreflight {
     /// The program ran strict and met its postcondition. Its `model_free`
@@ -82,10 +78,6 @@ pub(crate) enum WorkflowPreflight {
 /// The door's own stop, which the run parks or ends on as it does for any
 /// of its calls: a verb hook's stop, or a model call no provider answered
 /// (`ProviderUnavailable`, read by [`EngineRunError::provider_outage`]).
-#[allow(
-    dead_code,
-    reason = "resident_pump's run_bound, its caller, lands in L09's CUA E4 TASK-side PR"
-)]
 pub(crate) fn preflight_task_workflow(
     door: &dyn AgentVerbDoor,
     workflow: EntityId,

@@ -93,6 +93,12 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
             .admit_in_line_observed(key, crate::api::admission_observer())
     }
 
+    /// [`Self::admit`] on this thread, at `key`'s place in the same line, for
+    /// work that runs on a blocking worker rather than on the runtime.
+    pub(crate) fn admit_blocking(&self, key: K) -> Result<Permit, WaitTimedOut> {
+        self.line.admit_blocking(key)
+    }
+
     /// A permit for the host's own work, given only when no caller waits.
     pub(crate) fn admit_background_blocking(&self) -> Result<Permit, WaitTimedOut> {
         self.line.admit_background_blocking()
