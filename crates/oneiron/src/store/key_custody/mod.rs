@@ -13,6 +13,7 @@
 
 mod anchor;
 mod credential_faults;
+mod erase_binding;
 mod files;
 mod folder;
 mod fork;

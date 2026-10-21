@@ -21502,6 +21502,14 @@ pub struct RecordEraseSweep {
         skip_serializing_if = "Option::is_none"
     )]
     pub sweep_complete_at: Option<u64>,
+    #[serde(
+        rename = "erase_complete_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub erase_complete_at: Option<u64>,
+    #[serde(rename = "final_ref", default, skip_serializing_if = "Option::is_none")]
+    pub final_ref: Option<String>,
     #[serde(rename = "custody", default, skip_serializing_if = "Option::is_none")]
     pub custody: Option<RecordEraseCustody>,
 }
@@ -25529,6 +25537,8 @@ pub struct LegalHoldLiftAndEraseRequest {
 pub enum ErasePendingReason {
     #[serde(rename = "historical_sweep")]
     HistoricalSweep,
+    #[serde(rename = "custody_retirement")]
+    CustodyRetirement,
 }
 
 /// `oneiron_contracts::error::legal_hold::LegalHoldBoundKind`.

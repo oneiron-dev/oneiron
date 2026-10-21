@@ -1,4 +1,5 @@
-//! Owner-bound historical erasure timing from the immutable redaction receipt.
+//! Owner-bound historical erasure timing from the immutable redaction receipt,
+//! its factual sweep row and its overall final row (FIX 5844).
 
 use serde::{Deserialize, Serialize};
 
@@ -8,8 +9,9 @@ use crate::EntityId;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
-    decode_redaction_audit_receipt, redaction_sweep_completion_id,
-    redaction_sweep_completion_in_txn, validate_redaction_receipt_body,
+    decode_redaction_audit_receipt, redaction_erase_final_id, redaction_erase_final_in_txn,
+    redaction_sweep_completion_id, redaction_sweep_completion_in_txn,
+    validate_redaction_receipt_body,
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
@@ -31,6 +33,12 @@ pub struct RecordEraseSweep {
     pub sweep_queued_at: Option<u64>,
     pub deadline_at: Option<u64>,
     pub sweep_complete_at: Option<u64>,
+    /// When the erase completed overall, from its signed final row: its
+    /// sweep, if it queued one, and every custody retirement it bound had
+    /// finished. `None` while either is pending (FIX 5844).
+    pub erase_complete_at: Option<u64>,
+    /// That final row's `redaction:<hex>` ref, once it is appended.
+    pub final_ref: Option<String>,
     /// Where the erased records' key retirements stand on every required
     /// custody target and the anchor; absent when none was in custody here.
     pub custody: Option<RecordEraseCustody>,
@@ -59,7 +67,8 @@ pub struct RecordEraseCustody {
 pub const ERASE_RECALL_NOTE: &str = "bytes already read before the erase cannot be recalled";
 
 impl Memory<'_> {
-    /// Reads the receipt and its linked completion in one owner-checked snapshot.
+    /// Reads the receipt, its linked sweep row and its final row in one
+    /// owner-checked snapshot.
     pub fn record_erase_sweep_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -97,15 +106,25 @@ impl Memory<'_> {
             .ok_or(crate::Error::CorruptedIndex("redaction audit receipt body"))?;
         validate_redaction_receipt_body(body)?;
         let receipt = decode_redaction_audit_receipt(body)?;
-        let sweep_complete_at = if receipt.sweep_complete_at.is_some() {
-            receipt.sweep_complete_at
-        } else {
-            let completed =
-                redaction_sweep_completion_in_txn(&self.vault.store, &txn, &receipt_id, &receipt)?;
+        // A ref to an appended row reads that row's own times.
+        let (sweep_complete_at, erase_complete_at, final_ref) = if receipt.is_initial() {
+            let store = &self.vault.store;
+            let completed = redaction_sweep_completion_in_txn(store, &txn, &receipt_id, &receipt)?;
             if completed.is_some() {
                 self.produced_from([redaction_sweep_completion_id(&receipt_id)?]);
             }
-            completed
+            let erased = redaction_erase_final_in_txn(store, &txn, &receipt_id, &receipt)?;
+            let final_id = redaction_erase_final_id(&receipt_id)?;
+            if erased.is_some() {
+                self.produced_from([final_id]);
+            }
+            let final_ref = erased.map(|_| format!("redaction:{}", final_id.to_hex()));
+            (completed, erased, final_ref)
+        } else {
+            let final_ref = receipt
+                .erase_complete_at
+                .map(|_| format!("redaction:{}", receipt_id.to_hex()));
+            (receipt.sweep_complete_at, receipt.erase_complete_at, final_ref)
         };
         let claims: Vec<[u8; 16]> = receipt
             .scope
@@ -130,6 +149,8 @@ impl Memory<'_> {
             sweep_queued_at: receipt.sweep_queued_at,
             deadline_at: receipt.sweep_deadline_at,
             sweep_complete_at,
+            erase_complete_at,
+            final_ref,
             custody,
         }))
     }

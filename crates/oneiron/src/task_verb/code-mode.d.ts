@@ -1442,7 +1442,7 @@ declare namespace Sdk {
   type RecordEraseOutcome = { first: DeleteReceipt; first_act?: string | null; same_bytes: EraseSameBytesRow[] };
   type RecordEraseSweepRequest = { receipt_ref: string };
   type RecordEraseCustody = { state: string; pending: string[]; recall: string; note?: string | null };
-  type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null; custody?: RecordEraseCustody | null };
+  type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null; erase_complete_at?: number | null; final_ref?: string | null; custody?: RecordEraseCustody | null };
   type ResearchChildWire = { root: EntityId; parent: EntityId; agent: EntityId; intent_key: string; briefing: string };
   type ResearchChildReceipt = { root: EntityId; parent: EntityId; child: EntityId };
   type ResearchArchiveWire = { root: EntityId };
@@ -1691,7 +1691,7 @@ declare namespace Sdk {
   type LegalHoldReason = "owner_placed" | "host_placed" | "legal_order" | "scope_widened" | "scope_narrowed_by_erase" | "end_date_changed" | "held_record" | "privacy_erase_kept" | "owner_confirmed" | "completion_pending" | "receipt_completed" | "authority_released" | "order_ended" | "host_released" | "secrecy_ended";
   type LegalHoldEvent = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; actor_ref?: string | null; actor_kind: LegalHoldActorKind; at: number; event: LegalHoldEventKind; reason: LegalHoldReason; matter_ref?: string | null; request_id?: string | null };
   type LegalHoldLiftAndEraseRequest = { records: EntityId[] };
-  type ErasePendingReason = "historical_sweep";
+  type ErasePendingReason = "historical_sweep" | "custody_retirement";
   type LegalHoldBoundKind = "law";
   type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
   type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "retained_for_law"; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string } | { state: "failed"; message: string };

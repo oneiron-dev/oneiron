@@ -7102,6 +7102,8 @@ class RecordEraseSweep(TypedDict):
     sweep_queued_at: NotRequired[int | None]
     deadline_at: NotRequired[int | None]
     sweep_complete_at: NotRequired[int | None]
+    erase_complete_at: NotRequired[int | None]
+    final_ref: NotRequired[str | None]
     custody: NotRequired[RecordEraseCustody | None]
 class ResearchChildWire(TypedDict):
     root: EntityId
@@ -8379,7 +8381,7 @@ class LegalHoldEvent(TypedDict):
     request_id: NotRequired[str | None]
 class LegalHoldLiftAndEraseRequest(TypedDict):
     records: list[EntityId]
-ErasePendingReason = Literal["historical_sweep"]
+ErasePendingReason = Literal["historical_sweep", "custody_retirement"]
 LegalHoldBoundKind = Literal["law"]
 class LegalHoldBound(TypedDict):
     kind: LegalHoldBoundKind
