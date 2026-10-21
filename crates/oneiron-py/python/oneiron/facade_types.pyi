@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1129 facade rows, 3926 declarations.
+Census: 1129 facade rows, 3928 declarations.
 Inputs: 1064 of 1129 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1016 of 1129 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -422,7 +422,7 @@ class ConcernCardRequest(TypedDict):
 AgentHealthSignal = Literal["loop", "failed_check_repeat", "cost_spike", "long_wait", "silent", "duplicate_work", "unsupported_done", "misalignment"]
 AgentHealthTone = Literal["struggling", "off_course", "concern"]
 AgentHealthConfidence = Literal["high", "low"]
-AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs", "environment_cause"]
+AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs", "environment_cause", "other_session_active"]
 AgentHealthMove = Literal["note", "steer", "budget", "reassign", "ask_coach", "hold"]
 AgentHealthOutcome = Literal["open", "confirmed", "dismissed", "unresolved"]
 class HealthBriefPin(TypedDict):
@@ -501,6 +501,17 @@ class HealthCauseSource(TypedDict):
     share: float
     judge_revision: NotRequired[str | None]
     displaced_by: NotRequired[str | None]
+class HealthOtherSession(TypedDict):
+    attempt: EntityId
+    generation: int
+    at: int
+class HealthSilenceActivity(TypedDict):
+    own_call_at: NotRequired[int | None]
+    own_step_at: NotRequired[int | None]
+    actor_only_at: NotRequired[int | None]
+    stream_at: NotRequired[int | None]
+    tool_finished_at: NotRequired[int | None]
+    other_session: NotRequired[HealthOtherSession | None]
 class AgentHealthCard(TypedDict):
     subject: EntityId
     signal: AgentHealthSignal
@@ -532,6 +543,7 @@ class AgentHealthCard(TypedDict):
     reviewer: str
     review_outcomes: list[HealthReviewReceipt]
     causes: list[HealthCauseSource]
+    silence: NotRequired[HealthSilenceActivity | None]
 RunTreeStatus = Literal["queued", "running", "paused", "completed", "failed", "cancelled", "abandoned"]
 class RunTreeTimestamps(TypedDict):
     created_at: int
@@ -14253,7 +14265,7 @@ class ModelStepSubmit(TypedDict):
     step_key: str
     request: LlmRequest
     retry: NotRequired[ModelStepRetryPolicy]
-LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input"]
+LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input", "reasoning_content_history"]
 class UnsupportedCapability(TypedDict):
     capability: LlmCapability
     model: NotRequired[ModelId | None]
@@ -18283,6 +18295,7 @@ class WakeRecipePolicy(TypedDict):
     typing_instruction: str
     narrative_instruction: str
     arc_min_new_statements: int
+    arc_child_calls_per_wake: int
     audit_window_instruction: str
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy

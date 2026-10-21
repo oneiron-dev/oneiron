@@ -5,9 +5,9 @@ use std::sync::Arc;
 use rsa::rand_core::RngCore;
 
 use crate::api::{
-    Counter, FetchMethod, FetchPurpose, FetchRequest, PadesProfile, PreparedRevision,
-    ProfileDegradeReason, SealBackend, SealConfig, SealFetcher, SealWarning, Sha256Digest,
-    SignRevisionRequest, SignatureAlgorithm, SigningIdentity,
+    Counter, FetchError, FetchMethod, FetchPurpose, FetchRequest, PadesProfile, PreparedRevision,
+    ProfileDegradeReason, SealBackend, SealConfig, SealFetcher, SealResourceLimits, SealWarning,
+    Sha256Digest, SignRevisionRequest, SignatureAlgorithm, SigningIdentity,
 };
 use crate::error::{FatalCode, RetryableCode, SealError, SealStage};
 
@@ -48,6 +48,9 @@ enum Fit<T> {
 /// Everything the profile assembler needs, bundled to keep signatures small.
 pub(crate) struct SealContext<'a> {
     pub config: &'a SealConfig,
+    /// The config's limits, scoped to this seal's memory ledger: every
+    /// parse in the profile reserves under it (FIX 7654).
+    pub limits: &'a SealResourceLimits,
     pub backend: &'a Arc<dyn SealBackend>,
     pub fetcher: &'a Arc<dyn SealFetcher>,
     pub clock_ms: u64,
@@ -144,7 +147,8 @@ async fn request_signature(
 }
 
 /// Ordered TSA failover (§5 rule 8, §7.4 step 3). Returns the first token
-/// that passes every §7.4-step-5 check.
+/// that passes every §7.4-step-5 check. A response memory refused is the
+/// seal's own resource error, never a reason to try the next authority.
 async fn fetch_timestamp_token(
     ctx: &SealContext<'_>,
     imprint: &Sha256Digest,
@@ -164,7 +168,14 @@ async fn fetch_timestamp_token(
                 content_type: Some("application/timestamp-query".to_string()),
             })
             .await;
-        let Ok(resp) = response else { continue };
+        let resp = match response {
+            Ok(resp) => resp,
+            Err(FetchError::Memory(refusal)) => {
+                return Err(refusal.seal_error(SealStage::Timestamp));
+            }
+            // Denied, unreachable, timed out or invalid: the next authority.
+            Err(_) => continue,
+        };
         let validated = tsp::validate_response(
             &resp.body,
             imprint,
@@ -289,8 +300,7 @@ async fn try_capacity(
         chain_ders: &identity.certificate_chain_der,
     };
     let cms_der = cms::build_signed_data(&material, &wire, &signature, &unsigned);
-    ctx.config
-        .resource_limits
+    ctx.limits
         .observed
         .note(Counter::ContentsBytes, cms_der.len());
     match pdf::patch_contents(&mut draft, &cms_der) {
@@ -325,7 +335,7 @@ async fn append_doc_timestamp(
 ) -> Result<Option<Vec<u8>>, SealError> {
     let mut capacity = CAPACITY_LADDER[0];
     loop {
-        let state = pdf::reparse_revision(bytes, &ctx.config.resource_limits)?;
+        let state = pdf::reparse_revision(bytes, ctx.limits)?;
         let mut draft = pdf::append_revision(
             bytes,
             &state,
@@ -341,10 +351,7 @@ async fn append_doc_timestamp(
             return Ok(None);
         };
         let needed = token.content_info_der.len();
-        ctx.config
-            .resource_limits
-            .observed
-            .note(Counter::ContentsBytes, needed);
+        ctx.limits.observed.note(Counter::ContentsBytes, needed);
         match pdf::patch_contents(&mut draft, &token.content_info_der) {
             Ok(()) => return Ok(Some(draft.bytes)),
             Err(SealError::Fatal {
@@ -421,7 +428,7 @@ pub(crate) async fn assemble(
     }
     let mut bytes = draft.bytes;
     if target >= PadesProfile::BaselineLt && achieved == PadesProfile::BaselineT {
-        match gather_validation_material(ctx, &identity, token.as_ref()).await {
+        match gather_validation_material(ctx, &identity, token.as_ref()).await? {
             Some(material) => {
                 bytes = append_dss(&bytes, ctx, &material)?;
                 achieved = PadesProfile::BaselineLt;
@@ -463,7 +470,7 @@ pub(crate) async fn assemble(
     // row. The one refusal left is the format bound: the sealer never emits
     // a document past lopdf's u32 offsets, which the verifier (and every
     // later reader here) could not parse. Both read the same bound.
-    if bytes.len() > ctx.config.resource_limits.max_input_bytes {
+    if bytes.len() > ctx.limits.max_input_bytes {
         return Err(SealError::Fatal {
             stage: SealStage::PdfIncrementalUpdate,
             code: FatalCode::PdfInvariantFailed,

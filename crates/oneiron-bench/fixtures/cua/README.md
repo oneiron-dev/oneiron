@@ -50,7 +50,7 @@ not taken from a contact list. All addresses use reserved `example.com` or
 `example.org` domains. There are no real business URLs, credentials, copied mirror
 rows or private source files. Incidental resemblance is not an asserted identity.
 
-`--external-data-dir /absolute/path/to/private-inputs` optionally overlays whole
+`--external-data-dir /srv/cua/private-inputs` optionally overlays whole
 fixture input objects from `F1.json` … `F5.json`, using the same schemas as `data/`.
 Missing files retain seeded synthetic inputs. Intended later private F1/F3 variants
 stay outside the public repository; no such files ship here. The loader never
@@ -66,7 +66,7 @@ Do not run the generator with private data or commit private inputs/oracles/logs
 | PUBLIC | `127.0.0.1:8765`, configurable host/port | Guest: HTML, shared assets and page APIs only |
 | PRIVATE | **`127.0.0.1:8766`**, configurable port, not host | Host checker: bearer-authenticated reset, state and health only |
 
-Startup requires `--event-log /absolute/path/events.jsonl` and a random bearer token
+Startup requires `--event-log /srv/cua/events.jsonl` and a random bearer token
 from `CUA_PRIVATE_TOKEN`, a variable named with `--token-env`, or a file named with
 `--token-file`. Generate at least 32 random bytes; the documented recipe uses
 64 hex characters. The server rejects tokens shorter than 32 characters. All
@@ -192,28 +192,20 @@ be used. F1 uses a second link, matching the intended link role.
 
 ## S2/S3 PR1 integration boundary
 
-The `oneiron-bench cua taskgen`, `run` and `report` commands now have source
-implementations. `drift` emits typed `not_implemented` (S5, PR2). The CLI refuses
-`run` outside Linux. The runner freezes 51 paired fresh cells, exact deployment
-pins, terminal failures, checker/config identities and separate safety axes.
+The `oneiron-bench cua taskgen`, `run`, `report` and `drift` commands have
+source implementations. Execution refuses non-Linux hosts. The runner freezes
+51 paired fresh cells, deployment pins, terminal failures and checker identities;
+S5's original-workflow vault/attached-run adapter remains unavailable.
 
-**This checkout does not run a direction screen.** Its engine browser config
-still has no dynamic S1 transport (FIX 8061, engine lane). Linux `run` writes
-`fixture_transport_unavailable` for assigned cells without launching candidate
-work. It never mounts S1 into the engine's file fixture origin, drives CDP itself,
-or changes engine routing, consent, replay or browser semantics. Chromium's
-fenced-guest proof does not itself provide this missing served transport.
-
-**Served-engine transport (FIX 8061).** The engine side now exists: a served
-engine whose `[browser]` section sets `bench_fixture_forward = "172.30.91.1:8765"`
-(one numeric IPv4 `host:port`, never loopback, so PRIVATE's `127.0.0.1:8766` is
-refused) forwards the virtual origin `http://127.0.0.1:8080` to that address,
-host-side. A run browser opens that origin plus reset's relative `entry`, for
-example `http://127.0.0.1:8080/F4/v0/index.html`; its guest stays
-`--network none`, and a direct request to the bridge address or PRIVATE is still
-refused. The key refuses no external traffic: give the bench's engine process
-`ONEIRON_EGRESS_CONFIG` naming a file that holds `{"allowed_domains": []}`. The
-`run` command above does not use this path yet.
+**Served-engine forward (FIX 8061).** Freeze PUBLIC's non-loopback numeric IPv4
+bind with `taskgen --fixture-forward 172.30.91.1:8765` and supply the same
+`browser.bench_fixture_forward` in the runtime pins. The harness writes
+`[browser] bench_fixture_forward = "172.30.91.1:8765"` and points
+`ONEIRON_EGRESS_CONFIG` at a run-private file holding `{"allowed_domains": []}`.
+The guest opens `http://127.0.0.1:8080` plus reset's relative `entry`; only that
+origin forwards to PUBLIC. The guest stays network=none; PRIVATE, the direct
+bridge address and external sites stay refused. `run --readiness-only` writes
+the FIX 8326 matrix receipt on a Linux fleet host; it is not a direction screen.
 
 Detailed CLI, runtime pin schema, lifecycle, cash/identity gates and unavailable
 measures are documented in
@@ -234,9 +226,9 @@ No generated fixture HTML/data/expected output or existing test was changed.
 
 ## FIX / execution limits
 
-- S2 must wire this fixture into the engine's declared-fixture HTTP door or a
-  bench-only network transport. The existing production browser launcher uses
-  `--network none`; the standalone guest recipe is not a claim that S2 is wired.
+- The frozen plan and runtime pins must name the same PUBLIC bind. The harness
+  checks the written forward before serving. The standalone guest recipe is not
+  a substitute for the served-engine readiness matrix.
 - Runtime/browser behavior and Linux firewall isolation have not been exercised
   on this Mac. Validate them on a booked Linux host before benchmark runs. Only
   deterministic generation and direct Python handler self-checks were executed.

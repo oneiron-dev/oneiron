@@ -12,7 +12,8 @@
 
 use super::super::call_labels::{CallLabelMap, LabelKind};
 use super::super::resources::document_version;
-use super::super::turn_text::dreamer_read;
+use super::super::turn_text::{TurnText, dreamer_read};
+use super::arc_claims::ArcClaimEntry;
 use super::{ScopeSummaryEvidence, scope_summary_evidence_in_txn, source_pin};
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::error::Result;
@@ -36,6 +37,12 @@ pub(super) struct ArcView {
     pub(super) opened: BTreeSet<EntityId>,
     /// Each claim shown, which the Arc depends on once it lands.
     pub(super) claim_ids: Vec<EntityId>,
+    /// Each claim shown, by label and words, for an Arc composed in parts
+    /// (FIX 7509 PR3).
+    pub(super) claim_entries: Vec<ArcClaimEntry>,
+    /// The words of every Arc TURN that has any, as read and pinned: what a
+    /// part shows of a TURN read in place of a line or opened (PR3).
+    pub(super) texts: BTreeMap<EntityId, TurnText>,
     /// A TURN the Arc must read that its Dreamer could not.
     pub(super) unavailable: Option<EntityId>,
 }
@@ -123,9 +130,10 @@ pub(crate) fn arc_evidence_in_txn(
     )?;
     view.claims = claims.text;
     view.claim_ids = claims.ids;
+    view.claim_entries = claims.entries;
     evidence.text = serde_json::to_string(&(&view.lines, &view.turns, &view.claims))
         .map_err(|_| invalid_consolidation("arc evidence encoding"))?;
-    evidence.turns.clear();
+    view.texts = std::mem::take(&mut evidence.turns).into_iter().collect();
     evidence.arc = Some(view);
     Ok(evidence)
 }

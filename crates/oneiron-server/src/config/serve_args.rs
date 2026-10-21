@@ -379,6 +379,14 @@ pub struct ServeArgs {
     #[arg(long = "guest-runtime-fact", requires = "managed_by_hypnos")]
     pub guest_runtime_fact: Option<oneiron_vault_contract::GuestRuntimeFact>,
 
+    /// Managed mode: a private origin the hosted node's web fetch may reach,
+    /// `http|https://<dns-name>[:port]`; repeat it for each (FIX 7657). A
+    /// hosted node refuses RFC1918, CGNAT and ULA addresses except at a
+    /// listed origin, and never infrastructure. Without it, none; an entry
+    /// that does not parse stops the start.
+    #[arg(long = "hosted-private-origin", requires = "managed_by_hypnos")]
+    pub hosted_private_origins: Vec<oneiron::web_fetch::HostedPrivateOrigin>,
+
     /// Host address to bind to.
     #[arg(long)]
     pub host: Option<String>,

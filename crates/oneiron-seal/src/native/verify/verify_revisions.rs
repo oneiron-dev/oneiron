@@ -9,6 +9,7 @@ use crate::api::{
     Anomaly, Counter, ModificationLevel, Modifications, RevisionKind, RevisionReport,
     SealResourceLimits, SignatureKind, VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
 };
+use crate::memory::SealMemoryRefusal;
 use lopdf::{Document, Object, ObjectId};
 
 fn changed(before: &Document, after: &Document) -> Option<BTreeSet<ObjectId>> {
@@ -291,22 +292,23 @@ fn doc_timestamp_allowed(
 }
 
 /// A classification failure is NotRun, never Clean. Unknown changed objects
-/// are Suspicious even when their signature bytes still verify.
+/// are Suspicious even when their signature bytes still verify. Memory a
+/// snapshot's decodes were refused is `Err` (FIX 7654), never NotRun.
 pub(super) fn classify(
     bytes: &[u8],
     signatures: &[EnvelopeEvidence],
     ends: Option<&[usize]>,
     facts: Option<&pdf::RevisionFacts>,
     limits: &SealResourceLimits,
-) -> (Vec<RevisionReport>, Modifications, Vec<Anomaly>) {
+) -> Result<(Vec<RevisionReport>, Modifications, Vec<Anomaly>), SealMemoryRefusal> {
     let Some(ends) = ends else {
-        return (vec![], Modifications::NotRun, vec![]);
+        return Ok((vec![], Modifications::NotRun, vec![]));
     };
     let Some(facts) = facts else {
-        return (vec![], Modifications::NotRun, vec![]);
+        return Ok((vec![], Modifications::NotRun, vec![]));
     };
     if facts.ends() != ends {
-        return (vec![], Modifications::NotRun, vec![]);
+        return Ok((vec![], Modifications::NotRun, vec![]));
     }
     let mut revisions = Vec::new();
     let mut anomalies = Vec::new();
@@ -323,8 +325,8 @@ pub(super) fn classify(
         // (Rule 5); the sum goes to the `[limits]` prefix-bytes row.
         work = work.saturating_add(end);
         limits.observed.note(Counter::PrefixBytes, work);
-        let Some(doc) = pdf::load_snapshot(&bytes[..end], limits) else {
-            return (revisions, Modifications::NotRun, anomalies);
+        let Some(doc) = pdf::load_snapshot(&bytes[..end], limits)? else {
+            return Ok((revisions, Modifications::NotRun, anomalies));
         };
         let signed = signatures
             .iter()
@@ -346,7 +348,7 @@ pub(super) fn classify(
         };
         if let Some(before) = &previous {
             let Some(ids) = changed(before, &doc) else {
-                return (revisions, Modifications::NotRun, anomalies);
+                return Ok((revisions, Modifications::NotRun, anomalies));
             };
             if ids.is_empty() {
                 anomalies.push(Anomaly::PointerOnlyRevision);
@@ -404,9 +406,9 @@ pub(super) fn classify(
                 .iter()
                 .any(|r| r.signed_by.as_deref() == Some(s.id.as_str()))
     }) {
-        return (revisions, Modifications::NotRun, anomalies);
+        return Ok((revisions, Modifications::NotRun, anomalies));
     }
-    (
+    Ok((
         revisions,
         if suspicious {
             Modifications::Suspicious
@@ -414,7 +416,7 @@ pub(super) fn classify(
             Modifications::Clean(modification)
         },
         anomalies,
-    )
+    ))
 }
 
 #[cfg(test)]
