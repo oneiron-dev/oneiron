@@ -93,9 +93,10 @@ impl Vault {
     /// each later one the record before it ([`KeyFrontier`], FIX 5464);
     /// otherwise each names the rows themselves and its signer's previous row
     /// of the world. Returns the records' hashes; the caller judges the
-    /// refold. A world whose rows outgrow one record raises its OF-520
-    /// question and writes nothing ([`FrontierWide`]), whichever parents a
-    /// record would take.
+    /// refold. On the frontier a record's width is the parents it names
+    /// alone (FIX 5680): a world whose rows outgrow one record raises its
+    /// OF-520 question and writes nothing ([`FrontierWide`]) only when its
+    /// records stay on those rows.
     #[expect(
         clippy::too_many_arguments,
         reason = "one append: the snapshot, the signer, the key, its recipients and its request"
