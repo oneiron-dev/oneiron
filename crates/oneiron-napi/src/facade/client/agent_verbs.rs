@@ -3802,6 +3802,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_archive_delete_preview(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.archive.delete.preview", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_archive_delete_confirm(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.archive.delete.confirm", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_usage_events_undecodable(
         &self,
         input: serde_json::Value,

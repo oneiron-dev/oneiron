@@ -1382,6 +1382,12 @@ impl OneironClient {
                 "vault.cleanup.run" => remote_agent_verb_output::<
                     oneiron::vault_cleanup::surface::CleanupRunView,
                 >(client, verb, &input),
+                "vault.archive.delete.preview" => remote_agent_verb_output::<
+                    oneiron::memory::ArchiveDeletePreviewView,
+                >(client, verb, &input),
+                "vault.archive.delete.confirm" => remote_agent_verb_output::<
+                    oneiron::memory::ArchiveDeleteBatchResult,
+                >(client, verb, &input),
                 "vault.usage.events.undecodable" => remote_agent_verb_output::<
                     oneiron::memory::usage_repair::UndecodableUsageList,
                 >(client, verb, &input),
@@ -8927,6 +8933,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.cleanup.run", value)
+    }
+    pub fn vault_archive_delete_preview(
+        &self,
+        input: &oneiron::memory::ArchiveDeletePreviewRequest,
+    ) -> Result<oneiron::memory::ArchiveDeletePreviewView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.archive.delete.preview", value)
+    }
+    pub fn vault_archive_delete_confirm(
+        &self,
+        input: &oneiron::memory::ArchiveDeleteConfirmRequest,
+    ) -> Result<oneiron::memory::ArchiveDeleteBatchResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.archive.delete.confirm", value)
     }
     pub fn vault_usage_events_undecodable(
         &self,

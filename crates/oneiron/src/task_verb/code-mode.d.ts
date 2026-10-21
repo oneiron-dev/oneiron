@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1181 code-mode rows (1141 host rows, 40 run rows), 3991 declarations.
-// Replies: 1061 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1183 code-mode rows (1143 host rows, 40 run rows), 4004 declarations.
+// Replies: 1063 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1668,6 +1668,19 @@ declare namespace Sdk {
   type CleanupKind = "claimless_extraction_person" | "empty_summary" | "completed_task" | "completed_attempt" | "retained_note";
   type CleanupCandidate = { entity: EntityId; kind: CleanupKind };
   type CleanupRunView = { attempt: string; posture: CleanupPosture; candidates: CleanupCandidate[]; proposal?: EntityId | null; archived: EntityId[]; digest?: EntityId | null };
+  type ArchiveDeletePreviewRequest = { targets: string[] };
+  type ArchiveDeleteExpectation = { record_hash: string; archive_marker: string };
+  type ArchiveDeletePreviewRow = { record_bytes: number; expected: ArchiveDeleteExpectation };
+  type ArchiveDeleteError = { code: string; message: string; suggestions: string[] };
+  type ArchiveDeletePreviewOutcome = (ArchiveDeletePreviewRow & { outcome: "previewed" }) | { outcome: "refused"; error: ArchiveDeleteError };
+  type ArchiveDeletePreviewEntry = { entity: string; result: ArchiveDeletePreviewOutcome };
+  type ArchiveDeletePreviewView = { entries: ArchiveDeletePreviewEntry[]; record_bytes: number };
+  type ArchiveDeleteItem = { entity: string; expected?: ArchiveDeleteExpectation | null };
+  type ArchiveDeleteConfirmRequest = { items: ArchiveDeleteItem[] };
+  type ArchiveDeleteReceiptView = { existed: boolean; reason: string; receipt_ref?: string | null; role: string; grant_ref?: string | null };
+  type ArchiveDeleteConfirmOutcome = (ArchiveDeleteReceiptView & { outcome: "deleted" }) | { outcome: "refused"; error: ArchiveDeleteError };
+  type ArchiveDeleteConfirmEntry = { entity: string; result: ArchiveDeleteConfirmOutcome };
+  type ArchiveDeleteBatchResult = { entries: ArchiveDeleteConfirmEntry[] };
   type UsageRepairListRequest = Record<string, never>;
   type UndecodableUsageReason = "stored_event_decode_failed";
   type UndecodableUsageRow = { rowRef: string; byteLength: number; hash: string; decodeReason: UndecodableUsageReason };
@@ -4556,6 +4569,14 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Appends one authored delta to this actor's generation-bound stream through its existing write gate. */
   append_to_stream(input: Sdk.AppendToStreamRequest): Promise<null | StoredResult>;
+  archive: {
+    delete: {
+      /** Deletes explicit archived records under the caller's current delete authority and returns each receipt. */
+      confirm(input: Sdk.ArchiveDeleteConfirmRequest): Promise<Sdk.ArchiveDeleteBatchResult | StoredResult>;
+      /** Previews explicit archived records under the caller's delete authority. */
+      preview(input: Sdk.ArchiveDeletePreviewRequest): Promise<Sdk.ArchiveDeletePreviewView | StoredResult>;
+    };
+  };
   artifacts: {
     /** Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard. */
     admit(input: Sdk.ArtifactAdmitSubmit): Promise<Sdk.ArtifactAskOutcome | StoredResult>;

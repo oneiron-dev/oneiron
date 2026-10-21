@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1131 facade rows, 3938 declarations.
-Inputs: 1066 of 1131 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1018 of 1131 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1133 facade rows, 3951 declarations.
+Inputs: 1068 of 1133 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1020 of 1133 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -8251,6 +8251,52 @@ class CleanupRunView(TypedDict):
     proposal: NotRequired[EntityId | None]
     archived: list[EntityId]
     digest: NotRequired[EntityId | None]
+class ArchiveDeletePreviewRequest(TypedDict):
+    targets: list[str]
+class ArchiveDeleteExpectation(TypedDict):
+    record_hash: str
+    archive_marker: str
+class ArchiveDeletePreviewRow(TypedDict):
+    record_bytes: int
+    expected: ArchiveDeleteExpectation
+class ArchiveDeleteError(TypedDict):
+    code: str
+    message: str
+    suggestions: list[str]
+class ArchiveDeletePreviewOutcomePreviewed(ArchiveDeletePreviewRow):
+    outcome: Literal["previewed"]
+class ArchiveDeletePreviewOutcomeRefused(TypedDict):
+    outcome: Literal["refused"]
+    error: ArchiveDeleteError
+ArchiveDeletePreviewOutcome = ArchiveDeletePreviewOutcomePreviewed | ArchiveDeletePreviewOutcomeRefused
+class ArchiveDeletePreviewEntry(TypedDict):
+    entity: str
+    result: ArchiveDeletePreviewOutcome
+class ArchiveDeletePreviewView(TypedDict):
+    entries: list[ArchiveDeletePreviewEntry]
+    record_bytes: int
+class ArchiveDeleteItem(TypedDict):
+    entity: str
+    expected: NotRequired[ArchiveDeleteExpectation | None]
+class ArchiveDeleteConfirmRequest(TypedDict):
+    items: list[ArchiveDeleteItem]
+class ArchiveDeleteReceiptView(TypedDict):
+    existed: bool
+    reason: str
+    receipt_ref: NotRequired[str | None]
+    role: str
+    grant_ref: NotRequired[str | None]
+class ArchiveDeleteConfirmOutcomeDeleted(ArchiveDeleteReceiptView):
+    outcome: Literal["deleted"]
+class ArchiveDeleteConfirmOutcomeRefused(TypedDict):
+    outcome: Literal["refused"]
+    error: ArchiveDeleteError
+ArchiveDeleteConfirmOutcome = ArchiveDeleteConfirmOutcomeDeleted | ArchiveDeleteConfirmOutcomeRefused
+class ArchiveDeleteConfirmEntry(TypedDict):
+    entity: str
+    result: ArchiveDeleteConfirmOutcome
+class ArchiveDeleteBatchResult(TypedDict):
+    entries: list[ArchiveDeleteConfirmEntry]
 class UsageRepairListRequest(TypedDict):
     ...
 UndecodableUsageReason = Literal["stored_event_decode_failed"]

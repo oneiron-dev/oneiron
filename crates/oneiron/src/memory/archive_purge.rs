@@ -1,9 +1,14 @@
-//! Owner-only archive impact preview and confirmed ARCH-0038 delete. The
-//! ladder's erase, which also clears backups, is a different act.
+//! Archive impact preview and confirmed ARCH-0038 delete: the owner's door,
+//! and its checked siblings for every other caller's archive-delete
+//! authority (OF-449 L4). The ladder's erase, which also clears backups, is
+//! a different act.
 
 use crate::EntityId;
+use crate::federation::{ArchiveDeleteAuthority, ArchiveDeleteCaller, ArchiveDeleteRefusal};
 use crate::memory::support::verify_deletion_authority_in_txn;
-use crate::memory::{DeleteReceipt, Memory, MemoryError, MemoryResult, SafeDeleteReason};
+use crate::memory::{
+    DeleteReceipt, MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, SafeDeleteReason,
+};
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 
 /// One archived entity's retained record bytes. Secondary indexes and historical
@@ -15,6 +20,25 @@ pub struct ArchivePurgeEntry {
     fingerprint: [u8; 32],
     archive_marker: Vec<u8>,
 }
+
+impl ArchivePurgeEntry {
+    /// The BLAKE3 hash of the record bytes this entry read.
+    pub(crate) fn record_hash(&self) -> [u8; 32] {
+        self.fingerprint
+    }
+
+    /// The exact archive marker bytes this entry read.
+    pub(crate) fn marker(&self) -> &[u8] {
+        &self.archive_marker
+    }
+}
+
+/// What a confirm may bind one archived record to: the record hash and the
+/// archive marker its preview read.
+pub(crate) type ArchiveExpectation = ([u8; 32], Vec<u8>);
+
+/// A batch's per-record answers, in canonical order.
+pub(crate) type ArchiveDeleteResults<T> = Vec<(EntityId, MemoryResult<T>)>;
 
 /// A snapshot-bound confirmation. Fields are read-only so callers cannot add a
 /// target they did not preview. Restores and changed records invalidate it.
@@ -96,6 +120,122 @@ impl Memory<'_> {
             })
             .collect()
     }
+}
+
+impl Memory<'_> {
+    /// The checked sibling of [`Self::preview_archive_purge`] for a caller
+    /// the owner door does not serve (OF-449 L4): each explicit target, in
+    /// the same canonical order, under this caller's archive-delete
+    /// authority in one snapshot. A target it may not delete, or that is no
+    /// cleanup archive, answers its own error and the rest still preview.
+    ///
+    /// # Errors
+    /// The snapshot could not be opened.
+    pub(crate) fn preview_archive_delete(
+        &self,
+        ids: &[EntityId],
+    ) -> MemoryResult<ArchiveDeleteResults<ArchivePurgeEntry>> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        let mut targets = ids.to_vec();
+        targets.sort_unstable();
+        targets.dedup();
+        Ok(targets
+            .into_iter()
+            .map(|id| {
+                let entry = self
+                    .archive_delete_authority_in(&txn, id)
+                    .and_then(|_| archive_entry_in(self.vault, &txn, id));
+                (id, entry)
+            })
+            .collect())
+    }
+
+    /// The checked sibling of [`Self::confirm_archive_purge`]: each explicit
+    /// target, once, in canonical order (the first item named for an id is
+    /// kept), is a user hard delete under this caller's archive-delete
+    /// authority. Each write before publication rechecks that authority,
+    /// the cleanup archive marker and, when given, the expected record hash
+    /// and marker. One target's refusal or failure never hides another's
+    /// receipt.
+    pub(crate) fn confirm_archive_delete(
+        &self,
+        items: &[(EntityId, Option<ArchiveExpectation>)],
+    ) -> ArchiveDeleteResults<(DeleteReceipt, ArchiveDeleteAuthority)> {
+        let mut targets = items.to_vec();
+        targets.sort_by_key(|(id, _)| *id);
+        targets.dedup_by_key(|(id, _)| *id);
+        targets
+            .into_iter()
+            .map(|(id, expected)| {
+                let result = self.safe_delete_archive_checked(
+                    id,
+                    &|txn| self.archive_delete_authority_in(txn, id),
+                    |txn| {
+                        let marker = archive_marker(self.vault, txn, id)?;
+                        let Some((hash, expected_marker)) = &expected else {
+                            return Ok(());
+                        };
+                        let raw = self.vault.get_raw_in(txn, &id)?.ok_or_else(stale_preview)?;
+                        if &marker != expected_marker || blake3::hash(&raw).as_bytes() != hash {
+                            return Err(stale_preview());
+                        }
+                        Ok(())
+                    },
+                );
+                (id, result)
+            })
+            .collect()
+    }
+
+    /// This caller's authority to delete the archived `id` in `txn`
+    /// (`federation::require_archive_delete_in_txn`), its refusal FORBIDDEN.
+    fn archive_delete_authority_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+    ) -> MemoryResult<ArchiveDeleteAuthority> {
+        let caller = ArchiveDeleteCaller {
+            actor: self.actor,
+            class: self.actor_class,
+            credential: self.presented_credential(),
+        };
+        crate::federation::require_archive_delete_in_txn(self.vault, txn, caller, id)?.map_err(
+            |refusal: ArchiveDeleteRefusal| {
+                MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    refusal.message(),
+                    &[
+                        "An archived record is deleted by the vault's Owner, an Admin whose scope \
+                         holds it, the Member who owns it, or an agent under one Grant that names \
+                         delete.",
+                    ],
+                )
+            },
+        )
+    }
+}
+
+/// One archived record's preview entry as `txn` holds it.
+fn archive_entry_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> MemoryResult<ArchivePurgeEntry> {
+    let marker = archive_marker(vault, txn, id)?;
+    let raw = vault
+        .get_raw_in(txn, &id)?
+        .ok_or_else(|| MemoryError::from(crate::Error::EntityNotFound))?;
+    Ok(ArchivePurgeEntry {
+        entity: id,
+        record_bytes: raw.len() as u64,
+        fingerprint: *blake3::hash(&raw).as_bytes(),
+        archive_marker: marker,
+    })
 }
 
 fn stale_preview() -> MemoryError {
