@@ -301,9 +301,11 @@ impl<'v> ScopedRead<'v> {
 
     /// The row's own admission, before what it was written from: today's
     /// (B), and only once B refuses, the same row under one of the reader's
-    /// own live Grants (A, FIX 7462; `agent_grants`). B's error is the
-    /// read's; A never fails or hides it. `asked` is what the read asked
-    /// beyond its key's floor.
+    /// own live Grants (A, FIX 7462; `agent_grants`), and only once both
+    /// refuse, on a lane opted into it, the same row under the reader's own
+    /// live owner authority (FIX 7461; `owner_authority`). B's error is the
+    /// read's; neither alternative fails or hides it. `asked` is what the
+    /// read asked beyond its key's floor.
     #[expect(
         clippy::too_many_arguments,
         reason = "B else A over one row, its filter, held authority and request"
@@ -321,7 +323,10 @@ impl<'v> ScopedRead<'v> {
         if self.own_row_readable_in(rtxn, policy, id, raw, filter, authority, None)? {
             return Ok(true);
         }
-        Ok(self.own_row_readable_by_grant_in(rtxn, policy, id, raw, filter, authority, asked))
+        if self.own_row_readable_by_grant_in(rtxn, policy, id, raw, filter, authority, asked) {
+            return Ok(true);
+        }
+        Ok(self.own_row_readable_by_owner_in(rtxn, policy, id, raw, filter, authority, asked))
     }
 
     /// The row's own admission under `grant`, one live Grant of the
