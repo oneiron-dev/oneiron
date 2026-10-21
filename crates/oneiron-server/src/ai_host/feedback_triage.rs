@@ -9,6 +9,8 @@
 //! Proposed in the owner's run tray. No bound skill, no seat or answer, an
 //! answer that does not parse, or a write the engine refuses fails the job:
 //! the revision stays unacknowledged, and the next sweep queues it again.
+//! A revision whose evidence ASSET the owner erased is not triaged: its job
+//! files nothing, and the next sweep settles it erased (FIX 7551).
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::feedback::{
     FeedbackInboxNote, FeedbackTriageItem, FeedbackTriageJob, FeedbackTriageOutput,
@@ -91,8 +93,9 @@ pub(super) fn run_revision(
 ) -> oneiron::Result<()> {
     let vault = server.vault();
     let input = match vault.feedback_triage_job(admitted)? {
-        // A replayed job finds its result and files nothing.
-        FeedbackTriageJob::Acknowledged(_) => return Ok(()),
+        // A replayed job finds its result, and a job whose evidence the
+        // owner erased finds nothing to triage: neither calls nor files.
+        FeedbackTriageJob::Acknowledged(_) | FeedbackTriageJob::Erased => return Ok(()),
         FeedbackTriageJob::Pending(input) => input,
     };
     let attempt = &admitted.status.attempt;

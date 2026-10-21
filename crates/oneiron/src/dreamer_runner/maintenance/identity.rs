@@ -103,8 +103,6 @@ const MAX_OPEN_ASKS: usize = 64;
 const MAX_CANDIDATES: usize = 63;
 /// Context words one mention keeps.
 const MAX_TERMS: usize = 16;
-/// Context words one hint keeps.
-const MAX_HINT_TERMS: usize = 64;
 const MIN_TERM_CHARS: usize = 4;
 /// Bytes of text around a mention its ask keeps for the decision.
 const EXCERPT_BYTES: usize = 480;
@@ -667,7 +665,8 @@ pub(crate) fn hinted_mention_in_txn(
     Ok(best.filter(|_| !tied).map(|(entity, _)| entity))
 }
 
-/// Saves the words an answer was given in for its name and entity.
+/// Saves the words an answer was given in for its name and entity, each
+/// new one beside every word earlier answers saved (Rule 5: none is cut).
 fn put_hint_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -688,9 +687,6 @@ fn put_hint_in_txn(
             saved_at: now,
         });
     for term in &ask.context {
-        if hint.context.len() >= MAX_HINT_TERMS {
-            break;
-        }
         if !hint.context.contains(term) {
             hint.context.push(term.clone());
         }
