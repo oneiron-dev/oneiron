@@ -189,6 +189,9 @@ impl WidenIntent {
                 plan: self.plan.clone(),
                 objectives: self.objectives.clone(),
                 comm: self.comm,
+                // An approved widening's child carries no direct spawn
+                // receipt: the intent does not keep one.
+                direct_spawn: None,
             },
         ))
     }
