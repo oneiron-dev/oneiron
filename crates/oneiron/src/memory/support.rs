@@ -489,6 +489,10 @@ pub struct Memory<'v> {
     /// handle (`with_external_git_source_host`, FIX 6871); none otherwise.
     pub(super) external_git_source_host:
         Option<std::sync::Arc<dyn crate::repo_mutation::external_import::ExternalGitSourceHost>>,
+    /// The host bound this handle to an MCP tool call (FIX 8961,
+    /// `for_repo_tool_recipient`): repo bytes read masked whatever
+    /// credential rides it. Mask-only; off on every other handle.
+    pub(super) repo_tool_recipient: bool,
 }
 
 /// A door's admission of a verb hook's rewritten args, run on the verb's name
@@ -626,6 +630,7 @@ impl Vault {
             rewrite_admit: None,
             task_work_turn: None,
             external_git_source_host: None,
+            repo_tool_recipient: false,
         }
     }
 
@@ -677,6 +682,7 @@ impl Vault {
             rewrite_admit: None,
             task_work_turn: None,
             external_git_source_host: None,
+            repo_tool_recipient: false,
         }
     }
 }
@@ -738,6 +744,7 @@ impl<'v> Memory<'v> {
                 task_work_turn: self.task_work_turn.clone(),
                 // A call's import transport never crosses into a turn.
                 external_git_source_host: None,
+                repo_tool_recipient: self.repo_tool_recipient,
             },
         })
     }

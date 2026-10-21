@@ -8,7 +8,14 @@
 //! names which `c:ser` of its retained part each identity is
 //! ([`SeriesBinding`]).
 
+mod categories;
+
+pub(crate) use categories::draws_categories;
+pub use categories::{CategoryField, ChartCategories, ChartCategory, effective_categories};
+
 use super::{Conflict, DeckNode, NodeId, NodePayload};
+use crate::live::LiveError;
+use categories::{Sides, competing, series_conflicts, set_conflicts, values_compete};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -66,8 +73,8 @@ pub enum ChartSource {
 }
 
 /// One series: its identity, its name, one value per category (or, in a
-/// scatter plot, per x value), its plot family in a combo chart, and a
-/// scatter series' x values.
+/// scatter plot, per x value), its plot family in a combo chart, a scatter
+/// series' x values, and the categories it draws when they are its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChartSeries {
     /// Its identity within its chart. A series written with none, as a new
@@ -84,6 +91,10 @@ pub struct ChartSeries {
     /// A scatter series' x values, one per value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub x: Option<Vec<Option<serde_json::Number>>>,
+    /// The categories it draws instead of the chart's: `None` draws the
+    /// chart's, an empty set draws its points by index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub categories: Option<ChartCategories>,
 }
 
 /// Which series identity each `c:ser` of a bound chart's retained part
@@ -91,19 +102,26 @@ pub struct ChartSeries {
 /// series in document order), as the import read it or the last landed
 /// export wrote it: retained evidence, never the order to write. The next
 /// export finds each identity's own series, formatting and workbook cells by
-/// it.
+/// it, and each category point's own `c:pt` by the category identities each
+/// `c:ser` draws, in its point order.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SeriesBinding {
     pub series: Vec<NodeId>,
+    /// Each `c:ser`'s category identities, by its place in `series`.
+    #[serde(default)]
+    pub categories: Vec<Vec<NodeId>>,
 }
 
-/// One edit to a chart by series identity: a series inserted, deleted or
-/// moved, one field of one series written, or the chart's family,
-/// categories or data source. A series is placed after the one `after`
-/// names, first when it names none, or last when the chart no longer holds
-/// the one named. An edit naming a series the chart no longer holds does
-/// nothing: a concurrent delete wins, and an edit never brings a series
-/// back. The edited chart settles as a whole chart written over it does.
+/// One edit to a chart by series and category identity: a series inserted,
+/// deleted or moved, one field of one series written, a category point
+/// inserted, deleted, moved or relabelled in the chart's set or a series'
+/// own (`owner`, `None` the chart's), or the chart's family, categories or
+/// data source. A series or point is placed after the one `after` names,
+/// first when it names none, or last when its list no longer holds the one
+/// named. An edit naming a series, a set or a point the chart no longer
+/// holds does nothing: a concurrent delete wins, and an edit never brings
+/// one back. A category series' values move with its points. The edited
+/// chart settles as a whole chart written over it does.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChartEdit {
@@ -121,6 +139,9 @@ pub enum ChartEdit {
         family: Option<ChartKind>,
         #[serde(default)]
         x: Option<Vec<Option<serde_json::Number>>>,
+        /// Its own categories; none draws the chart's.
+        #[serde(default)]
+        categories: Option<ChartCategories>,
     },
     /// A series goes; its identity is never used again in its chart.
     DeleteSeries {
@@ -157,8 +178,55 @@ pub enum ChartEdit {
     SetFamily {
         family: ChartKind,
     },
+    /// The chart's categories, which every series without its own draws.
     SetCategories {
-        categories: Vec<String>,
+        categories: ChartCategories,
+    },
+    /// One series' own categories; none draws the chart's again.
+    SetSeriesCategories {
+        series: NodeId,
+        #[serde(default)]
+        categories: Option<ChartCategories>,
+    },
+    /// A new category point, holding no value in the series that draw it;
+    /// `id` names it, or its writer names a fresh one.
+    InsertCategory {
+        #[serde(default)]
+        owner: Option<NodeId>,
+        #[serde(default)]
+        id: Option<NodeId>,
+        #[serde(default)]
+        after: Option<NodeId>,
+        #[serde(default)]
+        levels: Vec<Option<String>>,
+    },
+    /// A category point goes, with its value in each series that draws it.
+    DeleteCategory {
+        #[serde(default)]
+        owner: Option<NodeId>,
+        category: NodeId,
+    },
+    /// A category point moves with its values.
+    MoveCategory {
+        #[serde(default)]
+        owner: Option<NodeId>,
+        category: NodeId,
+        #[serde(default)]
+        after: Option<NodeId>,
+    },
+    /// One category point's labels, leaf level first.
+    SetCategoryLevels {
+        #[serde(default)]
+        owner: Option<NodeId>,
+        category: NodeId,
+        levels: Vec<Option<String>>,
+    },
+    /// The identities, in order, the chart's settlement after these edits
+    /// gives the category points it adds (a set grown to its longest series,
+    /// x values turned to categories), named by the writer so every replay
+    /// names them alike. Applying it changes nothing.
+    ReserveCategories {
+        ids: Vec<NodeId>,
     },
     SetSource {
         source: ChartSource,
@@ -173,6 +241,8 @@ pub enum SeriesField {
     Values,
     Family,
     X,
+    /// Its own categories or the chart's, or the depth of its own.
+    Categories,
     /// Both sides moved it, to different places.
     Order,
     /// One side deleted it and the other wrote it.
@@ -180,11 +250,12 @@ pub enum SeriesField {
 }
 
 impl NodePayload {
-    /// The chart as its export draws it: its categories padded to its
-    /// longest category series, and no x values on a category series, as an
-    /// edit settles it. A chart concurrent writers joined is drawn so even
-    /// where neither writer's settlement saw the other's; a settled chart,
-    /// and any other payload, is drawn as it is.
+    /// The chart as its export draws it: each category set padded to the
+    /// longest category series that draws it, each such series' values to
+    /// its set, and no x values on a category series, as an edit settles it.
+    /// A chart concurrent writers joined is drawn so even where neither
+    /// writer's settlement saw the other's; a settled chart, and any other
+    /// payload, is drawn as it is.
     #[must_use]
     pub(crate) fn drawn(&self) -> NodePayload {
         let mut out = self.clone();
@@ -195,37 +266,59 @@ impl NodePayload {
             ..
         } = &mut out
         {
-            let chart_family = *family;
-            let category =
-                |line: &ChartSeries| line.family.unwrap_or(chart_family) != ChartKind::Scatter;
-            let longest = series
-                .iter()
-                .filter(|line| category(line))
-                .map(|line| line.values.len())
-                .max()
-                .unwrap_or(0);
-            if !categories.is_empty() && categories.len() < longest {
-                categories.resize(longest, String::new());
-            }
-            for line in &mut *series {
-                if category(line) {
-                    line.x = None;
-                }
-            }
+            categories::drawn(*family, categories, series);
         }
         out
     }
 }
 
+/// A chart's series fit the categories each draws: a category series holds
+/// no more values than its set has points (a shorter one ends in missing
+/// points; an empty set is points by index), and only a scatter series
+/// carries x values, at least one per value.
+pub(super) fn check(payload: &NodePayload) -> Result<(), LiveError> {
+    let NodePayload::Chart {
+        family,
+        categories,
+        series,
+        ..
+    } = payload
+    else {
+        return Ok(());
+    };
+    for line in series {
+        let set = effective_categories(categories, line);
+        if !draws_categories(*family, line) {
+            if line.x.as_ref().is_some_and(|x| x.len() < line.values.len()) {
+                return Err(LiveError::Invalid(
+                    "a scatter series holds more values than x values",
+                ));
+            }
+        } else if line.x.is_some() {
+            return Err(LiveError::Invalid("only a scatter series has x values"));
+        } else if !set.is_empty() && line.values.len() > set.len() {
+            return Err(LiveError::Invalid(
+                "a chart series holds more values than there are categories",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The conflicts of a chart both sides of a fork wrote, when the base, the
-/// head and the proposal all hold a chart: one series' name, values, family
-/// or x values both sides wrote differently, one series both sides moved to
-/// different places (among the series all three hold), or one series one
-/// side deleted and the other wrote ([`Conflict::SeriesVsSeries`]); and the
-/// chart's family, categories or data source both sides wrote differently
-/// ([`Conflict::PayloadVsPayload`]). Series inserted, deleted, moved or
-/// written by one side only, and different fields of one series, join
-/// without conflict. `None` when one of them holds no chart.
+/// head and the proposal all hold a chart: one series' name, values, family,
+/// x values or draw of categories both sides wrote differently, one series
+/// both sides moved to different places (among the series all three hold),
+/// or one series one side deleted and the other wrote
+/// ([`Conflict::SeriesVsSeries`]); one category point of the chart's set or
+/// of a series' own both sides relabelled, moved or one deleted and the
+/// other wrote ([`Conflict::CategoryVsCategory`]); and the chart's family,
+/// data source or category depth both sides wrote differently
+/// ([`Conflict::PayloadVsPayload`]). A category series' values compete
+/// point by point, through the points' identities. Series and points
+/// inserted, deleted, moved or written by one side only, and different
+/// fields of one series, join without conflict. `None` when one of them
+/// holds no chart.
 pub(crate) fn conflicts(
     node: NodeId,
     base: &DeckNode,
@@ -260,11 +353,18 @@ pub(crate) fn conflicts(
     }
     let mut out = Vec::new();
     if competing(base_family, head_family, proposal_family)
-        || competing(base_categories, head_categories, proposal_categories)
         || competing(base_source, head_source, proposal_source)
     {
         out.push(Conflict::PayloadVsPayload { node });
     }
+    set_conflicts(
+        node,
+        None,
+        [base_categories, head_categories, proposal_categories],
+        Conflict::PayloadVsPayload { node },
+        &mut out,
+    );
+    out.dedup();
     let find = |lines: &[ChartSeries], id: NodeId| -> Option<ChartSeries> {
         lines.iter().find(|line| line.id == Some(id)).cloned()
     };
@@ -292,15 +392,17 @@ pub(crate) fn conflicts(
         };
         match (find(head_series, id), find(proposal_series, id)) {
             (Some(head), Some(proposal)) => {
+                let sides = Sides {
+                    family: [*base_family, *head_family, *proposal_family],
+                    chart: [base_categories, head_categories, proposal_categories],
+                    line: [was, &head, &proposal],
+                };
                 for (field, both) in [
                     (
                         SeriesField::Name,
                         competing(&was.name, &head.name, &proposal.name),
                     ),
-                    (
-                        SeriesField::Values,
-                        competing(&was.values, &head.values, &proposal.values),
-                    ),
+                    (SeriesField::Values, values_compete(&sides)),
                     (
                         SeriesField::Family,
                         competing(&was.family, &head.family, &proposal.family),
@@ -311,6 +413,7 @@ pub(crate) fn conflicts(
                         out.push(series(field));
                     }
                 }
+                series_conflicts(node, id, &sides, &mut out);
                 if competing(
                     &before(base_series, id),
                     &before(head_series, id),
@@ -326,9 +429,4 @@ pub(crate) fn conflicts(
         }
     }
     Some(out)
-}
-
-/// Whether both sides wrote one value differently.
-fn competing<T: PartialEq>(base: &T, head: &T, proposal: &T) -> bool {
-    base != head && base != proposal && head != proposal
 }

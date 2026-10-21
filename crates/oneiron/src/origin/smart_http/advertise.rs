@@ -116,6 +116,29 @@ impl<'a> AdvertisedRefGate<'a> {
         }
     }
 
+    /// A gate over a masked copy's advertisement (FIX 7608 slice 2b-i): no
+    /// resolver runs. The projection is the canonical store's frozen
+    /// Published witness, its publication id `canonical_repo_id` and each
+    /// Published ref carried to its copy tip, so a copy advertises exactly
+    /// the refs the canonical store publishes and only at their copies.
+    /// The pkt-line, `HEAD`, keep-ref and capability rules are this gate's
+    /// own. No caller yet.
+    pub(super) fn frozen_copy(
+        vault: &Arc<Vault>,
+        copy_dir: &Path,
+        canonical_repo_id: EntityId,
+        copy_refs: Vec<(GitRefName, GitOid)>,
+        clock: &'a Progress,
+        inner: &'a mut dyn ServeSink,
+    ) -> Self {
+        let mut gate = Self::new(vault, copy_dir, false, clock, inner);
+        gate.projection = Some(AdvertisementProjection {
+            repo_id: canonical_repo_id,
+            published: copy_refs,
+        });
+        gate
+    }
+
     fn drain_carry(&mut self) -> Result<()> {
         while let Some(line) = take_pkt_line(&mut self.carry)? {
             self.handle_line(line)?;

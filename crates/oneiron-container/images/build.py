@@ -5,6 +5,7 @@
   build.py fetch   --repo R --mirror M --work W [--variant base ...] [--learn]
   build.py build   --repo R --mirror M --work W --variant tools|base|<variant>
   build.py receipt --work W --variant <variant>
+  build.py manifest --work W --variant <variant> [--kernel K] [--signer-cmd CMD]
   build.py engine-commit                  print inputs.engine.commit
 
 `fetch` is the only online phase: it fills the mirror (M) with every pinned
@@ -26,7 +27,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from imagebuild import model as model_mod  # noqa: E402
-from imagebuild import pipeline, receipt  # noqa: E402
+from imagebuild import pipeline, receipt, release_manifest  # noqa: E402
 from imagebuild.fetch import Mirror  # noqa: E402
 from imagebuild.util import BuildError, HostRefusal, log, userns_root  # noqa: E402
 
@@ -77,6 +78,13 @@ def main() -> int:
     rec = sub.add_parser("receipt")
     rec.add_argument("--work", required=True)
     rec.add_argument("--variant", required=True, choices=model_mod.BUILDABLE[1:])
+    man = sub.add_parser("manifest", help="write image-release.json from a built variant and its receipt")
+    man.add_argument("--work", required=True)
+    man.add_argument("--variant", required=True, choices=model_mod.BUILDABLE[1:])
+    man.add_argument("--kernel", default=None, help="an operator-supplied kernel image to list and hash")
+    man.add_argument("--signer-cmd", default=None,
+                     help="the signing seam: reads the manifest bytes on stdin, writes one envelope on stdout; "
+                          "unused today (no signing key exists)")
     args = parser.parse_args()
 
     try:
@@ -96,6 +104,18 @@ def main() -> int:
             path, sha = receipt.write(model, record, Path(record["artifacts"]))
             log(f"receipt {path} sha256 {sha}")
             print(receipt.release_block(record, sha))
+            return 0
+        if args.command == "manifest":
+            work = Path(args.work).resolve()
+            if release_manifest.in_builder(work):
+                # b3sum runs in the tools tree as the build ran it; the
+                # namespace keeps the network for a signer command.
+                _host()
+                _enter_userns(network=True)
+            kernel = Path(args.kernel) if args.kernel else None
+            path, sha = release_manifest.emit(model, work, args.variant, kernel=kernel, signer_cmd=args.signer_cmd)
+            log(f"manifest {path} sha256 {sha}")
+            print(path)
             return 0
         _host()
         model_mod.validate(model)

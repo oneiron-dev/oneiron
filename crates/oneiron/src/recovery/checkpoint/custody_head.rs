@@ -170,6 +170,11 @@ impl Vault {
             data_key,
             pad_worlds_kept_local,
             credentials_eligible,
+            // Each world's admitted machines and roots (FIX 6706): filled
+            // from L03's `world_pad_recipients_in_txn` when the head's world
+            // compartments switch on; empty, the head's pads stay
+            // host-readable as today.
+            pad_worlds: Default::default(),
         })
     }
 
