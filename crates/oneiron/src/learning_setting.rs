@@ -713,8 +713,21 @@ fn cached_fit(
 /// A row that does not decode; storage errors.
 pub fn list_setting_rows(vault: &Vault) -> Result<Vec<(SettingScope, SettingRow, String)>> {
     let rtxn = vault.store.env.read_txn()?;
+    list_setting_rows_in_txn(vault, &rtxn)
+}
+
+/// [`list_setting_rows`] in the caller's snapshot, for a reader whose other
+/// rows must be read beside the same owner rows (FIX 8358).
+///
+/// # Errors
+///
+/// As [`list_setting_rows`].
+pub(crate) fn list_setting_rows_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<(SettingScope, SettingRow, String)>> {
     let mut out = Vec::new();
-    for (stored_key, stored) in SETTING.scan(&vault.store, &rtxn)? {
+    for (stored_key, stored) in SETTING.scan(&vault.store, rtxn)? {
         let Some((key, mode, scope)) = parse_row_key(&stored_key) else {
             continue;
         };

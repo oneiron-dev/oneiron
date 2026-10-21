@@ -42,12 +42,15 @@ const NOT_A_NOTE: &str = "an actor claim this run loaded is no lesson or failure
 /// and loads what its manifest lacks at the pump's clock. Rule 5 caps none.
 /// No craft appends nothing. A continuation stamps its source run's craft
 /// on its own lease and appends nothing; a stamp that fails is logged and
-/// the run goes on, as it did before it was stamped.
+/// the run goes on, as it did before it was stamped. Its support check fails
+/// closed (FIX 8986): a read error there refuses the run, as an erased note
+/// does.
 ///
 /// # Errors
 ///
 /// A load the resident's pack door refuses, a frozen or continued note that
-/// no longer reads, and storage errors.
+/// no longer reads, and storage errors, a continuation's support check's
+/// included.
 pub(super) fn append_resident_craft(
     vault: &Vault,
     leased: &AttemptRecord,
@@ -57,12 +60,8 @@ pub(super) fn append_resident_craft(
 ) -> Result<()> {
     let resident = actor.entity_ref();
     if continues {
-        match inherit_craft(vault, leased, &resident) {
-            Ok(true) => {}
-            Ok(false) => return Err(refused(CONTINUED_ERASED)),
-            Err(error) => {
-                tracing::warn!(kind = ?error.kind(), agent = %resident.to_hex(), "a continued run's craft was not stamped on its own attempt");
-            }
+        if !inherit_craft(vault, leased, &resident)? {
+            return Err(refused(CONTINUED_ERASED));
         }
         return Ok(());
     }
@@ -93,7 +92,9 @@ pub(super) fn append_resident_craft(
 /// Stamps the craft the run a continuation's checkpoint names was shown on
 /// the continuation's own lease (OF-490), never the latest retry's. `false`,
 /// stamping nothing, when a note that run was shown no longer reads (FIX
-/// 8643): the continuation's task holds it.
+/// 8643): the continuation's task holds it. Every read up to that answer
+/// fails closed with its own error (FIX 8986); only the stamp after it is
+/// logged and passed over.
 fn inherit_craft(vault: &Vault, leased: &AttemptRecord, resident: &EntityId) -> Result<bool> {
     let Some(continuation) = run_continuation(vault, leased.id)? else {
         return Ok(true);
@@ -102,7 +103,9 @@ fn inherit_craft(vault: &Vault, leased: &AttemptRecord, resident: &EntityId) -> 
     if !vault.attempt_craft_supported(source)? {
         return Ok(false);
     }
-    vault.inherit_resident_craft(leased, source, resident, super::unix_now())?;
+    if let Err(error) = vault.inherit_resident_craft(leased, source, resident, super::unix_now()) {
+        tracing::warn!(kind = ?error.kind(), agent = %resident.to_hex(), "a continued run's craft was not stamped on its own attempt");
+    }
     Ok(true)
 }
 
