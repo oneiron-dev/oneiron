@@ -2,8 +2,8 @@
 
 use super::super::types::invalid;
 use super::super::{
-    AnswerContract, DecisionAnswer, DecisionCall, DecisionDial, DecisionQuestion, DecisionRung,
-    PairedReading, ProviderPin, TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionCall, DecisionDial, DecisionQuestion,
+    DecisionQuestionInput, DecisionRung, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::learning_setting::SettingSpec;
 use crate::{EntityId, Result, Vault};
@@ -82,10 +82,14 @@ pub struct ArtifactUnits {
     pub selection: crate::blob_artifact::ArtifactAskUnits,
 }
 
+/// A standing question's definition. Stored, its `question` is the
+/// engine's [`DecisionQuestion`], under the id and version the engine
+/// minted. As its author writes it ([`QuestionDefinitionInput`]), the
+/// question names neither (FIX 1586); every other field is the same.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct QuestionDefinition {
-    pub question: DecisionQuestion,
+pub struct QuestionDefinition<Q = DecisionQuestion> {
+    pub question: Q,
     pub adapter: String,
     /// Units are a narrowing set, never a grant. Each read rechecks authority.
     #[serde(with = "super::super::codec::entities")]
@@ -121,6 +125,39 @@ pub struct QuestionDefinition {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<ArtifactUnits>,
 }
+
+/// A standing question's definition as `vault.questions.create` and `.edit`
+/// take it: its question without the engine-owned id and version.
+pub type QuestionDefinitionInput = QuestionDefinition<DecisionQuestionInput>;
+
+impl QuestionDefinition<DecisionQuestionInput> {
+    /// The stored definition: this one, its question under the `id` and
+    /// `version` the engine minted, every other field as written. Its caller
+    /// validates the result.
+    #[must_use]
+    pub fn with_identity(self, id: EntityId, version: u32) -> QuestionDefinition {
+        QuestionDefinition {
+            question: self.question.with_identity(id, version),
+            adapter: self.adapter,
+            units: self.units,
+            recipe: self.recipe,
+            profile: self.profile,
+            dial: self.dial,
+            activation: self.activation,
+            refresh: self.refresh,
+            delivery: self.delivery,
+            learning: self.learning,
+            binding: self.binding,
+            criteria: self.criteria,
+            audience: self.audience,
+            posture: self.posture,
+            media: self.media,
+            deadline_ms: self.deadline_ms,
+            artifacts: self.artifacts,
+        }
+    }
+}
+
 impl QuestionDefinition {
     pub fn validate(&self) -> Result<()> {
         self.question.validate()?;
