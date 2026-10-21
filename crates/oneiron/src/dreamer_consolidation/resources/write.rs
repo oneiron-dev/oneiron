@@ -5,7 +5,9 @@ use super::{BranchResources, FallbackOutputPin, SourcePin, document_version};
 use crate::claim::ClaimSource;
 use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_consolidation::PromotionCandidate;
-use crate::dreamer_consolidation::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
+use crate::dreamer_consolidation::evidence::{
+    ResolvedConflictOutput, VerifiedCandidate, VerifiedEvidenceSet,
+};
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::turn_text::TurnText;
 use crate::llm::Scope;
@@ -17,6 +19,9 @@ pub struct ScopedConsolidationWrite {
     pub(crate) candidate_evidence: Vec<VerifiedEvidenceSet>,
     pub(crate) attachments: Vec<(EntityId, PromotionCandidate, VerifiedEvidenceSet)>,
     pub(crate) fence: ConsolidationFence,
+    /// The open markers this write's outputs answer, each output named by
+    /// the head it stands at (FIX 7325).
+    pub(crate) answers: Vec<ResolvedConflictOutput>,
     read_receipt: ScopedReadReceipt,
 }
 
@@ -134,8 +139,12 @@ impl BranchResources<'_> {
         let mut writes = Vec::new();
         let mut written_evidence = Vec::new();
         let mut attachments = Vec::new();
+        // Each output's head: its own id, or the head it attaches to.
+        let mut heads: BTreeMap<EntityId, EntityId> = BTreeMap::new();
+        let mut answers = Vec::new();
         for verified in candidates {
             verified.evidence.check_pins(self)?;
+            answers.extend(verified.answers);
             let mut candidate = verified.proposal;
             let evidence = verified.evidence;
             if candidate.evidence_turn_refs != evidence.refs()
@@ -176,17 +185,27 @@ impl BranchResources<'_> {
                     ));
                 }
                 self.require_prior_write(scope, id)?;
+                heads.insert(candidate.claim_id, id);
                 attachments.push((id, candidate, evidence));
             } else {
                 candidate.supersedes = prior;
+                heads.insert(candidate.claim_id, candidate.claim_id);
                 writes.push(candidate);
                 written_evidence.push(evidence);
             }
         }
+        // An answer whose output this write carries nowhere answers nothing.
+        let mut answers: Vec<_> = answers
+            .into_iter()
+            .filter_map(|answer: ResolvedConflictOutput| answer.at_heads(&heads))
+            .collect();
+        answers.sort();
+        answers.dedup();
         Ok(ScopedConsolidationWrite {
             candidates: writes,
             candidate_evidence: written_evidence,
             attachments,
+            answers,
             fence: self.write_fence(),
             read_receipt: self.read_receipt()?,
         })

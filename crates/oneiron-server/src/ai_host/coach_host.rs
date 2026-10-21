@@ -134,8 +134,14 @@ pub(crate) fn spawn(
                     tracing::warn!(kind = ?error.kind(), "the Coach's host queue waits for the next round");
                     false
                 }
+                // A stopped round logs a static code, never its payload.
                 Err(error) => {
-                    tracing::warn!(%error, "the Coach's host round stopped");
+                    let code = if error.is_panic() {
+                        "coach_host_round_panicked"
+                    } else {
+                        "coach_host_round_cancelled"
+                    };
+                    tracing::warn!(code, "the Coach's host round stopped");
                     false
                 }
                 Ok(Ok(())) => true,
