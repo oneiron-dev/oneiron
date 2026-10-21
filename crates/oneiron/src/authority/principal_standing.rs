@@ -17,8 +17,8 @@ use crate::claim::ClaimLifecycleStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{AgentGrantStanding, ScopeAxis};
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE};
+use crate::federation::{AgentGrantStanding, FederationGrant, FederationGrantScope, ScopeAxis};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// A recorded principal that stood in one snapshot.
@@ -268,5 +268,97 @@ impl AgentGrantStanding {
                 &self.grant.authority_scope.verbs,
                 ScopeAxis::Some(verbs) if verbs.contains(verb)
             )
+    }
+}
+
+/// [`AgentGrantStanding::pact_standing_lapsed_in_txn`] for a raw Grant row
+/// (FIX 7548): the Grant `id`, its pact `scope` and its `member`, for a
+/// reader that picks raw FEDERATION_GRANT rows by its own rule and holds no
+/// [`AgentGrantStanding`]. The same membership gate, the same lapse and the
+/// same [`PACT_STANDING_CHECK_ERROR`]; a personal vault has no pact standing
+/// to lapse.
+pub(crate) fn grant_pact_standing_lapsed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    scope: FederationGrantScope,
+    member: EntityId,
+) -> bool {
+    match vault.shared_vault_creation_in_txn(txn) {
+        Ok(Some(_)) => {}
+        Ok(None) => return false,
+        Err(error) => return lapse_on_check_error(id, &error),
+    }
+    match vault.authenticated_grant_membership_in_txn(txn, scope, member, id) {
+        Ok(Some(_)) => false,
+        Ok(None) | Err(Error::Claim(_)) => true,
+        Err(error) => lapse_on_check_error(id, &error),
+    }
+}
+
+/// [`grant_pact_standing_lapsed_in_txn`] for the live Grant row `id` as
+/// `txn` holds it, for a reader that holds only the Grant's id (FIX 7548). A
+/// row that is no live FEDERATION_GRANT, or does not decode, has no pact
+/// standing here: its reader's own rule judges it. A failed read is no
+/// lapse ([`PACT_STANDING_CHECK_ERROR`]).
+pub(crate) fn grant_row_pact_standing_lapsed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> bool {
+    match live_entity_row_in_txn(&vault.store, txn, &id) {
+        Ok(LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        }) => crate::federation::decode_federation_grant_body(&body).is_ok_and(|grant| {
+            grant_pact_standing_lapsed_in_txn(vault, txn, id, grant.scope, grant.member_ref)
+        }),
+        Ok(_) => false,
+        Err(error) => lapse_on_check_error(id, &error),
+    }
+}
+
+/// Which pact test a GitPush Grant takes (CALLS `FIX 7548 git push pact
+/// standing`, accepted by the Engine 10-21 22:4x).
+#[derive(Debug, Clone, Copy)]
+enum GitPushPactStanding {
+    /// On a shared vault, the pact activation of the exact Grant alone
+    /// (`federation::pact_admits_grant`: unpacted or Active passes, Inactive
+    /// lapses), for every holder alike, person or agent. Never the Access
+    /// membership gate, which admits no GitPush Grant. A personal vault has
+    /// no pact to lapse.
+    PactActivationOnlyOnSharedVault,
+}
+
+const GIT_PUSH_PACT_STANDING: GitPushPactStanding =
+    GitPushPactStanding::PactActivationOnlyOnSharedVault;
+
+/// The typed reason a push refusal names when a GitPush Grant that would
+/// admit it is inactive under its pact (FIX 7548); its code leads the text.
+pub(crate) const GIT_PUSH_PACT_STANDING_LAPSED: &str = "pact_standing_lapsed: on this shared \
+     vault a git_push Grant stands only while its pact does, and this Grant is inactive under \
+     its pact";
+
+/// Whether the GitPush Grant `id`, `grant` its decoded row, lapsed on its
+/// pact ([`GIT_PUSH_PACT_STANDING`]). A store or fold failure of the check
+/// is no lapse ([`PACT_STANDING_CHECK_ERROR`]).
+pub(crate) fn git_push_pact_standing_lapsed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    grant: &FederationGrant,
+) -> bool {
+    match GIT_PUSH_PACT_STANDING {
+        GitPushPactStanding::PactActivationOnlyOnSharedVault => {
+            match vault.shared_vault_creation_in_txn(txn) {
+                Ok(Some(_)) => {}
+                Ok(None) => return false,
+                Err(error) => return lapse_on_check_error(id, &error),
+            }
+            match vault.authority_fold_readonly_in_txn(txn) {
+                Ok(fold) => !crate::federation::pact_admits_grant(&fold, &id, grant),
+                Err(error) => lapse_on_check_error(id, &error),
+            }
+        }
     }
 }

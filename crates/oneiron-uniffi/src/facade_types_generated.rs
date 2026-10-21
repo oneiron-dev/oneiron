@@ -12730,6 +12730,12 @@ pub struct WeaveDigestSettingChange {
         skip_serializing_if = "Option::is_none"
     )]
     pub settled_at: Option<u64>,
+    #[serde(
+        rename = "grant_omitted",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub grant_omitted: Option<String>,
 }
 
 /// `oneiron::claim::scoped_read::weave_digest::settings::WeaveDigestSettingAnswer`.

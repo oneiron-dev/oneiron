@@ -4219,6 +4219,7 @@ class WeaveDigestSettingChange(TypedDict):
     undone_generation: NotRequired[int | None]
     created_at: int
     settled_at: NotRequired[int | None]
+    grant_omitted: NotRequired[str | None]
 class WeaveDigestSettingAnswer(TypedDict):
     change_ref: str
     accept: bool
