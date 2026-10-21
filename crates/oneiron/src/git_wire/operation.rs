@@ -58,6 +58,10 @@ pub enum GitWireOperation {
     WriteBlob,
     WriteTree,
     WriteCommit,
+    /// `hash-object -t tag -w`: one annotated tag object, written from a
+    /// retained spool (FIX 7608 slice 2b-i). It adds an object and moves no
+    /// ref.
+    WriteTag,
     /// The mixed writer class: `notes add` writes objects *and* moves the notes
     /// ref in one invocation. GitWire classifies it so both phases can refuse
     /// it, and deliberately exposes no constructor for it.
@@ -92,7 +96,7 @@ pub enum GitWireOperation {
     ReviewDiffs,
 }
 
-pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 28] = [
+pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 29] = [
     GitWireOperation::ReadConfig,
     GitWireOperation::ConfigureCheckout,
     GitWireOperation::ReadRefs,
@@ -109,6 +113,7 @@ pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 28] = [
     GitWireOperation::WriteBlob,
     GitWireOperation::WriteTree,
     GitWireOperation::WriteCommit,
+    GitWireOperation::WriteTag,
     GitWireOperation::NotesAdd,
     GitWireOperation::PublishRefs,
     GitWireOperation::WorktreeAdd,
@@ -143,6 +148,7 @@ impl GitWireOperation {
             Self::WriteBlob => "write_blob",
             Self::WriteTree => "write_tree",
             Self::WriteCommit => "write_commit",
+            Self::WriteTag => "write_tag",
             Self::NotesAdd => "notes_add",
             Self::PublishRefs => "publish_refs",
             Self::WorktreeAdd => "worktree_add",
@@ -178,7 +184,7 @@ impl GitWireOperation {
             | Self::PublishPush
             | Self::ImportDoorPush
             | Self::ReviewDiffs => GitWireEffectClass::Read,
-            Self::WriteBlob | Self::WriteTree | Self::WriteCommit => {
+            Self::WriteBlob | Self::WriteTree | Self::WriteCommit | Self::WriteTag => {
                 GitWireEffectClass::ObjectWrite
             }
             Self::NotesAdd | Self::ImportFetch => GitWireEffectClass::ObjectAndRefWrite,
