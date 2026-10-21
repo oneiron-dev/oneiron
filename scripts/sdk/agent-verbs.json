@@ -13892,7 +13892,7 @@
     },
     {
       "name": "self.browser.library.find",
-      "description": "The replay library's programs for a site, or for the open page's site.",
+      "description": "The replay library's programs for a site, or for the open page's site, each card with its lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of` outcomes), held_out, supersedes and seed.",
       "input": "crate::task_verb::sdk::BrowserLibraryFindInput",
       "output": "crate::task_verb::sdk::BrowserLibraryFindOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_find(input)?)",
@@ -13902,14 +13902,14 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>",
-        "description": "The replay library's programs for a site, or for the attached run's open page's site.",
+        "description": "The replay library's programs for a site, or for the attached run's open page's site, each card with lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of` outcomes), held_out, supersedes and seed.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.library.propose",
-      "description": "Offers a solved run's program to the replay library, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition.",
+      "description": "Offers a solved run's program to the replay library, refs as locators; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance.",
       "input": "crate::task_verb::sdk::BrowserLibraryProposeInput",
       "output": "crate::task_verb::sdk::BrowserLibraryProposeOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_propose(input)?)",
@@ -13919,7 +13919,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryProposeInput>",
-        "description": "Offers a solved run's program to the replay library of the attached run's browser session, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition.",
+        "description": "Offers a solved run's program to the attached run's replay library; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance.",
         "host_door_caller": true,
         "openapi": true
       }

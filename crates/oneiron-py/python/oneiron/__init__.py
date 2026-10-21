@@ -5466,10 +5466,10 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def find(self, spec):
-            """The replay library's programs for a site, or for the attached run's open page's site."""
+            """The replay library's programs for a site, or for the attached run's open page's site, each card with lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of` outcomes), held_out, supersedes and seed."""
             return json.loads(_translate(lambda: self._client.self_browser_library_find(json.dumps(spec))))
         def propose(self, spec):
-            """Offers a solved run's program to the replay library of the attached run's browser session, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition."""
+            """Offers a solved run's program to the attached run's replay library; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance."""
             return json.loads(_translate(lambda: self._client.self_browser_library_propose(json.dumps(spec))))
         def retire(self, spec):
             """Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."""

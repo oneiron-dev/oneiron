@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1125 facade rows, 3877 declarations.
+Census: 1125 facade rows, 3883 declarations.
 Inputs: 1060 of 1125 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1012 of 1125 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -19293,6 +19293,13 @@ class EffectReceipt(TypedDict):
     engine: NotRequired[BrowserEngine | None]
     fact: NotRequired[ActionFact | None]
     engine_switch: NotRequired[EngineSwitchRecord | None]
+RecentCounts = TypedDict("RecentCounts", {"pass": int, "miss": int, "repair": int, "of": int})
+class WorkflowSeed(TypedDict):
+    pack: str
+    pinned_ref: str
+    path: str
+    digest: str
+    license: str
 class LibraryCard(TypedDict):
     workflow: str
     site: str
@@ -19300,6 +19307,12 @@ class LibraryCard(TypedDict):
     params: list[str]
     runs: int
     failures: int
+    recent: RecentCounts
+    held_out: bool
+    supersedes: NotRequired[str | None]
+    seed: NotRequired[WorkflowSeed | None]
+    filed_at: int
+    last_run_at: NotRequired[int | None]
 class PartialTree(TypedDict):
     reason: str
     visited: int
@@ -19517,13 +19530,40 @@ class ProposeInput(TypedDict):
     steps: list[BatchStep]
     postcondition: list[ExpectInput]
     args: NotRequired[dict[str, str]]
-WorkflowCheck = Literal["solved", "replay"]
+    replay_args: NotRequired[dict[str, str]]
+    supersedes: NotRequired[str | None]
+    seed: NotRequired[WorkflowSeed | None]
+WorkflowCheck = Literal["solved", "replay", "held_out", "fresh_guest", "supersedes"]
+SupersedeRefusal = Literal["malformed", "not_on_site", "same_record", "not_filer"]
+class AdmissionRefusalHeldOut(TypedDict):
+    cause: Literal["held_out"]
+    used: list[str]
+    missing: list[str]
+    unknown: list[str]
+    same: list[str]
+class AdmissionRefusalFreshGuest(TypedDict):
+    cause: Literal["fresh_guest"]
+    stage: SwitchStage
+    code: str
+class AdmissionRefusalSupersedes(TypedDict):
+    cause: Literal["supersedes"]
+    workflow: str
+    why: SupersedeRefusal
+AdmissionRefusal = AdmissionRefusalHeldOut | AdmissionRefusalFreshGuest | AdmissionRefusalSupersedes
+class ReplayGuest(TypedDict):
+    engine: BrowserEngine
+    carried: list[SwitchCarried]
+    not_carried: list[SwitchNotCarried]
+SupersedeOutcome = Literal["retired", "linked", "dropped"]
 class ProposeOutput(TypedDict):
     admitted: bool
     workflow: NotRequired[str | None]
     refused_by: NotRequired[WorkflowCheck | None]
+    refusal: NotRequired[AdmissionRefusal | None]
     unmet: NotRequired[list[int]]
     replay: NotRequired[BatchOutput | None]
+    replay_guest: NotRequired[ReplayGuest | None]
+    superseded: NotRequired[SupersedeOutcome | None]
 BrowserLibraryProposeOutput = BrowserAnswer[ProposeOutput]
 class LibraryRetireInput(TypedDict):
     workflow: str
