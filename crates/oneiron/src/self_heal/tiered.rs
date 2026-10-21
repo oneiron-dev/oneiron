@@ -1,5 +1,7 @@
 //! Model-graded detection over ARCH-0037 runs. No signed T1 run is minted here. A positive
-//! finding files the Coach's issue in the write that emits it (OF-418 L3).
+//! finding files the Coach's issue in the write that emits it, and a window asked whole with
+//! no finding is a clean judgment for the Coach's open issues (OF-418 L3).
+use super::issue_evidence::Observation;
 use super::issue_work::ModelFinding;
 use super::{
     DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
@@ -431,6 +433,8 @@ pub struct WindowGrade<'w> {
     streak: Vec<DecisionReceipt>,
     /// T3 and session: the receipts of the parts that raised.
     raised: Vec<DecisionReceipt>,
+    /// The receipt of every question asked, in order: a clean window's judgment (OF-418 L3).
+    answers: Vec<DecisionReceipt>,
     /// The recipe the window is graded under (OF-418 L3).
     recipe: [u8; 32],
     /// What its questions read: the question, then each reviewed example (OF-418 L3).
@@ -549,6 +553,7 @@ impl Vault {
             graded: 0,
             streak: Vec::new(),
             raised: Vec::new(),
+            answers: Vec::new(),
             recipe: recipe_revision(policy, tier, examples, None),
             pins,
             context: blake3::Hasher::new(),
@@ -588,6 +593,7 @@ impl Vault {
                     read_state(&mut grade.context, &bytes);
                     let (raised, receipt) =
                         decisions.raised_with_state(&grade.asked.question, &evidence, &state)?;
+                    grade.answers.push(receipt.clone());
                     if raised {
                         grade.streak.push(receipt);
                     } else {
@@ -603,6 +609,7 @@ impl Vault {
                 );
                 let (raised, receipt) =
                     decisions.raised_with_state(&grade.asked.question, &run_ids(part)?, &state)?;
+                grade.answers.push(receipt.clone());
                 if raised {
                     grade.raised.push(receipt);
                 }
@@ -615,7 +622,9 @@ impl Vault {
     /// The window's one verdict once every part is asked. A T2b raises on `consecutive`
     /// raised runs in a row that end the window, across any part boundary, and its finding
     /// names those runs. A T3 or session window raises when any part raised; its finding
-    /// names every run of the window and carries the raising parts' receipts.
+    /// names every run of the window and carries the raising parts' receipts. A window with no
+    /// finding is a complete clean judgment, recorded for the Coach's open issues of its key
+    /// before it returns (OF-418 L3).
     ///
     /// # Errors
     ///
@@ -632,6 +641,7 @@ impl Vault {
         let (runs, decisions) = match grade.tier {
             ProposedTier::PromptClassifier => {
                 if grade.streak.len() < grade.policy.consecutive {
+                    self.observe_clean_window(&grade)?;
                     return Ok(None);
                 }
                 let start = grade.window.len() - grade.streak.len();
@@ -639,6 +649,7 @@ impl Vault {
             }
             ProposedTier::Judge | ProposedTier::SessionJudge | ProposedTier::Centroid => {
                 if grade.raised.is_empty() {
+                    self.observe_clean_window(&grade)?;
                     return Ok(None);
                 }
                 (grade.window, grade.raised)
@@ -650,6 +661,17 @@ impl Vault {
             context_digest: *grade.context.finalize().as_bytes(),
         };
         propose(self, grade.tier, grade.policy, runs, None, decisions, basis)
+    }
+
+    /// OF-418 L3: `grade`'s window, asked whole with no finding, as a clean judgment.
+    fn observe_clean_window(&self, grade: &WindowGrade<'_>) -> Result<()> {
+        self.record_issue_observation(Observation {
+            tier: grade.tier,
+            policy: grade.policy,
+            recipe: grade.recipe,
+            runs: grade.window,
+            decisions: &grade.answers,
+        })
     }
 
     /// `grade`'s whole window asked as one part: the single-call detector doors.

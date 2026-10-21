@@ -24,7 +24,8 @@ use serde_json::json;
 
 use super::coach::COACH_ISSUES_FACET;
 use super::coach_diagnostic::{
-    COACH_DIAGNOSTIC_PROPOSAL_PREDICATE, ProducerFixDraft, ProducerTarget,
+    COACH_DIAGNOSTIC_PROPOSAL_PREDICATE, COACH_ISSUE_RESOLUTION_PREDICATE, ProducerFixDraft,
+    ProducerTarget,
 };
 use super::coach_repair::{SkillRepairDraft, land_skill_repair_in_txn};
 use super::proposals;
@@ -434,7 +435,8 @@ impl Vault {
     /// waits for the next run, and its third failure goes to a person. A
     /// report whose receipt is gone leaves nothing to diagnose and drops.
     /// After the reports it reads each waiting model issue the same way, a
-    /// page at a time to the last (OF-418 L3).
+    /// page at a time to the last, then reconciles every filed one's evidence,
+    /// proposing a resolution where the evidence supports one (OF-418 L3).
     pub fn run_coach_issues(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -481,6 +483,7 @@ impl Vault {
             }
         }
         let _ = self.measure_limit(EngineLimit::MaintenanceRowItems, read as u64);
+        self.reconcile_issue_evidence(&pass)?;
         Ok(run)
     }
 
@@ -702,7 +705,7 @@ pub(crate) fn record_owner_review_in_txn(
         COACH_HEAL_PROPOSAL_PREDICATE => "case",
         COACH_ISSUE_PROPOSAL_PREDICATE => "receipt",
         // OF-418 L3: a model issue's answer is read from its closed gate row.
-        COACH_DIAGNOSTIC_PROPOSAL_PREDICATE => {
+        COACH_DIAGNOSTIC_PROPOSAL_PREDICATE | COACH_ISSUE_RESOLUTION_PREDICATE => {
             return issue_work::record_issue_owner_review_in_txn(
                 vault,
                 txn,

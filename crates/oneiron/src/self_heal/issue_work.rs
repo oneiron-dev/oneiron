@@ -7,7 +7,10 @@
 //! results link, the producer its recorded links prove, if any, and the recipe it ran under.
 //! The row is never rewritten when the Coach files it: an issue waits while no settled marker
 //! names it. An owner's answer to its proposal is appended as evidence, read from the claim's
-//! closed gate row, never from the answer's hook alone. Nothing here applies anything.
+//! closed gate row, never from the answer's hook alone. A finding is also a judgment of its
+//! window, appended to the open issues of its recurrence key, and one after a repair took
+//! effect files as a recurrence of the issue it follows (`issue_evidence`). Nothing here
+//! applies anything.
 
 use std::collections::BTreeSet;
 use std::ops::Bound;
@@ -15,12 +18,13 @@ use std::ops::Bound;
 use serde::{Deserialize, Serialize};
 
 use super::blocked_reports::{self, BlockedIssue};
+use super::issue_evidence::{self, WindowJudgment};
 use super::tiered::{DetectorPolicy, FindingBasis, ProposedTier};
 use super::{DiagnosticEvent, DiagnosticReplayCoordinate};
 use crate::batch::EntityMetadataHeader;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::dreamer_runner::maintenance::coach_diagnostic::{
-    ProducerLinks, ProducerTarget, bind_producer,
+    COACH_ISSUE_RESOLUTION_PREDICATE, EffectProof, ProducerLinks, ProducerTarget, bind_producer,
 };
 use crate::limit_ask::EngineLimit;
 use crate::llm::decision::DecisionReceipt;
@@ -31,10 +35,10 @@ use crate::store::RetrievalRunRecord;
 use crate::{EntityId, Error, Result, Vault};
 
 /// Every model finding's issue, kept after the Coach files it. Key: the issue.
-const ISSUES: SideTable<EntityId, DiagnosticIssue, Named> =
+pub(super) const ISSUES: SideTable<EntityId, DiagnosticIssue, Named> =
     SideTable::new(&side_table::COACH_DIAGNOSTIC_ISSUE);
 /// What was observed of an issue, append-only. Key: the issue, then the fact's digest.
-const EVIDENCE: SideTable<(EntityId, [u8; 32]), IssueFact, Named> =
+pub(super) const EVIDENCE: SideTable<(EntityId, [u8; 32]), IssueFact, Named> =
     SideTable::new(&side_table::COACH_ISSUE_EVIDENCE);
 
 /// A closed gate row's outcome for an approved tray answer, as the gate bundle writes it.
@@ -91,11 +95,12 @@ pub(crate) struct DiagnosticIssue {
     pub(crate) retries: u8,
 }
 
-/// One fact observed of an issue, appended once (OF-418 L3).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// One fact observed of an issue, appended once (OF-418 L3). An issue's resolution is folded
+/// from these, never kept as a flag.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) enum IssueFact {
-    /// An owner's closed answer to a proposal the Coach filed for the issue, as its gate row
-    /// records it.
+    /// An owner's closed answer to a proposal the Coach filed for the issue, its repair or a
+    /// resolution, as its gate row records it.
     OwnerReview {
         /// The answered proposal.
         proposal: EntityId,
@@ -104,6 +109,44 @@ pub(crate) enum IssueFact {
         /// Approved, or declined.
         approved: bool,
         /// When the answer was recorded.
+        at: u64,
+    },
+    /// A complete judgment of a window under the issue's recurrence key, clean or not.
+    Judgment(Box<WindowJudgment>),
+    /// The issue's producer proved in force at a revision other than the issue's base.
+    RepairEffective {
+        /// The revision, as [`ProducerTarget::base_revision`] spells it.
+        revision: String,
+        /// The first second a record stamps it in force from, if one does.
+        from: Option<u64>,
+        /// The exact refs that prove it.
+        proof: EffectProof,
+        /// When an Issues pass first proved it.
+        at: u64,
+    },
+    /// A resolution the Coach proposed for the owner to confirm, and what it cites.
+    ResolutionProposed {
+        /// The proposed `coach.issue.resolution` claim.
+        proposal: EntityId,
+        /// The repaired revision it rests on.
+        revision: String,
+        /// The first second its windows' runs count as fresh from.
+        counts_from: u64,
+        /// The digests of the judgments it cites.
+        windows: Vec<[u8; 32]>,
+        /// When it was proposed.
+        at: u64,
+    },
+    /// A positive finding under the same key after `previous` was repaired or resolved,
+    /// filed as the issue `next`; appended to both, neither row rewritten.
+    Recurrence {
+        /// The earlier issue.
+        previous: EntityId,
+        /// The issue the recurrence filed.
+        next: EntityId,
+        /// The recurrence's DIAGNOSTIC.
+        diagnostic: EntityId,
+        /// When it was filed.
         at: u64,
     },
 }
@@ -132,14 +175,16 @@ impl IssueCoalescingPolicy {
     }
 
     /// The key two issues recur under: `(family, recipe, proved producer)`, or the exact
-    /// source coordinate in place of a producer none proves.
+    /// source coordinate in place of a producer none proves. A producer is keyed by its
+    /// [`ProducerTarget::identity`], whatever its revision.
     pub(crate) fn recurrence_key(
         self,
+        vault: &Vault,
         family: &str,
         recipe: &[u8; 32],
         producer: &ProducerTarget,
         coordinate: &DiagnosticReplayCoordinate,
-    ) -> [u8; 32] {
+    ) -> Result<[u8; 32]> {
         let mut hash = blake3::Hasher::new();
         match self {
             Self::ExactFindingRecipe => {
@@ -149,7 +194,7 @@ impl IssueCoalescingPolicy {
         hash.update(&(family.len() as u64).to_be_bytes());
         hash.update(family.as_bytes());
         hash.update(recipe);
-        match producer.identity() {
+        match producer.identity(vault)? {
             Some(identity) => {
                 hash.update(b"producer\0");
                 hash.update(&(identity.len() as u64).to_be_bytes());
@@ -163,7 +208,7 @@ impl IssueCoalescingPolicy {
                 hash.update(run.as_bytes());
             }
         }
-        *hash.finalize().as_bytes()
+        Ok(*hash.finalize().as_bytes())
     }
 }
 
@@ -293,7 +338,9 @@ pub(crate) fn defer_diagnostic_issue(vault: &Vault, issue_id: &EntityId) -> Resu
 /// review (ARCH-0066 #oversight), in the transaction that answers it, and appends what the
 /// answer was: approved or declined, with the decision id, read from the claim's CLOSED gate
 /// row. The hook firing proves no answer: with no closed row, none is appended. A claim whose
-/// issue the Coach settled under another proposal counts nothing.
+/// issue the Coach settled under another proposal counts nothing. An answer to a resolution
+/// the Coach proposed (OF-418 L3) is appended the same way and counts no second review: the
+/// repair's stands for both.
 pub(crate) fn record_issue_owner_review_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -316,9 +363,15 @@ pub(crate) fn record_issue_owner_review_in_txn(
     if !ISSUES.contains(&vault.store, &*txn, &issue_id)? {
         return Ok(());
     }
-    match blocked_reports::settled_in_txn(vault, &*txn, &issue_id)? {
-        Some(settled) if settled.proposal == claim => {}
-        _ => return Ok(()),
+    let resolution = body.predicate == COACH_ISSUE_RESOLUTION_PREDICATE;
+    let proposed = if resolution {
+        issue_evidence::resolution_proposed_in_txn(vault, &*txn, issue_id, claim)?
+    } else {
+        blocked_reports::settled_in_txn(vault, &*txn, &issue_id)?
+            .is_some_and(|settled| settled.proposal == claim)
+    };
+    if !proposed {
+        return Ok(());
     }
     let closed = vault
         .store
@@ -342,6 +395,9 @@ pub(crate) fn record_issue_owner_review_in_txn(
         };
         append_fact_in_txn(vault, txn, issue_id, &fact)?;
     }
+    if resolution {
+        return Ok(());
+    }
     crate::failure_ladder::oversight::reviewed_in_txn(
         vault,
         txn,
@@ -353,7 +409,7 @@ pub(crate) fn record_issue_owner_review_in_txn(
 }
 
 /// Appends `fact` to `issue`'s evidence once, keyed by its digest.
-fn append_fact_in_txn(
+pub(crate) fn append_fact_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     issue: EntityId,
@@ -416,6 +472,9 @@ impl Vault {
     /// the Coach's Issues job (OF-418 L3), whether or not failure-signal export is on. The
     /// issue is keyed under [`IssueCoalescingPolicy::ExactFindingRecipe`], so a replay of the
     /// same finding and recipe files nothing new; an error leaves the window to the next pass.
+    /// In the same write the finding is a positive judgment of its window for the open issues
+    /// of its recurrence key, and, after an earlier issue's repair took effect, a recurrence of
+    /// it: the new row names it, and both carry the fact.
     pub(super) fn file_model_diagnostic(&self, finding: ModelFinding<'_>) -> Result<()> {
         let ModelFinding {
             id,
@@ -428,15 +487,14 @@ impl Vault {
         } = finding;
         let policy_hook = IssueCoalescingPolicy::ExactFindingRecipe;
         let issue_id = policy_hook.issue_id(id, &basis.recipe_revision)?;
-        let mut windows = Vec::with_capacity(runs.len());
-        for run in runs {
-            let bytes = rmp_serde::to_vec_named(run)
-                .map_err(|_| Error::InvariantViolation("retrieval telemetry encode"))?;
-            windows.push(WindowRun {
-                run: run.run_id.as_bytes(),
-                replay: *blake3::hash(&bytes).as_bytes(),
-            });
-        }
+        let (observed, _) = issue_evidence::observed_window(runs)?;
+        let windows = observed
+            .iter()
+            .map(|run| WindowRun {
+                run: run.run,
+                replay: run.replay,
+            })
+            .collect();
         let gate_decisions = linked_gate_decisions(self, runs)?;
         // A retrieval window records no link to an attempt or a manifest.
         let links = ProducerLinks {
@@ -445,12 +503,24 @@ impl Vault {
         };
         let producer = bind_producer(self, runs, &links)?;
         let recurrence_key = policy_hook.recurrence_key(
+            self,
             &policy.family,
             &basis.recipe_revision,
             &producer,
             &event.replay,
-        );
+        )?;
         let now = self.now_recorded_at();
+        let judgment = WindowJudgment {
+            positive: true,
+            tier: tier.token().to_owned(),
+            recipe_revision: basis.recipe_revision,
+            recurrence_key,
+            producer: producer.clone(),
+            runs: observed,
+            decisions: decisions.to_vec(),
+            diagnostic: Some(id),
+            at: now,
+        };
         let issue = DiagnosticIssue {
             diagnostic: id,
             tier: tier.token().to_owned(),
@@ -478,7 +548,23 @@ impl Vault {
             if ISSUES.contains(&self.store, &*txn, &issue_id)? {
                 return Ok(());
             }
+            let recurrence_of = issue_evidence::recurrence_of_in_txn(self, &*txn, &judgment)?;
+            let issue = DiagnosticIssue {
+                recurrence_of,
+                ..issue
+            };
             ISSUES.put(&self.store, txn, &issue_id, &issue)?;
+            if let Some(previous) = recurrence_of {
+                let fact = IssueFact::Recurrence {
+                    previous,
+                    next: issue_id,
+                    diagnostic: id,
+                    at: now,
+                };
+                append_fact_in_txn(self, txn, previous, &fact)?;
+                append_fact_in_txn(self, txn, issue_id, &fact)?;
+            }
+            issue_evidence::observe_in_txn(self, txn, &judgment)?;
             DreamerRunnerStore::new(self).enqueue_coach_issues_in_txn(txn, None, None, now)
         })?;
         self.store.notify_attempt_observers();
