@@ -23437,7 +23437,7 @@
       "crate-vis": 6,
       "enum": 6,
       "fn": 12,
-      "re-export": 3,
+      "re-export": 5,
       "struct": 7
      }
     },
@@ -23486,6 +23486,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HealthBriefPin",
+      "HealthObservedBrief"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/brief.rs",
+     "purpose": "The typed brief one agent-health review observed (OF-568 L7, agent-mind §3.5: \"the evidence: the brief…",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/agent_health/check_repeat.rs",
      "purpose": "`failed_check_repeat` (agent-mind §3.4): the same check fails again on the same inputs",
@@ -23515,6 +23529,19 @@
      "surface": {
       "crate-vis": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HealthReviewReceipt"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/outcomes.rs",
+     "purpose": "Reviewer outcome receipts (OF-568 L9, agent-mind §3.7: \"Score the reviewer\"; \"Health flags never move…",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
      }
     },
     {
@@ -33697,7 +33724,7 @@
      "path": "src/learning/evidence.rs",
      "purpose": "The anchored-evidence ledger: the only input the projector reads",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 6,
       "struct": 3
@@ -63459,7 +63486,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -69453,7 +69480,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 116,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70470,7 +70497,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4479,
+   "source_files": 4481,
    "test_files": 902
   },
   "oneiron-android": {
@@ -98336,6 +98363,8 @@
       "HandoffAlarmRequest",
       "HandoverInput",
       "HandoverOutput",
+      "HealthBriefPin",
+      "HealthReviewReceipt",
       "HeapDropReport",
       "HeldAttempt",
       "HeldFailureSignalBatchView",
@@ -100705,7 +100734,7 @@
      "purpose": "—",
      "surface": {
       "enum": 940,
-      "struct": 2946
+      "struct": 2948
      }
     },
     {
