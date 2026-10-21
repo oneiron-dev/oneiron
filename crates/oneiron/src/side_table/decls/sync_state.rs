@@ -190,6 +190,11 @@ side_tables! {
     /// The MACHINE row this install is (16 B entity id), which names its keystore slots; never
     /// synced and never restored from another install. Key: ().
     IDENTITY_MACHINE_ID: SyncState b"m:machine_id" Raw;
+    /// Cached 32-byte Ed25519 verifying key of this install's machine key, whose seed is in the
+    /// install's keystore slot, so a restore with no keys loaded still names its serving machine
+    /// (FIX 5472); a stored value that disagrees with the derived key is corruption, never written
+    /// over. Dropped wherever the machine id is. Key: ().
+    IDENTITY_MACHINE_PK: SyncState b"m:machine_pk" Raw;
     /// The owner recovery root this install pins (its id and anchor key), and the admitter
     /// its machine was mine under before the pin last changed. Local like the machine id:
     /// never synced, and dropped wherever the machine id is. Key: ().

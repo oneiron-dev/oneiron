@@ -61,6 +61,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_CLIENT_ID, LIVE),
     (&t::IDENTITY_DEVICE_PK, LIVE),
     (&t::IDENTITY_MACHINE_ID, LIVE),
+    (&t::IDENTITY_MACHINE_PK, LIVE),
     (&t::IDENTITY_PINNED_ROOT, LIVE),
     (&t::DELETION_WINDOW_LABEL, CONTENT),
     (&t::DELETION_PENDING_SWEEP_REFS, CONTENT),
