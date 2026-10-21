@@ -1,3 +1,4 @@
+pub(crate) mod attempt_binding;
 mod codec;
 mod lifecycle;
 pub(crate) mod teardown;
@@ -8,6 +9,7 @@ pub use self::codec::checkout_result_identity;
 // The typed `LEASE`/`TOMBSTONE`/`SETTLEMENT` side tables now own every non-test read/write in
 // `lease/`, so these row/key builders have no non-test user inside `lease/` at all; the seam
 // exposes them to `checkout::tests` only.
+pub use self::attempt_binding::CheckoutAttemptBinding;
 pub(crate) use self::codec::load_act_in_txn;
 #[cfg(test)]
 pub(super) use self::codec::{
