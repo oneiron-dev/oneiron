@@ -5,8 +5,8 @@
 //! Local-vision rung, and returns the full decision for the engine to land
 //! as a proposal held for Keep.
 use std::borrow::Cow;
+use std::sync::Arc;
 
-use oneiron::edit_roundtrip::slides_review::SlideRenderer;
 use oneiron::edit_roundtrip::{UnitCall, UnitDecider};
 use oneiron::edit_settle::ReaskShape;
 use oneiron::llm::decision::questions::{QuestionCriteria, QuestionDefinition};
@@ -142,11 +142,12 @@ pub(crate) fn pump_answer_wakes_while(
         if !may_start() {
             break;
         }
-        // Only a slide wake looks for the renderer.
+        // Only a slide wake looks for the renderer; its render takes the
+        // host's own turn in the renderer line, behind every caller
+        // (FIX 7653).
         let renderer = matches!(wake.shape, ReaskShape::Slides { .. })
-            .then(crate::slide_render::host_renderer)
-            .flatten()
-            .map(|renderer| renderer as &dyn SlideRenderer);
+            .then(|| crate::slide_render::AdmittedRenderer::at_render(server, None, Arc::default()))
+            .flatten();
         let woke = vault.answer_wake_actor(&wake).and_then(|actor| {
             vault.wake_answer_proposer(
                 &wake,
@@ -154,7 +155,9 @@ pub(crate) fn pump_answer_wakes_while(
                 &HostUnitDecider::new(server, actor.actor_class(), "vault.artifacts.ask"),
                 host.dial(DecisionRung::Big),
                 &host.bands(),
-                renderer,
+                renderer
+                    .as_ref()
+                    .map(crate::slide_render::AdmittedRenderer::slides),
                 now,
             )
         });

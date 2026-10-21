@@ -1,7 +1,8 @@
 //! Scoped children at the host (FIX 7507 PR2): the door a scoped child runs
 //! behind, the binding of its lent ports to the host's registered adapters,
 //! and the host-only enqueue a host queues one through (the Dreamer's, in
-//! FIX 7508).
+//! FIX 7508). PR3 adds what a host lends a parent ([`ReaderParentHost`]):
+//! the live clock it runs under and the lease of the attempt it runs as.
 //!
 //! A scoped child's door is its parent's loan. It admits the child's own
 //! lifecycle calls, its reads of what it was lent and its lent ports, each
@@ -13,8 +14,11 @@
 //! in for it. No tagger or extraction port is registered here; a host
 //! registers its own through `McpCodeModeProvider::scoped_child_ports`.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use oneiron::attempt_queue::{AttemptRecord, BorrowedAttemptLease};
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, ReaderJob, ReaderJobs, ReaderRunEnd,
@@ -22,7 +26,9 @@ use oneiron::code_run::{
     ScopedChildLoan, ScopedChildPorts, SelfAgentVerbCall, SelfEffect, SpawnHostSeat,
     scoped_child_authority,
 };
+use oneiron::dreamer_wake::{WakeAttemptContext, WakePassDeadline};
 use oneiron::memory::HostWriteOrigin;
+use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EntityId, Vault};
 
@@ -158,4 +164,154 @@ pub fn enqueue_scoped_child(
     now_ms: u64,
 ) -> oneiron::Result<Result<ReaderSpawnReceipt, &'static str>> {
     jobs.spawn_scoped(seat, loan, intent_key, ask, now_ms)
+}
+
+/// The live clock a parent runs under, as its host holds it (FIX 1839): what
+/// was left of its wake pass or its decision when it was lent, counted down
+/// on the monotonic clock. Never a wall reading and never stored: a first
+/// spawn projects it once into its parent row (`reader_parent_deadline`),
+/// and the runner bounds the parent's children's model and port work by it
+/// beside that row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReaderParentClock {
+    origin: Instant,
+    budget_ms: u64,
+}
+
+impl ReaderParentClock {
+    fn left_from_now(budget_ms: u64) -> Self {
+        Self {
+            origin: Instant::now(),
+            budget_ms,
+        }
+    }
+
+    /// A wake pass's clock: what is left before its hard ceiling.
+    #[must_use]
+    pub fn of_wake(deadline: &WakePassDeadline) -> Self {
+        Self::left_from_now(deadline.remaining_ms())
+    }
+
+    /// A decision's clock: what is left before its answer is due.
+    #[must_use]
+    pub fn of_decision(deadline: &RetrievalDeadline) -> Self {
+        Self::left_from_now(millis(
+            deadline
+                .answer_at()
+                .saturating_duration_since(Instant::now()),
+        ))
+    }
+
+    /// The earlier of two clocks a parent runs under at once: a decision
+    /// inside a wake ends with whichever comes first, and no new window is
+    /// made of either.
+    #[must_use]
+    pub fn earlier(self, other: Self) -> Self {
+        if self.remaining_ms() <= other.remaining_ms() {
+            self
+        } else {
+            other
+        }
+    }
+
+    /// What is left of it now, in milliseconds; zero once it is due.
+    #[must_use]
+    pub fn remaining_ms(self) -> u64 {
+        self.budget_ms.saturating_sub(millis(self.origin.elapsed()))
+    }
+}
+
+fn millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// What a host lends a parent run whose children it queues (FIX 7507 PR3):
+/// the live clock the parent runs under, the lease of the attempt it runs
+/// as, and the loan of a scoped child it queues. The host keeps it; a seat
+/// made with it (`ReaderSeats::seat_with_parent`) freezes the clock once and
+/// hands the lease's ids, never its payload, to the scoped children queued
+/// under it. Without a clock a parent keeps its one window from its first
+/// spawn; without a lease its children outlive it, as before.
+#[derive(Debug, Clone, Default)]
+pub struct ReaderParentHost {
+    clock: Option<ReaderParentClock>,
+    lease: Option<BorrowedAttemptLease>,
+    loan: Option<ScopedChildLoan>,
+}
+
+impl ReaderParentHost {
+    /// The parent a leased attempt's run is, as the host that holds the
+    /// lease lends it: its lease, and no clock. `None` for a record that
+    /// holds no lease.
+    #[must_use]
+    pub fn for_attempt(leased: &AttemptRecord) -> Option<Self> {
+        BorrowedAttemptLease::of(leased).map(|lease| Self {
+            lease: Some(lease),
+            ..Self::default()
+        })
+    }
+
+    /// This parent under `clock` as well; with one already lent, the
+    /// earlier of the two.
+    #[must_use]
+    pub fn with_clock(mut self, clock: ReaderParentClock) -> Self {
+        self.clock = Some(self.clock.map_or(clock, |held| held.earlier(clock)));
+        self
+    }
+
+    /// The live clock the parent runs under, if its host lent one.
+    #[must_use]
+    pub const fn clock(&self) -> Option<ReaderParentClock> {
+        self.clock
+    }
+
+    /// The lease of the attempt the parent runs as, if any.
+    #[must_use]
+    pub const fn lease(&self) -> Option<&BorrowedAttemptLease> {
+        self.lease.as_ref()
+    }
+
+    /// The scoped child's loan its host lends with it, if any: the loan
+    /// [`enqueue_scoped_child`] queues.
+    #[must_use]
+    pub const fn loan(&self) -> Option<&ScopedChildLoan> {
+        self.loan.as_ref()
+    }
+}
+
+/// The parent a Dreamer wake attempt lends its scoped child (FIX 7507; FIX
+/// 7508's executor calls it with the wake context it already receives):
+/// `ctx`'s live wake clock, the lease of `leased`, the attempt the wake
+/// runs, and `loan`, made for `run`, borrowing that lease
+/// ([`ScopedChildLoan::with_parent_attempt`]) with every port it lends among
+/// `parent_ports`, what that attempt itself may call. It assumes no
+/// AGENT_DEF dispatch, starts no clock of its own and renews nothing. The
+/// answer's `Err` is the loan's refusal: `scoped_child_parent_lease_lost` or
+/// `scoped_child_port_exceeds_parent`.
+///
+/// # Errors
+///
+/// [`oneiron::Error::InvalidConfig`] when `loan` is not lent from `run` or
+/// is another vault's; the queue's own read errors.
+pub fn reader_parent_for_wake(
+    ctx: &WakeAttemptContext<'_>,
+    leased: &AttemptRecord,
+    run: EntityId,
+    loan: ScopedChildLoan,
+    parent_ports: &BTreeSet<String>,
+) -> oneiron::Result<Result<ReaderParentHost, &'static str>> {
+    if loan.parent_run() != run {
+        return Err(oneiron::Error::InvalidConfig(
+            "a wake's scoped loan is another run's".to_owned(),
+        ));
+    }
+    let loan = match loan.with_parent_attempt(ctx.vault, leased, parent_ports)? {
+        Ok(loan) => loan,
+        Err(refused) => return Ok(Err(refused)),
+    };
+    Ok(Ok(ReaderParentHost {
+        clock: Some(ReaderParentClock::of_wake(ctx.deadline)),
+        lease: loan.parent_lease().cloned(),
+        loan: Some(loan),
+    }))
 }
