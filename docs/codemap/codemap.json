@@ -23492,10 +23492,10 @@
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
       "const": 15,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 6,
       "fn": 12,
-      "re-export": 6,
+      "re-export": 9,
       "struct": 7
      }
     },
@@ -23636,6 +23636,27 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HealthTrendRollup",
+      "HealthTrendRollups",
+      "TrendMargin",
+      "TrendRatio",
+      "TrendSignalTally",
+      "TrendSource",
+      "TrendSpendTally",
+      "TrendStratum"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/rollups.rs",
+     "purpose": "The daily trend pass's rollups (OF-568 L3; agent-mind §3, \"Daily",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -23653,6 +23674,55 @@
      "purpose": "The agent-health review over one agent attempt (OF-568 L1, L2): on its terminal receipt, and at each Dreamer…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HealthTrendComparison",
+      "HealthTrendInput",
+      "HealthTrendReview",
+      "TrendDirection",
+      "TrendMetric",
+      "TrendSide",
+      "TrendUnknown"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/trend.rs",
+     "purpose": "The daily trend review (OF-568 L3): pure, deterministic comparisons over the rollups, per actor and per…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/trend_output.rs",
+     "purpose": "The daily trend pass and its output (OF-568 L3)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DetectionDialChanges",
+      "TrendPeriods",
+      "TrendWindow"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/trend_policy.rs",
+     "purpose": "The daily trend pass's comparison policy (OF-568 L3, agent-mind §3: \"Daily",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -69749,7 +69819,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 121,
+     "files": 125,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70766,7 +70836,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4501,
+   "source_files": 4505,
    "test_files": 902
   },
   "oneiron-android": {
