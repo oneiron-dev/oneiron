@@ -5,7 +5,7 @@ use super::rollout;
 use super::scan;
 use super::{
     CleanupCandidate, CleanupDecision, CleanupDigest, CleanupKind, CleanupPosture, CleanupProposal,
-    CleanupRunReport, MAX_CLEANUP_SCAN_ROWS, fresh_row_id, put_digest_in_txn, put_proposal_in_txn,
+    CleanupRunReport, fresh_row_id, put_digest_in_txn, put_proposal_in_txn,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -215,18 +215,15 @@ fn has_any_edge_in_txn(
         .is_some())
 }
 
-/// Every current cleanup candidate in the vault, in checker-table order.
-///
-/// Paged and capped (`MAX_CLEANUP_SCAN_ROWS` rows examined per type): a
-/// maintenance scan that cannot finish is worse than one that does part of
-/// the work and leaves the rest for the next wake.
+/// Every current cleanup candidate in the vault, in checker-table order,
+/// each eligible index read to its end.
 ///
 /// # Errors
 ///
 /// Storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub fn scan_cleanup_candidates(vault: &Vault) -> Result<Vec<CleanupCandidate>> {
     let txn = vault.store.env.read_txn()?;
-    Ok(scan::scan_in_txn(vault, &txn, MAX_CLEANUP_SCAN_ROWS)?.candidates)
+    scan::scan_in_txn(vault, &txn)
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +305,7 @@ pub(super) fn set_cleanup_posture_in_txn(
 ///
 /// Storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub fn run_vault_cleanup(vault: &Vault, attempt: &AttemptId) -> Result<CleanupRunReport> {
-    scan::run_with_limit(vault, attempt, MAX_CLEANUP_SCAN_ROWS)
+    scan::run(vault, attempt)
 }
 
 pub(super) fn run_cleanup_candidates_in_txn(

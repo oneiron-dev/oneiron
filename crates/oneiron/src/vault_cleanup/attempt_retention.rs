@@ -1,5 +1,4 @@
 //! Reversible retention for private queue records; the serialized attempt is never changed.
-use super::scan::ScanCursorTag;
 use super::{CleanupCandidate, CleanupKind};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, decode_record};
 use crate::error::{Error, MaintenanceError, Result};
@@ -112,32 +111,21 @@ fn eligible(
     .then_some(record))
 }
 
+/// Every completed queue record retention would archive, the ledger read
+/// from its start.
 pub(super) fn scan(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    limit: usize,
     candidates: &mut Vec<CleanupCandidate>,
-) -> Result<(ScanCursorTag, Option<EntityId>)> {
-    let after = super::scan::SCAN_CURSOR.get(&vault.store, txn, &ScanCursorTag::Attempt)?;
-    let after = after
-        .map(|id| AttemptId::from_bytes(id.as_bytes()))
-        .transpose()?;
+) -> Result<()> {
     // Owner-retained rows are job state at the top of the ledger's key
-    // order: the arm stops before them, so they take none of its budget and
-    // never become its cursor.
-    let mut last = None;
-    let mut exhausted = true;
-    for (examined, row) in JobQueueRead::port_job_rows(&vault.store, txn, after)?.enumerate() {
+    // order: the arm stops before them, the ledger's other rows all read.
+    for row in JobQueueRead::port_job_rows(&vault.store, txn, None)? {
         let (attempt, raw) = row?;
         if crate::attempt_queue::owner_retained_id(&attempt) {
             break;
         }
-        if examined == limit {
-            exhausted = false;
-            break;
-        }
         let entity = EntityId::from_bytes(*attempt.as_bytes())?;
-        last = Some(entity);
         if eligible(vault, txn, attempt, &raw)?.is_some() {
             candidates.push(CleanupCandidate {
                 entity,
@@ -145,7 +133,7 @@ pub(super) fn scan(
             });
         }
     }
-    Ok((ScanCursorTag::Attempt, if exhausted { None } else { last }))
+    Ok(())
 }
 
 pub(super) fn archive(vault: &Vault, txn: &mut heed::RwTxn<'_>, entity: EntityId) -> Result<bool> {

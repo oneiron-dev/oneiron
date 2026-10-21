@@ -81,14 +81,6 @@ pub const FIELD_CLEANUP_TOMBSTONE_REASON: &str = "cleanup_tombstone_reason";
 /// The value of [`FIELD_CLEANUP_PHASE`] on every row this projector mints.
 pub const CLEANUP_PHASE: &str = "cleanup";
 
-/// Ceiling on rows one run will EXAMINE per entity type.
-///
-/// A cron that walks an unbounded index holds a read transaction for an
-/// unbounded time. Stopping early is safe in a way that stopping early on a
-/// deletion never is: the rows not examined are simply not archived this run,
-/// and the next run starts over.
-pub(crate) const MAX_CLEANUP_SCAN_ROWS: usize = 50_000;
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
