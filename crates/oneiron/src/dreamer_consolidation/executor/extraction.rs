@@ -13,6 +13,7 @@ mod quote_binding;
 mod wire;
 pub(in crate::dreamer_consolidation) use cited::CitationCheck;
 use corrections::Correction;
+pub(in crate::dreamer_consolidation) use quote_binding::{QuoteBinding, bind_quote};
 pub(in crate::dreamer_consolidation) use wire::{
     CallPins, ExtractedPerson, ExtractionReply, ReplyContext, check_extraction_reply,
     contract_reply, decode_ref, disagreeing_child_hashes, extraction_reply, reply_json,

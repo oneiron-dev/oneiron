@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3946 declarations.
+// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3955 declarations.
 // Replies: 1057 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -784,7 +784,9 @@ declare namespace Sdk {
   type WeaveSectionKind = "changes" | "projects" | "open_asks" | "links" | "conflicts" | "exceptions" | "admissions" | "budgets" | "sieve_score" | "digest";
   type WeaveSectionInput = { kind: WeaveSectionKind; predicates?: string[]; edge_kinds?: string[] };
   type WeaveReportRequest = { sections: WeaveSectionInput[] };
-  type WeaveItemView = { item: "claim"; claim: ClaimView } | { item: "project"; project_ref: string; goal_ref?: string | null } | { item: "budget"; project_ref: string; budget_ref: string } | { item: "link"; source_ref: string; kind: string; target_ref: string } | { item: "dream_progress"; resident_ref: string; dreamed_at: number; entries: number } | { item: "agent_health"; card_ref: string; card: AgentHealthCard } | { item: "sieve_audit"; attempt_ref: string; span_ref: string; turn_ref: string; source_ref: string; expected_kind: string; actual_kind: string; expected_entity_ref?: string | null; actual_entity_ref?: string | null; novel: boolean; confidence: number; agrees: boolean; audited_at: number } | { item: "loop_decision"; decision_ref: string; created_at: number; family: string; kind: string; outcome: string; reason_codes: string[]; redacted: boolean; claim_ref?: string | null; actor_ref?: string | null; evidence_refs: string[] };
+  type WeaveSieveDiscoveryView = { start: number; end: number; kind: string; confidence: number };
+  type WeaveSieveFindingView = { expectation: string; window_ref: string; turn_ref: string; source_ref: string; start: number; end: number; discovered: WeaveSieveDiscoveryView[]; agrees: boolean; audited_at: number };
+  type WeaveItemView = { item: "claim"; claim: ClaimView } | { item: "project"; project_ref: string; goal_ref?: string | null } | { item: "budget"; project_ref: string; budget_ref: string } | { item: "link"; source_ref: string; kind: string; target_ref: string } | { item: "dream_progress"; resident_ref: string; dreamed_at: number; entries: number } | { item: "agent_health"; card_ref: string; card: AgentHealthCard } | { item: "sieve_audit"; attempt_ref: string; span_ref: string; turn_ref: string; source_ref: string; expected_kind: string; actual_kind: string; expected_entity_ref?: string | null; actual_entity_ref?: string | null; novel: boolean; confidence: number; agrees: boolean; audited_at: number } | { item: "sieve_window_audit"; attempt_ref: string; finding: WeaveSieveFindingView } | { item: "loop_decision"; decision_ref: string; created_at: number; family: string; kind: string; outcome: string; reason_codes: string[]; redacted: boolean; claim_ref?: string | null; actor_ref?: string | null; evidence_refs: string[] };
   type WeaveSieveScoreView = { sampled: number; agreeing: number };
   type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[]; sieve_score?: WeaveSieveScoreView | null };
   type WeaveReportView = { sections: WeaveSectionView[]; narrowing: ScopedReadReceipt };
@@ -3079,10 +3081,10 @@ declare namespace Sdk {
   type SwitchStage = "start" | "attach" | "cookies" | "navigate";
   type SwitchOutcome = { state: "switched" } | { state: "unchanged" } | { state: "failed"; stage: SwitchStage; code: string; detail: string };
   type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reason: string; url: string; carried?: SwitchCarried[]; not_carried?: SwitchNotCarried[]; outcome: SwitchOutcome };
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; duration_ms: number };
   type RecentCounts = { pass: number; miss: number; repair: number; of: number };
   type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
-  type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null };
+  type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
   type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null };
   type ObservationPage = Observation2 & { next?: string | null };
@@ -3113,8 +3115,14 @@ declare namespace Sdk {
   type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text: string; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
+  type StrictDenial = "rule_abstained" | "no_rule" | "image";
+  type AskUpReason = { why: "asked"; ladder?: string | null } | { why: "looks" } | { why: "no_answer" } | { why: "wrong_answer" } | { why: "strict"; denied: StrictDenial };
+  type ClockScope = "wait" | "navigation" | "decision";
+  type BatchStopCause = { cause: "postcondition_unmet" } | { cause: "locator_missing" } | { cause: "incomplete_observation" } | { cause: "decider_asked_up"; reason: AskUpReason } | { cause: "clock"; scope: ClockScope } | { cause: "press_needed" } | { cause: "taken_over" } | { cause: "field_text" } | { cause: "no_progress" } | { cause: "browser"; code: string };
+  type CheckReceipt = { expect: ExpectInput; observed: ExpectOutput };
+  type FailedStepReceipt = { step?: number | null; stop_cause: BatchStopCause; missed?: CheckReceipt[]; observation?: Observation2 | null; error?: string | null };
   type StepRebound = { step: number; rebound: Rebound };
-  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null; rebindings?: StepRebound[] };
+  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; stop_cause?: BatchStopCause | null; failed_receipt?: FailedStepReceipt | null; elapsed_ms: number; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null; rebindings?: StepRebound[] };
   type WindowsInput = { app?: string | null };
   type DesktopWindow = { window: string; app: string; title: string; current: boolean; front: boolean };
   type WindowsOutput = { windows: DesktopWindow[] };
@@ -3606,7 +3614,7 @@ declare namespace Sdk {
   type SievePolicyRequest = Record<string, never>;
   type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: number; max_text_bytes_per_pass: number; date_interest: number; name_interest: number; absolute_date_confidence: number; relative_date_confidence: number; vague_date_confidence: number; name_confidence: number; initial_name_confidence: number; katakana_name_confidence: number; uncertain_low: number; uncertain_high: number };
   type SievePolicySetRequest = { policy: SievePolicy };
-  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string };
+  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; audit_window_instruction: string };
   type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy };
   type SieveLeaseRequest = { budget_id: string };
   type SieveLeaseCounter = { total_units: number; remaining_units: number; reserved_units: number; updated_at: number };
@@ -3872,8 +3880,9 @@ declare namespace Sdk {
   type RetiredCard = { card: LibraryCard; retired_at: number; reason?: string | null };
   type LibraryRetiredOutput = { site: string; retired: RetiredCard[] };
   type BrowserLibraryRetiredOutput = BrowserAnswer<LibraryRetiredOutput>;
-  type LibraryRunInput = { workflow: string; args?: Record<string, string>; base?: ObservationBase | null };
-  type LibraryRunOutput = { workflow: string; status: SubgoalStatus; unmet?: number[]; batch: BatchOutput };
+  type LibraryRunMode = "strict" | "assisted";
+  type LibraryRunInput = { workflow: string; args?: Record<string, string>; base?: ObservationBase | null; mode?: LibraryRunMode | null };
+  type LibraryRunOutput = { workflow: string; status: SubgoalStatus; mode: LibraryRunMode; model_free: boolean; model_free_unproven?: number | null; unmet?: number[]; batch: BatchOutput };
   type BrowserLibraryRunOutput = BrowserAnswer<LibraryRunOutput>;
   type BrowserHandoverOutput = BrowserAnswer<HandoverOutput>;
   type SwitchEngineInput = { engine: BrowserEngine; reason: string };
@@ -4163,7 +4172,7 @@ declare namespace self {
     spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.AgentSpawnOutput | StoredResult>;
   };
   const browser: {
-    /** Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one. */
+    /** Runs one batched program of browser steps for a subgoal, stopping at the first failing step with a stop_cause and a failed_receipt (missed checks, the page); elapsed_ms times it, duration_ms each effect; the last observation edits the base. */
     batch(input: Sdk.BatchInput): Promise<Sdk.BrowserBatchOutput | StoredResult>;
     /** Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next. */
     click(input: Sdk.ClickInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
@@ -4178,7 +4187,7 @@ declare namespace self {
     /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.BrowserHandoverOutput | StoredResult>;
     library: {
-      /** The replay library's programs for a site, or for the open page's site, each card with its lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of` outcomes), held_out, supersedes and seed. */
+      /** The replay library's programs for a site, or the open page's, each card with its lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of`), its strict_misses in a row, held_out, supersedes and seed. */
       find(input: Sdk.LibraryFindInput): Promise<Sdk.BrowserLibraryFindOutput | StoredResult>;
       /** Offers a solved run's program to the replay library, refs as locators; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance. */
       propose(input: Sdk.ProposeInput): Promise<Sdk.BrowserLibraryProposeOutput | StoredResult>;
@@ -4186,7 +4195,7 @@ declare namespace self {
       retire(input: Sdk.LibraryRetireInput): Promise<Sdk.BrowserLibraryRetireOutput | StoredResult>;
       /** The programs retires took out of the replay library for a site, or for the open page's site, the newest first, each with when and why. */
       retired(input: Sdk.LibraryRetiredInput): Promise<Sdk.BrowserLibraryRetiredOutput | StoredResult>;
-      /** Runs a replay library program live with its arguments, resolving its locators as each step runs; its last observation edits the caller's base, and a missed postcondition goes back to the planner. */
+      /** Runs a replay library program live, strict (rules only; a step needing a model asks up at zero tokens) or assisted, by default as its proof allows; model_free reads receipts, a miss returns a failed_receipt; 3 strict misses retire it drift. */
       run(input: Sdk.LibraryRunInput): Promise<Sdk.BrowserLibraryRunOutput | StoredResult>;
     };
     /** Observes the run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched. */
