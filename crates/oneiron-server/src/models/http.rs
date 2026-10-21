@@ -407,6 +407,26 @@ impl ProviderHttp {
         })
     }
 
+    /// One GET of `path` at the server's own root (as [`Self::native`]
+    /// joins it), its body read whole up to `max_bytes`. The path is the
+    /// caller's, never a URL a reply named, so it stays on this origin; a
+    /// redirect is answered, never followed, and nothing is sent twice.
+    pub(super) async fn get_native_within(
+        &self,
+        path: &str,
+        max_bytes: usize,
+    ) -> Result<BytesReply, HttpFailure> {
+        let response = self.client.get(self.native().url(path)).send().await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let body = bounded_body(response, max_bytes).await?;
+        Ok(BytesReply {
+            status,
+            headers,
+            body,
+        })
+    }
+
     /// A file the provider named by its full URI, read whole up to
     /// [`MAX_MEDIA_REPLY_BYTES`]. The key goes only to the provider's own
     /// origin; one redirect from there is followed, without the key or any
