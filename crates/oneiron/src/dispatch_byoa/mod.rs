@@ -60,15 +60,16 @@ pub use provider::{
 mod seat;
 pub use seat::{
     HostedSeatBound, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeat, RunnerSeatPolicy,
-    RunnerWork, SeatAuth, SeatIdentity, SeatRoute, SeatSpent, SkippedRunnerSeat, hosted_seat_bound,
-    skipped_seats_note, spent_seat_in,
+    RunnerWork, SeatAuth, SeatIdentity, SeatPassedOver, SeatRoute, SeatSpent, SkippedRunnerSeat,
+    hosted_seat_bound, skipped_seats_note, spent_seat_in,
 };
 mod seat_quota;
 pub use seat_quota::{RunnerSeatQuota, runner_seat_quotas};
 mod work_binding;
 pub use work_binding::{
-    BindRunnerWork, RunnerSeatChoice, RunnerWorkBinding, RunnerWorkBindingId, RunnerWorkBound,
-    RunnerWorkErrorKind, RunnerWorkOutcome, RunnerWorkTerminal, runner_work_outcome,
+    BindRunnerWork, RunnerSeatChoice, RunnerTaskSource, RunnerWorkBinding, RunnerWorkBindingId,
+    RunnerWorkBound, RunnerWorkErrorKind, RunnerWorkOutcome, RunnerWorkTerminal,
+    runner_work_outcome,
 };
 mod connector;
 mod dispatcher;
@@ -80,6 +81,7 @@ mod repo_binding;
 mod staged_input;
 mod stream;
 mod validate;
+mod work_hand_off;
 
 pub use self::official_seats::{
     ANTHROPIC_API_BASE_URL, ClaudeAgentSdkSeatAdapter, ClaudeCodeSeatAdapter, CodexSeatAdapter,

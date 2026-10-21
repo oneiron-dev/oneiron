@@ -226,8 +226,8 @@ pub struct ByoaTerminalReceipt {
     pub artifact_id: EntityId,
     pub artifact_version: u64,
     pub result_ref: AttemptResultRef,
-    /// Fallback seats a NextSeat route passed over for a hosted-only bound,
-    /// in the owner's order. Empty for every other capture.
+    /// Fallback seats a NextSeat route passed over, each with why, in the
+    /// owner's order. Empty for every other capture.
     pub skipped_seats: Vec<SkippedRunnerSeat>,
 }
 
