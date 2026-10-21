@@ -449,6 +449,12 @@ impl SyncServer {
         live_runs.close_cards_with(Arc::clone(&lens_frames));
         // CUA-001: no run guest outlives a restart, so no takeover Ask can be answered.
         super::desktop_seats::clear_stale_asks(&vault);
+        // FIX 3837: no connector's live exchange outlives a restart, so the
+        // questions kept on its calls' rows stand with their delivery
+        // uncertain.
+        if let Err(error) = vault.mark_connector_inputs_uncertain() {
+            tracing::warn!(%error, "connector call questions not marked uncertain");
+        }
         // One machine memory line for the server's work and its organs'
         // own buffers alike (FIX 7649, FIX 7654).
         let memory = crate::machine::MachineMemory::new();

@@ -364,6 +364,11 @@ impl Vault {
         host: &mut H,
         answered: bool,
     ) -> Result<(ConnectorCallOutcome, Option<Vec<EntityId>>), IntentLedgerError> {
+        // A call whose connector asked for input answers from its row; its
+        // wait settled when the questions came (FIX 3837).
+        if let Some(outcome) = pending.input_outcome(*call_ref) {
+            return Ok((outcome, pending.source_rows));
+        }
         let Some(wait_id) = pending.code_consent_wait else {
             return self.drive_connector_call(Some(*call_ref), None, pending, host);
         };
@@ -549,7 +554,7 @@ pub(crate) fn settle_code_owned_call_in_txn(
     let Some(mut row) = PENDING_CALLS.get(&vault.store, txn, call_ref)? else {
         return Ok(());
     };
-    if row.settled.is_some() {
+    if row.settled.is_some() || row.input.is_some() {
         return Ok(());
     }
     row.settled = Some(SettledConnectorCall::Refused {

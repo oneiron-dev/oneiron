@@ -14858,10 +14858,11 @@ class ConnectorCallReplyPendingDelivery(TypedDict):
 class ConnectorCallReplyAwaitingInput(TypedDict):
     outcome: Literal["awaiting_input"]
     handle: str
+    call_ref: NotRequired[str | None]
     source: str
     foreign: bool
     questions: list[ConnectorQuestion]
-    expires_at_ms: int
+    live_until_ms: int
     reasons: NotRequired[list[str]]
 ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
 class LiveVoiceToolReply(TypedDict):
@@ -15606,7 +15607,15 @@ class ConnectorCallStatusSettled(TypedDict):
     name: str
     tool: str
     reply: ConnectorCallReply
-ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled
+class ConnectorCallStatusAwaitingInput(TypedDict):
+    state: Literal["awaiting_input"]
+    call_ref: str
+    name: str
+    tool: str
+    generation: int
+    uncertain: NotRequired[bool]
+    reply: ConnectorCallReply
+ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled | ConnectorCallStatusAwaitingInput
 class ScopedCommitRequest(TypedDict):
     claims: list[ScopedClaimInput]
 RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
