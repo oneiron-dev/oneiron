@@ -11,7 +11,7 @@ use crate::learning_setting::{self, CREDIT_DECAY, SettingMode};
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::receipt::{PackAttributionFields, UsedProvenanceEdge};
 use crate::side_table::{self, Named, SideTable};
-use crate::{Error, Result, Vault};
+use crate::{Result, Vault};
 
 pub(super) const CREDIT_RECEIPT: SideTable<String, LateCreditReceipt, Named> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_LATE_CREDIT);
@@ -120,7 +120,10 @@ fn decay_in_txn(
 }
 
 /// A beneficiary gets at most its strongest path from one anchored outcome.
-/// Two paths to the same ancestor are not two independent runs.
+/// Two paths to the same ancestor are not two independent runs. A used edge
+/// lineage no longer holds (an erase between the run's close and its outcome)
+/// is a hop skipped, with the credit only it reached (FIX 3105, OF-397): the
+/// outcome's other credit stands.
 pub(super) fn shares_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -142,12 +145,8 @@ pub(super) fn shares_in_txn(
             )?
             .iter()
             .any(|stored| stored.target == edge.source);
-        if !exists {
-            return Err(Error::InvalidClaimBody(
-                "a used provenance edge must exist in lineage",
-            ));
-        }
-        if edge.check.as_ref().is_some_and(|check| !check.contributed)
+        if !exists
+            || edge.check.as_ref().is_some_and(|check| !check.contributed)
             || fields.credit.check_every_hop && edge.check.is_none()
         {
             continue;

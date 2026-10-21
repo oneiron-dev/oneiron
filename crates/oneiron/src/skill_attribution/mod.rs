@@ -40,7 +40,7 @@ pub use self::calibration::{
 };
 mod causes;
 pub use self::causes::AttributionCauseRecord;
-pub(crate) use self::causes::{attempt_attribution_causes, erase_attribution_cause_actor_in_txn};
+pub(crate) use self::causes::{attempt_attribution_causes, erase_attribution_cause_entity_in_txn};
 mod codec;
 pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill};
 mod judge;
@@ -73,6 +73,10 @@ mod projector;
 pub(crate) use self::projector::{
     attribution_judgments_in_txn, draw_proposal_sequence_in_txn, mint_edit_proposal_in_txn,
     withdraw_edit_proposal_in_txn,
+};
+mod skill_erase;
+pub(crate) use self::skill_erase::{
+    erase_attribution_evidence_skill_in_txn, erase_attribution_judgment_skill_in_txn,
 };
 mod split;
 pub(crate) use self::split::{
