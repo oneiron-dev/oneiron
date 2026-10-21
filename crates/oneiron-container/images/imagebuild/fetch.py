@@ -7,11 +7,18 @@ payloads). Debian packages stay in mkosi's package cache layout
 packages.lock.toml; the signed apt metadata they were verified against stays
 in mkosi-cache. The Cargo closure is a clean CARGO_HOME (cargo-home/) that
 `cargo fetch --locked` filled; Cargo.lock's checksums pin it.
+
+The fetch runs the pinned cargo in a root of its own (fetch_root): a tmpfs
+holding the pinned base layer's userspace, the engine source at /src and the
+store's CARGO_HOME at /cargo-home. Cargo reads `.cargo/config.toml` in every
+parent of its working directory, so a work dir under a home directory would
+pick up that home's Cargo config; in this root the walk is /src (the pinned
+repo config) and an empty /.
 """
 
 from __future__ import annotations
 
-import os
+import shlex
 import shutil
 import subprocess
 import tarfile
@@ -27,6 +34,7 @@ from .util import (
     fetch_json,
     fetch_url,
     log,
+    host_env,
     run,
     sha256_file,
 )
@@ -197,7 +205,8 @@ def engine_tree(model: Model, repo: Path, work: Path) -> Path:
     dest.mkdir(parents=True)
     archive = work / "engine.tar"
     with open(archive, "wb") as out:
-        result = subprocess.run(["git", "-C", str(repo), "archive", "--format=tar", commit], stdout=out)
+        result = subprocess.run(["git", "-C", str(repo), "archive", "--format=tar", commit], stdout=out,
+                                env=host_env())
     if result.returncode != 0:
         raise StepFailed("git archive of the engine commit failed")
     run(["tar", "--extract", "--file", archive, "--directory", dest, "--no-same-owner"])
@@ -219,22 +228,97 @@ def engine_tree(model: Model, repo: Path, work: Path) -> Path:
     return dest
 
 
-def _refuse_host_cargo_config(tree: Path) -> None:
-    for parent in tree.resolve().parents:
-        for name in ("config", "config.toml"):
-            if (parent / ".cargo" / name).exists():
-                raise HostRefusal(f"{parent / '.cargo' / name} would leak host Cargo config into the fetch")
+# Where a host keeps its CA roots; cargo's TLS needs one bundle, nothing else of the host's /etc.
+CA_BUNDLES = (
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/cert.pem",
+    "/etc/ca-certificates/extracted/tls-ca-bundle.pem",
+)
+# The device nodes the fetch root binds one by one (no other host device).
+FETCH_DEVICES = ("null", "zero", "full", "random", "urandom")
+# Inside the fetch root.
+FETCH_SRC, FETCH_CARGO_HOME, FETCH_RUST = "/src", "/cargo-home", "/rust"
+FETCH_CA = "/etc/ssl/certs/ca-certificates.crt"
+
+# Runs as root of the build's user namespace, in a mount namespace of its own
+# (unshare --mount), so every mount below ends with the command. $1 is the
+# empty mount point, $2 the bootstrap tree, $3-$5 the engine source, the
+# store's CARGO_HOME and the pinned Rust, $6 the host CA bundle, $7 the host
+# resolver file; the rest is the command run in the root.
+FETCH_ROOT_SH = r"""
+set -eu
+root=$1 boot=$2 engine=$3 cargo_home=$4 rust=$5 ca=$6 resolv=$7
+shift 7
+mount -t tmpfs -o mode=0755 oneiron-fetch-root "$root"
+for top in "$boot"/*; do
+  name=${top##*/}
+  if [ -L "$top" ]; then ln -s "$(readlink "$top")" "$root/$name"; fi
+done
+mkdir -p "$root/usr" "$root/dev" "$root/tmp" "$root/src" "$root/cargo-home" "$root/rust"
+chmod 1777 "$root/tmp"
+mount --bind "$boot/usr" "$root/usr"
+cp -a "$boot/etc" "$root/etc"
+rm -f "$root/etc/resolv.conf"
+cat "$resolv" > "$root/etc/resolv.conf"
+mkdir -p "$root/etc/ssl/certs"
+cat "$ca" > "$root/etc/ssl/certs/ca-certificates.crt"
+for dev in null zero full random urandom; do
+  : > "$root/dev/$dev"
+  mount --bind "/dev/$dev" "$root/dev/$dev"
+done
+mount --bind "$engine" "$root/src"
+mount --bind "$cargo_home" "$root/cargo-home"
+mount --bind "$rust" "$root/rust"
+exec chroot "$root" "$@"
+"""
 
 
-def cargo_fetch(mirror: Mirror, engine: Path, rust: Path) -> None:
-    _refuse_host_cargo_config(engine)
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("CARGO_", "RUSTUP_", "RUSTC"))}
-    env.update(CARGO_HOME=str(mirror.cargo_home), PATH=f"{rust / 'bin'}:/usr/bin:/bin",
-               CARGO_TERM_COLOR="never", CARGO_NET_RETRY="6")
+def _host_file(candidates, what: str) -> Path:
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.exists():
+            return path.resolve()
+    raise HostRefusal(f"the host has no {what} (looked at {', '.join(candidates)})")
+
+
+def fetch_root(work: Path, bootstrap: Path, *, engine: Path, cargo_home: Path, rust: Path, command: list[str],
+               cwd: str = FETCH_SRC) -> None:
+    """Runs command (an argv inside the root) with the pinned base layer's
+    userspace, the engine at /src, CARGO_HOME at /cargo-home, the pinned Rust
+    at /rust, and nothing of the host's but its CA roots and resolver.
+
+    No HOME is set and no host directory but those three is visible, so no
+    Cargo or git configuration of the host reaches the command."""
+    ca = _host_file(CA_BUNDLES, "CA certificate bundle")
+    resolv = _host_file(("/etc/resolv.conf",), "/etc/resolv.conf")
+    mount_point = work / "fetch-root"
+    mount_point.mkdir(parents=True, exist_ok=True)
+    env = [
+        f"PATH={FETCH_RUST}/bin:/usr/bin:/bin",
+        f"CARGO_HOME={FETCH_CARGO_HOME}",
+        f"CARGO_HTTP_CAINFO={FETCH_CA}",
+        f"SSL_CERT_FILE={FETCH_CA}",
+        "CARGO_TERM_COLOR=never",
+        "CARGO_NET_RETRY=6",
+        "CARGO_HTTP_TIMEOUT=120",
+        "CARGO_NET_GIT_FETCH_WITH_CLI=false",
+    ]
+    inner = f"cd {shlex.quote(cwd)} && exec " + " ".join(shlex.quote(a) for a in command)
+    run(["unshare", "--mount", "--propagation", "private", "--", "/bin/sh", "-c", FETCH_ROOT_SH, "fetch-root",
+         mount_point, bootstrap, engine, cargo_home, rust, ca, resolv,
+         "/usr/bin/env", "-i", *env, "/bin/sh", "-c", inner])
+
+
+def cargo_fetch(mirror: Mirror, engine: Path, rust: Path, *, bootstrap: Path, work: Path) -> None:
     for leaked in ("config", "config.toml", "credentials", "credentials.toml"):
         if (mirror.cargo_home / leaked).exists():
             raise HostRefusal(f"the mirror CARGO_HOME holds {leaked}; it must stay clean")
-    run(["cargo", "fetch", "--locked", "--target", RUST_TARGET], cwd=engine, env=env)
+    if (bootstrap / ".cargo").exists() or (bootstrap / "root" / ".cargo").exists():
+        raise HostRefusal("the bootstrap tree holds a .cargo directory; the pinned base layer has none")
+    log(f"cargo config walk: {FETCH_SRC}/.cargo/config.toml (inputs.files.cargo-config), then an empty /")
+    fetch_root(work, bootstrap, engine=engine, cargo_home=mirror.cargo_home, rust=rust,
+               command=["cargo", "fetch", "--locked", "--target", RUST_TARGET])
 
 
 # -- the Debian closure ---------------------------------------------------------

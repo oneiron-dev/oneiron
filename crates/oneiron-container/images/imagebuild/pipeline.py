@@ -52,7 +52,7 @@ def fetch(model: Model, *, repo: Path, mirror: Mirror, work: Path, variants: lis
     mkosi_src = mkosi_source(model, mirror, work, learn=learn)
     rust = install_rust(model, mirror, model.inputs("rust", "builder_components"), work / "rust")
     engine = engine_tree(model, repo, work)
-    cargo_fetch(mirror, engine, rust)
+    cargo_fetch(mirror, engine, rust, bootstrap=bootstrap, work=work)
     _payload_blobs(model, mirror, plans)
     mkosi_run.sandbox_tree(model, work)
     tools = model.plan("tools")

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .fetch import Mirror, install_rust
 from .model import HERE, Model, Plan
-from .util import NotYetSupported, StepFailed, run
+from .util import NotYetSupported, StepFailed, host_env, run
 
 IMAGES = HERE
 HOOKS = {
@@ -173,11 +173,16 @@ def write_config(
 
 
 def _env(mkosi_src: Path, work: Path) -> dict:
+    """mkosi's environment: host_env() plus its source, a scratch TMPDIR and an
+    empty HOME in the work dir, so no user configuration of the host reaches it."""
     tmp = work / "tmp"
-    tmp.mkdir(parents=True, exist_ok=True)
-    keep = ("PATH", "HOME", "LANG", "TERM", "ONEIRON_IMAGES_USERNS")
-    env = {k: os.environ[k] for k in keep if k in os.environ}
-    env.update(PYTHONPATH=str(mkosi_src), TMPDIR=str(tmp))
+    home = work / "home"
+    for path in (tmp, home):
+        path.mkdir(parents=True, exist_ok=True)
+    env = host_env(PYTHONPATH=str(mkosi_src), TMPDIR=str(tmp), HOME=str(home))
+    for key in ("TERM", "ONEIRON_IMAGES_USERNS"):
+        if key in os.environ:
+            env[key] = os.environ[key]
     return env
 
 
