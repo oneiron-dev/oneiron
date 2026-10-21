@@ -1,3 +1,7 @@
+//! Extraction-quality schemas and validation.
+//! Entry: Of360EvalError.
+//! Schemas are owned here; shared constants stay in the parent.
+
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
