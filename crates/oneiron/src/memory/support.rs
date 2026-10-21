@@ -485,6 +485,10 @@ pub struct Memory<'v> {
     /// (`with_task_work_turn`, Rule 5): its nested task work runs on it and
     /// never waits for another. A turn that waited out the line still counts.
     pub(super) task_work_turn: Option<std::sync::Arc<crate::work_line::TaskWorkTurn>>,
+    /// The authenticated Git transport ONE outside-import call lends this
+    /// handle (`with_external_git_source_host`, FIX 6871); none otherwise.
+    pub(super) external_git_source_host:
+        Option<std::sync::Arc<dyn crate::repo_mutation::external_import::ExternalGitSourceHost>>,
 }
 
 /// A door's admission of a verb hook's rewritten args, run on the verb's name
@@ -621,6 +625,7 @@ impl Vault {
             credential_door: None,
             rewrite_admit: None,
             task_work_turn: None,
+            external_git_source_host: None,
         }
     }
 
@@ -671,6 +676,7 @@ impl Vault {
             credential_door: None,
             rewrite_admit: None,
             task_work_turn: None,
+            external_git_source_host: None,
         }
     }
 }
@@ -730,6 +736,8 @@ impl<'v> Memory<'v> {
                 credential_door: self.credential_door.clone(),
                 rewrite_admit: self.rewrite_admit.clone(),
                 task_work_turn: self.task_work_turn.clone(),
+                // A call's import transport never crosses into a turn.
+                external_git_source_host: None,
             },
         })
     }
