@@ -81500,6 +81500,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/chat_emit.rs",
+     "purpose": "What a live chat answer's context leaves on record (FIX 6921): the emit receipt `ai.reply` keeps, and the…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -81546,7 +81556,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -92602,7 +92612,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 489,
+     "files": 490,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -93052,7 +93062,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 988,
+   "source_files": 989,
    "test_files": 182
   },
   "oneiron-spawn": {
