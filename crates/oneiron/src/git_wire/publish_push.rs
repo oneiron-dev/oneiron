@@ -21,7 +21,7 @@ use super::{GitOid, GitRefName, GitWire, GitWireOperation, GitWireProcessEnv, Gi
 use crate::error::Result;
 
 /// How long one remote read may run.
-const REMOTE_READ_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+pub(super) const REMOTE_READ_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 /// How long one exact publish push may run: the mirror push's bound.
 const PUBLISH_PUSH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -112,7 +112,7 @@ impl GitWire<'_> {
     }
 
     /// The outbound profile of one call to `url`, bound to `repo`.
-    fn egress_env(
+    pub(super) fn egress_env(
         &self,
         repo: &GitWireRepo,
         url: &str,

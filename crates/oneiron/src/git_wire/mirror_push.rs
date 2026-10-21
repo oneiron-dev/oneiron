@@ -14,13 +14,13 @@ use super::{GitOid, GitRefName, GitWire, GitWireOperation, GitWireRepo};
 use crate::error::Result;
 
 /// How long one mirror push may run.
-const MIRROR_PUSH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+pub(super) const MIRROR_PUSH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// Captured output bound of one mirror push: porcelain lines, one per ref.
-const MIRROR_PUSH_MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+pub(super) const MIRROR_PUSH_MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 
 /// Refspecs one push child carries; more refs go in further pushes.
-const MIRROR_PUSH_REFSPECS: usize = 256;
+pub(crate) const MIRROR_PUSH_REFSPECS: usize = 256;
 
 /// Rejected refs named in a failure.
 const MIRROR_PUSH_NAMED_REJECTIONS: usize = 8;
