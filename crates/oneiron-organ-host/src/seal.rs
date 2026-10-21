@@ -58,7 +58,7 @@ use crate::error::{HostError, Unavailable};
 use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
 use crate::receipt::AskReceipt;
-use crate::spec::{AskGrant, CallClass, FetchGrant, LentInput, OrganCall, OrganSpec};
+use crate::spec::{AskGrant, CallClass, FetchGrant, LentInput, OrganCall, OrganSpec, OrganTier};
 
 /// The name the seal organ is installed under.
 pub const SEAL_ORGAN: &str = "seal";
@@ -214,17 +214,22 @@ pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
 
 /// The seal organ from a pack's build for this host (OF-575 pinned
 /// install): the build written under `dir` by its blake3, and
-/// [`seal_spec`] pinned to that binary and to the version the pack names.
+/// [`seal_spec`] pinned to that binary and to the version the pack names,
+/// at `tier`, which the caller classifies from the build's verified
+/// provenance as it does every pack organ's (FIX 7644): a pack named for
+/// the seal is no proof of who built it.
 ///
 /// # Errors
 /// The build could not be written.
 pub fn seal_spec_from_pack(
     binary: &PackOrganBinary,
     dir: &Path,
+    tier: OrganTier,
     fetch: FetchGrant,
 ) -> Result<OrganSpec, HostError> {
     let program = binary.materialize(dir)?;
     let mut spec = seal_spec(program, fetch);
+    spec.tier = tier;
     spec.program_hash = Some(Hash32::of(&binary.bytes));
     spec.version_pin = binary.organ.version.clone();
     Ok(spec)

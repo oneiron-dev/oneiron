@@ -88,8 +88,9 @@ struct Carrier {
     /// kept again, and always on the guest.
     backup_wait: Option<VmOutboxOutcome>,
     /// Why each kind waits on this end's carrier records, once one of them
-    /// did not write as its sets were scanned or readied. Kept across
-    /// sessions until a scan of the kind writes them again.
+    /// did not write as its sets were scanned or readied, or as a set the
+    /// other end sent was applied. Kept across sessions until a scan of the
+    /// kind writes them again.
     record_wait: HashMap<VmOutboxKind, RecordWait>,
 }
 

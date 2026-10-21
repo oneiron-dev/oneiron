@@ -100,7 +100,10 @@ impl Memory<'_> {
     ) -> MemoryResult<MergeQueuePointersView> {
         self.merge_queue_owner(owner)?;
         let repo = self.merge_queue_repo(input.repo)?;
-        let queue = self.merge_queue_of(&repo)?;
+        // A served source's missing projection is put back first (FIX 6869).
+        let queue = self
+            .vault
+            .open_queue_for_recovery(repo.repo, &repo.repo_ref)?;
         let pointers = queue.recover()?;
         // A no-op recovery wakes the queue driver too (FIX 6868).
         self.vault.store.notify_attempt_observers();

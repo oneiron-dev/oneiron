@@ -98,6 +98,11 @@ pub struct WeaveDigestSettingChange {
     /// When it reached its status, in Unix seconds; absent while pending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settled_at: Option<u64>,
+    /// For a proposal, why a Grant of the Coach's that named these settings
+    /// was passed over: `pact_standing_lapsed` when, on a shared vault, its
+    /// pact membership alone had lapsed (FIX 7548). Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_omitted: Option<String>,
 }
 
 /// The owner's answer to one proposed change.
