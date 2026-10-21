@@ -2775,6 +2775,16 @@ room. That bound is the dispatcher's memory only: a turn's tagging marker is
 written when the turn commits and never waits on it, and markers not yet
 claimed stay in the vault for a later pass. No call is refused for a backlog.
 
+A tagging marker carries its class: live for a chat or voice turn written
+while the server runs, bulk for imports, publications, recovery and markers
+left from an earlier start; a live write promotes a pending bulk marker of
+the same turn. One tagging coordinator per vault claims a ready live marker
+before any bulk one and keeps both classes in flight through the same
+dispatcher, at most 64 of each between claim and settlement, holding the
+reap freeze's admission from each claim to the end of its settlement. A call
+already claimed is never cut short, so it can outlast a reap's wait, and
+steady live work holds bulk back with no timer.
+
 Each call names what ran it in an `execution` receipt: `runtime` (`candle` or
 `endpoint`), `compute` (`cpu`, `metal`, `cuda`, or `opaque` for an endpoint),
 `engine` (`candle/metal`, `endpoint`), `pick` (`calibrated`, `free`,

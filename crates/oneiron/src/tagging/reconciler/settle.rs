@@ -1,7 +1,10 @@
-//! Settlement: a marker completed, skipped, failed or retried with its
-//! trace, each in one transaction.
+//! Settlement (FIX 6755): a marker completed, skipped, failed or retried
+//! with its trace, each in one transaction. A prepared marker settles here
+//! whichever path its call took, so there is one settlement path.
 
-use super::coordinator::TaggingReconciler;
+use super::call::Called;
+use super::claim::PreparedCall;
+use super::coordinator::{PreparedTagging, TaggingReconciler};
 use crate::EntityId;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, CompleteAttempt, FailAttempt, RetryAttempt};
 use crate::error::Result;
@@ -9,6 +12,7 @@ use crate::memory::extraction::EncoderOutput;
 use crate::tagging::history;
 use crate::tagging::input::{TurnInput, turn_text_in_txn};
 use crate::tagging::marker::{TaggingMode, retry_marker_in_txn};
+use crate::tagging::save::{self, Answer};
 use crate::tagging::tags::tagged_messages_absent_in_txn;
 use crate::tagging::trace::{SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace, attempt_hex};
 
@@ -17,8 +21,96 @@ const UNREADABLE_MARKER: &str = "unreadable_tagging_marker";
 /// Retry reason of a marker whose turn's tagged MESSAGE is away from this
 /// replica (OF-534).
 const MESSAGES_ABSENT: &str = "messages_absent";
+/// Retry reason of a marker whose turn changed while it was read.
+const SUPERSEDED: &str = "superseded";
 
 impl TaggingReconciler {
+    /// Settles `prepared` on what its call came back with: a failed call or
+    /// a refused answer is a retry on the failure backoff, and an answer that
+    /// passed every check ([`Self::checked`]) settles against the turn's
+    /// current text. Once its write commits the marker leaves this
+    /// reconciler's hold; an error leaves it held for the next hand-back.
+    pub(super) fn settle_called(
+        &self,
+        prepared: PreparedTagging,
+        called: Called,
+    ) -> Result<TaggingTrace> {
+        let PreparedTagging { trace, call, hold } = prepared;
+        let trace = match self.checked(&call, called) {
+            Ok(output) => self.settle_answer(&call, &output, trace)?,
+            Err(failure) => self.retry(&call, failure, trace)?,
+        };
+        hold.settled();
+        Ok(trace)
+    }
+
+    /// Settles an answer that passed every check. It stands only for the
+    /// text it tagged: the settling transaction reads the turn's own text
+    /// again; the window was context, which it never reads. In save mode the
+    /// tags land in that same write, so a turn's marker settles exactly when
+    /// its tags are saved. A turn whose text changed while the tagger read it
+    /// is superseded, retried at once on the new text, and one whose tagged
+    /// MESSAGE left this replica meanwhile (OF-534) is deferred: each in that
+    /// same transaction, with its trace. Each retry carries the row's payload
+    /// as that transaction reads it, so a live write's promotion of the marker
+    /// since its claim carries over.
+    fn settle_answer(
+        &self,
+        call: &PreparedCall,
+        output: &EncoderOutput,
+        mut trace: TaggingTrace,
+    ) -> Result<TaggingTrace> {
+        let turn = call.payload.turn;
+        let made_by = self.encoder.model_id().as_str().to_owned();
+        self.vault
+            .try_with_write_txn_grouped(|txn| -> Result<TaggingTrace> {
+                // Inference ran outside this writer: a MESSAGE the saved set
+                // was read from may have left this replica since.
+                if tagged_messages_absent_in_txn(&self.vault.store, txn, &turn)? {
+                    return self.defer_in_txn(txn, &call.record, call.prior_retries, trace);
+                }
+                let current = matches!(
+                    turn_text_in_txn(&self.vault, txn, &turn)?,
+                    TurnInput::Ready { text_hash: ref now, .. } if *now == call.text_hash
+                );
+                if !current {
+                    return self.supersede_in_txn(txn, &call.record, trace);
+                }
+                trace.outcome = match self.config.mode {
+                    TaggingMode::Shadow => self.shadowed(output),
+                    TaggingMode::Save => {
+                        let answer = Answer {
+                            turn,
+                            input: &call.input,
+                            output,
+                            envelope: save::envelope(
+                                &call.hash,
+                                &made_by,
+                                &self.config,
+                                output.stack_sha16.as_deref(),
+                            ),
+                        };
+                        let now = self.stamp_in_txn(txn)?;
+                        let saved = save::save_in_txn(&self.vault, txn, answer, &self.config, now)?;
+                        TaggingOutcome::Saved {
+                            spans: output.spans.len(),
+                            links: output.links.len(),
+                            mood: output.vad.is_some(),
+                            linked: saved.linked,
+                            minted: saved.minted,
+                            context_links: output.context_links.len(),
+                            speaker_links: output.speaker_links.len(),
+                            unresolved_context_links: saved.unresolved_context_links,
+                            unresolved_speaker_links: saved.unresolved_speaker_links,
+                            surprise: saved.surprise,
+                        }
+                    }
+                };
+                self.settle_in_txn(txn, &call.record, &trace)?;
+                Ok(trace)
+            })
+    }
+
     /// Waits out a turn whose tagged MESSAGE is away from this replica
     /// (OF-534): the marker is retried on the failure backoff, the turn's
     /// saved set and every row of it untouched, until a promotion brings the
@@ -30,9 +122,35 @@ impl TaggingReconciler {
         prior_retries: u32,
         trace: TaggingTrace,
     ) -> Result<TaggingTrace> {
+        self.vault.try_with_write_txn_grouped(|txn| {
+            self.defer_in_txn(txn, record, prior_retries, trace)
+        })
+    }
+
+    /// [`Self::defer`], in the caller's transaction.
+    fn defer_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        record: &AttemptRecord,
+        prior_retries: u32,
+        trace: TaggingTrace,
+    ) -> Result<TaggingTrace> {
         let delay = self.backoff.delay_secs(prior_retries);
-        self.retry_traced(record, delay, MESSAGES_ABSENT, trace, |retry_at| {
+        self.retry_traced_in_txn(txn, record, delay, MESSAGES_ABSENT, trace, |retry_at| {
             TaggingOutcome::Deferred { retry_at }
+        })
+    }
+
+    /// Retries the marker at once on its turn's new text, recording its
+    /// trace, in the caller's transaction.
+    fn supersede_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        record: &AttemptRecord,
+        trace: TaggingTrace,
+    ) -> Result<TaggingTrace> {
+        self.retry_traced_in_txn(txn, record, 0, SUPERSEDED, trace, |retry_at| {
+            TaggingOutcome::Superseded { retry_at }
         })
     }
 
@@ -43,9 +161,9 @@ impl TaggingReconciler {
     /// The skip stands only for the turn it read: a witness that added text
     /// since then was absorbed by this leased marker, so the settling
     /// transaction reads the turn again and, if it now has text, the marker
-    /// is retried at once on it. So is one whose tagged MESSAGE left this
-    /// replica since (OF-534): its next try waits for the row, and the set
-    /// stays.
+    /// is retried at once on it, in that same transaction. So is one whose
+    /// tagged MESSAGE left this replica since (OF-534): its next try waits
+    /// for the row, and the set stays.
     pub(super) fn skip(
         &self,
         record: &AttemptRecord,
@@ -54,31 +172,24 @@ impl TaggingReconciler {
         mut trace: TaggingTrace,
     ) -> Result<TaggingTrace> {
         trace.outcome = TaggingOutcome::Skipped { reason };
-        let settled = self
-            .vault
-            .try_with_write_txn_grouped(|txn| -> Result<bool> {
+        self.vault
+            .try_with_write_txn_grouped(|txn| -> Result<TaggingTrace> {
                 if tagged_messages_absent_in_txn(&self.vault.store, txn, turn)? {
-                    return Ok(false);
+                    return self.supersede_in_txn(txn, record, trace);
                 }
                 let read = turn_text_in_txn(&self.vault, txn, turn)?;
                 if matches!(read, TurnInput::Ready { .. }) {
-                    return Ok(false);
+                    return self.supersede_in_txn(txn, record, trace);
                 }
                 if self.config.mode == TaggingMode::Save && matches!(read, TurnInput::Empty) {
                     crate::tagging::tags::replace_in_txn(&self.vault, txn, turn, None)?;
                 }
                 self.settle_in_txn(txn, record, &trace)?;
-                Ok(true)
-            })?;
-        if settled {
-            return Ok(trace);
-        }
-        self.retry_traced(record, 0, "superseded", trace, |retry_at| {
-            TaggingOutcome::Superseded { retry_at }
-        })
+                Ok(trace)
+            })
     }
 
-    pub(super) fn shadowed(&self, output: &EncoderOutput) -> TaggingOutcome {
+    fn shadowed(&self, output: &EncoderOutput) -> TaggingOutcome {
         TaggingOutcome::Shadowed {
             spans: output.spans.len(),
             links: output.links.len(),
@@ -161,10 +272,9 @@ impl TaggingReconciler {
         Ok(())
     }
 
-    pub(super) fn retry(
+    fn retry(
         &self,
-        record: &AttemptRecord,
-        prior_retries: u32,
+        call: &PreparedCall,
         failure: TaggingFailure,
         trace: TaggingTrace,
     ) -> Result<TaggingTrace> {
@@ -173,40 +283,55 @@ impl TaggingReconciler {
             TaggingFailure::Refused { .. } => "answer_refused",
             TaggingFailure::Panicked => "tagger_panicked",
         };
-        let delay = self.backoff.delay_secs(prior_retries);
-        self.retry_traced(record, delay, reason, trace, |retry_at| {
+        let delay = self.backoff.delay_secs(call.prior_retries);
+        self.retry_traced(&call.record, delay, reason, trace, |retry_at| {
             TaggingOutcome::Failed { failure, retry_at }
         })
     }
 
     /// Retries the marker `delay_secs` from now and records its trace, whose
     /// outcome `outcome` names from the retry's time, in one transaction.
-    pub(super) fn retry_traced(
+    fn retry_traced(
         &self,
+        record: &AttemptRecord,
+        delay_secs: u64,
+        reason: &str,
+        trace: TaggingTrace,
+        outcome: impl FnOnce(u64) -> TaggingOutcome,
+    ) -> Result<TaggingTrace> {
+        self.vault.try_with_write_txn_grouped(|txn| {
+            self.retry_traced_in_txn(txn, record, delay_secs, reason, trace, outcome)
+        })
+    }
+
+    /// [`Self::retry_traced`], in the caller's transaction.
+    fn retry_traced_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
         record: &AttemptRecord,
         delay_secs: u64,
         reason: &str,
         mut trace: TaggingTrace,
         outcome: impl FnOnce(u64) -> TaggingOutcome,
     ) -> Result<TaggingTrace> {
-        self.vault.try_with_write_txn_grouped(|txn| {
-            let stamp = self.stamp_in_txn(txn)?;
-            let retry_at = stamp.saturating_add(delay_secs);
-            // A retry owed at once is ready at once, whatever the clock reads
-            // at the next claim; a backoff counts from this stamp.
-            let ready_at = if delay_secs == 0 { 0 } else { retry_at };
-            self.retry_in_txn(txn, record, ready_at, reason)?;
-            trace.outcome = outcome(retry_at);
-            history::record_in_txn(&self.vault, txn, &trace, stamp)?;
-            Ok(trace)
-        })
+        let stamp = self.stamp_in_txn(txn)?;
+        let retry_at = stamp.saturating_add(delay_secs);
+        // A retry owed at once is ready at once, whatever the clock reads at
+        // the next claim; a backoff counts from this stamp.
+        let ready_at = if delay_secs == 0 { 0 } else { retry_at };
+        self.retry_in_txn(txn, record, ready_at, reason)?;
+        trace.outcome = outcome(retry_at);
+        history::record_in_txn(&self.vault, txn, &trace, stamp)?;
+        Ok(trace)
     }
 
     /// Retries a marker this owner holds, in the caller's transaction, with
     /// its successor ready at `retry_at`. The successor's id is derived from
     /// the try it retries, so no retry draws from the vault's id source and
     /// shadow leaves every later write's entity ids as a run with no tagger
-    /// leaves them. Every caller has read the payload first.
+    /// leaves them. Every caller has read the payload first. The successor
+    /// carries the payload the row holds in `txn`, so a live write's
+    /// promotion of the try since its claim carries over (FIX 6755).
     pub(super) fn retry_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

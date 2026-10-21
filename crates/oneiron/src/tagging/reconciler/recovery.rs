@@ -2,9 +2,9 @@
 //! markers an earlier build left below the owner-retained range, and the
 //! hand-back of every marker this reconciler holds unsettled.
 
-use std::sync::PoisonError;
 use std::sync::atomic::Ordering;
 
+use super::claim::{Held, disown, lock_held};
 use super::coordinator::TaggingReconciler;
 use super::settle::unreadable_trace;
 use crate::attempt_queue::{
@@ -86,13 +86,15 @@ impl TaggingReconciler {
         };
         let found = stale.len();
         {
-            let mut unsettled = self
-                .unsettled
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut unsettled = lock_held(&self.unsettled);
             for record in stale {
-                if !unsettled.iter().any(|(held, _)| held.id == record.id) {
-                    unsettled.push((record, HandBackReason::WorkerRestarted));
+                // A claim this reconciler holds is entered before it commits.
+                if !unsettled.iter().any(|held| held.record.id == record.id) {
+                    unsettled.push(Held {
+                        record,
+                        reason: HandBackReason::WorkerRestarted,
+                        owned: false,
+                    });
                 }
             }
         }
@@ -235,22 +237,29 @@ impl TaggingReconciler {
         Ok(())
     }
 
-    /// Hands back each marker this reconciler holds, as an immediate retry,
-    /// recording the trace of the try it finalizes. One that is no longer
-    /// leased under this owner at the held lease generation was settled after
-    /// all, and is let go. A failed hand-back keeps the rest and fails the
-    /// pass, so the next one tries again. `Ok(true)` when `paused` cut it
-    /// short: what it has not handed back stays held for the next pass.
+    /// Hands back each marker this reconciler holds that nothing owns, newest
+    /// first, as an immediate retry, recording the trace of the try it
+    /// finalizes. One that is no longer leased under this owner at the held
+    /// lease generation was settled after all, and is let go. A failed
+    /// hand-back keeps the rest and fails the pass, so the next one tries
+    /// again. `Ok(true)` when `paused` cut it short: what it has not handed
+    /// back stays held for the next pass. A marker a preparation, call or
+    /// settlement owns is passed over, and the held set is never locked
+    /// across a write: a claim enters its hold under the writer.
     pub(super) fn return_unsettled(&self, paused: &dyn Fn() -> bool) -> Result<bool> {
-        let mut unsettled = self
-            .unsettled
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        while let Some((record, reason)) = unsettled.last() {
-            if paused() {
-                return Ok(true);
-            }
-            self.vault.try_with_write_txn_grouped(|txn| -> Result<()> {
+        loop {
+            let (record, reason) = {
+                let mut unsettled = lock_held(&self.unsettled);
+                let Some(next) = unsettled.iter_mut().rev().find(|held| !held.owned) else {
+                    return Ok(false);
+                };
+                if paused() {
+                    return Ok(true);
+                }
+                next.owned = true;
+                (next.record.clone(), next.reason)
+            };
+            let handed = self.vault.try_with_write_txn_grouped(|txn| -> Result<()> {
                 let current =
                     crate::ports::JobQueueRead::port_job_row(&self.vault.store, txn, &record.id)?
                         .and_then(|raw| decode_record(&raw, record.id).ok());
@@ -260,13 +269,17 @@ impl TaggingReconciler {
                         && current.attempt_count == record.attempt_count
                 });
                 if still_held {
-                    self.hand_back_in_txn(txn, record, *reason)?;
+                    self.hand_back_in_txn(txn, &record, reason)?;
                 }
                 Ok(())
-            })?;
-            unsettled.pop();
+            });
+            let mut unsettled = lock_held(&self.unsettled);
+            if let Err(error) = handed {
+                disown(&mut unsettled, record.id);
+                return Err(error);
+            }
+            unsettled.retain(|held| held.record.id != record.id);
         }
-        Ok(false)
     }
 
     /// Hands a held marker back as an immediate retry and records the trace
