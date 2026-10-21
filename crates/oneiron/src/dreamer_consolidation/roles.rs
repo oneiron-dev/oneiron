@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use super::sieve_ports::ExtractionPorts;
 use crate::Vault;
 use crate::error::Result;
 use crate::llm::manifest::ModelRole;
@@ -42,11 +43,14 @@ pub struct RoleBackend {
     pub binding: HostInferenceBinding,
 }
 
-/// The backends a host routes the Dreamer's roles to, and the input window
-/// the host lends the sieve's follower (FIX 7510).
+/// The backends a host routes the Dreamer's roles to, the ports the sieve's
+/// rungs and a child's extraction call (OF-498a; by default each port calls
+/// its role as this table routes it), and the input window the host lends
+/// the sieve's follower (FIX 7510).
 #[derive(Clone, Default)]
 pub struct RoleBackends {
     routes: BTreeMap<ModelRole, RoleBackend>,
+    ports: ExtractionPorts,
     /// The tokens one follower call's input may fill on the extraction
     /// role's model, as the host counts them; `None` when the host lends
     /// none, so the follower packs by its sizing estimate alone.
@@ -76,6 +80,19 @@ impl RoleBackends {
     #[must_use]
     pub fn follower_window_tokens(&self) -> Option<u64> {
         self.follower_window_tokens
+    }
+
+    /// The host's sieve and child-extraction ports in place of the role
+    /// defaults.
+    #[must_use]
+    pub fn with_extraction_ports(mut self, ports: ExtractionPorts) -> Self {
+        self.ports = ports;
+        self
+    }
+
+    /// The ports the sieve's rungs and a child's extraction call.
+    pub(super) fn extraction_ports(&self) -> &ExtractionPorts {
+        &self.ports
     }
 }
 

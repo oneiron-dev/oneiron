@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
 use oneiron::dreamer_consolidation::{
-    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, PersonAboutExecutor, RoleBackends, RoleCall,
-    ScopeSummaryExecutor,
+    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, ExtractionPorts, PersonAboutExecutor,
+    RoleBackends, RoleCall, ScopeSummaryExecutor,
 };
 use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, ConnectorEventResponder};
 use oneiron::dreamer_runner::maintenance::{
@@ -170,6 +170,9 @@ pub struct ConsolidationExecutorFactory {
     /// The backend each Dreamer role calls out on; a role it does not name
     /// calls `backend`.
     roles: RoleBackends,
+    /// The host's sieve and child-extraction ports (OF-498a). `None` keeps
+    /// whatever `roles` carries, by default the role ports.
+    extraction_ports: Option<ExtractionPorts>,
     sink: Box<dyn ConsolidationSink>,
     parallel_sinks: Vec<Box<dyn ConsolidationSink>>,
     /// CMT-3 (ONE-1540). `None` by DEFAULT, and the wrapper is installed
@@ -221,6 +224,7 @@ impl ConsolidationExecutorFactory {
             binding,
             extraction_egress,
             roles: RoleBackends::default(),
+            extraction_ports: None,
             sink,
             parallel_sinks: Vec::new(),
             commitment_wake_planner: None,
@@ -259,6 +263,14 @@ impl ConsolidationExecutorFactory {
     #[must_use]
     pub fn with_role_backends(mut self, roles: RoleBackends) -> Self {
         self.roles = roles;
+        self
+    }
+
+    /// The sieve's and a child extraction's ports (OF-498a) in place of the
+    /// role defaults, whatever `with_role_backends` routes.
+    #[must_use]
+    pub fn with_extraction_ports(mut self, ports: ExtractionPorts) -> Self {
+        self.extraction_ports = Some(ports);
         self
     }
 
@@ -441,7 +453,11 @@ impl ConsolidationExecutorFactory {
                 .model,
             )
             .copied();
-        let roles = self.roles.clone().with_follower_window(follower_window);
+        let roles = match &self.extraction_ports {
+            Some(ports) => self.roles.clone().with_extraction_ports(ports.clone()),
+            None => self.roles.clone(),
+        }
+        .with_follower_window(follower_window);
         let mut executors = Vec::new();
         for sink in std::iter::once(&mut self.sink).chain(self.parallel_sinks.iter_mut()) {
             let inner = ConsolidationExecutor {

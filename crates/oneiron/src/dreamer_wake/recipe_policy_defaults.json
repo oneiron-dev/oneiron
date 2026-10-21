@@ -10,6 +10,7 @@
   "typing_instruction": "Resolve the uncertain cited span using its source context and the novelty reading. Return only JSON with kind (date or name), novel (boolean), confidence (integer percent), and entity (one supplied candidate id or null). Do not invent entity ids. This is a typed classification, not permission to write a belief.",
   "rung_retry_secs": 60,
   "arc_min_new_statements": 1,
+  "arc_child_calls_per_wake": 16,
   "narrative_instruction": "Write a concise arc summary from only these child proposals and their ids. Preserve disagreements and uncertainty. Cite the proposal ids. Do not infer new facts, decide conflicts, copy an earlier summary, or treat a proposal as approved truth.",
   "follower_enabled": true,
   "follower_instruction": "You follow one append-only log of source frames. Each frame is labelled F<n> and holds its chunks in order; the frames before the question are what you have already read, and a keyframe stands in for the frames it folds. The last part lists spans, each with its ordinal, frame, chunk, quoted words, cheap reading and entity candidate labels. Return only JSON {\"readings\": [...]} with exactly one item per listed span: span (its ordinal), kind (date or name), novel (boolean), confidence (integer percent) and entity (one of that span's candidate labels, or null). Novel means new information worth retaining, not merely an unfamiliar spelling. Do not invent labels or ids, and do not skip or repeat a span. A low score never discards the span.",

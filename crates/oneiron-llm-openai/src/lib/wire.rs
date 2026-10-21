@@ -6,9 +6,9 @@ use super::{
 };
 use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, is_solo, limit};
 use oneiron::{
-    ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
-    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec, LlmUsage,
-    ModelLocality, ResponseFormat, RetryableLlmError,
+    ContentPart, FatalLlmError, FinishReason, ImageContent, LlmCapability, LlmError, LlmInputUsage,
+    LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec,
+    LlmUsage, ModelLocality, ResponseFormat, RetryableLlmError,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use std::collections::BTreeMap;
@@ -100,13 +100,16 @@ pub fn build_openai_chat_request(
                 .to_owned(),
         ),
     );
+    // Only the selected offer's own declaration sends assistant reasoning
+    // apart; no param, provider option or model name turns it on.
+    let reasoning_history = catalog.supports(&LlmCapability::ReasoningContentHistory);
     body.insert(
         "messages".to_owned(),
         JsonValue::Array(
             request
                 .messages
                 .iter()
-                .map(openai_message)
+                .map(|message| openai_message(message, reasoning_history))
                 .collect::<Vec<_>>(),
         ),
     );
@@ -219,7 +222,12 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
     })
 }
 
-fn openai_message(message: &LlmMessage) -> JsonValue {
+/// One history message on the chat wire. With `reasoning_history` (the
+/// offer declares [`LlmCapability::ReasoningContentHistory`]), an assistant
+/// message's reasoning parts go, in order and joined as they are, into
+/// `reasoning_content` instead of its content; their signatures are not
+/// sent. Otherwise reasoning is text content, as every other message's is.
+fn openai_message(message: &LlmMessage, reasoning_history: bool) -> JsonValue {
     if message.role == LlmMessageRole::Tool
         && let Some(ContentPart::ToolResult {
             call_id, output, ..
@@ -238,10 +246,15 @@ fn openai_message(message: &LlmMessage) -> JsonValue {
         JsonValue::String(openai_role(message.role).to_owned()),
     );
 
+    let separate_reasoning = reasoning_history && message.role == LlmMessageRole::Assistant;
+    let mut reasoning: Option<String> = None;
     let mut content_parts = Vec::new();
     let mut tool_calls = Vec::new();
     for part in &message.content {
         match part {
+            ContentPart::Reasoning { text, .. } if separate_reasoning => {
+                reasoning.get_or_insert_with(String::new).push_str(text);
+            }
             ContentPart::Text { text } | ContentPart::Reasoning { text, .. } => {
                 content_parts.push(json!({ "type": "text", "text": text }));
             }
@@ -277,6 +290,9 @@ fn openai_message(message: &LlmMessage) -> JsonValue {
         object.insert("content".to_owned(), JsonValue::String(text.to_owned()));
     } else {
         object.insert("content".to_owned(), JsonValue::Array(content_parts));
+    }
+    if let Some(reasoning) = reasoning {
+        object.insert("reasoning_content".to_owned(), JsonValue::String(reasoning));
     }
     if !tool_calls.is_empty() {
         object.insert("tool_calls".to_owned(), JsonValue::Array(tool_calls));

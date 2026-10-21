@@ -6,6 +6,7 @@ mod failure;
 mod merge_resolution;
 
 pub use decisions::ConsolidationDecisions;
+pub(super) use decisions::{Decider, ScopedRead};
 use merge_resolution::MergeResolution;
 
 use super::evidence::{
@@ -65,7 +66,8 @@ pub struct ConsolidationExecutor<'a> {
     /// Explicit host binding and extraction egress decision for this backend.
     pub inference: HostInferenceContext<'a>,
     /// The backend each role's calls go out on; a role it does not name
-    /// calls `backend` as `model`.
+    /// calls `backend` as `model`. It holds the sieve's and a child
+    /// extraction's ports too (OF-498a), by default on these roles.
     pub roles: RoleBackends,
     pub sink: &'a mut dyn ConsolidationSink,
     /// Trusted caller's exact branch scope, in addition to actor authority.
@@ -679,6 +681,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         }
         if attempt.status.payload.attempt_type == super::nightly_merge::ATTEMPT {
             return self.run_nightly_merge(attempt, ctx).await;
+        }
+        if attempt.status.payload.attempt_type == super::nightly_links::ATTEMPT {
+            return self.run_nightly_links(attempt, ctx).await;
         }
         if attempt.status.payload.attempt_type
             == crate::dreamer_runner::DREAMER_NOTE_REVIEW_ATTEMPT_KIND

@@ -6,9 +6,12 @@
 //! datagram its guest opens off its own session, a page WebSocket's and a
 //! worker's included ([`relay`], FIX 7333), by the address it goes to, with
 //! the hosted egress guard the fetch hands the render. It refuses only what
-//! that guard refuses. The guest's own loopback (the Lightpanda debugger's
-//! socket among it) never reaches the relay, and the guest's DNS goes to the
-//! host's resolvers, which are no page's destination.
+//! that guard refuses, by the guard's own reason: hosted infrastructure, or
+//! a private network (FIX 7657), which a page's request may reach at an
+//! operator's private origin and a relayed connection never does, as the
+//! relay knows only an address. The guest's own loopback (the Lightpanda
+//! debugger's socket among it) never reaches the relay, and the guest's DNS
+//! goes to the host's resolvers, which are no page's destination.
 //!
 //! A render ends its guest before it answers: once the page is read it
 //! stops taking new work, cancels the requests still in flight, drops the
@@ -32,14 +35,16 @@ use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_sandbox::egress::EgressConfig;
 use oneiron::code_sandbox::microvm::select_backend_for_session;
 use oneiron::web_fetch::{
-    HeadlessDocument, HeadlessRenderer, HostedEgressGuard, RendererError, RendererResult,
+    HeadlessDocument, HeadlessRenderer, HostedEgressGuard, HostedEgressRefusal, RendererError,
+    RendererResult,
 };
 use oneiron_browser::{
     BrowserDriver as _, BrowserError, BrowserGuest, BrowserRequestHandler, BrowserSession,
-    HandleRetention, OpenInput, RenderedDocument,
+    DestinationRefusal, HandleRetention, OpenInput, RenderedDocument,
 };
 use oneiron_container::{EgressRelay, GuestSeccomp, GuestSpec, ImageRef};
 use oneiron_vault_contract::BrowserUnavailableReason;
+use reqwest::Url;
 use tokio::sync::watch;
 
 use self::handler::PageRequests;
@@ -86,9 +91,7 @@ impl GuestHeadless {
         operation.end();
         operation.settle();
         if let Err(BrowserError::DestinationRefused(refused)) = &read {
-            operation.refuse(RendererError::hosted_infrastructure(
-                refused.message.clone(),
-            ));
+            operation.refuse(destination_refusal(refused));
         }
         if let Some(refused) = operation.refusal() {
             return Err(refused);
@@ -150,7 +153,7 @@ impl GuestHeadless {
             })
             .and_then(|_| session.document());
         if let Some(refused) = session.take_destination_refusal() {
-            operation.refuse(RendererError::hosted_infrastructure(refused.message));
+            operation.refuse(destination_refusal(&refused));
         }
         // The page is read: nothing new of the render starts from here, its
         // requests in flight are cancelled, and dropping the session removes
@@ -176,6 +179,15 @@ impl HeadlessRenderer for GuestHeadless {
     ) -> RendererResult<HeadlessDocument> {
         self.render(url, Some(Arc::new(guard.clone())))
     }
+}
+
+/// The rung error a browser's destination refusal stands for: the guard
+/// refusal its reason names exactly (FIX 7657); a reason that names neither
+/// stays the hosted-infrastructure refusal every one was before.
+fn destination_refusal(refused: &DestinationRefusal) -> RendererError {
+    let reason = HostedEgressRefusal::from_reason(&refused.reason)
+        .unwrap_or(HostedEgressRefusal::Infrastructure);
+    RendererError::hosted(reason, refused.message.clone())
 }
 
 /// Starts one render's guest from the host's pinned image through the
@@ -276,14 +288,32 @@ impl Operation {
 
     /// Refuses the request or connection `destination` names, about to go
     /// to `ip`, when the render's guard refuses that address, and keeps the
-    /// refusal for the render first. An unguarded render refuses nothing.
-    fn check(&self, destination: &str, ip: IpAddr) -> RendererResult<()> {
-        let Some(guard) = &self.guard else {
+    /// refusal for the render first. No operator origin admits an address
+    /// here. An unguarded render refuses nothing.
+    fn check(&self, destination: &str, ip: IpAddr) -> Result<(), HostedEgressRefusal> {
+        self.judge(destination, |guard| guard.refuses(ip))
+    }
+
+    /// Refuses a request to `url`, a named host, when its host is an
+    /// operator's private origin name at a scheme and port no origin lists
+    /// (FIX 7657), as [`Self::check`] refuses; its resolver judges the
+    /// addresses.
+    fn check_origin(&self, url: &Url) -> Result<(), HostedEgressRefusal> {
+        self.judge(url.as_str(), |guard| guard.refuses_origin(url))
+    }
+
+    /// The render's guard's verdict on `destination`, `refuses` asked of it,
+    /// with a refusal kept for the render first.
+    fn judge(
+        &self,
+        destination: &str,
+        refuses: impl FnOnce(&HostedEgressGuard) -> Option<HostedEgressRefusal>,
+    ) -> Result<(), HostedEgressRefusal> {
+        let Some(refused) = self.guard.as_deref().and_then(refuses) else {
             return Ok(());
         };
-        guard
-            .check_request(destination, ip)
-            .inspect_err(|refused| self.refuse(refused.clone()))
+        self.refuse(refused.request_error(destination));
+        Err(refused)
     }
 
     /// Keeps `refused` for the render, unless it keeps one already.

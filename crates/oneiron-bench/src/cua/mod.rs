@@ -8,6 +8,7 @@ mod drift_plan;
 mod fixture;
 mod measures;
 mod provider_gate;
+mod readiness;
 mod programs;
 mod repair;
 mod report;
@@ -21,10 +22,13 @@ pub(super) type Result<T> = std::result::Result<T, String>;
 
 pub(crate) fn run(args: &[String]) -> ExitCode {
     let result = args::parse(args).and_then(|command| match command {
-        args::Command::Taskgen { manifest, seed, out } => taskgen::generate(&manifest, seed, &out),
-        args::Command::Run { plan, server, pins, out } => {
+        args::Command::Taskgen { manifest, seed, forward, out } => taskgen::generate(&manifest, seed, forward, &out),
+        args::Command::Run { plan, server, pins, readiness, out } => {
             tokio::runtime::Runtime::new().map_err(|e| e.to_string())?
-                .block_on(run::campaign(&plan, &server, &pins, &out))
+                .block_on(async {
+                    if readiness { readiness::run(&plan, &server, &pins, &out).await }
+                    else { run::campaign(&plan, &server, &pins, &out).await }
+                })
         }
         args::Command::Report { input, out } => report::generate(&input, &out),
         args::Command::Drift { plan, programs, out } => {

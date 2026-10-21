@@ -142,12 +142,10 @@ impl DriftPlan {
     }
 }
 pub(super) fn strict_spec(workflow:&str, arguments:&Arguments, entry_param:&str, reset:&Value) -> Result<Value> {
-    let entry = reset["entry"].as_str().ok_or("reset_entry_missing")?;
-    if !entry.starts_with('/') || entry.starts_with("//") || entry.contains("..") || entry.contains('?') || entry.contains('#') {
-        return Err("reset_entry_not_relative".into());
-    }
+    let url = super::fixture::entry_url(reset)?;
+    let entry = url.strip_prefix("http://127.0.0.1:8080/").ok_or("reset_entry_not_relative")?;
     let mut args = arguments.args.clone();
-    args.insert(entry_param.into(),entry.trim_start_matches('/').into());
+    args.insert(entry_param.into(),entry.into());
     // Use the engine's E2 wire enum/DTO, not a harness mode implementation.
     let spec:oneiron::task_verb::sdk::BrowserLibraryRunInput = serde_json::from_value(json!({"workflow":workflow,"args":args,"mode":"strict"}))
         .map_err(|e| e.to_string())?;

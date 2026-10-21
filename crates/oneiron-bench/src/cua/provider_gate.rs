@@ -179,13 +179,6 @@ async fn forward(State(proxy): State<Proxy>, request: Request) -> Response {
     exchange(proxy, parts.uri, parts.headers, bytes, true).await
 }
 
-fn house_alias(model: &str) -> Option<(&str, &str)> {
-    let rest = model.strip_prefix("oneiron-llama/")?;
-    let (epoch, manifest_digest) = rest.split_once('/')?;
-    if epoch.is_empty() || manifest_digest.is_empty() || manifest_digest.contains('/') { return None }
-    Some((epoch, manifest_digest))
-}
-
 async fn exchange(proxy: Proxy, uri: Uri, headers: HeaderMap, body: Bytes, post_method: bool) -> Response {
     if proxy.ledger.lock().map_or(true, |l| l.blocked(proxy.route.cash).is_some()) { return refuse(&proxy, Stop::ProviderFailure) }
     let request: Value = if post_method { match serde_json::from_slice(&body) {
@@ -253,16 +246,18 @@ async fn exchange(proxy: Proxy, uri: Uri, headers: HeaderMap, body: Bytes, post_
     let (status, bytes) = match returned { Ok(Ok(v)) => v, Ok(Err(e)) => return refuse(&proxy, e), Err(_) => return refuse(&proxy, Stop::ProviderTimeout) };
     let value: Value = match serde_json::from_slice(&bytes) { Ok(v) => v, Err(_) => return refuse(&proxy, Stop::ModelIdUnattested) };
     let reported = value["model"].as_str();
-    let alias = reported.and_then(house_alias);
+    let alias = reported.and_then(oneiron::llm::parse_llama_alias);
     // L06 FIX 7895: a house response names the deployment manifest, not the
     // requested wire slug. Map it to this already-attested owned route's pin;
     // retain both identities. Subscription/cash siblings remain exact matches.
-    let mapped_house = alias.is_some() && proxy.route.weight_digest.is_some()
-        && proxy.route.tokenizer_digest.is_some() && proxy.route.deployment_identity.is_some()
-        && proxy.route.attestation.is_some();
+    let attested_route = proxy.route.weight_digest.is_some() && proxy.route.tokenizer_digest.is_some()
+        && proxy.route.deployment_identity.is_some() && proxy.route.attestation.is_some();
+    let mapped_house = alias.is_some() && attested_route;
+    // A native batch answers with an array; each element names its own model.
+    let batch = if native_completion { value.as_array() } else { None };
     let recorded = json!({"id":id,"cell":proxy.cell,"status":status.as_u16(),"requested_model":proxy.route.requested_model,
-        "returned_model":reported,"deployment_identity":proxy.route.deployment_identity,"usage":value["usage"],
-        "house_alias_epoch":alias.map(|(epoch,_)| epoch),"house_alias_manifest_digest":alias.map(|(_,digest)| digest),
+        "returned_model":reported,"returned_models":batch.map(|items| items.iter().map(|item| item["model"].clone()).collect::<Vec<_>>()),"deployment_identity":proxy.route.deployment_identity,"usage":value["usage"],
+        "house_alias_epoch":alias.as_ref().map(|a| a.epoch.as_str()),"house_alias_manifest_digest":alias.as_ref().map(|a| a.manifest.as_str()),
         "mapped_engine_model":if mapped_house {Some(&proxy.route.engine_model)} else {None},
         "inference":!native_probe,"response_digest":super::digest(&bytes),"stage":null,"stage_unavailable":"no_public_physical_stage_join",
         "billing_actual":null});
@@ -270,6 +265,15 @@ async fn exchange(proxy: Proxy, uri: Uri, headers: HeaderMap, body: Bytes, post_
     if !status.is_success() { return refuse(&proxy, Stop::ProviderFailure) }
     if !native_probe {
         if value.get("model").is_some_and(|m| !m.is_string()) { return refuse(&proxy, Stop::ModelIdUnattested) }
+        for item in batch.into_iter().flatten() {
+            match item.get("model") {
+                Some(Value::String(model)) if model == &proxy.route.returned_model => {}
+                Some(Value::String(model)) if attested_route && oneiron::llm::parse_llama_alias(model).is_some() => {}
+                Some(Value::String(_)) => return refuse(&proxy, Stop::ModelIdMismatch),
+                None if proxy.route.deployment_identity.is_some() => {}
+                _ => return refuse(&proxy, Stop::ModelIdUnattested),
+            }
+        }
         if let Some(model) = reported {
             if model != proxy.route.returned_model && !mapped_house { return refuse(&proxy, Stop::ModelIdMismatch) }
         } else if !native_completion || proxy.route.deployment_identity.is_none() {

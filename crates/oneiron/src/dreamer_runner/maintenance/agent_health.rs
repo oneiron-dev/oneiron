@@ -1,11 +1,11 @@
 //! The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1
 //! recipe on the gated maintenance lane, run on the Coach's timer wake, and
 //! over one agent attempt at its terminal receipt and at each Dreamer wake
-//! while it runs (`targeted`). It reads call receipts, attempt rows, run
-//! coordination and sealed attempt receipts. Each finding is one
-//! `agent_health` DIAGNOSTIC, merged into one card per actor, signal and
-//! task. Every dial resolves for the project and task type of the attempt it
-//! judges (`learning_setting` scoped rows).
+//! while it runs (`targeted`). It reads call receipts, step replay
+//! capsules, attempt rows, run coordination and sealed attempt receipts.
+//! Each finding is one `agent_health` DIAGNOSTIC, merged into one card per
+//! actor, signal and task. Every dial resolves for the project and task type
+//! of the attempt it judges (`learning_setting` scoped rows).
 //!
 //! It never stops an agent and never narrows a grant or scope: its output is
 //! cards and proposed moves, and an agent-health event never feeds the auto
@@ -29,7 +29,6 @@ use crate::agent_inbox_lens::{
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_runner::DreamerRunnerStore;
 use crate::edge::EdgeKind;
 use crate::learning::{
     DuplicateLabeller, DuplicateWork, DuplicateWorkKind, TeamEvent, label_duplicate_work,
@@ -41,7 +40,6 @@ use crate::llm::run_admission::LeaseUnit;
 use crate::llm::{DreamerTrapKind, OpenTrapWait, open_trap_waits};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::ports::EdgeDirection;
-use crate::receipt::CallReceipt;
 use crate::run_tree::{RunTree, RunTreeAdapter};
 use crate::self_heal::{
     AgentHealthSignal, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass,
@@ -63,6 +61,7 @@ mod loaded;
 mod outcomes;
 mod rollups;
 mod run_loop;
+mod silence;
 mod targeted;
 mod trend;
 mod trend_output;
@@ -84,6 +83,8 @@ pub use rollups::{
     HealthTrendRollup, HealthTrendRollups, TrendMargin, TrendRatio, TrendSignalTally, TrendSource,
     TrendSpendTally, TrendStratum, health_trend_rollups,
 };
+pub use silence::{HealthOtherSession, HealthSilenceActivity};
+use silence::{SilenceCalls, silent_findings};
 pub(super) use targeted::review;
 pub use trend::{
     COACH_HEALTH_TRENDS_FACET, HealthTrendComparison, HealthTrendInput, HealthTrendReview,
@@ -137,7 +138,8 @@ pub const HEALTH_WAIT_MINUTES: SettingSpec = SettingSpec {
     seed: 10.0,
 };
 
-/// `silent`: minutes a leased attempt may go without a call.
+/// `silent`: minutes a leased attempt may go without activity of its own, a
+/// call or a model step at its lease generation (OF-568 L5).
 pub const HEALTH_SILENT_MINUTES: SettingSpec = SettingSpec {
     key: "health.silent.minutes",
     min: 1.0,
@@ -318,6 +320,11 @@ pub enum AgentHealthCounter {
     /// outside fact may be the cause, and the card's `causes` name each label
     /// (OF-568 L10).
     EnvironmentCause,
+    /// Another session of the same agent, another attempt or another lease
+    /// generation of this one, made a call since this attempt's claim: it
+    /// may be at work there. The card's `silence` names it; it never stands
+    /// for this attempt's activity (OF-568 L5).
+    OtherSessionActive,
 }
 
 /// Low when counter-evidence stands against the signal.
@@ -422,6 +429,12 @@ pub struct AgentHealthCard {
     /// DIAGNOSTICs cite their source ids; `evidence` and the watermark never
     /// count them.
     pub causes: Vec<HealthCauseSource>,
+    /// The activity the newest `silent` finding judged its attempt by
+    /// (OF-568 L5): its own call and model step at its lease generation, its
+    /// actor's newest call that names no attempt, and another session's
+    /// newest call. `None` on every other signal. Neither `evidence` nor the
+    /// watermark counts it, so it never reopens a settled card.
+    pub silence: Option<HealthSilenceActivity>,
 }
 
 impl AgentHealthCard {
@@ -452,6 +465,9 @@ struct Finding {
     blocked: bool,
     /// The TASK's typed brief as this review observed it (`brief`).
     observed_brief: Option<HealthBriefPin>,
+    /// The activity `silent` judged its attempt by (`silence`); `None` for
+    /// every other signal.
+    silence: Option<HealthSilenceActivity>,
 }
 
 /// The working set's attempts, and its agent dispatches, by attempt bytes.
@@ -758,7 +774,8 @@ fn detect(
 ) -> Result<(Vec<Finding>, Vec<duplicate::DigestPair>)> {
     // Each agent's calls, and their streams by the attempt each names
     // (OF-568 L4): `loop` and `failed_check_repeat` judge each stream as its
-    // own; `silent` reads the actor's newest call, whatever it names.
+    // own; `silent` reads each leased attempt's own calls and its actor's
+    // calls that name no attempt (OF-568 L5, `silence`).
     let calls = call_evidence::agent_calls(vault, since)?;
     let streams = call_evidence::call_streams(&calls);
     let mut findings = call_loop::loop_findings(&streams, dispatched, attempts, book);
@@ -769,8 +786,14 @@ fn detect(
         vault, &streams, dispatched, attempts, book, since,
     )?);
     findings.extend(silent_findings(
-        vault, &calls, dispatched, attempts, traps, book, now,
-    )?);
+        vault,
+        &SilenceCalls::Actors(&calls),
+        dispatched,
+        attempts,
+        traps,
+        book,
+        now,
+    ));
     findings.extend(long_wait_findings(
         dispatched, attempts, traps, book, since, now,
     ));
@@ -857,70 +880,6 @@ fn same_inputs(first: Option<&str>, second: Option<&str>) -> bool {
     }
 }
 
-/// `silent`: a leased attempt whose actor made no call within the dial, with
-/// no open wait (an ask, a trap, a park) and no word that it is stuck (a
-/// Blocked TASK or a blocked report). Saying it is stuck is the honest move.
-fn silent_findings(
-    vault: &Vault,
-    calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
-    dispatched: &Dispatches,
-    attempts: &Attempts,
-    traps: &Traps,
-    book: &DialBook,
-    now: u64,
-) -> Result<Vec<Finding>> {
-    let runner = DreamerRunnerStore::new(vault);
-    let mut out = Vec::new();
-    for (id, dispatch) in dispatched {
-        let Some(record) = attempts.get(id) else {
-            continue;
-        };
-        if record.state != AttemptState::Leased {
-            continue;
-        }
-        let dials = book.of(Some(dispatch));
-        let claimed = record.claimed_at.unwrap_or(record.updated_at);
-        let last_call = calls
-            .get(&dispatch.actor)
-            .and_then(|rows| rows.last())
-            .map_or(0, |(_, row)| row.at);
-        let active = claimed.max(last_call);
-        let quiet = now.saturating_sub(active);
-        if quiet < dials.silent_secs {
-            continue;
-        }
-        let waiting = record
-            .asks
-            .iter()
-            .any(|ask| ask.answers.len() < ask.questions.len())
-            || traps.contains_key(id)
-            || runner.parked_attempt(record.id)?.is_some();
-        let task = task_of(record);
-        if waiting || said_blocked(vault, dispatch.actor, task, claimed, Some(record.id))? {
-            continue;
-        }
-        let Some(attempt) = entity(record.id) else {
-            continue;
-        };
-        out.push(Finding {
-            subject: dispatch.actor,
-            signal: AgentHealthSignal::Silent,
-            task,
-            attempt: Some(record.id),
-            evidence: vec![attempt],
-            window: (active, now),
-            actual: 0,
-            dial: 1,
-            measured: quiet as i64,
-            counter: Vec::new(),
-            confession: None,
-            blocked: false,
-            observed_brief: None,
-        });
-    }
-    Ok(out)
-}
-
 /// `long_wait`: an attempt that spent more than the dial's share of its life
 /// waiting, not on a person, over at least the dial's minutes. A settled
 /// attempt's life is closed. A live one's runs to now, and its open trap
@@ -1004,6 +963,7 @@ fn long_wait_findings(
             confession: None,
             blocked: false,
             observed_brief: None,
+            silence: None,
         });
     }
     out
@@ -1139,6 +1099,7 @@ fn cost_spike_findings(
             confession: None,
             blocked: false,
             observed_brief: None,
+            silence: None,
         });
     }
     Ok(out)
@@ -1377,6 +1338,7 @@ fn dup_finding(record: &AttemptRecord, dispatch: &Dispatched, evidence: Vec<Enti
         confession: None,
         blocked: false,
         observed_brief: None,
+        silence: None,
     }
 }
 
@@ -1444,6 +1406,7 @@ fn misalignment_findings(
             confession: Some(attempt),
             blocked: false,
             observed_brief: None,
+            silence: None,
         });
     }
     Ok(out)
@@ -1492,6 +1455,7 @@ fn widen_denial_findings(
             confession: None,
             blocked: false,
             observed_brief: None,
+            silence: None,
         });
     }
     Ok(out)
@@ -1551,6 +1515,7 @@ fn unsupported_done_findings(
             confession: None,
             blocked: false,
             observed_brief,
+            silence: None,
         });
     }
     Ok(out)
@@ -1747,6 +1712,7 @@ fn merge(
         reviewer: detector_id(finding.signal),
         review_outcomes: Vec::new(),
         causes: Vec::new(),
+        silence: None,
     });
     add_ids(&mut card.evidence, &finding.evidence);
     add_ids(&mut card.diagnostics, &[diagnostic]);
@@ -1766,6 +1732,7 @@ fn merge(
     // The newest finding's observation and evaluator: an ask or an outcome
     // already taken keeps its own copy.
     card.observed_brief = finding.observed_brief.clone();
+    card.silence = finding.silence;
     card.reviewer = detector_id(finding.signal);
     if card.outcome != AgentHealthOutcome::Open && card.evidence.len() > card.watermark {
         card.outcome = AgentHealthOutcome::Open;

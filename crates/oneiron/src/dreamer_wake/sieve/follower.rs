@@ -7,7 +7,8 @@ use std::collections::BTreeSet;
 
 use crate::claim::ScopedReadActorKey;
 use crate::error::{Error, Result};
-use crate::llm::{Scope, ScopeResource};
+use crate::llm::Scope;
+use crate::llm::decision::EvidenceVersion;
 use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
 use crate::{EntityId, Vault};
 
@@ -135,15 +136,25 @@ pub(crate) fn candidates_in_txn(
     quote: &str,
     scope: &mut Scope,
 ) -> Result<Option<Vec<EntityId>>> {
+    candidates_pinned_in_txn(vault, txn, span, quote, scope, &mut Vec::new())
+}
+
+/// [`candidates_in_txn`], also pinning each body it read as an evidence
+/// version, as a rung's typed decisions cite them (OF-498a).
+pub(crate) fn candidates_pinned_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    span: &SieveSpan,
+    quote: &str,
+    scope: &mut Scope,
+    versions: &mut Vec<EvidenceVersion>,
+) -> Result<Option<Vec<EntityId>>> {
     let read = vault.scoped_read(dreamer_read_key()?);
     for id in BTreeSet::from([span.turn, span.source]) {
         let Some(raw) = read.entity_raw_live_in(txn, &id)? else {
             return Ok(None);
         };
-        scope.readable.insert(ScopeResource::DocumentVersion {
-            document: id,
-            version: version_of(&raw),
-        });
+        super::recipes::pin_version(scope, versions, id, &raw);
     }
     let mut ids = BTreeSet::new();
     for kind in [ENTITY_TYPE_PERSON, ENTITY_TYPE_ORG, ENTITY_TYPE_PLACE] {
@@ -162,10 +173,7 @@ pub(crate) fn candidates_in_txn(
     let mut entities = Vec::new();
     for id in ids {
         if let Some(raw) = read.entity_raw_live_in(txn, &id)? {
-            scope.readable.insert(ScopeResource::DocumentVersion {
-                document: id,
-                version: version_of(&raw),
-            });
+            super::recipes::pin_version(scope, versions, id, &raw);
             entities.push(id);
         }
     }

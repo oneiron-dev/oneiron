@@ -485,9 +485,16 @@ pub(super) fn require(
         }
     }
     let retired = require_body_instances(&named, plan)?;
-    prune_retired_bodies_in_rows(rows, &retired)?;
+    let pruned = prune_retired_bodies_in_rows(rows, &retired)?;
     // A retired response's row keeps its erased disposition (KS-2B1).
     response_rows::retire_carried(image, &retired)?;
+    // So does a step claim whose response's artifact version rests in a
+    // retired body; its pins release once the rows land (FIX 6225).
+    crate::llm::retire_erased_step_responses_in_rows(
+        &mut image.databases,
+        &pruned.assets,
+        &pruned.digests,
+    )?;
     Ok(retired)
 }
 
