@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import resource
 import socket
+from datetime import datetime, timezone
 from pathlib import Path
 
-from . import export, mkosi_run, owners
+from . import attest, export, mkosi_run, owners
 from .fetch import (
     Mirror,
     bootstrap_tree,
@@ -127,7 +129,19 @@ def _native_record(build_dir: Path) -> dict:
     return record
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def peak_rss_bytes() -> int:
+    """The largest single process of this build so far: this process or any
+    waited-for descendant (ru_maxrss is KiB on Linux). Not a cgroup total."""
+    return 1024 * max(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+                      resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
+
+
 def build(model: Model, *, repo: Path, mirror: Mirror, work: Path, variant: str) -> dict:
+    started = _now()
     if os.environ.get("ONEIRON_IMAGES_OFFLINE") != "1":
         raise HostRefusal("build runs only inside its network-less namespace (build.py enters it itself)")
     plan = model.plan(variant)
@@ -180,7 +194,7 @@ def build(model: Model, *, repo: Path, mirror: Mirror, work: Path, variant: str)
     native = _native_record(work / "cargo-build" / variant)
     record = {
         "variant": variant, "builder_commit": builder, "engine_commit": commit,
-        "host": socket.gethostname(), "tools_tree_sha256": tools_sha,
+        "host": socket.gethostname(), "started": started, "tools_tree_sha256": tools_sha,
         "packages_lock_sha256": sha256_file(LOCK), "mkosi": model.inputs("mkosi", "version"),
         "apivfs_removed": removed, "packages": [list(p) for p in packages],
         "ownership": {
@@ -192,6 +206,12 @@ def build(model: Model, *, repo: Path, mirror: Mirror, work: Path, variant: str)
         "compressed_bytes": oci["oci_archive_bytes"], "unpacked_bytes": tar["file_bytes"],
         "artifacts": str(artifacts),
     }
+    record["finished"] = _now()
+    record["builder_peak_rss_bytes"] = peak_rss_bytes()
+    # Written before the SBOM step too, so a refusal there still leaves the build's record.
+    write_json(artifacts / "build-record.json", record)
+    record.update(attest.write(model, record, plan, build_dir=work / "cargo-build" / variant, engine=engine,
+                               cargo_home=mirror.cargo_home))
     write_json(artifacts / "build-record.json", record)
     return record
 

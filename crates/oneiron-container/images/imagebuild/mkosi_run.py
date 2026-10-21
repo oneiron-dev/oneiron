@@ -179,15 +179,33 @@ def _env(mkosi_src: Path, work: Path) -> dict:
     home = work / "home"
     for path in (tmp, home):
         path.mkdir(parents=True, exist_ok=True)
-    env = host_env(PYTHONPATH=str(mkosi_src), TMPDIR=str(tmp), HOME=str(home))
+    env = host_env(PYTHONPATH=str(mkosi_src), TMPDIR=str(tmp), HOME=str(home), MKOSI_FORCE_USERNS_FALLBACK="1")
     for key in ("TERM", "ONEIRON_IMAGES_USERNS"):
         if key in os.environ:
             env[key] = os.environ[key]
     return env
 
 
+def _as_user() -> list[str]:
+    """mkosi runs as the invoking uid, in a user namespace below the builder's.
+
+    The builder is root of its own single-uid namespace. mkosi 27.1 takes uid 0
+    with CAP_SYS_ADMIN for real root: it then skips its own unprivileged setup,
+    and its tar extraction (`--same-owner` when getuid() is 0) chowns to ids no
+    single-uid namespace maps. Run as a regular uid, mkosi does what it does
+    for any unprivileged user: every tool in a sandbox that maps that uid to
+    root, package managers with chown() made a no-op. MKOSI_FORCE_USERNS_FALLBACK
+    keeps it on plain unshare(CLONE_NEWUSER), never systemd-nsresourced's
+    foreign uid range (files the builder could not read back)."""
+    uid = os.environ.get("ONEIRON_IMAGES_UID", "1000")
+    gid = os.environ.get("ONEIRON_IMAGES_GID", uid)
+    if uid == "0":
+        uid = gid = "1000"
+    return ["unshare", "--user", f"--map-user={uid}", f"--map-group={gid}", "--"]
+
+
 def mkosi(mkosi_src: Path, cfg: Path, work: Path, *args) -> None:
-    run([sys.executable, "-B", "-m", "mkosi", "-C", cfg, *args], env=_env(mkosi_src, work))
+    run([*_as_user(), sys.executable, "-B", "-m", "mkosi", "-C", cfg, *args], env=_env(mkosi_src, work))
 
 
 def build(mkosi_src: Path, cfg: Path, work: Path) -> None:
@@ -197,7 +215,7 @@ def build(mkosi_src: Path, cfg: Path, work: Path) -> None:
 def box(mkosi_src: Path, cfg: Path, work: Path, argv, *, env_extra: dict | None = None, capture=False):
     """Runs argv with /usr from the tools tree (`mkosi box`), the host's other dirs in place."""
     prefix = ["env", *[f"{k}={v}" for k, v in (env_extra or {}).items()]] if env_extra else []
-    cmd = [sys.executable, "-B", "-m", "mkosi", "-C", cfg, "box", "--", *prefix, *argv]
+    cmd = [*_as_user(), sys.executable, "-B", "-m", "mkosi", "-C", cfg, "box", "--", *prefix, *argv]
     result = run(cmd, env=_env(mkosi_src, work), capture=capture, check=False)
     if result.returncode != 0:
         raise StepFailed(f"tools-tree command {argv[0]} exited {result.returncode}")
