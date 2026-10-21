@@ -35,6 +35,7 @@ mod planner;
 mod provider;
 #[cfg(test)]
 mod tests;
+mod training;
 mod voice;
 
 pub use browser_planner::{BROWSER_PLANNER_ROLE, NEEDS_AGENT_BEFORE_CHAT, unbound_row_is_no_seat};
@@ -53,6 +54,7 @@ pub use provider::{
     OutputLimitField, ProviderConfig, ProviderKind, RequestCodec, RequestCompression,
     ResponseFormatWire, ResponsesSocket,
 };
+pub use training::{TRAINING_SERVICE_UNIT, TrainingConnectorSettings, TrainingSettings};
 pub use voice::VoiceSettings;
 
 use levels::{RoleFile, Shorthand};
@@ -95,6 +97,8 @@ pub(crate) struct ModelsFile {
     voice: voice::VoiceFile,
     #[serde(default)]
     planner: planner::PlannerFile,
+    #[serde(default)]
+    training: training::TrainingFile,
 }
 
 /// `[models.broker]`: where the credential broker listens and the OS user it
@@ -210,6 +214,9 @@ pub struct ModelsConfig {
     /// The seats a leased agent's planned spawns choose among
     /// (`[models.planner]`); none lends no planner.
     pub planner: PlannerSettings,
+    /// The trainer connectors an authorized training run dispatches through
+    /// (`[models.training]`); none by default.
+    pub training: TrainingSettings,
 }
 
 /// The credential broker (ARCH-0069 `#broker-design`): a separate process
@@ -486,6 +493,7 @@ impl ModelsFile {
         let decisions = self.decisions.resolve()?;
         let voice = self.voice.resolve(base)?;
         let planner = self.planner.resolve()?;
+        let training = self.training.resolve()?;
         let mut models = ModelsConfig {
             providers,
             roles,
@@ -504,6 +512,7 @@ impl ModelsFile {
             media,
             voice,
             planner,
+            training,
         };
         if let Some(file) = self.decision_read {
             models.decision_read = Some(file.resolve(base, &models)?);
