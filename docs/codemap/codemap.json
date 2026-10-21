@@ -15308,11 +15308,17 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "FixtureForward",
+      "FixtureForwardError"
+     ],
      "path": "src/code_sandbox/egress/fixture.rs",
      "purpose": "Host-declared fixture origin",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -15322,7 +15328,7 @@
      "path": "src/code_sandbox/egress/http.rs",
      "purpose": "Guarded, pinned HTTP with manual redirects and final-domain decisions",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -15335,8 +15341,8 @@
      "path": "src/code_sandbox/egress/mod.rs",
      "purpose": "The engine's open egress proxy",
      "surface": {
-      "fn": 5,
-      "re-export": 1,
+      "fn": 6,
+      "re-export": 2,
       "struct": 2
      }
     },
@@ -36153,7 +36159,7 @@
      "surface": {
       "crate-vis": 11,
       "mod": 11,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -80272,6 +80278,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "LlamaAlias"
+     ],
+     "path": "src/llm/backend_identity.rs",
+     "purpose": "The answering house llama.cpp process's launch alias (FIX 7895, 6567 PR1b): which incarnation answered a…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DispatchBinding",
       "DispatchRefused"
      ],
@@ -80701,7 +80720,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 23
+      "re-export": 24
      }
     },
     {
@@ -80826,7 +80845,7 @@
      "purpose": "—"
     },
     "llm": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -80835,7 +80854,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 36,
+   "source_files": 37,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -93833,7 +93852,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -93906,6 +93925,16 @@
      "purpose": "The launch statement's USD quote (OF-532)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/llama_identity.rs",
+     "purpose": "What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -97050,7 +97079,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -97192,7 +97221,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1062,
+   "source_files": 1063,
    "test_files": 182
   },
   "oneiron-spawn": {
