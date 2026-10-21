@@ -19,7 +19,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 47 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 141 | 18 | 0 |
 | [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 16 | 5 | 0 |
-| [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) | 45 | 0 | 4 |
+| [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) | 47 | 0 | 4 |
 | [oneiron-code-check](codemap/oneiron-code-check.md) | An optional type check of code-mode programs before they run | 6 | 1 | 0 |
 | [oneiron-container](codemap/oneiron-container.md) | Container sessions with an engine-owned Linux Landlock/seccomp fence | 18 | 0 | 0 |
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 59 | 1 | 1 |
@@ -49,7 +49,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 18 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 48 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1064 | 182 | 53 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1065 | 182 | 53 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 11 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 48 | 1 | 0 |
@@ -345,7 +345,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `driver` | file+dir | 10 | XL | The CDP driver: one page in a browser guest, read as an outline and acted on by ref |
 | `engine` | file | 1 | s | The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt… |
 | `fact` | file | 1 | s | What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page… |
-| `library` | file+dir | 4 | m | The replay library (OF-598; EIRI-ARCH-0002 "The replay library"): a solved browser run, kept as a… |
+| `field` | file | 1 | m | A Fill step's text (CUA E6, DESIGN-2 §4 "Field text = A"): what one field takes, resolved in code before any… |
+| `library` | file+dir | 5 | m | The replay library (OF-598; EIRI-ARCH-0002 "The replay library"): a solved browser run, kept as a… |
 | `mcp` | file | 1 | s | MCP over a guest's stdio, as `cua-driver mcp` serves it: JSON-RPC 2.0, one message per line, on one reader… |
 | `observation` | file | 1 | s | The observation contract both drivers answer (AB-001, AB-002) |
 | `outline` | file | 1 | m | The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and… |
@@ -357,7 +358,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `secret` | file | 1 | s | The host's secret custody, as a browser or desktop session holds it (FIX 8028, OF-560; ARCH-0069) |
 | `secret_fields` | file | 1 | s | One classifier for the secrets a page or a window shows (FIX 8028, OF-560; ARCH-0069 secret custody): card… |
 | `session` | file+dir | 6 | L | A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules… |
-| `stop` | file | 1 | s | Why a batch stopped (CUA E2): one typed cause per stop, beside the stable refusal code a program already… |
+| `stop` | file | 1 | m | Why a batch stopped (CUA E2): one typed cause per stop, beside the stable refusal code a program already… |
 | `switch` | file | 1 | s | An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the run's browser to the other engine… |
 
 ## oneiron-code-check
@@ -684,7 +685,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `actions` | file | 1 | s | Host-bound UI and agent action executor over the engine's one verb registry |
 | `admission` | file+dir | 2 | s | Admission for work a remote caller can start |
 | `ai_host` | dir | 74 | L | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
-| `api` | dir | 499 | XL | HTTP query routes for web dashboard access |
+| `api` | dir | 500 | XL | HTTP query routes for web dashboard access |
 | `auth` | file+dir | 12 | L | HTTP authentication for log-backed version-two capability slips |
 | `big_rung` | file | 1 | m | The big model on the decision ladder's Big rung (ARCH-0076, OF-495) |
 | `broadcast` | file | 1 | s | Broadcast group for multi-device fan-out with echo suppression |
