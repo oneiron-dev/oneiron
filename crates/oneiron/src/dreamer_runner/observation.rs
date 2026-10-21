@@ -4,10 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use super::maintenance::MAINTENANCE_QUEUE_KIND;
+use super::maintenance::coach::COACH_HOST_QUEUE_KIND;
 use super::store::{PARKED, RUN_TREE};
 use super::{
-    DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
-    decode_dreamer_attempt_payload,
+    COACH_HEAL_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
+    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, decode_dreamer_attempt_payload,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::consent::AuthenticatedOwner;
@@ -140,6 +142,19 @@ fn night_step_request(record: &AttemptRecord) -> Option<NightStepRequestId> {
         .and_then(NightStepRequestId::parse_hex)
 }
 
+/// Whether `record` is a Coach or maintenance job, which a read by its own id
+/// answers as its own subtree, in a root's shape, when another job spawned
+/// it (FIX 6937, CALLS "FIX 6937 settlements by child id"). Its root's walk
+/// still covers it; a listing names roots only.
+fn own_subtree(record: &AttemptRecord) -> bool {
+    [
+        COACH_HOST_QUEUE_KIND,
+        COACH_HEAL_ATTEMPT_KIND,
+        MAINTENANCE_QUEUE_KIND,
+    ]
+    .contains(&record.kind.as_str())
+}
+
 /// When a pending nightly remainder is due: its retry's scheduled instant,
 /// else the due its payload names. `None` for every other job.
 fn remainder_due(record: &AttemptRecord) -> Option<Option<u64>> {
@@ -234,7 +249,7 @@ fn settlement_in_txn(
     };
     let tree: BTreeMap<_, _> = RUN_TREE.scan(&vault.store, txn)?.into_iter().collect();
     if !tree.contains_key(&root)
-        || tree[&root].parent_attempt.is_some()
+        || (tree[&root].parent_attempt.is_some() && !own_subtree(&record))
         || vault.dreamer_attempt_authority_in_txn(txn, root)?.is_none()
     {
         return Err(Error::InvalidConfig(

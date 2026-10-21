@@ -5,6 +5,7 @@
 use rmpv::Value;
 
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::coach::enqueue_coach_training_run_in_txn;
 use crate::entity_id::EntityId;
@@ -128,7 +129,8 @@ impl Vault {
         run.state = TrainingState::Authorized;
         run.authorization = Some(authorization);
         RUNS.put(&self.store, txn, id, &run)?;
-        enqueue_coach_training_run_in_txn(self, txn, id, &run.spec_blake3, at)?;
+        // The owner's own authorization: its job is queued rootless.
+        enqueue_coach_training_run_in_txn(self, txn, id, &run.spec_blake3, None, None, at)?;
         Ok(run)
     }
 
@@ -211,15 +213,30 @@ impl Vault {
     }
 
     /// Queues each run that waits on the host for its Coach job again, for
-    /// the nightly offer pass; the queue's dedupe keeps one job per run.
-    pub(crate) fn requeue_authorized_training_runs(&self, now: u64) -> Result<()> {
+    /// the nightly offer pass; the queue's dedupe keeps one job per run. A
+    /// job queued here carries `parent_attempt`, the pass, and its `run_id`
+    /// (FIX 6937), lineage only; one already queued keeps the lineage it has.
+    pub(crate) fn requeue_authorized_training_runs(
+        &self,
+        parent_attempt: Option<AttemptId>,
+        run_id: Option<&str>,
+        now: u64,
+    ) -> Result<()> {
         let runs = self.authorized_training_runs()?;
         if runs.is_empty() {
             return Ok(());
         }
         self.with_write_txn_grouped(|txn| {
             for run in &runs {
-                enqueue_coach_training_run_in_txn(self, txn, &run.id, &run.spec_blake3, now)?;
+                enqueue_coach_training_run_in_txn(
+                    self,
+                    txn,
+                    &run.id,
+                    &run.spec_blake3,
+                    parent_attempt,
+                    run_id.map(str::to_owned),
+                    now,
+                )?;
             }
             Ok(())
         })

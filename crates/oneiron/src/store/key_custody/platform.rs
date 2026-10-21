@@ -80,7 +80,7 @@ fn unix_owned(_: &Metadata, _: bool, _: bool) -> bool {
 /// Syncs directory `path`, so an entry made, renamed or unlinked in it is
 /// durable. Windows opens the directory for writing with backup semantics,
 /// as a flush of its entries requires; an error is never swallowed.
-pub(super) fn sync_dir(path: &Path) -> Result<()> {
+pub fn sync_dir(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         File::open(path)?.sync_all()?;

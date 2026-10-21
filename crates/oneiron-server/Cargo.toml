@@ -151,6 +151,9 @@ subtle = "2"
 libc = "0.2"
 jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json", "multipart"] }
+# The training transport reads a `Retry-After` HTTP-date (FIX 6881), at the
+# version already in the tree through hyper.
+httpdate = "1"
 thiserror = { workspace = true }
 utoipa = "5.5.0"
 # The `/v1/ai/voices` route bodies' schemas in the OpenAPI document

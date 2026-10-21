@@ -9,11 +9,11 @@
 //! backoff waits longer when it is the longer, never shorter. A success
 //! clears both.
 //!
-//! `Retry-After` is read as delta-seconds only. An HTTP-date is not read,
-//! as no date parser is a dependency of this crate, so a reply that names
-//! one waits the backoff alone.
+//! `Retry-After` is read as delta-seconds or as an HTTP-date (FIX 6881):
+//! a date names the wait from now to it on the system clock, none for a date
+//! already past. A value that is neither waits the backoff alone.
 
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 
@@ -70,11 +70,17 @@ impl Failure {
     }
 }
 
-/// The wait a busy reply names in its `Retry-After` header, as
-/// delta-seconds; `None` for none, or for an HTTP-date.
+/// The wait a busy reply names in its `Retry-After` header: its
+/// delta-seconds, or the time from now to its HTTP-date, zero once that
+/// date has passed; `None` for none, or for a value that is neither.
 pub(super) fn retry_after(headers: &HeaderMap) -> Option<Duration> {
-    let value = headers.get(RETRY_AFTER)?.to_str().ok()?;
-    value.trim().parse::<u64>().ok().map(Duration::from_secs)
+    let value = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let at = httpdate::parse_http_date(value).ok()?;
+    // A date already past names no wait: the backoff paces the retry.
+    Some(at.duration_since(SystemTime::now()).unwrap_or_default())
 }
 
 /// One endpoint's retry state.

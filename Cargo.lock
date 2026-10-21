@@ -8515,6 +8515,7 @@ dependencies = [
  "half",
  "heed",
  "hmac 0.12.1",
+ "httpdate",
  "hyper",
  "hyper-util",
  "jsonwebtoken",

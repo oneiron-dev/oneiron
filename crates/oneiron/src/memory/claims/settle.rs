@@ -498,6 +498,12 @@ impl Memory<'_> {
         for decision in &settled.recorded {
             decision.record_metrics(&self.vault.store.diagnostics.gate);
         }
+        // An approved curator finding applies now, after the approval
+        // committed, not at the next nightly pass (FIX 6078); one that cannot
+        // waits for that pass, and the settlement stands either way.
+        if action == GateConsentBundleAction::Approve {
+            crate::dreamer_runner::maintenance::apply_curator_after_consent(self.vault, [id], now);
+        }
         // Consent is committed before the consolidator opens its own writer;
         // a VAD failure is returned with the settlement durable.
         if action == GateConsentBundleAction::Approve && (settled.dreamer_run || vetting) {

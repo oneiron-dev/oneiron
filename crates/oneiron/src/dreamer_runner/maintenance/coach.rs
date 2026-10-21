@@ -619,12 +619,17 @@ fn offer_check_target(input: &Value) -> Result<EntityId> {
 }
 
 /// Queues one owner-authorized training run for the host, in the writer
-/// that authorized it; the dedupe key keeps one queued job per run.
+/// that authorized it; the dedupe key keeps one queued job per run. A job
+/// the nightly offer pass queues carries that pass's attempt as its parent
+/// and its run (FIX 6937), lineage only; the owner's own authorization
+/// queues it rootless. A job already queued keeps the lineage it has.
 pub(crate) fn enqueue_coach_training_run_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     run: &EntityId,
     spec_blake3: &[u8; 32],
+    parent_attempt: Option<AttemptId>,
+    run_id: Option<String>,
     now: u64,
 ) -> Result<()> {
     DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
@@ -633,10 +638,10 @@ pub(crate) fn enqueue_coach_training_run_in_txn(
         DreamerAttemptPayload {
             attempt_type: COACH_TRAINING_RUN_FACET.into(),
             input: crate::training_pack::training_run_job_input(run, spec_blake3),
-            parent_attempt: None,
+            parent_attempt,
         },
         Some(format!("{COACH_TRAINING_RUN_FACET}:{}", run.to_hex())),
-        None,
+        run_id,
         now,
     )?;
     Ok(())
@@ -678,9 +683,18 @@ fn notify_offer_in_txn(
 /// approved offer whose check date came, and that has no check yet, queues
 /// its promise check for the host; the queue's dedupe keeps one per offer.
 /// A promise is checked only after a yes: a declined, postponed or
-/// unanswered offer kept the baseline and promised nothing.
-pub(super) fn run_training_offers(vault: &Vault, now: u64) -> Result<()> {
-    vault.requeue_authorized_training_runs(now)?;
+/// unanswered offer kept the baseline and promised nothing. The training
+/// runs and promise checks the pass queues carry `attempt`, the pass, as
+/// their parent and its run (FIX 6937): lineage only, which neither stops
+/// nor holds them when the pass does.
+pub(super) fn run_training_offers(
+    vault: &Vault,
+    attempt: &DreamerAdmittedAttempt,
+    now: u64,
+) -> Result<()> {
+    let parent = Some(attempt.status.attempt.id);
+    let run_id = attempt.status.attempt.run_id.as_deref();
+    vault.requeue_authorized_training_runs(parent, run_id, now)?;
     let pending = crate::skill_optimize::pending_training_offers(vault)?;
     let mut due = Vec::new();
     for (offer, answer) in crate::skill_optimize::training_offers(vault, None)? {
@@ -707,10 +721,10 @@ pub(super) fn run_training_offers(vault: &Vault, now: u64) -> Result<()> {
                 DreamerAttemptPayload {
                     attempt_type: COACH_OFFER_CHECK_FACET.into(),
                     input: Value::Map(vec![(Value::from("offer"), Value::from(offer.to_hex()))]),
-                    parent_attempt: None,
+                    parent_attempt: parent,
                 },
                 Some(format!("{COACH_OFFER_CHECK_FACET}:{}", offer.to_hex())),
-                None,
+                run_id.map(str::to_owned),
                 now,
             )?;
         }

@@ -15,6 +15,8 @@
 //! On a self-hosted vault with its shipper on, the intake's two key files at
 //! the root are written here too, from the intake's descriptor
 //! (`descriptor`): whole, under the lock, the receipt key ring first.
+//! Every directory flush here is the engine's one portable flush
+//! (`oneiron::store::sync_dir`, FIX 6880), on every platform.
 //! Nothing here decides what is staged, published or purged.
 
 use std::collections::BTreeSet;
@@ -31,7 +33,7 @@ use oneiron_vault_contract::conversation_training::{
     CONTROLS_DIR, INTAKE_RECEIPT_KEY_FILE, INTAKE_RECIPIENT_FILE, OFFERS_DIR, RECEIPTS_DIR,
     SCOPES_DIR, TRAINING_SCHEMA_VERSION, TRAINING_SCOPES_FILE, TRAINING_SCOPES_TYPE,
     TrainingFileName, TrainingScopeCursorV2, TrainingScopesV2, decode_training_receipt,
-    parse_training_file_name, spool_training_file,
+    parse_training_file_name,
 };
 use rand_core::{OsRng, RngCore as _};
 
@@ -202,8 +204,8 @@ impl PublisherTrainingLifecycle for Outbox {
     fn control(&self, control: &SignedTrainingControl) -> oneiron::Result<TrainingQueued> {
         // A file already there is this control: its name holds its id.
         if fs::symlink_metadata(self.controls.join(&control.file)).is_err() {
-            spool_training_file(&self.controls, &control.file, &control.bytes)
-                .map_err(|error| oneiron::Error::Io(io::Error::other(format!("{error:#}"))))?;
+            write_training_file(&self.controls, &control.file, &control.bytes)
+                .map_err(oneiron::Error::Io)?;
         }
         Ok(TrainingQueued {
             id: control.control.0,
@@ -280,9 +282,7 @@ impl PublisherTrainingLifecycle for Outbox {
         if fs::read(dir.join(TRAINING_SCOPES_FILE)).is_ok_and(|held| held == bytes) {
             return Ok(());
         }
-        spool_training_file(&dir, TRAINING_SCOPES_FILE, &bytes)
-            .map_err(|error| oneiron::Error::Io(io::Error::other(format!("{error:#}"))))?;
-        Ok(())
+        write_training_file(&dir, TRAINING_SCOPES_FILE, &bytes).map_err(oneiron::Error::Io)
     }
 
     fn retire_receipt(&self, file: &str) -> oneiron::Result<()> {
@@ -322,11 +322,24 @@ fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 
+/// Writes protocol file `name` to `dir` whole ([`write_atomic`]). A name
+/// that is no protocol file's is refused before a byte is written, as the
+/// contract's own spool refuses it.
+fn write_training_file(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
+    if parse_training_file_name(name).is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a training outbox file must have a protocol name",
+        ));
+    }
+    write_atomic(dir, name, bytes)
+}
+
 /// Writes `bytes` to `dir/name` whole: a private sibling made new under a
 /// random name, written and synced, renamed over the file, then the
 /// directory synced. The pattern is the e-sign delivery outbox's, copied
-/// rather than shared. Off unix a directory does not open for a sync here,
-/// and the file's own sync is all this writer makes.
+/// rather than shared; the directory flush is the engine's portable one on
+/// every platform (FIX 6880).
 fn write_atomic(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
     let staged = dir.join(format!(".{name}.{:016x}.tmp", OsRng.next_u64()));
     let mut options = OpenOptions::new();
@@ -344,10 +357,7 @@ fn write_atomic(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
         let _ = fs::remove_file(&staged);
         return Err(error);
     }
-    if cfg!(unix) {
-        sync_dir(dir)?;
-    }
-    Ok(())
+    sync_dir(dir)
 }
 
 fn remove_if_present(path: &Path) -> io::Result<()> {
@@ -357,8 +367,14 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Syncs directory `dir` through the engine's one portable flush (FIX
+/// 6880), which opens it as each platform's flush needs; its I/O error is
+/// returned as it is, and any other as an I/O error.
 fn sync_dir(dir: &Path) -> io::Result<()> {
-    File::open(dir)?.sync_all()
+    oneiron::store::sync_dir(dir).map_err(|error| match error {
+        oneiron::Error::Io(error) => error,
+        other => io::Error::other(other),
+    })
 }
 
 fn ensure_directory(dir: &Path) -> io::Result<()> {
