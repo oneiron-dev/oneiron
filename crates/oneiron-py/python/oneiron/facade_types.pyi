@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1094 facade rows, 3767 declarations.
-Inputs: 1029 of 1094 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 981 of 1094 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1096 facade rows, 3773 declarations.
+Inputs: 1031 of 1096 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 983 of 1096 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -11005,6 +11005,32 @@ class AgentGrantRevoked(TypedDict):
     grant_ref: EntityId
     changed: bool
     agent: NotRequired[EntityId | None]
+    act_ref: NotRequired[str | None]
+class GitPushRepo(TypedDict):
+    repo: EntityId
+    project: EntityId
+class GitPushGrantMintInput(TypedDict):
+    member: EntityId
+    repos: list[GitPushRepo]
+    expires_at: NotRequired[int | None]
+class GitPushGrantView(TypedDict):
+    grant_ref: EntityId
+    member: EntityId
+    repos: list[GitPushRepo]
+    delegated_by: EntityId
+    expires_at: NotRequired[int | None]
+    stands: bool
+    revoke_command: str
+class GitPushGrantMintOutput(TypedDict):
+    grant: GitPushGrantView
+    act_ref: str
+class GitPushGrantRevokeInput(TypedDict):
+    grant_ref: EntityId
+    seen: NotRequired[str | None]
+class GitPushGrantRevokeOutput(TypedDict):
+    grant_ref: EntityId
+    changed: bool
+    member: NotRequired[EntityId | None]
     act_ref: NotRequired[str | None]
 class BaseAgentPrincipal(TypedDict):
     name: str

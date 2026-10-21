@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1094 facade rows, 3741 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1046.
+// UniFFI census: 1096 facade rows, 3747 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1048.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -34369,6 +34369,90 @@ pub struct AgentGrantRevoked {
     pub changed: bool,
     #[serde(rename = "agent", default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+    #[serde(rename = "act_ref", default, skip_serializing_if = "Option::is_none")]
+    pub act_ref: Option<String>,
+}
+
+/// `oneiron_authority::federation::git_push::GitPushRepo`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GitPushRepo {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "project")]
+    pub project: String,
+}
+
+/// `oneiron::task_verb::sdk_git_push_grant::GitPushGrantMintInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GitPushGrantMintInput {
+    #[serde(rename = "member")]
+    pub member: String,
+    #[serde(rename = "repos")]
+    pub repos: Vec<GitPushRepo>,
+    #[serde(
+        rename = "expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_git_push_grant::GitPushGrantView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GitPushGrantView {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "member")]
+    pub member: String,
+    #[serde(rename = "repos")]
+    pub repos: Vec<GitPushRepo>,
+    #[serde(rename = "delegated_by")]
+    pub delegated_by: String,
+    #[serde(
+        rename = "expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<u64>,
+    #[serde(rename = "stands")]
+    pub stands: bool,
+    #[serde(rename = "revoke_command")]
+    pub revoke_command: String,
+}
+
+/// `oneiron::task_verb::sdk_git_push_grant::GitPushGrantMintOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GitPushGrantMintOutput {
+    #[serde(rename = "grant")]
+    pub grant: GitPushGrantView,
+    #[serde(rename = "act_ref")]
+    pub act_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_git_push_grant::GitPushGrantRevokeInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GitPushGrantRevokeInput {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "seen", default, skip_serializing_if = "Option::is_none")]
+    pub seen: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_git_push_grant::GitPushGrantRevokeOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GitPushGrantRevokeOutput {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "changed")]
+    pub changed: bool,
+    #[serde(rename = "member", default, skip_serializing_if = "Option::is_none")]
+    pub member: Option<String>,
     #[serde(rename = "act_ref", default, skip_serializing_if = "Option::is_none")]
     pub act_ref: Option<String>,
 }

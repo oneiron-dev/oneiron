@@ -521,7 +521,7 @@ impl FederationGrant {
         // an owner's agent or git_push grant (a Delegate) may stand until revoked.
         let expiry_optional = matches!(self.scope, FederationGrantScope::Connect { .. })
             || self.owner_agent
-            || !self.is_access();
+            || self.is_git_push();
         if (!expiry_optional && expects_delegation != self.expires_at.is_some())
             || expects_delegation != self.delegated_by.is_some()
             || (self.owner_agent && !expects_delegation)
@@ -558,7 +558,7 @@ impl FederationGrant {
     #[must_use]
     pub fn confers_at(&self, now_secs: u64) -> bool {
         // A git_push grant confers no standing (G1-PUSH).
-        if !self.is_access()
+        if self.is_git_push()
             || !self.authority_scope.verbs.contains(&"read".to_owned())
             || self.authority_scope.worlds.is_bottom()
             || self.authority_scope.bands.is_bottom()

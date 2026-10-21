@@ -32,11 +32,12 @@ const KEY_GRANT_KIND: &str = FEDERATION_GRANT_BODY_KEYS[11];
 const KEY_GIT_PUSH_BOUNDS: &str = FEDERATION_GRANT_BODY_KEYS[12];
 
 impl FederationGrant {
-    /// Whether this is an Access grant (its role and Scope), not a git_push
-    /// grant.
+    /// Whether this is a git_push grant, which confers no standing but
+    /// raw git push to its repos (G1-PUSH). Every other grant kind stands
+    /// as it did.
     #[must_use]
-    pub fn is_access(&self) -> bool {
-        self.kind == FederationGrantKind::Access
+    pub fn is_git_push(&self) -> bool {
+        self.kind == FederationGrantKind::GitPush
     }
 }
 
