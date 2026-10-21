@@ -62,7 +62,7 @@ load was sampled for *each trial*, not once for each device. The NVMe trials
 had 1-minute start load 1.42–6.16; HDD trials 5.06–11.67 on 16 logical CPUs.
 
 - Host: `arch`, Linux x86_64; AMD Ryzen 7 8745HS (8 cores, 16 logical CPUs).
-- **Primary NVMe baseline**: `/home/lexi/w8-opus/swarm-temp-nvme`,
+- **Primary NVMe baseline**: `/srv/bench/swarm-temp-nvme`,
   `/dev/nvme0n1p2`, `ROTA=0`, `ext4` (`/`), verified with `df -T` and `lsblk`.
   Raw results: [`results/swarm-nvme-2026-09-26.jsonl`](results/swarm-nvme-2026-09-26.jsonl).
 - **Secondary HDD sensitivity run**: `/mnt/wd16/w8-build/swarm-temp`,
@@ -251,8 +251,8 @@ No engine behavior, writer policy, telemetry policy, or group commit was changed
 
 ```sh
 CARGO_TARGET_DIR=/mnt/wd16/w8-build/bench-target cargo build -p oneiron-bench --release -j 8
-mkdir -p /home/lexi/w8-opus/swarm-temp-nvme
-TMPDIR=/home/lexi/w8-opus/swarm-temp-nvme SWARM_DISK_DEVICE=/dev/nvme0n1p2 SWARM_DISK_ROTATIONAL=0 SWARM_DISK_FILESYSTEM=ext4 /mnt/wd16/w8-build/bench-target/release/oneiron-bench swarm --matrix > swarm-nvme.jsonl 2> swarm-progress.log
+mkdir -p /srv/bench/swarm-temp-nvme
+TMPDIR=/srv/bench/swarm-temp-nvme SWARM_DISK_DEVICE=/dev/nvme0n1p2 SWARM_DISK_ROTATIONAL=0 SWARM_DISK_FILESYSTEM=ext4 /mnt/wd16/w8-build/bench-target/release/oneiron-bench swarm --matrix > swarm-nvme.jsonl 2> swarm-progress.log
 ```
 
 Confirm `findmnt -T "$TMPDIR"` and `lsblk -o NAME,ROTA,FSTYPE,MOUNTPOINTS`

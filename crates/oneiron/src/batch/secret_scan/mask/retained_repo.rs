@@ -43,6 +43,8 @@ use crate::secret_custody::{
 };
 use crate::store::Store;
 
+pub(crate) mod read;
+
 /// Where a retained repository blob's custody records say their keys were
 /// found.
 const PLACE: &str = "repo:receive-pack";

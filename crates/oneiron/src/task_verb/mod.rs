@@ -24,6 +24,8 @@ mod board_task;
 mod comm_widen;
 pub(crate) use board_task::board_task_for_id;
 mod brief;
+mod brief_history;
+pub(crate) use brief_history::settled_brief_in;
 mod browser_workflow;
 mod checkout_facts;
 mod code_consent_word;
@@ -57,6 +59,7 @@ mod highway;
 mod highway_accept;
 mod highway_block;
 mod highway_post;
+mod highway_redo;
 mod highway_report;
 pub(crate) mod highway_runner;
 mod highway_status;
@@ -88,6 +91,7 @@ pub(crate) use report_journal::{
 pub mod revoke_lands;
 mod room_thread;
 mod route_receipts;
+pub mod run_cancel;
 pub mod run_control;
 pub mod run_doors;
 mod runner_done;
@@ -174,14 +178,14 @@ pub use brief::{
 pub(crate) use browser_workflow::erase_task_workflows_in_txn;
 pub use browser_workflow::{
     TaskWorkflowAttempt, TaskWorkflowCheck, TaskWorkflowPin, TaskWorkflowReport,
-    TaskWorkflowUnavailable, record_task_workflow_outcome, task_workflow_binding,
-    task_workflow_binding_in_txn,
+    TaskWorkflowUnavailable, mark_task_workflow_started, record_task_workflow_outcome,
+    task_workflow_binding, task_workflow_binding_in_txn,
 };
 pub use decision_port::TaskDecisions;
 pub(crate) use highway_post::settle_task_proposal_in_txn;
 pub use highway_types::{
     AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle,
-    TaskLifecycleRecord, TaskOutcome, TaskPhase, TaskPost, TaskReport, TaskReportBody,
+    TaskLifecycleRecord, TaskOutcome, TaskPhase, TaskPost, TaskRedo, TaskReport, TaskReportBody,
     TaskStatusQuery, TaskStatusView, TaskVia, TaskWorkflowHandoff, TaskWorkflowOutcome,
     TaskWorkflowStatus,
 };
@@ -296,6 +300,66 @@ pub(crate) fn open_thread_task_holder_in(
     }
 }
 
+/// The PERSON a typed TASK is assigned to as a human, in the caller's
+/// snapshot: [`task_human_assignee`] for a reader that already holds one.
+/// `None` for any other assignee, for none, and for a row that is no typed
+/// TASK.
+pub(crate) fn task_human_assignee_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    task: crate::EntityId,
+) -> crate::Result<Option<crate::EntityId>> {
+    Ok(
+        wire_decode::task_verb_body_in(vault, txn, task)?.and_then(|body| match body.assignee {
+            Some(TaskAssignee::Human { actor_ref }) => Some(actor_ref),
+            None
+            | Some(
+                TaskAssignee::Dreamer
+                | TaskAssignee::AgentDef { .. }
+                | TaskAssignee::Peer { .. }
+                | TaskAssignee::Child { .. },
+            ) => None,
+        }),
+    )
+}
+
+/// Whether a device-local world in `kept` keeps one of the rows the ask
+/// `task` is a member of answers from (FIX 7209): each member TASK, the TASK
+/// its class came from, its question and its context, the cut its handle's
+/// verbs read the group under. Each such row is listed as a producer of the
+/// read. `false` when `task` is no member of a stored ask group.
+pub(crate) fn ask_rows_kept_in(
+    memory: &crate::memory::Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    kept: &std::collections::BTreeSet<crate::EntityId>,
+    task: crate::EntityId,
+) -> crate::Result<bool> {
+    let vault = memory.vault();
+    let Some(consult) =
+        wire_decode::task_verb_body_in(vault, txn, task)?.and_then(|body| body.consult)
+    else {
+        return Ok(false);
+    };
+    let Some(group) = ask_record::read_group(vault, txn, consult.correlation_ref)? else {
+        return Ok(false);
+    };
+    if !group
+        .members
+        .iter()
+        .any(|member| member.task == task.to_hex())
+    {
+        return Ok(false);
+    }
+    let rows = group.answer_rows();
+    memory.produced_from(rows.iter().copied());
+    for row in rows {
+        if crate::settings::device_local_keeps_among(&vault.store, txn, kept, &row)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(crate) use owner_index::{index_owner_fact, indexed_tasks_of_in};
 pub(crate) use policy_change_followup::{
     enqueue_policy_change_digest_followup_in_txn, enqueue_policy_change_followup_in_txn,
@@ -397,6 +461,7 @@ mod sdk_shared_policy;
 mod sdk_skill_attribution;
 mod sdk_skill_defaults;
 mod sdk_skill_execution;
+mod sdk_skill_fork;
 mod sdk_skills;
 mod sdk_standing;
 mod sdk_support_grant;

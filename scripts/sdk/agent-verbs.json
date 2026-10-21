@@ -1297,6 +1297,24 @@
       "section": true
     },
     {
+      "name": "tasks.redo",
+      "description": "Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written.",
+      "input": "crate::task_verb::TaskRedo",
+      "output": "crate::task_verb::TaskCallReceipt",
+      "mcp_served": "[input.task_ref]",
+      "call": "memory.tasks_redo(input)?",
+      "scope": "Write",
+      "task_decisions": true,
+      "proposes": true,
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "task_ref"
+        ]
+      },
+      "section": true
+    },
+    {
       "name": "vault.commit_message",
       "description": "Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes.",
       "input": "crate::memory::CommitMessageRequest",
@@ -3517,7 +3535,7 @@
     },
     {
       "name": "vault.skills.fork",
-      "description": "The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable.",
+      "description": "The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable.",
       "input": "SkillLibraryForkRequest",
       "output": "crate::task_verb::sdk::SkillLibraryView",
       "call": "crate::task_verb::sdk::skill_library_fork_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.fork\")?, &input)?",
@@ -5350,7 +5368,7 @@
     },
     {
       "name": "vault.trusted_contacts.name",
-      "description": "The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again.",
+      "description": "A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again.",
       "input": "crate::task_verb::sdk::TrustedContactNameRequest",
       "output": "crate::counterparty_contact::TrustedContact",
       "call": "crate::task_verb::sdk::name_trusted_contact(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.name\")?, input)?",
@@ -5410,7 +5428,7 @@
     },
     {
       "name": "vault.trusted_contacts.dial.set",
-      "description": "The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands.",
+      "description": "A person changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands.",
       "input": "crate::task_verb::sdk::TrustedContactDialRequest",
       "output": "crate::counterparty_contact::TrustedContact",
       "call": "crate::task_verb::sdk::set_trusted_contact_dial(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.dial.set\")?, input)?",
@@ -5440,7 +5458,7 @@
     },
     {
       "name": "vault.trusted_contacts.concern.asks",
-      "description": "The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled.",
+      "description": "A person reads their own open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled.",
       "input": "crate::task_verb::sdk::TrustedContactAsksRequest",
       "output": "Vec<crate::counterparty_contact::TrustedContactAsk>",
       "call": "crate::task_verb::sdk::read_trusted_contact_asks(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.concern.asks\")?, input)?",
@@ -5455,7 +5473,7 @@
     },
     {
       "name": "vault.trusted_contacts.concern.authorize",
-      "description": "The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing.",
+      "description": "A person answers one of their own open asks, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing.",
       "input": "crate::task_verb::sdk::TrustedContactAuthorizeRequest",
       "output": "crate::task_verb::sdk::TrustedContactAuthorization",
       "call": "crate::task_verb::sdk::authorize_trusted_contact_ask(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.concern.authorize\")?, input, &crate::policy_model::PolicyModelConfig::default())?",
@@ -5895,7 +5913,7 @@
     },
     {
       "name": "vault.off_record.rooms.export",
-      "description": "A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in.",
+      "description": "A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in.",
       "input": "crate::task_verb::sdk::OffRecordRoomRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomExport",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.export\", &input)?",
@@ -7523,7 +7541,7 @@
     },
     {
       "name": "vault.gate.policy.put",
-      "description": "The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions.",
+      "description": "The owner, or an Admin or Delegate holding the policy power, installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions.",
       "input": "crate::policy_manifest_doors::PolicyManifestPut",
       "output": "crate::policy_manifest_doors::PolicyManifestReceipt",
       "call": "crate::policy_manifest_doors::put_policy_manifest_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.policy.put\")?, input).map_err(crate::memory::MemoryError::from)?",
@@ -13265,10 +13283,10 @@
     },
     {
       "name": "vault.voices.packs.put",
-      "description": "The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op.",
+      "description": "A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op.",
       "input": "crate::task_verb::sdk::VoiceBankPackPutRequest",
       "output": "crate::task_verb::sdk::VoiceBankPackReceipt",
-      "call": "crate::task_verb::sdk::put_voice_bank_pack_as(memory.vault(), &memory.embedded_owner(\"vault.voices.packs.put\")?, input)?",
+      "call": "crate::task_verb::sdk::put_voice_bank_pack(memory, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -13280,7 +13298,7 @@
     },
     {
       "name": "vault.voices.render_consent",
-      "description": "The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs.",
+      "description": "A person records the render decision on their own voice, or a designed voice's creator on that voice with no basis: a grant names the farthest locality its refs reach; a withdrawal drops each target clone. It joins the render history.",
       "input": "crate::task_verb::sdk::VoiceRenderConsentRequest",
       "output": "crate::task_verb::sdk::VoiceRenderConsentReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.render_consent\", &input)?",
@@ -13295,7 +13313,7 @@
     },
     {
       "name": "vault.voices.targets.provision",
-      "description": "The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call.",
+      "description": "The caller's own voice, a person's or a designed voice its creator made, cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality first.",
       "input": "crate::task_verb::sdk::VoiceTargetProvisionRequest",
       "output": "crate::task_verb::sdk::VoiceTargetReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.targets.provision\", &input)?",
@@ -13310,7 +13328,7 @@
     },
     {
       "name": "vault.voices.targets.evict",
-      "description": "The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay.",
+      "description": "A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay.",
       "input": "crate::task_verb::sdk::VoiceTargetEvictRequest",
       "output": "crate::task_verb::sdk::VoiceTargetEvictReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.targets.evict\", &input)?",
@@ -13325,10 +13343,25 @@
     },
     {
       "name": "vault.voices.inspect",
-      "description": "The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone.",
+      "description": "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone.",
       "input": "crate::task_verb::sdk::VoiceBankInspectRequest",
       "output": "crate::task_verb::sdk::VoiceBankInspection",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.inspect\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.voices.lineage",
+      "description": "A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call.",
+      "input": "crate::task_verb::sdk::VoiceRenderLineageRequest",
+      "output": "Vec<crate::task_verb::sdk::VoiceRenderEventView>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.lineage\", &input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
@@ -14324,6 +14357,28 @@
       "call": "oneiron_browser::DesktopAnswer::of(driver.handover(input)?)",
       "scope": "Write",
       "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.dreamer.thing.extract",
+      "description": "Runs one lent slice's extraction on the parent's own wake and stages its draft, answering one engine-issued proposal ref per drafted candidate.",
+      "input": "crate::dreamer_consolidation::ThingExtractInput",
+      "output": "crate::dreamer_consolidation::ThingExtractOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.dreamer.thing.extract\", &input)?",
+      "scope": "Write",
+      "context": "scoped_child",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.dreamer.thing.decide",
+      "description": "Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt.",
+      "input": "crate::dreamer_consolidation::ThingDecideInput",
+      "output": "crate::dreamer_consolidation::ThingDecideOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.dreamer.thing.decide\", &input)?",
+      "scope": "Write",
+      "context": "scoped_child",
       "mcp": "none",
       "section": false
     },

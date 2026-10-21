@@ -1736,7 +1736,7 @@ class Oneiron:
         def restore(self, spec: Facade.SkillLibraryRestoreRequest) -> Facade.SkillLibraryRestoreReceipt:
             """The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring."""
         def fork(self, spec: Facade.SkillLibraryForkRequest) -> Facade.SkillLibraryView:
-            """The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
+            """The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
         @property
         def rules(self) -> "Oneiron._VaultSkillsRulesVerbs": ...
         @property
@@ -2172,7 +2172,7 @@ class Oneiron:
             """The owner accepts the peer host signed re-scope and receives the matching signed counter-half."""
     class _VaultTrustedContactsVerbs:
         def name(self, spec: Facade.TrustedContactNameRequest) -> Facade.TrustedContact:
-            """The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
+            """A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
         def list(self, spec: Facade.TrustedContactsRequest) -> list[Facade.TrustedContact]:
             """A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential."""
         def consent(self, spec: Facade.TrustedContactConsentRequest) -> Facade.TrustedContact:
@@ -2187,15 +2187,15 @@ class Oneiron:
         def concern(self) -> "Oneiron._VaultTrustedContactsConcernVerbs": ...
     class _VaultTrustedContactsDialVerbs:
         def set(self, spec: Facade.TrustedContactDialRequest) -> Facade.TrustedContact:
-            """The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands."""
+            """A person changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands."""
     class _VaultTrustedContactsTierVerbs:
         def set(self, spec: Facade.TrustedContactTierRequest) -> Facade.TrustedContactTierSet:
             """The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern."""
     class _VaultTrustedContactsConcernVerbs:
         def asks(self, spec: Facade.TrustedContactAsksRequest) -> list[Facade.TrustedContactAsk]:
-            """The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled."""
+            """A person reads their own open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled."""
         def authorize(self, spec: Facade.TrustedContactAuthorizeRequest) -> Facade.TrustedContactAuthorization:
-            """The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."""
+            """A person answers one of their own open asks, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."""
         def propose(self, spec: Facade.TrustedContactConcernRequest) -> Facade.TrustedContactConcernProposal:
             """The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices."""
         def deliver(self, spec: Facade.TrustedContactDeliverRequest) -> Facade.TrustedContactDeliveryReceipt | None:
@@ -2263,7 +2263,7 @@ class Oneiron:
         def save_from_here(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
             """A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."""
         def export(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomExport:
-            """A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in."""
+            """A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in."""
         def suggest_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
             """An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."""
         def confirm_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomSaved:
@@ -2526,7 +2526,7 @@ class Oneiron:
         def get(self, spec: Facade.PolicyManifestRead) -> Facade.PolicyManifestsView:
             """The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."""
         def put(self, spec: Facade.PolicyManifestPut) -> Facade.PolicyManifestReceipt:
-            """The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions."""
+            """The owner, or an Admin or Delegate holding the policy power, installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions."""
         def propose(self, spec: Facade.PolicyManifestPropose) -> Facade.PolicyManifestReceipt:
             """Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert."""
     class _VaultGateCheckerVerbs:
@@ -3340,19 +3340,21 @@ class Oneiron:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...
         def render_consent(self, spec: Facade.VoiceRenderConsentRequest) -> Facade.VoiceRenderConsentReceipt:
-            """The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs."""
+            """A person records the render decision on their own voice, or a designed voice's creator on that voice with no basis: a grant names the farthest locality its refs reach; a withdrawal drops each target clone. It joins the render history."""
         @property
         def targets(self) -> "Oneiron._VaultVoicesTargetsVerbs": ...
         def inspect(self, spec: Facade.VoiceBankInspectRequest) -> Facade.VoiceBankInspection:
-            """The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone."""
+            """A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone."""
+        def lineage(self, spec: Facade.VoiceRenderLineageRequest) -> list[Facade.VoiceRenderEventView]:
+            """A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."""
     class _VaultVoicesPacksVerbs:
         def put(self, spec: Facade.VoiceBankPackPutRequest) -> Facade.VoiceBankPackReceipt:
-            """The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op."""
+            """A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op."""
     class _VaultVoicesTargetsVerbs:
         def provision(self, spec: Facade.VoiceTargetProvisionRequest) -> Facade.VoiceTargetReceipt:
-            """The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call."""
+            """The caller's own voice, a person's or a designed voice its creator made, cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality first."""
         def evict(self, spec: Facade.VoiceTargetEvictRequest) -> Facade.VoiceTargetEvictReceipt:
-            """The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay."""
+            """A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay."""
     class _VaultGraphVerbs:
         def ask(self, spec: Facade.GraphAskRequest) -> Facade.GraphAskOutcome: ...
         def admit(self, spec: Facade.GraphAdmitRequest) -> Facade.GraphAskOutcome:
@@ -3986,6 +3988,8 @@ class Oneiron:
             """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries."""
         def accept(self, spec: Facade.TaskAccept) -> Facade.TaskCallReceipt:
             """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
+        def redo(self, spec: Facade.TaskRedo) -> Facade.TaskCallReceipt:
+            """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:

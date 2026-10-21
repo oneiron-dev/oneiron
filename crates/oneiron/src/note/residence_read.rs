@@ -4,8 +4,8 @@ use super::documents::{NoteDocument, invalid};
 use super::reads::read_view;
 use super::{NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView};
 use crate::authority::VerifiedSlip;
-use crate::claim::CallerLocality;
 use crate::memory::{MemoryError, MemoryResult};
+use crate::settings::ReadDestination;
 use crate::sync::{OpenedItem, ThinItem};
 use crate::{Vault, WriteActor};
 
@@ -17,7 +17,7 @@ pub(crate) fn opened_note_view(
     opened: &OpenedItem,
     actor: WriteActor,
     proof: Option<&VerifiedSlip>,
-    locality: CallerLocality,
+    destination: &ReadDestination,
     reason: Option<&str>,
     spans: &[NoteReadSpan],
 ) -> MemoryResult<Option<NoteReadView>> {
@@ -30,7 +30,7 @@ pub(crate) fn opened_note_view(
             }
             let memory = vault
                 .memory(actor.entity_ref(), actor.actor_class())
-                .at(locality);
+                .for_destination(destination);
             let memory = match proof {
                 Some(proof) => memory.with_read_proof(proof),
                 None => memory,

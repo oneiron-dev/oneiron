@@ -45,6 +45,7 @@ use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extractio
 mod compaction_check;
 mod free_time;
 mod run_log;
+mod urgent_digest;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
@@ -295,6 +296,13 @@ async fn supervise(
         Arc::clone(&vault),
         Arc::clone(&runtime),
         settings.pass_budget_units,
+        admission.clone(),
+    ));
+    // So do the urgent digest's harm questions (OF-194): each queues on the
+    // Dreamer's own maintenance lane, which its passes answer.
+    tokio::spawn(urgent_digest::candidate_loop(
+        Arc::clone(&vault),
+        settings.urgent_digest_question.clone(),
         admission.clone(),
     ));
     let built = (|| -> anyhow::Result<_> {
@@ -597,6 +605,17 @@ impl ObservedFactory {
             .get(DREAMER_EXTRACTION_ROLE)
             .cloned()
             .ok_or_else(|| oneiron::Error::InvalidConfig("dreamer extraction unrouted".into()))?;
+        // A thing's branch runs as a scoped code-mode agent on this server's
+        // code host, its own generation on the extraction route (FIX 7508).
+        let thing_route = routes
+            .iter()
+            .find(|(role, _)| *role == DREAMER_EXTRACTION_ROLE)
+            .map(|(_, route)| super::dreamer_thing::ThingRoute {
+                ladder: Arc::clone(&route.ladder),
+                model: route.model.clone(),
+                locality: route.locality,
+                window: self.windows.get(&route.model).copied(),
+            });
         let selected = routes.iter().map(|(_, route)| route.model.clone());
         let host = self.decisions.get();
         let sink = AttemptPromotionSink::new(Arc::clone(&self.vault))
@@ -636,6 +655,16 @@ impl ObservedFactory {
                     Arc::clone(&self.runtime),
                     self.serve.clone(),
                     Arc::clone(&self.question_timer),
+                ),
+            ));
+        }
+        if let Some(route) = thing_route {
+            factory = factory.with_thing_child_host(Arc::new(
+                super::dreamer_thing::ServedThingChildHost::new(
+                    Arc::clone(&self.vault),
+                    Arc::clone(&self.runtime),
+                    Arc::clone(&self.question_timer),
+                    route,
                 ),
             ));
         }
@@ -1353,6 +1382,11 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                     cause: oneiron::dreamer_runner::DreamerParkCause::Retry,
                 }),
             }
+        } else if attempt.status.payload.attempt_type
+            == oneiron::dreamer_runner::maintenance::digest::DIGEST_ASSESS_FACET
+        {
+            // OF-194: asked on the shared ladder, off this pass's runtime.
+            urgent_digest::assess_waiting_harm(attempt, ctx, self.decisions).await
         } else {
             self.inner.execute(attempt, ctx).await
         };

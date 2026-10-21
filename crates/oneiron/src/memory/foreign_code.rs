@@ -135,12 +135,16 @@ struct StepOutput {
 
 impl Memory<'_> {
     /// Run source under the foreign contract. No host path, runtime binary,
-    /// actor, source stamp, approval or grant is accepted from the wire.
+    /// actor, source stamp, approval or grant is accepted from the wire. Its
+    /// proposed files spool on `spool`, the host's measured disk floor; one
+    /// that would cross it fails the run as `SANDBOX_PROPOSAL_DISK_FLOOR`
+    /// before any receipt (FIX 7650).
     pub fn execute_foreign_code(
         &self,
         input: ForeignCodeRunRequest,
         artifact: ForeignCodeArtifact<'_>,
         budget: crate::code_sandbox::microvm::ExecutionBudget,
+        spool: std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>,
     ) -> MemoryResult<ForeignCodeRunResult> {
         let proof = self.foreign_code_credential()?;
         if input.source.trim().is_empty() {
@@ -167,7 +171,7 @@ impl Memory<'_> {
             workspace.path(),
         );
         let run_id = EntityId::now();
-        let outcome = execute_foreign_code(&input.source, mounts, artifact, budget)?;
+        let outcome = execute_foreign_code(&input.source, mounts, artifact, budget, spool)?;
         let output: StepOutput = serde_json::from_str(&outcome.result_json)
             .map_err(|_| MemoryError::bad_request("foreign step returned invalid typed output"))?;
         for file in &output.outputs {

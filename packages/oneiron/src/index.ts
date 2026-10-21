@@ -921,7 +921,7 @@ export class Oneiron {
       archive: (input: Facade.HubSkillRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsArchive(input) as Facade.SkillLibraryView),
       /** The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring. */
       restore: (input: Facade.SkillLibraryRestoreRequest): Facade.SkillLibraryRestoreReceipt => this.#call(() => this.#client.vaultSkillsRestore(input) as Facade.SkillLibraryRestoreReceipt),
-      /** The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
+      /** The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
       fork: (input: Facade.SkillLibraryForkRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsFork(input) as Facade.SkillLibraryView),
       rules: {
         /** The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose. */
@@ -1328,7 +1328,7 @@ export class Oneiron {
       },
     },
     trusted_contacts: {
-      /** The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
+      /** A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
       name: (input: Facade.TrustedContactNameRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsName(input) as Facade.TrustedContact),
       /** A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential. */
       list: (input: Facade.TrustedContactsRequest): Facade.TrustedContact[] => this.#call(() => this.#client.vaultTrustedContactsList(input) as Facade.TrustedContact[]),
@@ -1337,7 +1337,7 @@ export class Oneiron {
       /** Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close. */
       revoke: (input: Facade.TrustedContactRevokeRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsRevoke(input) as Facade.TrustedContact),
       dial: {
-        /** The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
+        /** A person changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
         set: (input: Facade.TrustedContactDialRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsDialSet(input) as Facade.TrustedContact),
       },
       tier: {
@@ -1345,9 +1345,9 @@ export class Oneiron {
         set: (input: Facade.TrustedContactTierRequest): Facade.TrustedContactTierSet => this.#call(() => this.#client.vaultTrustedContactsTierSet(input) as Facade.TrustedContactTierSet),
       },
       concern: {
-        /** The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
+        /** A person reads their own open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
         asks: (input: Facade.TrustedContactAsksRequest): Facade.TrustedContactAsk[] => this.#call(() => this.#client.vaultTrustedContactsConcernAsks(input) as Facade.TrustedContactAsk[]),
-        /** The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
+        /** A person answers one of their own open asks, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
         authorize: (input: Facade.TrustedContactAuthorizeRequest): Facade.TrustedContactAuthorization => this.#call(() => this.#client.vaultTrustedContactsConcernAuthorize(input) as Facade.TrustedContactAuthorization),
         /** The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices. */
         propose: (input: Facade.TrustedContactConcernRequest): Facade.TrustedContactConcernProposal => this.#call(() => this.#client.vaultTrustedContactsConcernPropose(input) as Facade.TrustedContactConcernProposal),
@@ -1416,7 +1416,7 @@ export class Oneiron {
         save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomSaved => this.#call(() => this.#client.vaultOffRecordRoomsSave(input) as Facade.OffRecordRoomSaved),
         /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
         save_from_here: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSaveFromHere(input) as Facade.OffRecordRoomView),
-        /** A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in. */
+        /** A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in. */
         export: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomExport => this.#call(() => this.#client.vaultOffRecordRoomsExport(input) as Facade.OffRecordRoomExport),
         /** An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms. */
         suggest_save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSuggestSave(input) as Facade.OffRecordRoomView),
@@ -1667,7 +1667,7 @@ export class Oneiron {
       policy: {
         /** The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions. */
         get: (input: Facade.PolicyManifestRead): Facade.PolicyManifestsView => this.#call(() => this.#client.vaultGatePolicyGet(input) as Facade.PolicyManifestsView),
-        /** The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
+        /** The owner, or an Admin or Delegate holding the policy power, installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
         put: (input: Facade.PolicyManifestPut): Facade.PolicyManifestReceipt => this.#call(() => this.#client.vaultGatePolicyPut(input) as Facade.PolicyManifestReceipt),
         /** Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert. */
         propose: (input: Facade.PolicyManifestPropose): Facade.PolicyManifestReceipt => this.#call(() => this.#client.vaultGatePolicyPropose(input) as Facade.PolicyManifestReceipt),
@@ -2470,19 +2470,21 @@ export class Oneiron {
     },
     voices: {
       packs: {
-        /** The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op. */
+        /** A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op. */
         put: (input: Facade.VoiceBankPackPutRequest): Facade.VoiceBankPackReceipt => this.#call(() => this.#client.vaultVoicesPacksPut(input) as Facade.VoiceBankPackReceipt),
       },
-      /** The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs. */
+      /** A person records the render decision on their own voice, or a designed voice's creator on that voice with no basis: a grant names the farthest locality its refs reach; a withdrawal drops each target clone. It joins the render history. */
       render_consent: (input: Facade.VoiceRenderConsentRequest): Facade.VoiceRenderConsentReceipt => this.#call(() => this.#client.vaultVoicesRenderConsent(input) as Facade.VoiceRenderConsentReceipt),
       targets: {
-        /** The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call. */
+        /** The caller's own voice, a person's or a designed voice its creator made, cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality first. */
         provision: (input: Facade.VoiceTargetProvisionRequest): Facade.VoiceTargetReceipt => this.#call(() => this.#client.vaultVoicesTargetsProvision(input) as Facade.VoiceTargetReceipt),
-        /** The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay. */
+        /** A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay. */
         evict: (input: Facade.VoiceTargetEvictRequest): Facade.VoiceTargetEvictReceipt => this.#call(() => this.#client.vaultVoicesTargetsEvict(input) as Facade.VoiceTargetEvictReceipt),
       },
-      /** The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone. */
+      /** A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone. */
       inspect: (input: Facade.VoiceBankInspectRequest): Facade.VoiceBankInspection => this.#call(() => this.#client.vaultVoicesInspect(input) as Facade.VoiceBankInspection),
+      /** A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call. */
+      lineage: (input: Facade.VoiceRenderLineageRequest): Facade.VoiceRenderEventView[] => this.#call(() => this.#client.vaultVoicesLineage(input) as Facade.VoiceRenderEventView[]),
     },
     graph: {
       ask: (input: Facade.GraphAskRequest): Facade.GraphAskOutcome => this.#call(() => this.#client.vaultGraphAsk(input) as Facade.GraphAskOutcome),
@@ -3108,6 +3110,8 @@ export class Oneiron {
     update: (input: Facade.TaskUpdateRequest): Facade.TaskUpdateReceipt => this.#call(() => this.#client.tasksUpdate(input) as Facade.TaskUpdateReceipt),
     /** Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports. */
     accept: (input: Facade.TaskAccept): Facade.TaskCallReceipt => this.#call(() => this.#client.tasksAccept(input) as Facade.TaskCallReceipt),
+    /** Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written. */
+    redo: (input: Facade.TaskRedo): Facade.TaskCallReceipt => this.#call(() => this.#client.tasksRedo(input) as Facade.TaskCallReceipt),
     /** Admits one person's word on an ask; the word is evidence, never approval. */
     answer: (handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */

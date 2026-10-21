@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::sieve_ports::ExtractionPorts;
+use super::thing_agent::ThingChildHost;
 use crate::Vault;
 use crate::error::Result;
 use crate::llm::manifest::ModelRole;
@@ -43,13 +44,21 @@ pub struct RoleBackend {
     pub binding: HostInferenceBinding,
 }
 
-/// The backends a host routes the Dreamer's roles to, and the ports the
-/// sieve's rungs and a child's extraction call (OF-498a); by default each
-/// port calls its role as this table routes it.
+/// The backends a host routes the Dreamer's roles to, the ports the sieve's
+/// rungs and a child's extraction call (OF-498a; by default each port calls
+/// its role as this table routes it), and the input window the host lends
+/// the sieve's follower (FIX 7510). A host that can run a thing's branch as
+/// a scoped code-mode agent lends its thing-child host here too (FIX 7508);
+/// without one, that branch runs the per-slice path.
 #[derive(Clone, Default)]
 pub struct RoleBackends {
     routes: BTreeMap<ModelRole, RoleBackend>,
     ports: ExtractionPorts,
+    thing_child: Option<Arc<dyn ThingChildHost>>,
+    /// The tokens one follower call's input may fill on the extraction
+    /// role's model, as the host counts them; `None` when the host lends
+    /// none, so the follower packs by its sizing estimate alone.
+    follower_window_tokens: Option<u64>,
 }
 
 impl RoleBackends {
@@ -64,6 +73,19 @@ impl RoleBackends {
         self.routes.get(&role)
     }
 
+    /// Lends the follower the extraction model's input window (FIX 7510).
+    #[must_use]
+    pub fn with_follower_window(mut self, tokens: Option<u64>) -> Self {
+        self.follower_window_tokens = tokens;
+        self
+    }
+
+    /// The input window the host lent the follower, if any.
+    #[must_use]
+    pub fn follower_window_tokens(&self) -> Option<u64> {
+        self.follower_window_tokens
+    }
+
     /// The host's sieve and child-extraction ports in place of the role
     /// defaults.
     #[must_use]
@@ -75,6 +97,18 @@ impl RoleBackends {
     /// The ports the sieve's rungs and a child's extraction call.
     pub(super) fn extraction_ports(&self) -> &ExtractionPorts {
         &self.ports
+    }
+
+    /// The host a thing's branch runs its scoped agent on (FIX 7508).
+    #[must_use]
+    pub fn with_thing_child_host(mut self, host: Arc<dyn ThingChildHost>) -> Self {
+        self.thing_child = Some(host);
+        self
+    }
+
+    /// The thing-child host, if the host lent one.
+    pub(super) fn thing_child_host(&self) -> Option<&dyn ThingChildHost> {
+        self.thing_child.as_deref()
     }
 }
 

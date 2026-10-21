@@ -178,13 +178,17 @@ impl Memory<'_> {
         let repo = RepoRef::parse(&proposal.repo)?;
         let base =
             vault.mount_repo_ref(&repo, RepoMountRef::Fork(proposal.pre_action_fork_hash))?;
+        // Repo bytes a mark covers read masked but at the owner's own door,
+        // on both sides, before they enter the diff (FIX 7608).
+        let masks = self.repo_read_masks()?;
         let mut refs = OpRefs::new(self);
         let received = proposal.received_candidate().is_some();
         let mut files = Vec::with_capacity(proposal.files.len());
         let mut diff = String::new();
         for file in &proposal.files {
-            let old = utf8(base.read_file(&file.path)?.unwrap_or(b""))?;
-            let new = utf8(file.content.as_deref().unwrap_or(b""))?;
+            let old = masks.bytes(vault, base.read_file(&file.path)?.unwrap_or(b""))?;
+            let new = masks.bytes(vault, file.content.as_deref().unwrap_or(b""))?;
+            let (old, new) = (utf8(&old)?, utf8(&new)?);
             // An ordinary proposal lands under its own id; a received
             // bundle's file under its deterministic child operation.
             let operation = match file.source_operation {
@@ -401,6 +405,9 @@ impl Memory<'_> {
                 }
                 self.produced_from([id]);
                 let mount = vault.mount_repo_ref(&repo, RepoMountRef::Snapshot(id))?;
+                // Repo bytes a mark covers read masked but at the owner's own
+                // door, after their ASSET is admitted (FIX 7608).
+                let masks = self.repo_read_masks()?;
                 let mut files = Vec::new();
                 for path in mount.list_files() {
                     let bytes = mount.read_file(path)?.unwrap_or_default();
@@ -415,7 +422,8 @@ impl Memory<'_> {
                         continue;
                     }
                     self.produced_from([asset]);
-                    match std::str::from_utf8(bytes) {
+                    let bytes = masks.bytes(vault, bytes)?;
+                    match std::str::from_utf8(&bytes) {
                         Ok(text) => files.push(TreeFile {
                             path: path.to_owned(),
                             text: text.to_owned(),

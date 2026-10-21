@@ -1,0 +1,194 @@
+# Guest image family: build, rebuild, retain, hand off
+
+The guest images (the code/minimal base, browser, desktop/CUA, checker, a
+generic agent sandbox and the vault) come from one builder in
+`crates/oneiron-container/images/`. Pinned mkosi assembles each image from a
+frozen Debian snapshot, and the guest binaries are built inside the image's
+own userspace. One assembled tree is exported twice: as an OCI image for the
+no-KVM container backend and as a root-only ext4 rootfs for Firecracker.
+Nothing here changes which image a host runs. The existing recipes under
+`crates/oneiron-container/guest/`, with their pins and receipts, stay
+authoritative until an adoption change names a new image.
+
+## Files
+
+- `release.toml` is the one release list. `[inputs]` holds the frozen inputs:
+  - the Debian base's index, platform, config and layer digests;
+  - the snapshot, derived from the base's build epoch;
+  - mkosi's tag, commit and archive hash;
+  - the exact Rust release and its dist component hashes;
+  - the engine commit and the `Cargo.lock` hash;
+  - every existing pin, by path + sha256 at that commit;
+  - the contract revisions;
+  - the Lightpanda, CUA, Bun and tsrs payload pins.
+
+  `[variants.*.outputs."linux/amd64"]` holds what a build measured.
+  `[variants.*.budget]` holds proposed targets.
+- `packages.toml` holds requests only: the tools tree, `[base]` and one
+  overlay per variant.
+- `packages.lock.toml` is the resolved closure: every `.deb` by name,
+  version, arch, size and sha256.
+
+`python3 build.py validate` checks that the three agree. It needs no Linux
+host. It refuses a moving `latest`, a malformed hash or commit, a missing
+variant, a stale lock scope, and an output field on an unbuilt variant.
+
+## Build
+
+Fetch and build run on a Linux x86_64 host. They need python3 3.11 or newer,
+the util-linux `unshare`, libseccomp, network for the fetch phase, and
+unprivileged user and mount namespaces. They need no root, no sudo and no
+container daemon. `build.py` re-executes itself as root of a single-uid user
+namespace, and mkosi runs there with its `chown()` calls made no-ops.
+
+1. **Fetch (online).** `build.py fetch --repo R --mirror M --work W --variant base`
+   puts every input in the mirror `M` and checks it against its pin:
+   - the base's amd64 rootfs layer, over the registry HTTP API;
+   - the mkosi source archive;
+   - the Rust components;
+   - payloads;
+   - a clean `CARGO_HOME` filled by `cargo fetch --locked` at the engine commit;
+   - the Debian packages for the tools tree and the requested variants.
+
+   The `.deb` files come through mkosi's own apt run against our sources
+   file. That file pins main, updates and security to the snapshot,
+   verifies every InRelease signature with the archive keyring, and skips
+   `Valid-Until` on those sources only.
+
+   The first run on a fresh mirror passes `--learn` and writes
+   `packages.lock.toml`. Commit that lock. A later fetch without `--learn`
+   refuses any `.deb` whose bytes differ from the lock, and any newly
+   downloaded `.deb` the lock does not name.
+2. **Build (offline).** `build.py build --variant base` re-enters a namespace
+   with no network at all and works from the mirror alone:
+   1. It unpacks the base layer as a bootstrap tree.
+   2. mkosi builds the **tools tree** from it (`ToolsTree=` the bootstrap
+      tree). The tools tree is apt, dpkg, the keyring, e2fsprogs and the rest
+      of `packages.toml [tools]`, from the same snapshot. Its content hash is
+      the **builder identity**, `tools_tree_sha256`. The Debian base digest
+      is only its seed.
+   3. mkosi builds the variant with `ToolsTree=` the tools tree.
+      `mkosi.build.chroot` compiles the plan's binaries inside the image plus
+      its build overlay, so they link against the glibc the image ships. It
+      runs `--locked --offline` with the mirror's clean `CARGO_HOME`,
+      `--remap-path-prefix` for every build path, and `SOURCE_DATE_EPOCH`.
+   4. `mkosi.postinst` places the guest account, pinned files, payloads and
+      links. `mkosi.finalize` empties `machine-id` and removes random seeds,
+      credentials, keys, apt lists and caches, logs, the ldconfig aux cache
+      and backup files. Licence files and dpkg's database stay.
+   5. The exporter refuses a tree whose files name a build-machine path.
+   6. The exporter writes one deterministic `rootfs.tar`: sorted entries,
+      mtimes clamped to the epoch, and explicit ownership (below). It builds
+      both outputs from that tar:
+      - `<variant>.oci.tar` is an OCI layout with `index.json` plus docker's
+        `manifest.json`, so `docker load` accepts it;
+      - `rootfs.ext4` comes from `mke2fs -d rootfs.tar` in the tools tree:
+        root-only, with no partition table, ESP or UKI, and the kernel kept
+        separate.
+
+      The ext4 is refused above the engine's 4 GiB Firecracker rootfs cap;
+      the cap does not move.
+3. **Receipt.** `build.py receipt --variant base` writes `receipt.json` and
+   prints the `[variants.base.outputs."linux/amd64"]` block. Paste the block
+   into `release.toml` with `state = "built-candidate"`.
+
+**Ownership.** The single-uid build leaves every file root-owned on disk, so
+the tar states each owner explicitly:
+- the default is `0:0`;
+- data.tar owners and set-id bits come from each installed `.deb`;
+- dpkg statoverrides win over those;
+- `packages.toml owners` rules win over all. They cover maintainer-script
+  ownership dpkg does not record, such as `/etc/shadow` `root:shadow` the way
+  the pinned base layer ships it, and any path of the guest's own.
+
+The existing recipes give the guest no path in the image: its HOME is the
+run-time `/tmp`. The receipt lists every non-root entry and its source.
+Ownership a maintainer script sets and no rule names stays root.
+
+## Rebuild from the mirror, and retention
+
+A release is rebuildable while its mirror exists. That mirror is the `blobs/`,
+`pkgcache/`, `mkosi-cache/` (the signed apt metadata) and `cargo-home/`
+directories. Run `build` (and `fetch` without `--learn`, to re-verify) against
+the same `--mirror` with any checkout that holds the pinned engine commit. The
+work directory is disposable.
+
+Keep a mirror while any `release.toml` output at `built-candidate` or later
+names its lock, and keep the artifacts of the current and the previous
+generation. snapshot.debian.org keeps the archive, so a lost mirror can be
+refetched. Then the lock and the pins still decide what counts. A changed
+byte fails the fetch; nothing re-resolves.
+
+## Four different proofs
+
+- **Pins** (`[inputs]`) say what a build reads. A pin is an identity, not an
+  approval.
+- **Built digests** (`outputs`) say what one build produced. There are three
+  digest namespaces, never interchangeable:
+  - `oci_index_digest`, `oci_manifest_digest` and `oci_config_digest` are
+    OCI digests. `oci_config_digest` is the image id a classic-store
+    `docker load` reports; a containerd-store load reports the manifest
+    digest.
+  - `oci_archive_sha256` and `ext4_sha256` are file hashes.
+  - The Firecracker host pins are BLAKE3 values, computed when a host adopts
+    the rootfs.
+- **Signatures**: none exist yet. A later pack signs the release manifest. No
+  key is in the repo, a log or a receipt.
+- **Boot proof**: a candidate is not qualified until a fresh boot reaches its
+  protocol. Each variant needs its own boot: a browser serves CDP, a checker
+  runs a check, a desktop serves MCP and a display. A receipt is provenance,
+  not a boot.
+
+## Byte fields
+
+| Field | Meaning |
+|---|---|
+| `compressed_bytes` | Size of `<variant>.oci.tar`, what a host transfers to `docker load`. |
+| `oci_layer_bytes` | The gzipped layer blob alone. |
+| `unpacked_bytes` | The sum of regular-file sizes in the tree: the read-only payload the budget limits. |
+| `rootfs_tar_bytes` | The uncompressed layer (`rootfs.tar`) with tar headers. |
+| `sparse_capacity_bytes` | The ext4 file's length, which the engine's 4 GiB verifier measures, sparse space included. |
+| `ext4_allocated_bytes` | Blocks the ext4 file occupies on the build host's disk. |
+| `writable_bytes`, `peak_ram_bytes` | Run-time measurements from a boot. They stay absent until one is made. |
+
+Budgets in `release.toml` are proposed engineering targets, not checks. The
+browser's 2 GiB and the desktop's 3 GiB runtime memory defaults are config
+values, not image sizes. The checker's provisional 2-8 GiB payload can exceed
+the 4 GiB Firecracker cap. Its first build decides between pruning, a split,
+or a reviewed bound change.
+
+## Candidate hand-off to the acceptance smoke
+
+A candidate goes to the lane's existing OCI acceptance smoke without touching
+the smoke's default inputs or any serving config:
+
+1. Copy `<variant>.oci.tar` to the booked Linux host and run `docker load -i`
+   there. Record the local image id it prints, and keep the receipt's
+   manifest digest beside it.
+2. Give the smoke its own kind directory, for example
+   `/srv/acceptance/<candidate-kind>/`. Write only that id to its
+   `image-id.txt`.
+3. Stage the engine, broker and the **matching host fence** in that kind's
+   `bin/` with their hashes. The OCI backend mounts the host's fence over the
+   image's, so both identities travel together.
+4. Run the smoke for that kind. Do not rerun the smoke's own build step: it
+   would overwrite the candidate.
+
+Booting the Firecracker rootfs is a separate step. It needs a host
+`ONEIRON_MICROVM_OCI_IMAGES` row and BLAKE3 pins for that rootfs. Nothing in
+this pack installs those.
+
+## Repeatability
+
+Pinning inputs does not make filesystem bytes identical. `SOURCE_DATE_EPOCH`
+clamps file mtimes and the fixed seed fixes the rootfs UUID and hash seed.
+The tar is written in sorted order with explicit owners. Still, two builds
+can differ in places no pin reaches:
+- ext4 block placement;
+- gzip framing across zlib versions;
+- whether a package's maintainer script writes a timestamp or a random value;
+- the order a build script emits.
+
+A second, independent build compares payload hashes file by file and reports
+filesystem metadata differences. It does not call a digest-pinned base
+"reproducible" until that comparison holds.
