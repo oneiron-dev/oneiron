@@ -24,7 +24,7 @@ const DECLARATIONS: [Declaration<'static>; 3] = [
     },
     Declaration {
         name: "code-mode.d.ts",
-        text: include_str!("../../oneiron/src/task_verb/catalog_fragment.d.ts"),
+        text: include_str!("../../oneiron/src/verbs/generated/catalog_fragment.d.ts"),
     },
     Declaration {
         name: "runtime.d.ts",
@@ -457,7 +457,7 @@ fn run() -> Result<()> {
             "note": "compiled-in defaults, not a process RSS limit"},
         "contract_source_sha256": sha(include_bytes!("../src/lib.rs")),
         "catalog_revision": format!("sha256:{}", sha(DECLARATIONS[1].text.as_bytes())),
-        "catalog_revision_source": include_str!("../../oneiron/src/task_verb/catalog_fragment_revision.rs"),
+        "catalog_revision_source": include_str!("../../oneiron/src/verbs/generated/catalog_fragment_revision.rs"),
         "declarations": declarations, "backends": pins,
         "artifacts": {
             "tsc-rs": serde_json::from_str::<Value>(include_str!("../../../components/tsc-rs/artifacts/manifest.json"))?,
