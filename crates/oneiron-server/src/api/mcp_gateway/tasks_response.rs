@@ -966,6 +966,7 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
+        "tasks.redo" => a.spec.clone().ok_or_else(invalid),
         "vault.commit_message" => a.spec.clone().ok_or_else(invalid),
         "vault.begin_message_stream" => a.spec.clone().ok_or_else(invalid),
         "vault.append_to_stream" => a.spec.clone().ok_or_else(invalid),
@@ -1850,6 +1851,7 @@ fn mcp_agent_verb_input(
         "vault.voices.targets.provision" => a.spec.clone().ok_or_else(invalid),
         "vault.voices.targets.evict" => a.spec.clone().ok_or_else(invalid),
         "vault.voices.inspect" => a.spec.clone().ok_or_else(invalid),
+        "vault.voices.lineage" => a.spec.clone().ok_or_else(invalid),
         "ai.transcribe" => a.spec.clone().ok_or_else(invalid),
         "ai.embed" => a.spec.clone().ok_or_else(invalid),
         "ai.video" => a.spec.clone().ok_or_else(invalid),
@@ -2445,6 +2447,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             if let Some(value) = input.get("task_ref") {
                 arguments.insert("task_ref".to_owned(), value.clone());
             }
+        }
+        "tasks.redo" => {
+            arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.commit_message" => {
             arguments.insert("spec".to_owned(), input.clone());
@@ -4780,6 +4785,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.voices.inspect" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.voices.lineage" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "ai.transcribe" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -6900,6 +6908,20 @@ async fn execute_agent_verb_row(
             served.extend([input.task_ref]);
             let output =
                 oneiron::task_verb::sdk::tasks_accept(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.redo" => {
+            let input: oneiron::task_verb::TaskRedo =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.task_ref]);
+            let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| {
+                oneiron::task_verb::sdk::tasks_redo(memory, input)
+            })
+            .await?;
+            // Derived from the rows its reads listed, on a refusal too.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -18134,6 +18156,20 @@ async fn execute_agent_verb_row(
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.voices.lineage" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.voices.lineage", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::VoiceRenderLineageRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_voices_lineage(server, auth, input).await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
         "ai.transcribe" => {
