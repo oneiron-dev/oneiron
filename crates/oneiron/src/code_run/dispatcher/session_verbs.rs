@@ -34,10 +34,6 @@ use crate::task_verb::sdk::AgentVerb;
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
-/// The code an image hydrate in a room answers until the room keeps
-/// served-form receipts (S01-2).
-const SESSION_SERVED_FORM_UNRECORDED: &str = "session_served_form_unrecorded";
-
 /// The verbs a session-bound run reads through the room's view: an explicit
 /// list, never "every verb that writes nothing". A read joins it only with
 /// its room enumeration and projection (neighbors, claim lists and history,
@@ -61,9 +57,6 @@ enum SessionReadRefusal {
     Door(String),
     /// The read itself refused, with its own Memory code.
     Read(String),
-    /// A hydrate that would serve an image in a resolved form, whose
-    /// served-form receipt the room does not keep yet.
-    ServedFormUnrecorded,
 }
 
 impl SessionReadRefusal {
@@ -71,7 +64,6 @@ impl SessionReadRefusal {
         match self {
             Self::Unbound => AGENT_VERB_DOOR_UNBOUND.to_owned(),
             Self::Door(code) | Self::Read(code) => code,
-            Self::ServedFormUnrecorded => SESSION_SERVED_FORM_UNRECORDED.to_owned(),
         }
     }
 
@@ -121,7 +113,6 @@ impl HostSelfDispatcher<'_> {
                     rows: Some(rows),
                 }));
             }
-            Ok(SessionAnswer::ServedFormUnrecorded) => SessionReadRefusal::ServedFormUnrecorded,
             Err(refused) => SessionReadRefusal::Read(refused.code),
         };
         Ok(refused.denied(SelfEffect::AgentVerb))

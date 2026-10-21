@@ -21,11 +21,10 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::support::{decode_body_json, encode_rmpv};
+use super::support::encode_rmpv;
 use super::*;
 
 use super::read_lane::ReadTargetSlot;
-use super::structural::kind_string_for_type;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, ScopedReadResult};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -43,7 +42,9 @@ use crate::receipt::{PixelPull, ServedForm};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::temporal::TimeRange;
-use crate::vault::ReadMode;
+
+mod hydrated;
+pub(super) use hydrated::serve_hydrated_views;
 
 /// The ASSET body field that holds the bytes.
 const BODY_BYTES: &str = "bytes";
@@ -588,9 +589,9 @@ impl Memory<'_> {
 
     /// Hydrate's half of OF-329: each live image ASSET among `views` with a
     /// text this reader admits is served as [`hydrated_asset`] serves a
-    /// reader that declared no image input. Every other view keeps its body.
-    /// The rungs served are recorded, in one write, before the hydrate
-    /// answers.
+    /// reader that declared no image input ([`serve_hydrated_views`]). Every
+    /// other view keeps its body. The rungs served are recorded, in one
+    /// write, before the hydrate answers.
     pub(super) fn serve_hydrated_assets(
         &self,
         lane: &ScopedRead<'_>,
@@ -598,23 +599,7 @@ impl Memory<'_> {
         views: &mut [EntityView],
         receipt: &mut ScopedReadReceipt,
     ) -> MemoryResult<()> {
-        let asset_kind = kind_string_for_type(ENTITY_TYPE_ASSET);
-        let consumer = AssetConsumer::hydrate_reader(false);
-        let mut served_forms = Vec::new();
-        for (target, view) in targets.iter().zip(views) {
-            let Some((asset, ReadMode::Live)) = target else {
-                continue;
-            };
-            if view.kind != asset_kind {
-                continue;
-            }
-            let served = hydrated_asset(lane, *asset, &consumer, None, &mut |_| true)?;
-            receipt.restrict_with(&served.receipt);
-            if let HydratedAsset::Served { body, form, .. } = served.value {
-                view.body = decode_body_json(&body);
-                served_forms.push(form);
-            }
-        }
+        let served_forms = serve_hydrated_views(lane, targets, views, receipt)?;
         lane.commit_served_forms(&served_forms)?;
         Ok(())
     }

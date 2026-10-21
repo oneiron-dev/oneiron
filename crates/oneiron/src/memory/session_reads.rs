@@ -13,19 +13,19 @@
 //! made of its caller, and the read applies it as every other read does.
 //!
 //! Neighbors, claim lists and history, hybrid search and recall are later
-//! opt-ins: their enumeration still reads base. A hydrate that would serve an
-//! image in a resolved form needs a served-form receipt the room does not
-//! keep yet (S01-2), so it answers [`SessionAnswer::ServedFormUnrecorded`].
+//! opt-ins: their enumeration still reads base. A hydrate that serves an image
+//! in a resolved form keeps each form's served-form receipt in the room before
+//! it answers, as a canonical hydrate keeps it in the vault (S01-2b).
 
 use std::cell::Cell;
 use std::time::Instant;
 
+use super::asset_resolve::serve_hydrated_views;
 use super::read_lane::ReadTargetSlot;
-use super::structural::kind_string_for_type;
 use super::support::short_ref_in_txn;
 use super::{
-    EntityView, LexicalHit, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult, caps,
-    resolve_entity_ref,
+    EntityView, LexicalHit, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError,
+    MemoryResult, caps, resolve_entity_ref,
 };
 
 use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadActorKey, ScopedReadResult};
@@ -33,6 +33,8 @@ use crate::entity_id::EntityId;
 use crate::lens::{RecordRefPreview, ResolveRecordRefRequest};
 use crate::off_record::{OffRecordSession, SessionWriteRoute};
 use crate::pipeline::ScoredEntity;
+use crate::receipt::ServedForm;
+use crate::session_overlay::RouteTarget;
 use crate::store::SessionStoreView;
 use crate::task_verb::sdk::{EntityRequest, HydrateRequest, QueryBm25Request};
 use crate::vault::{ReadMode, RevisionRef};
@@ -59,10 +61,6 @@ pub(crate) enum SessionAnswer {
         output: serde_json::Value,
         rows: Vec<EntityId>,
     },
-    /// A hydrate that would serve an image in a resolved form. That form's
-    /// served-form receipt has no home in the room yet, so the read gives no
-    /// answer rather than one without its receipt.
-    ServedFormUnrecorded,
 }
 
 /// One call's read of a room: the room, the run's captured route, the
@@ -125,9 +123,7 @@ impl<'s> SessionReadContext<'s> {
             SessionRead::Hydrate => {
                 let input: HydrateRequest = decode(input)?;
                 caps::check_batch_len("refs", input.refs.len())?;
-                let Some(read) = self.hydrate(&memory, &input.refs)? else {
-                    return Ok(SessionAnswer::ServedFormUnrecorded);
-                };
+                let read = self.hydrate(&memory, &input.refs)?;
                 let rows = read.value.iter().filter_map(view_id).collect();
                 (encode(&read)?, rows)
             }
@@ -224,19 +220,20 @@ impl<'s> SessionReadContext<'s> {
 
     /// `vault.hydrate` in the room: every ref resolved and read in one
     /// snapshot, a ref that reads nothing `NOT_FOUND` under the read's
-    /// receipt, as `Memory::hydrate` answers. `None` when a view is an image
-    /// ASSET the hydrate would serve in a resolved form.
+    /// receipt, as `Memory::hydrate` answers. A live image ASSET is served in
+    /// its resolved form, as a canonical hydrate serves it (OF-329), each
+    /// form served first kept in the room ([`Self::keep_served_forms`]).
     fn hydrate(
         &self,
         memory: &Memory<'_>,
         refs: &[String],
-    ) -> MemoryResult<Option<ScopedReadResult<Vec<EntityView>>>> {
+    ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
         let lane = self.lane(ClaimReadStatus::Recorded);
         let targets = refs
             .iter()
             .map(|reference| self.target(reference))
             .collect::<MemoryResult<Vec<_>>>()?;
-        let ScopedReadResult { value, receipt } = memory.read_views(&lane, &targets)?;
+        let ScopedReadResult { value, mut receipt } = memory.read_views(&lane, &targets)?;
         let mut views = Vec::with_capacity(value.len());
         for (reference, view) in refs.iter().zip(value) {
             let Some(view) = view else {
@@ -247,19 +244,38 @@ impl<'s> SessionReadContext<'s> {
             };
             views.push(view);
         }
-        let asset = kind_string_for_type(crate::registry::ENTITY_TYPE_ASSET);
-        for (target, view) in targets.iter().zip(&views) {
-            if let Some((id, ReadMode::Live)) = target
-                && view.kind == asset
-                && super::asset_image_in_lane(&lane, *id)?.is_some()
-            {
-                return Ok(None);
-            }
-        }
-        Ok(Some(ScopedReadResult {
+        let forms = serve_hydrated_views(&lane, &targets, &mut views, &mut receipt)?;
+        self.keep_served_forms(&lane, &forms)?;
+        Ok(ScopedReadResult {
             value: views,
             receipt,
-        }))
+        })
+    }
+
+    /// Keeps `forms`, the forms this call's hydrate served on `lane`, in the
+    /// room before the hydrate answers (WILL L11-01 S01-2b): each one a
+    /// served-form receipt staged on the run's captured route
+    /// ([`ScopedRead::commit_served_forms_in_room`]). A hydrate that served no
+    /// form keeps, allocates and checks nothing, and answers as it did. A
+    /// room back on record lands its route in base, where nothing proves
+    /// the forms' evidence, so that hydrate refuses ([`served_forms_on_base`])
+    /// rather than answer without its receipts.
+    ///
+    /// # Errors
+    ///
+    /// The route's own refusal once the room flipped, closed or keeps no
+    /// record; [`served_forms_on_base`]; the holder's refusal; the room's
+    /// budget refusal; storage errors.
+    fn keep_served_forms(&self, lane: &ScopedRead<'_>, forms: &[ServedForm]) -> MemoryResult<()> {
+        if forms.is_empty() {
+            return Ok(());
+        }
+        self.route.revalidate()?;
+        if self.route.target() == RouteTarget::Base {
+            return Err(served_forms_on_base());
+        }
+        lane.commit_served_forms_in_room(self.session, self.route, forms)?;
+        Ok(())
     }
 
     /// `vault.refs.resolve` in the room: the same bounded preview and the
@@ -425,6 +441,19 @@ pub(crate) fn scoped_session_text(
     };
     lane.end_recall_plan()?;
     Ok((scores?, started))
+}
+
+/// The refusal of a room's hydrate that served an image in a resolved form
+/// on a route that lands in base (WILL L11-01 S01-2b): nothing proves in base
+/// the evidence its served-form receipts would name, so the read gives no
+/// answer rather than one without them. A hydrate that served no form, and
+/// every other read, still answers there.
+fn served_forms_on_base() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "a hydrate in a room on record keeps no served-form receipt for its image forms",
+        &["Hydrate the image from a run outside the room, or with no image ASSET among its refs."],
+    )
 }
 
 /// A room's own short ref, `s<n>:<hash>`: the alias a room mints for each

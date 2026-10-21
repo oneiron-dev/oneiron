@@ -138,8 +138,8 @@ pub(crate) use self::ledgers::{
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
 pub(crate) use self::record::{
     canonical_records_in_window, put_served_form_in_txn, put_suppression_in_txn,
-    stage_receipt_record_index, suppression_for_intent, suppression_receipt_id,
-    validate_receipt_record_put,
+    served_form_carrier, stage_receipt_record_index, suppression_for_intent,
+    suppression_receipt_id, validate_receipt_record_put,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::record::{validate_receipt_record_body, validate_receipt_record_time};
