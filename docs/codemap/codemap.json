@@ -40109,7 +40109,7 @@
      "path": "src/merge_queue/candidate_intake.rs",
      "purpose": "The queue's accepted-push candidate intake (FIX 6869, G4 PR2): the one server port the checker's drain calls…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -40180,7 +40180,7 @@
      "purpose": "The checker's companion rows and their attempt lifecycle (FIX 6868)",
      "surface": {
       "const": 2,
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 3,
       "fn": 4,
       "struct": 3
@@ -40316,7 +40316,7 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 1
      }
     },
@@ -40366,6 +40366,39 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/merge_queue/source.rs",
+     "purpose": "The served queue source's one resolver (FIX 6869): which root a queue opens at the owner's doors, the driver…",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/source_materialize.rs",
+     "purpose": "The served queue source's materialization (FIX 6869): the one place its engine-owned detached worktree is…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ServedQueueSource"
+     ],
+     "path": "src/merge_queue/source_types.rs",
+     "purpose": "The served queue source's names (FIX 6869): which authenticated import a served repository's checked queue…",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/merge_queue/staging.rs",
      "purpose": "Bounded speculation, materialization and cleanup through the shared repo writer",
      "surface": {
@@ -40380,7 +40413,7 @@
      "path": "src/merge_queue/storage.rs",
      "purpose": "Repo-scoped queue/batch rows; every transition is under the repo single writer",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 3
      }
     },
@@ -69469,7 +69502,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 28,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -70143,7 +70176,7 @@
    },
    "over_bar": 182,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4452,
+   "source_files": 4455,
    "test_files": 902
   },
   "oneiron-android": {
