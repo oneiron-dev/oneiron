@@ -20,6 +20,7 @@ use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, ErrorKind, Result};
+use crate::federation::git_push::{GitPushRefChange, GitPushStamp};
 use crate::git_wire::{GitOid, GitRefName, GitWire, lock_repository};
 use crate::origin::lfs::{
     DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsOid, LfsPushedPointer, lfs_repo_id,
@@ -31,6 +32,8 @@ use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
+
+mod push_admission;
 
 // A local operation journal, not an exported claim or caller-supplied authority.
 // Its initial row is committed while pre-receive still blocks every ref effect.
@@ -177,6 +180,8 @@ pub(super) struct ReceivePackIntent {
     pub(super) transport_bytes: Option<(u64, u64)>,
     pub(super) refs: Vec<ReceivePackIntentRef>,
     pointers: Vec<(String, String, u64)>,
+    #[serde(default)]
+    push: Option<GitPushStamp>,
 }
 
 impl ReceivePackIntent {
@@ -310,6 +315,7 @@ impl Vault {
         repo: &RepoRef,
         stamp: &DoorAdmissionStamp,
         door: &DoorWindowReport,
+        changes: Option<&[GitPushRefChange]>,
     ) -> Result<()> {
         let RepoRef::LocalFolder { path, .. } = repo else {
             return Err(receive_pack_provenance_refused("intent is not local"));
@@ -337,6 +343,7 @@ impl Vault {
                 "intent was not admitted and scanned",
             ));
         }
+        let push = push_admission::admitted_push(&admission, stamp)?;
         // The serving thread holds the coordinator while this hook runs.
         // Do not acquire that thread's lock here; only verify its epoch.
         self.require_receive_pack_host_at(&root, stamp.origin_authority.as_ref())?;
@@ -377,6 +384,7 @@ impl Vault {
                     )
                 })
                 .collect(),
+            push: stamp.push.clone(),
         };
         let key = ReceivePackIntentKey {
             repo_identity_hex: receive_pack_repo_identity_hex(self, &root)?,
@@ -389,6 +397,7 @@ impl Vault {
             if INTENTS.contains(&self.store, wtxn, &key)? {
                 return Err(receive_pack_provenance_refused("intent already exists"));
             }
+            self.recheck_git_push_in_txn(wtxn, push, repo, changes)?;
             INTENTS.put(&self.store, wtxn, &key, &intent)?;
             Ok(())
         })
@@ -634,15 +643,7 @@ impl Vault {
             return Ok((None, None));
         }
         let root = Path::new(&intent.repo_root);
-        let stamp = DoorAdmissionStamp {
-            principal_ref: intent.actor_id.clone(),
-            credential_fingerprint: None,
-            method: "bearer+registered-principal",
-            admitted_at: intent.admitted_at,
-            origin_authority: intent.origin_authority.clone(),
-            operation_id: EntityId::from_hex(&intent.operation_id)
-                .map_err(|_| Error::CorruptedIndex("receive-pack operation id"))?,
-        };
+        let stamp = push_admission::recovered_stamp(intent)?;
         // Recovery uses the accepted host, never the current pusher or a new
         // lease. The producer receipt seals the journal's epoch binding too.
         let admission = {

@@ -16,6 +16,7 @@ use axum::http::HeaderValue;
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
 use axum::response::Response;
+use oneiron::federation::GitPushCaller;
 use oneiron::origin::residence::{
     ORIGIN_WRITER_ERASED_REFUSAL, OriginAuthority, OriginHostAuthority, OriginResidence,
 };
@@ -47,12 +48,15 @@ const GIT_HTTP_BODY_PIECE: usize = 64 * 1024;
 /// outlives this handler whenever the response streams. Past the bound the
 /// exchange waits its turn; a push first waits for its repository's turn,
 /// behind the pushes to that repository that came before it, so no worker
-/// thread ever sits waiting for a repository.
+/// thread ever sits waiting for a repository. A push is first decided
+/// (G1-PUSH) as `caller`, the pusher the gate authenticated, before it
+/// queues; the engine decides it again under the coordinator.
 pub(super) async fn run_serve(
     server: Arc<SyncServer>,
     repo: String,
     request: smart_http::ServeRequest,
     body: Body,
+    caller: Option<GitPushCaller>,
 ) -> Response {
     // A push runs under the lease this host holds over the repository, read
     // from the vault's own authority row and this install's machine, never
@@ -75,6 +79,12 @@ pub(super) async fn run_serve(
     } else {
         None
     };
+    if request.is_push()
+        && let Some(refused) =
+            super::gate::preflight(&server, &repo, &request, caller.as_ref()).await
+    {
+        return refused;
+    }
     let principal = request.remote_user.as_deref();
     // A repository that does not resolve has no line; the exchange says why.
     let turn = match request
@@ -132,13 +142,14 @@ pub(super) async fn run_serve(
         // serve path persists landed admission and observed outcome evidence;
         // this bridge supplies neither a claim id nor an alternate credential.
         let Some(status_memory) = held else {
-            return Some(smart_http::serve_bounded_with_authority(
+            return Some(smart_http::serve_bounded_as(
                 vault,
                 &repo,
                 &request,
                 smart_http::DoorSeam::Landed,
                 bounds,
                 authority.as_ref(),
+                caller.as_ref(),
                 &mut reader,
                 &mut sink,
             ));
@@ -149,13 +160,14 @@ pub(super) async fn run_serve(
                 .with_floor(Some(floor)),
             failed: None,
         };
-        let served = smart_http::serve_bounded_with_authority(
+        let served = smart_http::serve_bounded_as(
             vault,
             &repo,
             &request,
             smart_http::DoorSeam::Landed,
             bounds,
             authority.as_ref(),
+            caller.as_ref(),
             &mut reader,
             &mut holding,
         );
@@ -383,6 +395,13 @@ pub(super) fn serve_failure(
 ) -> Response {
     if let Ok(Err(error)) = &joined {
         tracing::warn!(kind = ?error.kind(), "git smart-http worker failed");
+    }
+    if let Ok(Err(oneiron::Error::Code(oneiron::error::CodeError::GitPushCapabilityRequired {
+        repo,
+        reason,
+    }))) = &joined
+    {
+        return super::gate::capability_refused(repo, reason);
     }
     let (status, message) = match joined {
         Ok(Ok(_)) => (

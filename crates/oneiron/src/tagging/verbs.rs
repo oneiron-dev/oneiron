@@ -19,7 +19,7 @@ use super::{OutputRefusal, TaggingMode};
 use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::claim::ClaimReadStatus;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::memory::extraction::SpeakerTarget;
+use crate::memory::extraction::{EncoderExecution, SpeakerTarget};
 use crate::memory::{Memory, MemoryError, MemoryResult, resolve_entity_ref};
 use crate::{EntityId, Error};
 
@@ -164,6 +164,8 @@ pub struct TaggingTraceView {
     pub try_number: u32,
     /// Wall time of the tagger call in microseconds, when one was made.
     pub call_micros: Option<u64>,
+    /// What ran the call, when a worker was dispatched for it.
+    pub execution: Option<EncoderExecution>,
     pub outcome: TaggingOutcomeView,
 }
 
@@ -447,6 +449,7 @@ fn trace_view(record: &TaggingTraceRecord) -> TaggingTraceView {
         input_hash: trace.input_hash.clone(),
         try_number: trace.try_number,
         call_micros: trace.call_micros,
+        execution: trace.execution.clone(),
         outcome: outcome_view(&trace.outcome),
     }
 }

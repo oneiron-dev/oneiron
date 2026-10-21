@@ -2249,14 +2249,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "AttemptReadSet"
+      "AttemptReadSet",
+      "ReadSetProducer"
      ],
      "path": "src/attempt_queue/read_set.rs",
      "purpose": "FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 1,
-      "struct": 1
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -19852,7 +19854,7 @@
      "path": "src/credential_door/checkout_ticket.rs",
      "purpose": "Checkout redemption rights",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -22828,7 +22830,7 @@
      "path": "src/dreamer_runner/maintenance/code_fix/engine.rs",
      "purpose": "A publisher's engine candidate replayed against the real failure (FIX 1661, 2144, 6357): one matched pair on…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -22859,7 +22861,7 @@
      "path": "src/dreamer_runner/maintenance/code_fix/publisher.rs",
      "purpose": "A publisher's candidates beyond an instruction (FIX 1661, 2144): a candidate engine build, or a patch over…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 7,
       "fn": 3,
       "struct": 2,
@@ -23339,6 +23341,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "StewardshipDraftOutcome",
       "StewardshipDraftRequest",
       "StewardshipDraftRoute",
       "StewardshipRule",
@@ -23349,7 +23352,8 @@
      "surface": {
       "const": 2,
       "crate-vis": 4,
-      "fn": 4,
+      "enum": 1,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -27474,6 +27478,65 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/git_push/admission.rs",
+     "purpose": "The one receive-pack decision (FIX 6867, G1-PUSH): who may push into a served repository, read in the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GitPushAdmission",
+      "GitPushCaller",
+      "GitPushCredential",
+      "GitPushSeal"
+     ],
+     "path": "src/federation/git_push/caller.rs",
+     "purpose": "The receive-pack decision's values (FIX 6867, G1-PUSH): the pusher a host transport authenticated, the…",
+     "surface": {
+      "crate-vis": 16,
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/git_push/mint.rs",
+     "purpose": "The owner's mint and revoke of a `git_push` Grant (FIX 6867, G1-PUSH): `vault.repo.git_push.mint` and…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/git_push/mod.rs",
+     "purpose": "The owner's `git_push` Grant (FIX 6867, owner ruling G1-PUSH = D, as the owner refined it 10-21: \"the Grant…",
+     "surface": {
+      "crate-vis": 10,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/git_push/registry.rs",
+     "purpose": "The GitPush grants as `vault.consent.registry` reviews them (FIX 6867, G1-PUSH): one row per live grant, in…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -27487,10 +27550,21 @@
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
       "const": 4,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 3,
       "fn": 19,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/grant/git_push.rs",
+     "purpose": "The `grant_kind` and `git_push_bounds` keys of the FEDERATION_GRANT body (FIX 6867, G1-PUSH): a GitPush…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -27587,9 +27661,9 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 2,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -36729,18 +36803,24 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ContextLink",
       "CorefLink",
+      "EncoderAttempt",
+      "EncoderExecution",
       "EncoderGolden",
       "EncoderInput",
       "EncoderMessage",
       "EncoderOutput",
       "EncoderParity",
       "EncoderTurn",
+      "ExecutionCompute",
+      "ExecutionPick",
+      "ExecutionRuntime",
       "ExtractionEncoder",
+      "ExtractionWork",
       "NerSpan",
       "ShadowTrace",
       "SpeakerLink",
@@ -36751,9 +36831,9 @@
      "path": "src/memory/extraction/types.rs",
      "purpose": "Typed serving payloads and observable extraction receipts",
      "surface": {
-      "enum": 2,
-      "fn": 5,
-      "struct": 12,
+      "enum": 6,
+      "fn": 10,
+      "struct": 14,
       "trait": 1
      }
     },
@@ -40823,7 +40903,7 @@
      "path": "src/origin/smart_http/hooks.rs",
      "purpose": "The per-request door-owned hook directory and the vetted pre-receive script it carries",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 2,
       "struct": 1
      }
@@ -40842,6 +40922,16 @@
       "enum": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/intent/push_admission.rs",
+     "purpose": "The push authority on a receive-pack intent (FIX 6867, G1-PUSH): the final writer takes the stamp's…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -40926,7 +41016,7 @@
      "purpose": "Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908)",
      "surface": {
       "crate-vis": 3,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -40953,11 +41043,32 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/push_admission.rs",
+     "purpose": "Where the receive-pack decision (FIX 6867, G1-PUSH) meets the serving plane: the host's checked serving…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/origin/smart_http/push_cert_tests.rs",
      "purpose": "Ticket 7: `git receive-pack` writes a push certificate into the object store as a blob before any hook runs…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/push_paths.rs",
+     "purpose": "A checkout push's changed paths (FIX 6867, G1-PUSH): the stream the vetted hook lists while the objects are…",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -40995,7 +41106,7 @@
      "path": "src/origin/smart_http/serve.rs",
      "purpose": "One-request orchestration: coordinator lock, reconcile, threaded exchange, finish",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6,
       "struct": 1,
       "trait": 1
@@ -57460,7 +57571,7 @@
      "path": "src/tagging/trace.rs",
      "purpose": "One trace per settled marker attempt",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "struct": 1
      }
@@ -58786,7 +58897,7 @@
      "surface": {
       "enum": 1,
       "fn": 10,
-      "re-export": 75,
+      "re-export": 76,
       "struct": 39
      }
     },
@@ -59287,7 +59398,24 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1123
+      "fn": 1125
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GitPushGrantMintInput",
+      "GitPushGrantMintOutput",
+      "GitPushGrantRevokeInput",
+      "GitPushGrantRevokeOutput",
+      "GitPushGrantView"
+     ],
+     "path": "src/task_verb/sdk_git_push_grant.rs",
+     "purpose": "The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`…",
+     "surface": {
+      "fn": 2,
+      "struct": 5
      }
     },
     {
@@ -63158,7 +63286,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CrawlCompletion",
@@ -63220,8 +63348,8 @@
      "purpose": "The managed (hosted) node's web-fetch egress guard (SCAN C447)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
-      "fn": 3,
+      "crate-vis": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -63245,6 +63373,14 @@
      "surface": {
       "crate-vis": 16
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_fetch/rungs.rs",
+     "purpose": "The built-in rungs' [`Renderer`] impls",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -66697,7 +66833,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 43,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66963,7 +67099,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 78,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67432,7 +67568,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 202,
+     "files": 203,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67565,9 +67701,9 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)"
     },
     "web_fetch": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
@@ -67600,9 +67736,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 186,
+   "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4245,
+   "source_files": 4256,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67677,6 +67813,16 @@
       "enum": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/agent_grant_act/git_push.rs",
+     "purpose": "The owner's mint of a `git_push` Grant in his one signed Grant act (FIX 6867, G1-PUSH): the same…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -68225,12 +68371,29 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "FederationGrantKind",
+      "GitPushBounds",
+      "GitPushRepo"
+     ],
+     "path": "src/federation/git_push.rs",
+     "purpose": "The `git_push` Grant capability (FIX 6867, owner ruling G1-PUSH = D, as the owner refined it 10-21): raw git…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/federation/mod.rs",
      "purpose": "Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction…",
      "surface": {
-      "mod": 6,
-      "re-export": 3
+      "mod": 7,
+      "re-export": 4
      }
     },
     {
@@ -68350,7 +68513,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68364,7 +68527,7 @@
      "purpose": "Credential-door bounds the authority log's slip checks share with the door itself"
     },
     "federation": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68380,7 +68543,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 44,
+   "source_files": 46,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -71506,7 +71669,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CodeError"
@@ -77381,7 +77544,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1094
+      "fn": 1096
      }
     },
     {
@@ -78596,7 +78759,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1095
+      "fn": 1097
      }
     },
     {
@@ -81337,6 +81500,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/chat_emit.rs",
+     "purpose": "What a live chat answer's context leaves on record (FIX 6921): the emit receipt `ai.reply` keeps, and the…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -81383,7 +81556,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -82526,6 +82699,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/git_push_doors.rs",
+     "purpose": "The host doors of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint` and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/goal_optimize_doors.rs",
      "purpose": "Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof",
      "surface": {
@@ -82599,7 +82782,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 182
+      "crate-vis": 183
      }
     },
     {
@@ -83377,7 +83560,17 @@
      "path": "src/api/git_http/gate.rs",
      "purpose": "Authentication gate and service canonicalization for Git smart-HTTP",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/git_http/gate/push.rs",
+     "purpose": "The push half of the smart-HTTP gate (FIX 6867, G1-PUSH): the pusher's sidecar, built from the credential…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -86986,16 +87179,29 @@
       "OneironerConfigOverride",
       "OneironerMode",
       "OneironerProvider",
-      "OneironerRuntime",
       "OneironerTier"
      ],
      "path": "src/config/oneironer.rs",
      "purpose": "The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity, native runtime and label table",
      "surface": {
       "crate-vis": 2,
-      "enum": 4,
-      "fn": 10,
+      "enum": 3,
+      "fn": 9,
+      "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OneironerRuntime"
+     ],
+     "path": "src/config/oneironer/runtime.rs",
+     "purpose": "The native runtime a local tagger runs on",
+     "surface": {
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -89131,9 +89337,23 @@
      "purpose": "The microVM adapter's host half: one Firecracker VM per vault",
      "surface": {
       "enum": 1,
-      "fn": 14,
-      "re-export": 2,
+      "fn": 15,
+      "re-export": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VmExitWatch"
+     ],
+     "path": "src/managed/vm_host/exit.rs",
+     "purpose": "A watch on one VMM generation's exit (FIX 7047): a pidfd taken as the VMM spawns, which any number of tasks…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -89255,7 +89475,8 @@
      "path": "src/managed/vm_outbox/host.rs",
      "purpose": "The host's end of a vault VM's outbox carrier: an attachment bound to one VM's guest-initiated socket for…",
      "surface": {
-      "fn": 4,
+      "crate-vis": 1,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -89297,7 +89518,7 @@
      "path": "src/managed/vm_outbox/store.rs",
      "purpose": "One end's durable carrier state: a record per member and its next transfer id, in a directory only that…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 13
      }
     },
     {
@@ -90233,20 +90454,70 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/oneironer/endpoint.rs",
-     "purpose": "The `endpoint` provider: a tagger server on this machine that speaks the slot's contract",
+     "path": "src/oneironer/dispatcher/mod.rs",
+     "purpose": "The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/dispatcher/policy.rs",
+     "purpose": "The dispatcher's policy (Engine 10-21, FIX 6755 rulings 3 and 4): the one definition of each hold, batch cap…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/dispatcher/worker.rs",
+     "purpose": "One worker: a model loaded on one engine, or the one opaque endpoint, on its own thread",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/oneironer/engines.rs",
+     "path": "src/oneironer/endpoint.rs",
+     "purpose": "The `endpoint` provider: a tagger server on this machine that speaks the slot's contract",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/engines/calibration.rs",
+     "purpose": "The bundle's reference cases, the bar an engine's answers must clear, the measurement of one engine against…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/engines/mod.rs",
      "purpose": "The slot's engines, and which one serves on this machine (ARCH-0036, \"Several engines, one default per…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/engines/rows.rs",
+     "purpose": "This machine's measured engine rows: where they live, how they are read and written, and what keys them",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -90256,7 +90527,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -92341,7 +92612,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 487,
+     "files": 490,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92418,7 +92689,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92635,7 +92906,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 67,
+     "files": 68,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92663,7 +92934,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 13,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92791,7 +93062,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 979,
+   "source_files": 989,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -94120,6 +94391,7 @@
       "EmbeddingSpaceProbes",
       "EmbeddingSpaceRequest",
       "EmbeddingSpacesView",
+      "EncoderExecution",
       "EncoderOutput",
       "EngineSwitchRecord",
       "EntityMentionRequest",
@@ -94222,6 +94494,9 @@
       "EvidenceVerdict",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
+      "ExecutionCompute",
+      "ExecutionPick",
+      "ExecutionRuntime",
       "ExpectInput",
       "ExpectOutput",
       "ExpectedSpend",
@@ -94385,6 +94660,12 @@
       "GeneratedUiStatePatch",
       "GeomPath",
       "GeometryProps",
+      "GitPushGrantMintInput",
+      "GitPushGrantMintOutput",
+      "GitPushGrantRevokeInput",
+      "GitPushGrantRevokeOutput",
+      "GitPushGrantView",
+      "GitPushRepo",
       "GoalAxis",
       "GoalAxisKind",
       "GoalAxisReport",
@@ -96733,8 +97014,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 913,
-      "struct": 2828
+      "enum": 916,
+      "struct": 2835
      }
     },
     {

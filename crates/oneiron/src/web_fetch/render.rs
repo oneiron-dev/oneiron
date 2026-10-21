@@ -232,7 +232,8 @@ pub(super) fn renderer_request_url(raw: &str) -> RendererResult<String> {
     Ok(url.to_string())
 }
 
-/// Renders one `reqwest` failure into a credential-safe diagnostic.
+/// Renders one `reqwest` failure into a credential-safe rung error, its
+/// diagnostic `{context}: {detail}`.
 ///
 /// A transport error is hostile URL-bearing input, not a safe display string.
 /// `reqwest` keeps the URL of the request that failed and prints it verbatim,
@@ -246,9 +247,15 @@ pub(super) fn renderer_request_url(raw: &str) -> RendererResult<String> {
 /// remaining text is scrubbed of those exact secrets rather than trusted to be
 /// free of them. An empty username or password is not a secret and is never
 /// substituted for.
-pub(super) fn redacted_transport_detail(error: reqwest::Error) -> String {
-    // A host's egress guard failed this connection (SCAN C447): the detail
-    // names it with the engine's own text, never the chain's.
+///
+/// When a host's egress guard failed the connection (SCAN C447) — its
+/// resolver's refusal of an address, a redirect hop's included, or its
+/// redirect policy's — the error is the typed
+/// [`RendererErrorKind::HostedInfrastructure`](super::RendererErrorKind::HostedInfrastructure),
+/// which ends the ladder as [`WebFetchError::HostedInfrastructure`]
+/// (FIX 6101), its detail named with the engine's own text, never the
+/// chain's. Any other failure is a transport error.
+pub(super) fn transport_failure(context: &str, error: reqwest::Error) -> RendererError {
     let refused =
         std::iter::successors(std::error::Error::source(&error), |&source| source.source()).any(
             |source| {
@@ -259,15 +266,18 @@ pub(super) fn redacted_transport_detail(error: reqwest::Error) -> String {
                         .is_some_and(|inner| inner.is::<super::HostedInfrastructureRefusal>())
             },
         );
-    let detail = transport_detail(error);
+    let detail = format!("{context}: {}", transport_detail(error));
     if refused {
-        format!("{detail}: {}", super::HostedInfrastructureRefusal)
+        RendererError::hosted_infrastructure(format!(
+            "{detail}: {}",
+            super::HostedInfrastructureRefusal
+        ))
     } else {
-        detail
+        RendererError::transport(detail)
     }
 }
 
-/// [`redacted_transport_detail`]'s redaction of the error itself.
+/// [`transport_failure`]'s redaction of the error itself.
 fn transport_detail(error: reqwest::Error) -> String {
     let Some(url) = error.url().cloned() else {
         // No URL was ever attached, so there is none to disclose.
@@ -285,7 +295,7 @@ fn transport_detail(error: reqwest::Error) -> String {
     format!("{detail} (target {target})")
 }
 
-/// Renders one response-body read failure into a credential-safe diagnostic.
+/// Renders one response-body read failure into a credential-safe rung error.
 ///
 /// A blocking `reqwest` body read reaches this module as [`std::io::Error`]
 /// carrying the transport's own error inside it, and that inner error is
@@ -294,14 +304,15 @@ fn transport_detail(error: reqwest::Error) -> String {
 /// and sent through the same seam. Anything else is reported by its
 /// [`std::io::ErrorKind`], a fixed enum that can carry no URL at all, rather
 /// than by a nested message this module cannot vouch for.
-fn redacted_read_detail(error: std::io::Error) -> String {
+fn read_failure(error: std::io::Error) -> RendererError {
+    const CONTEXT: &str = "web fetch response body was unreadable";
     let kind = format!("{:?}", error.kind());
     let Some(source) = error.into_inner() else {
-        return kind;
+        return RendererError::transport(format!("{CONTEXT}: {kind}"));
     };
     match source.downcast::<reqwest::Error>() {
-        Ok(transport) => redacted_transport_detail(*transport),
-        Err(_) => kind,
+        Ok(transport) => transport_failure(CONTEXT, *transport),
+        Err(_) => RendererError::transport(format!("{CONTEXT}: {kind}")),
     }
 }
 
@@ -319,12 +330,7 @@ pub(super) fn read_capped_body(source: impl Read, limit: NonZeroUsize) -> Render
     let read = source
         .take(ceiling)
         .read_to_end(&mut body)
-        .map_err(|error| {
-            RendererError::transport(format!(
-                "web fetch response body was unreadable: {}",
-                redacted_read_detail(error)
-            ))
-        })?;
+        .map_err(read_failure)?;
     if read > limit {
         return Err(RendererError::invalid_response(format!(
             "web fetch response body exceeded the {limit} byte ceiling"

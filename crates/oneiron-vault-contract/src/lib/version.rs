@@ -126,6 +126,22 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// `identity` and `observation`, with its `state` and its `data_present` or
 /// `reason`. No reader of a record without them is kept. Supervisor and vault
 /// move to v3 together; no v2 reader is kept.
+///
+/// VM backup-label registration (FIX 7046): a vault VM's outbox companion
+/// names its engine's registered backup label on the carrier
+/// ([`VmOutboxFrame::BackupRegistered`](crate::vm_outbox::VmOutboxFrame::BackupRegistered)),
+/// and the host keeps the last one it was told for the vault its attachment
+/// is bound to, which the host library's `read_vm_backup_label` reads. It
+/// carries a build floor, at the engine revision it merged in: carrier
+/// revision 2 ([`VM_OUTBOX_WIRE_REVISION`](crate::vm_outbox::VM_OUTBOX_WIRE_REVISION))
+/// makes the frame's `label` required, and each end refuses the other's
+/// revision 1 at the hello, with no reader of it kept. So the host library and
+/// the installed guest image and its companion are all at or after the
+/// floor, and a supervisor that accepts an image by its outbox revision (LC's
+/// image acceptance, revision 1 today) moves to 2 at the floor in its
+/// consuming change. An image before the floor, or one whose engine registered
+/// no backup plan, gives no binding, and none is guessed from a backup's file
+/// name. No `Ping` field is added and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.
