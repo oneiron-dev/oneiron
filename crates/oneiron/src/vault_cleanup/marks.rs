@@ -107,6 +107,11 @@ pub(super) fn mark_in_txn(
     Ok(raw_in_txn(store, txn, id)?.and_then(|raw| CleanupMark::decode(&raw)))
 }
 
+/// The full `vault_meta` key of `id`'s mark row.
+pub(super) fn mark_key(id: &[u8; 16]) -> Vec<u8> {
+    MARK.key_bytes(id)
+}
+
 pub(super) fn put_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,

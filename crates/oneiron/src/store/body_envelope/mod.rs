@@ -57,7 +57,8 @@ pub(crate) use self::reader::BodyFile;
 pub(crate) use self::response::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
     bind_response_in_txn, carrier_row, erase_response_owner_in_txn, release_response_in_txn,
-    response_binding_in_txn, response_carrier,
+    response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
+    settle_shared_response_in_txn,
 };
 pub(crate) use self::retention::{
     INLINE_ASSETS, erase_bodies_for_owner_in_txn, erase_bodies_in_txn, note_settled_inline_in_txn,

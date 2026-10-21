@@ -198,7 +198,8 @@ pub(crate) use body_envelope::{
 pub(crate) use body_envelope::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
     bind_response_in_txn, carrier_row, erase_response_owner_in_txn, release_response_in_txn,
-    response_binding_in_txn, response_carrier,
+    response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
+    settle_shared_response_in_txn,
 };
 #[cfg(unix)]
 pub(crate) use body_store::{
@@ -227,6 +228,15 @@ pub(crate) use key_custody::{
     PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
     TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
     standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
+};
+// FIX 6706 (L04 half): world pad compartments, for L03's pad hydration.
+#[allow(
+    unused_imports,
+    reason = "L03 02A's pad hydration (FIX 6706) calls these"
+)]
+pub(crate) use key_custody::{
+    OpenedWorldPads, PadRecipients, SealedWorldPads, WorldPadScope, open_world_pad_compartment,
+    seal_world_pad_compartment,
 };
 pub(crate) use key_encoding::*;
 // KS-3: the known-value index's master and history in typed custody.

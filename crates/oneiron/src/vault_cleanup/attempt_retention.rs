@@ -74,6 +74,29 @@ pub(crate) fn refresh_archived_attempt_in_txn(
     marks::put_in_txn(store, txn, id.as_bytes(), moved)
 }
 
+/// [`refresh_archived_attempt_in_txn`] over a checkpoint image's sorted
+/// `vault_meta` rows (FIX 7115): `id`'s mark moves to `revision` (the BLAKE3
+/// of the bytes its row lands as) when it binds `bound`, the revision of the
+/// bytes its row was carried as, so a restore that lands the row rewritten
+/// (unleased, or its erased text-free form) leaves it archived or kept as it
+/// was. An absent, unreadable or stale mark stays as it is; none is made.
+pub(crate) fn refresh_archived_attempt_in_rows(
+    vault_meta: &mut [(Vec<u8>, Vec<u8>)],
+    id: AttemptId,
+    bound: &[u8; 32],
+    revision: &[u8; 32],
+) {
+    let key = marks::mark_key(id.as_bytes());
+    let Ok(at) = vault_meta.binary_search_by(|(row, _)| row.as_slice().cmp(&key)) else {
+        return;
+    };
+    if let Some(moved) =
+        CleanupMark::decode(&vault_meta[at].1).and_then(|mark| mark.moved(bound, revision))
+    {
+        vault_meta[at].1 = moved.encode();
+    }
+}
+
 /// Drops the archive markers of an attempt row that left the ledger, so no
 /// marker outlives the row it archived.
 pub(crate) fn forget_archived_attempt_in_txn(

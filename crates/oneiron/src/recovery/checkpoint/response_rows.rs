@@ -13,8 +13,10 @@
 //! A restore requires each carried instance with the rest. A retired one's
 //! row keeps the erased disposition its stub names, as the erase that
 //! retired it left its vault: a STEP row its evidence, a step-state row a
-//! terminal erased state, a replay record its terminal evidence, and a claim
-//! the erase's shell, deindexed and marked deleted.
+//! terminal erased state, a replay record its terminal evidence, a claim
+//! the erase's shell, deindexed and marked deleted, a wait's reply its erased
+//! form, an agent dispatch's attempt row its text-free form, and a captured
+//! request nothing at all (FIX 6588, 7115, 6708).
 
 use std::collections::BTreeSet;
 
@@ -23,12 +25,14 @@ use heed::types::Bytes;
 
 use super::carried_bodies::CarriedInline;
 use super::restore_class::{Class, Classes};
-use super::{CanonicalRows, CheckpointImage, codec_error};
+use super::{CanonicalRows, CheckpointImage, codec_error, rebuild};
+use crate::attempt_queue::AttemptId;
 use crate::store::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily, Store,
     bind_response_in_txn, carrier_row, release_response_in_txn, response_binding_in_txn,
-    response_carrier,
+    response_carrier, response_owed_to_all_in_txn,
 };
+use crate::vault_cleanup::refresh_archived_attempt_in_rows;
 use crate::{Error, Result};
 
 /// What the census found of one row.
@@ -80,16 +84,28 @@ impl ResponseCensus {
             self.bindings.insert(carrier.to_vec());
             return Ok(Noted::Not);
         }
-        let Some(carriage) =
-            ResponseFamily::of_row(db, key, value).and_then(|family| family.carriage(value))
-        else {
+        let Some(family) = ResponseFamily::of_row(db, key, value) else {
+            return Ok(Noted::Not);
+        };
+        let Some(carriage) = family.carriage(key, value) else {
             return Ok(Noted::Not);
         };
         let carrier = response_carrier(db, key);
         let digest = *blake3::hash(&value[carriage.keep..]).as_bytes();
         self.responses.insert(carrier.clone());
-        match response_binding_in_txn(store, txn, &carrier)? {
-            Some(binding) if binding.digest == digest => Ok(Noted::Bound {
+        let binding =
+            response_binding_in_txn(store, txn, &carrier)?.filter(|bound| bound.digest == digest);
+        // A shared reply's late holder joins its instance's obligations at
+        // the binding pass before an image carries it (FIX 6588).
+        let joined = match binding {
+            Some(binding) if family.shared() => {
+                let owners = family.owners(store, txn, key, value)?;
+                response_owed_to_all_in_txn(store, txn, family, &binding.instance, &owners)?
+            }
+            _ => true,
+        };
+        match binding {
+            Some(binding) if joined => Ok(Noted::Bound {
                 carriage,
                 instance: binding.instance,
                 digest,
@@ -125,6 +141,10 @@ pub(super) fn carry(
     (carriage, instance, digest): (ResponseCarriage, [u8; 16], [u8; 32]),
 ) -> Result<(CarriedInline, Vec<u8>, Vec<u8>)> {
     let body = value[carriage.keep..].to_vec();
+    // A queue row lands unleased (FIX 7115): the length it lands at.
+    let landed_len = (database == ResponseDb::Attempts.name())
+        .then(|| rebuild::unlease_attempt(key, value).map(|row| row.len() as u64))
+        .transpose()?;
     let carried = CarriedInline {
         database: database.to_owned(),
         key: key.to_vec(),
@@ -134,6 +154,7 @@ pub(super) fn carry(
         len: body.len() as u64,
         stored_len: 0,
         retired: Some(u32::try_from(carriage.retired).map_err(|_| codec_error())?),
+        landed_len,
         superseded: false,
     };
     Ok((carried, body, carriage.stub))
@@ -177,12 +198,23 @@ pub(super) fn bind_in_txn(
     let Some(family) = ResponseFamily::of_row(db, key, &value) else {
         return Ok(Vec::new());
     };
-    let Some(carriage) = family.carriage(&value) else {
+    let Some(carriage) = family.carriage(key, &value) else {
         return Ok(Vec::new());
     };
     let digest = *blake3::hash(&value[carriage.keep..]).as_bytes();
-    if response_binding_in_txn(store, txn, carrier)?.is_some_and(|bound| bound.digest == digest) {
-        return Ok(Vec::new());
+    if let Some(bound) =
+        response_binding_in_txn(store, txn, carrier)?.filter(|bound| bound.digest == digest)
+    {
+        if !family.shared() {
+            return Ok(Vec::new());
+        }
+        // A shared reply's late holder joins the instance its images carry
+        // it under (FIX 6588); `instance` is debris.
+        let owners = family.owners(store, txn, key, &value)?;
+        if response_owed_to_all_in_txn(store, txn, family, &bound.instance, &owners)? {
+            return Ok(Vec::new());
+        }
+        return bind_response_in_txn(store, txn, carrier, bound, &owners);
     }
     let owners = family.owners(store, txn, key, &value)?;
     bind_response_in_txn(
@@ -213,7 +245,7 @@ pub(super) fn release_stale_in_txn(
         let holds = match carrier_row(carrier) {
             Some((db, key)) => row_in_txn(store, txn, db, key)?.is_some_and(|value| {
                 ResponseFamily::of_row(db, key, &value)
-                    .and_then(|family| family.carriage(&value))
+                    .and_then(|family| family.carriage(key, &value))
                     .is_some()
             }),
             None => false,
@@ -239,18 +271,25 @@ pub(super) fn retire_carried(
     image: &mut CheckpointImage,
     retired: &BTreeSet<[u8; 16]>,
 ) -> Result<()> {
-    let gone: Vec<(String, Vec<u8>, usize, [u8; 16])> = image
+    type Gone = (String, Vec<u8>, usize, [u8; 16], [u8; 32]);
+    let gone: Vec<Gone> = image
         .inline_bodies
         .iter()
         .filter(|carried| !carried.superseded && retired.contains(&carried.instance))
         .filter_map(|carried| {
             carried.retired.map(|keep| {
                 let (database, key) = (carried.database.clone(), carried.key.clone());
-                (database, key, keep as usize, carried.instance)
+                (
+                    database,
+                    key,
+                    keep as usize,
+                    carried.instance,
+                    carried.digest,
+                )
             })
         })
         .collect();
-    for (database, key, keep, instance) in gone {
+    for (database, key, keep, instance, digest) in gone {
         let rows = image.databases.get_mut(&database).ok_or_else(codec_error)?;
         let value = row_mut(rows, &key)?;
         if value.len() < keep {
@@ -266,6 +305,17 @@ pub(super) fn retire_carried(
         let caller = (family == ResponseFamily::Http)
             .then(|| crate::store::http_erase_drop_caller(value))
             .flatten();
+        // An attempt's archive mark bound its carried bytes: it follows the
+        // row to its text-free form (FIX 7115).
+        if family == ResponseFamily::AttemptPayload {
+            let after = *blake3::hash(value).as_bytes();
+            if let (Ok(id), Some(rows)) = (
+                AttemptId::from_bytes(&key),
+                image.databases.get_mut("vault_meta"),
+            ) {
+                refresh_archived_attempt_in_rows(rows, id, &digest, &after);
+            }
+        }
         if let Some(caller) = caller
             && erased_by(&image.databases, &caller, &instance)
         {
@@ -275,6 +325,48 @@ pub(super) fn retire_carried(
             continue;
         }
         family.retire_in_rows(&mut image.databases, &key)?;
+    }
+    Ok(())
+}
+
+/// Unleases each queue row a restore landed from its carried bytes, after
+/// they land and before any row does, as a snapshot unleases every other
+/// (FIX 7115): the instance seals the row as it stood, so its image row is
+/// normalized only here. Its archive mark follows it when it bound the bytes
+/// carried. A Landing attempt refuses, as at the snapshot.
+///
+/// # Errors
+///
+/// [`Error::CorruptedIndex`] for a carried row the image does not hold, and
+/// an attempt that does not decode or is landing.
+pub(super) fn unlease_carried_attempts(
+    image: &mut CheckpointImage,
+    retired: &BTreeSet<[u8; 16]>,
+) -> Result<()> {
+    let landed: Vec<(Vec<u8>, [u8; 32])> = image
+        .inline_bodies
+        .iter()
+        .filter(|carried| {
+            carried.database == ResponseDb::Attempts.name()
+                && !carried.superseded
+                && !retired.contains(&carried.instance)
+        })
+        .map(|carried| (carried.key.clone(), carried.digest))
+        .collect();
+    for (key, digest) in landed {
+        let rows = image
+            .databases
+            .get_mut(ResponseDb::Attempts.name())
+            .ok_or_else(codec_error)?;
+        let value = row_mut(rows, &key)?;
+        *value = rebuild::unlease_attempt(&key, value)?;
+        let after = *blake3::hash(value).as_bytes();
+        if let (Ok(id), Some(rows)) = (
+            AttemptId::from_bytes(&key),
+            image.databases.get_mut("vault_meta"),
+        ) {
+            refresh_archived_attempt_in_rows(rows, id, &digest, &after);
+        }
     }
     Ok(())
 }

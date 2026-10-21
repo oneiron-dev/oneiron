@@ -298,10 +298,9 @@ impl Store {
                     EntryState::Live => entries.extend(head_entry(&custody, id)?),
                     // KS-6: a credential key kept off this member keeps its
                     // retirement fact off too; an owner-only compartment
-                    // seals to the root alone.
-                    EntryState::Retired
-                        if crate::store::credential_kind(id.kind())
-                            && recipients.keeps_local(id) => {}
+                    // seals to the root alone. So does a pad no world
+                    // compartment receives (FIX 6706).
+                    EntryState::Retired if recipients.keeps_fact_local(id) => {}
                     EntryState::Retired => retired.push(id.clone()),
                     EntryState::Missing => {}
                 }

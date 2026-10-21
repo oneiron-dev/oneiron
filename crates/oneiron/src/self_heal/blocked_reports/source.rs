@@ -27,11 +27,16 @@
 //! actor, its subject and, once the step logs, its terminal claim. An erase
 //! of any of them takes the row, and none is kept for an owner already gone.
 
+mod response;
+
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, LlmRequest, Result, Vault};
+
+// FIX 6708: both row kinds in checkpoint images, as row-held responses.
+pub(crate) use self::response::{blocked_capture_owners, blocked_capture_stub};
 
 /// Receipt rows. Key: the receipt.
 const SOURCE: SideTable<EntityId, BlockedReplaySource, Named> =

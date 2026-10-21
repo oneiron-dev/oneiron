@@ -83,5 +83,7 @@ pub(crate) use self::program_resume::{
 };
 pub(crate) use self::wait_delivery::wait_delivered_in_txn;
 pub(crate) use self::wait_holders::{
-    WaitReply, erase_settled_reply_of_erased_run_in_txn, wait_reply_in_txn,
+    WaitReply, erase_settled_reply_of_erased_run_in_txn, settled_reply_held_in_txn,
+    settled_wait_key, wait_delivery_owners, wait_reply_in_txn, wait_reply_stub,
+    wait_settled_owners,
 };

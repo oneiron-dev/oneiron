@@ -154,6 +154,11 @@ pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
+// FIX 6588: a wait's replies in checkpoint images, as row-held responses.
+pub(crate) use self::storage::{
+    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_stub,
+    wait_settled_owners,
+};
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
 pub(crate) use self::wait_rows::{keep_wait_rows, parks_on};

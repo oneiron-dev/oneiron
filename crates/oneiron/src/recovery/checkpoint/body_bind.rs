@@ -28,8 +28,9 @@ use crate::store::{
 use crate::{Error, Result, Vault};
 
 /// The databases whose rows name the bodies a checkpoint carries: the host's
-/// row-held responses rest in `sync_state` (KS-2B2).
-const BODY_DATABASES: [&str; 3] = ["entities", "vault_meta", "sync_state"];
+/// row-held responses rest in `sync_state` (KS-2B2), an agent dispatch's
+/// payload text in `job_records` (FIX 7115).
+const BODY_DATABASES: [&str; 4] = ["entities", "vault_meta", "sync_state", "job_records"];
 
 impl Vault {
     /// Mints and binds an instance for every body the next checkpoint will

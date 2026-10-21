@@ -12,14 +12,15 @@
 //! policy until its pass ends, so no pass seals an older policy at a newer
 //! position than another pass recorded.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
 
 use super::files::{open_dir, read_whole, replace_file};
-use super::head::CustodyRecipients;
+use super::head::{CustodyRecipients, PadRecipients};
 use super::log::LogEntry;
 use super::platform;
 use super::protocol::{TargetKind, TargetSpec};
@@ -52,7 +53,8 @@ impl TargetRecipients {
 
     /// The digest of the policy both heads follow: each group's recovery
     /// root by id, the worlds each leaves the pads of out, then the
-    /// credentials whose keys each may carry (KS-6), in order.
+    /// credentials whose keys each may carry (KS-6), then each world's
+    /// admitted pad recipients (FIX 6706), in order.
     fn policy(&self) -> [u8; 32] {
         policy_digest(
             &[
@@ -62,11 +64,16 @@ impl TargetRecipients {
                 &self.hosted.credentials_eligible,
             ],
             [&self.own, &self.hosted].map(|group| group.root.as_ref().map(|(id, _)| *id)),
+            [&self.own.pad_worlds, &self.hosted.pad_worlds],
         )
     }
 }
 
-fn policy_digest(sets: &[&BTreeSet<[u8; 16]>], roots: [Option<[u8; 32]>; 2]) -> [u8; 32] {
+fn policy_digest(
+    sets: &[&BTreeSet<[u8; 16]>],
+    roots: [Option<[u8; 32]>; 2],
+    pads: [&BTreeMap<EntityId, PadRecipients>; 2],
+) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(POLICY_CONTEXT);
     // Each group's recovery root by identity, not presence alone (FIX
@@ -90,6 +97,27 @@ fn policy_digest(sets: &[&BTreeSet<[u8; 16]>], roots: [Option<[u8; 32]>; 2]) -> 
         hasher.update(&(worlds.len() as u64).to_be_bytes());
         for world in worlds {
             hasher.update(world);
+        }
+    }
+    // Each group's world pad recipients (FIX 6706): each world, then each
+    // admitted machine's and root's id and canonical public key, counted and
+    // in order, so a recipient-only change seals and acknowledges every head
+    // again at a new position. Hashed once a group names a world, so the
+    // policy of a vault with none stays the digest it is.
+    if pads.iter().any(|group| !group.is_empty()) {
+        hasher.update(b"pad-recipients");
+        for group in pads {
+            hasher.update(&(group.len() as u64).to_be_bytes());
+            for (world, admitted) in group {
+                hasher.update(world.as_bytes());
+                hasher.update(&(admitted.len() as u64).to_be_bytes());
+                for (recipient, public) in admitted {
+                    for part in [recipient.envelope_recipient(), public.to_bytes()] {
+                        hasher.update(&(part.len() as u64).to_be_bytes());
+                        hasher.update(&part);
+                    }
+                }
+            }
         }
     }
     *hasher.finalize().as_bytes()

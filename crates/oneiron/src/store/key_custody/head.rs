@@ -13,14 +13,16 @@
 //! authenticates its anchor records, and the digest of every other
 //! compartment in order, so no compartment is dropped, added, moved or
 //! transplanted from another head. A head holds no frozen requirement: a
-//! restore asks it for what its image needs.
+//! restore asks it for what its image needs. A world's pads may go in a
+//! compartment of their own, wrapped to the world's admitted machines and
+//! roots alone (`pad_scope`, FIX 6706); that is off for now.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use getrandom::SysRng;
 use oneiron_crypto::{
-    Argon2Cost, Envelope, HybridPublicKey, HybridSecretKey, Kek, OpenKey, OpenPolicy, Purpose,
-    SealKey, SealParams, SuiteId, WrapType, seal,
+    Argon2Cost, Envelope, Kek, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, SuiteId,
+    WrapType, seal,
 };
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
@@ -33,6 +35,19 @@ use super::log::{
     AEAD, CRYPTO_EPOCH, Control, CustodyPosition, POSITION_LEN, open_sym, seal_refused, seal_sym,
 };
 use super::recipients::RecipientRetirement;
+
+mod pad_scope;
+mod scope;
+
+#[allow(
+    unused_imports,
+    reason = "L03 02A's pad hydration (FIX 6706) reaches these through crate::store"
+)]
+pub(crate) use self::pad_scope::{
+    OpenedWorldPads, PadRecipients, SealedWorldPads, WorldPadScope, open_world_pad_compartment,
+    seal_world_pad_compartment,
+};
+pub(crate) use self::scope::{CompartmentScope, CustodyOpener, CustodyRecipients};
 
 const HEAD_MAGIC: &[u8; 4] = b"OCHD";
 const HEAD_VERSION: u16 = 1;
@@ -54,120 +69,6 @@ pub(crate) const CUSTODY_HEAD_WRAP_CONTEXT: &str = "oneiron/custody-head/v1";
 
 pub(super) fn head_corrupt() -> Error {
     Error::CorruptedIndex("key custody head")
-}
-
-/// Who may read one kind's entries, which fixes the recipients of the
-/// compartment they are sealed in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum CompartmentScope {
-    /// Kinds the host engine reads in its own process (claim keys, the
-    /// training link key): their compartment opens with the vault data key
-    /// as well, so a restore that unlocked a backup opens it without the kit.
-    HostReadable,
-    /// Kinds only the owner's own machines may read (a later client's):
-    /// wrapped to the recovery root alone, never to the host-readable data
-    /// key.
-    OwnerOnly,
-}
-
-impl CompartmentScope {
-    /// Each kind's scope; a later kind names its own.
-    pub(crate) fn of(kind: CustodyKind) -> Self {
-        match kind {
-            // A body instance's key is one the host engine reads in its own
-            // process, as a claim key is (KS-2A); so are the known-value
-            // index's master and its history entries (KS-3), which no kit
-            // need open.
-            //
-            // A world pad too (KS-5, CALLS WORLD_PAD_HEAD_SCOPE): a backup
-            // the data key unlocks restores its worlds' pads, as it did
-            // when the pads rode its rows. A pad alone opens nothing; its
-            // world's key wraps open only to a machine or root secret.
-            CustodyKind::ClaimDecision
-            | CustodyKind::BodyInstance
-            | CustodyKind::KnownValueIndex
-            | CustodyKind::KnownValueEntry
-            | CustodyKind::WorldPad
-            | CustodyKind::CheckpointPayload
-            | CustodyKind::TrainingLink => Self::HostReadable,
-            // A credential's value and its carriers' keys (KS-6, CALLS
-            // `KS-6 entry eligibility`): only the owner's kit opens them; a
-            // head carries one only where [`CustodyRecipients::keeps_local`]
-            // lets it.
-            CustodyKind::CredentialValue
-            | CustodyKind::CustodyTransition
-            | CustodyKind::CustodyRequestInput => Self::OwnerOnly,
-        }
-    }
-
-    fn code(self) -> u8 {
-        match self {
-            Self::HostReadable => 1,
-            Self::OwnerOnly => 2,
-        }
-    }
-
-    fn from_code(code: u8) -> Option<Self> {
-        match code {
-            1 => Some(Self::HostReadable),
-            2 => Some(Self::OwnerOnly),
-            _ => None,
-        }
-    }
-}
-
-/// Who a head's compartment keys are wrapped to. Domain policy picks them:
-/// the stored root's public facts and the held data key, never a seed.
-pub(crate) struct CustodyRecipients {
-    /// The owner's recovery root, by id and hybrid public key: every
-    /// compartment. `None` while no root is pinned; the kit is never
-    /// enrolled by a publication.
-    pub(crate) root: Option<([u8; 32], HybridPublicKey)>,
-    /// The vault data key's [`CUSTODY_HEAD_WRAP_CONTEXT`] subkey: the
-    /// control compartment and host-readable ones.
-    pub(crate) data_key: Option<Zeroizing<[u8; 32]>>,
-    /// The worlds (16-byte ids) whose pads the head leaves out: their
-    /// settings keep their pads off where the head goes (KS-5 pad head
-    /// eligibility). They stay in this machine's custody.
-    pub(crate) pad_worlds_kept_local: BTreeSet<[u8; 16]>,
-    /// The credentials (16-byte custody record ids) whose value and carrier
-    /// keys may ride the head (KS-6): portable ones the owner may recover
-    /// with his kit. Every other credential's stay in this machine's
-    /// custody, as do all of them while no root is pinned.
-    pub(crate) credentials_eligible: BTreeSet<[u8; 16]>,
-}
-
-impl CustodyRecipients {
-    /// Whether the head leaves the live entry `id` out: a world pad of a
-    /// world [`Self::pad_worlds_kept_local`] names, or a credential's value
-    /// or carrier key unless a root is pinned and the credential is one
-    /// [`Self::credentials_eligible`] names (KS-6).
-    pub(crate) fn keeps_local(&self, id: &CustodyId) -> bool {
-        if crate::store::credential_kind(id.kind()) {
-            return self.root.is_none()
-                || !id
-                    .subject()
-                    .item()
-                    .get(..16)
-                    .and_then(|credential| <[u8; 16]>::try_from(credential).ok())
-                    .is_some_and(|credential| self.credentials_eligible.contains(&credential));
-        }
-        id.kind() == CustodyKind::WorldPad
-            && id
-                .subject()
-                .item()
-                .get(..16)
-                .and_then(|world| <[u8; 16]>::try_from(world).ok())
-                .is_some_and(|world| self.pad_worlds_kept_local.contains(&world))
-    }
-}
-
-/// What a restore opens a head with. The kit's root opens every
-/// compartment; the data key, unlocked from a backup, opens the control
-/// compartment and host-readable ones.
-pub(crate) struct CustodyOpener<'a> {
-    pub(crate) root: Option<&'a HybridSecretKey>,
-    pub(crate) data_key: Option<Zeroizing<[u8; 32]>>,
 }
 
 /// One live entry a head carries.
@@ -206,6 +107,9 @@ struct HeadWire {
 #[serde(deny_unknown_fields)]
 struct CompartmentWire {
     scope: u8,
+    /// A world compartment's world (FIX 6706); absent on every other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    world: Option<[u8; 16]>,
     #[serde(with = "serde_bytes_vec")]
     sealed: Vec<u8>,
     wraps: Vec<WrapWire>,
@@ -216,6 +120,9 @@ struct CompartmentWire {
 struct WrapWire {
     to: u8,
     root: Option<[u8; 32]>,
+    /// A world compartment's admitted machine (FIX 6706).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    machine: Option<[u8; 16]>,
     #[serde(with = "serde_bytes_vec")]
     envelope: Vec<u8>,
 }
@@ -314,12 +221,16 @@ pub(super) mod serde_bytes_vec {
 
 /// What binds a compartment and its key's wraps to their place in exactly
 /// this head: a 32-byte commitment to the whole of `position | u32be index |
-/// scope`, which fits an envelope's key id (FIX 6769).
+/// scope`, and a world compartment's world, which fits an envelope's key id
+/// (FIX 6769, 6706).
 fn key_id(position: &[u8; POSITION_LEN], index: u32, scope: Option<CompartmentScope>) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key(KEY_ID_CONTEXT);
     hasher.update(position);
     hasher.update(&index.to_be_bytes());
     hasher.update(&[scope.map_or(0, CompartmentScope::code)]);
+    if let Some(world) = scope.and_then(CompartmentScope::world) {
+        hasher.update(world.as_bytes());
+    }
     *hasher.finalize().as_bytes()
 }
 
@@ -366,6 +277,19 @@ fn seal_compartment(
         &Kek::from_bytes_ref(&key),
         &plain,
     )?;
+    let world = scope.and_then(CompartmentScope::world);
+    // A world's pads: its admitted machines and roots alone, never the data
+    // key or the generic root wrap (FIX 6706).
+    if let Some(world) = world {
+        let admitted = recipients.pad_worlds.get(&world);
+        let wraps = pad_scope::wrap_to_world(position, &id, &key, admitted)?;
+        return Ok(CompartmentWire {
+            scope: scope.map_or(0, CompartmentScope::code),
+            world: Some(*world.as_bytes()),
+            sealed,
+            wraps,
+        });
+    }
     let mut wraps = Vec::new();
     if let Some((root, public)) = &recipients.root {
         let params = SealParams {
@@ -389,6 +313,7 @@ fn seal_compartment(
         wraps.push(WrapWire {
             to: TO_ROOT,
             root: Some(*root),
+            machine: None,
             envelope: envelope.to_bytes(),
         });
     }
@@ -399,6 +324,7 @@ fn seal_compartment(
         wraps.push(WrapWire {
             to: TO_DATA_KEY,
             root: None,
+            machine: None,
             envelope: seal_sym(
                 Purpose::CustodyCompartmentKey,
                 position.vault,
@@ -418,6 +344,7 @@ fn seal_compartment(
     }
     Ok(CompartmentWire {
         scope: scope.map_or(0, CompartmentScope::code),
+        world: None,
         sealed,
         wraps,
     })
@@ -451,7 +378,7 @@ pub(super) fn seal_head(
         chunks.len() - 1
     };
     for entry in entries {
-        let scope = CompartmentScope::of(entry.id.kind());
+        let scope = CompartmentScope::of(entry.id.subject())?;
         let at = chunk_of(&mut scopes, scope);
         scopes.get_mut(&scope).ok_or_else(head_corrupt)?[at]
             .live
@@ -463,7 +390,7 @@ pub(super) fn seal_head(
             });
     }
     for id in retired {
-        let scope = CompartmentScope::of(id.kind());
+        let scope = CompartmentScope::of(id.subject())?;
         let at = chunk_of(&mut scopes, scope);
         scopes.get_mut(&scope).ok_or_else(head_corrupt)?[at]
             .retired
@@ -579,6 +506,11 @@ fn unwrap_key(
     wraps: &[WrapWire],
     opener: &CustodyOpener<'_>,
 ) -> Option<Zeroizing<[u8; 32]>> {
+    // A world's pads open only with an admitted machine's or root's own
+    // wrap, never the data key's or the generic root wrap (FIX 6706).
+    if scope.and_then(CompartmentScope::world).is_some() {
+        return pad_scope::unwrap_world(position, id, wraps, opener.machine, opener.root);
+    }
     let vault = position.vault.as_bytes();
     let opened = wraps.iter().find_map(|wrap| match (wrap.to, wrap.root) {
         (TO_ROOT, Some(root)) => {
@@ -610,12 +542,17 @@ fn unwrap_key(
         }
         _ => None,
     })?;
+    guarded_key(&opened)
+}
+
+/// A 32-byte key straight into guarded storage, never through a plain
+/// array (FIX 6048); `None` for any other length.
+fn guarded_key(opened: &[u8]) -> Option<Zeroizing<[u8; 32]>> {
     if opened.len() != 32 {
         return None;
     }
-    // Straight into guarded storage, never through a plain array (FIX 6048).
     let mut key = Zeroizing::new([0u8; 32]);
-    key.copy_from_slice(&opened);
+    key.copy_from_slice(opened);
     Some(key)
 }
 
@@ -675,7 +612,8 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
     // canonical layout, which the control compartment's digests fix.
     let mut last: Option<CompartmentScope> = None;
     for (index, compartment) in rest.iter().enumerate() {
-        let scope = CompartmentScope::from_code(compartment.scope).ok_or_else(head_corrupt)?;
+        let scope = CompartmentScope::from_wire(compartment.scope, compartment.world)
+            .ok_or_else(head_corrupt)?;
         if last.is_some_and(|last| last > scope) {
             return Err(head_corrupt());
         }
@@ -698,31 +636,33 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
             }
             opened.history.insert(row.key, row.value);
         }
+        // A world's compartment names each of its pads once, live or
+        // retired, never both (FIX 6706).
+        let world = scope.world().is_some();
         for mut entry in std::mem::take(&mut body.live) {
             let id = typed(&position, entry.kind, &entry.item, entry.generation, scope)?;
             let secret = std::mem::take(&mut entry.secret);
             if secret.len() != id.kind().secret_len() {
                 return Err(head_corrupt());
             }
-            opened
-                .live
-                .insert(id, CustodySecret::from_bytes(Zeroizing::new(secret)));
+            let secret = CustodySecret::from_bytes(Zeroizing::new(secret));
+            if opened.live.insert(id, secret).is_some() && world {
+                return Err(head_corrupt());
+            }
         }
         for fact in &body.retired {
-            opened.retired.insert(typed(
-                &position,
-                fact.kind,
-                &fact.item,
-                fact.generation,
-                scope,
-            )?);
+            let id = typed(&position, fact.kind, &fact.item, fact.generation, scope)?;
+            if world && (opened.live.contains_key(&id) || opened.retired.contains(&id)) {
+                return Err(head_corrupt());
+            }
+            opened.retired.insert(id);
         }
     }
     Ok(opened)
 }
 
 /// The typed id a compartment names, refused in a compartment not of its
-/// kind's scope.
+/// subject's scope; a world's pad is custody generation 0.
 fn typed(
     position: &CustodyPosition,
     tag: u8,
@@ -731,10 +671,11 @@ fn typed(
     scope: CompartmentScope,
 ) -> Result<CustodyId> {
     let kind = CustodyKind::from_tag(tag).ok_or_else(head_corrupt)?;
-    if CompartmentScope::of(kind) != scope {
+    let subject = CustodySubject::new(position.vault, kind, item).map_err(|_| head_corrupt())?;
+    if CompartmentScope::of(&subject).map_err(|_| head_corrupt())? != scope
+        || (scope.world().is_some() && generation != 0)
+    {
         return Err(head_corrupt());
     }
-    Ok(CustodySubject::new(position.vault, kind, item)
-        .map_err(|_| head_corrupt())?
-        .at(generation))
+    Ok(subject.at(generation))
 }
