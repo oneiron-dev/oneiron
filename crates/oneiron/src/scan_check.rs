@@ -155,11 +155,14 @@ pub enum EngineScan {
     CallReceiptRows,
     /// One durable run's blocked-report lineage rows.
     BlockedRunReports,
+    /// The Sieve's audit rows an audit read walks before its sampled filter,
+    /// rows that fail to decode included.
+    SieveAuditRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 48] = [
+    pub const ALL: [Self; 49] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -208,6 +211,7 @@ impl EngineScan {
         Self::RetrievalRunRows,
         Self::CallReceiptRows,
         Self::BlockedRunReports,
+        Self::SieveAuditRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -270,6 +274,7 @@ impl EngineScan {
             Self::RetrievalRunRows => "retrieval_run_rows",
             Self::CallReceiptRows => "call_receipt_rows",
             Self::BlockedRunReports => "blocked_run_reports",
+            Self::SieveAuditRows => "sieve_audit_rows",
         }
     }
 
@@ -335,6 +340,7 @@ impl EngineScan {
             Self::RetrievalRunRows => 73,
             Self::CallReceiptRows => 74,
             Self::BlockedRunReports => 75,
+            Self::SieveAuditRows => 76,
         }]
     }
 }

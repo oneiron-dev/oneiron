@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1117 facade rows, 3832 declarations.
+Census: 1117 facade rows, 3836 declarations.
 Inputs: 1052 of 1117 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1004 of 1117 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -8232,6 +8232,7 @@ class PairedInterval(TypedDict):
     low: float
     high: float
 NotWorse = Literal["not_worse", "worse", "unknown"]
+CohortProbe = TypedDict("CohortProbe", {"probe": str, "source": EntityId, "from": int, "until": int})
 class KindProbeCheck(TypedDict):
     kind: InputKind
     probes: int
@@ -8245,10 +8246,12 @@ class KindProbeCheck(TypedDict):
     set_version: NotRequired[str | None]
     rubric: NotRequired[str | None]
     card: NotRequired[SufficiencyCard | None]
+    cohort_members: NotRequired[list[CohortProbe]]
 class SpaceMoveCheck(TypedDict):
     checked_at: int
     kinds: list[KindProbeCheck]
     verdict: NotWorse
+    cohort_check: NotRequired[str | None]
 class SpaceMove(TypedDict):
     candidate: str
     incumbent: SpaceRef
@@ -10931,6 +10934,20 @@ class ContractVerdict(TypedDict):
     candidate: str
     tests_passed: bool
     diffs: list[ContractDiff]
+QueueDriveStatus = Literal["unenrolled", "driving", "waiting_check", "waiting_symbols", "waiting_review", "waiting_admission", "held_needs_new_base", "held_diverged", "held_binding", "held_materialization", "held_overlap", "held_task_authority", "held_recovery", "held_check", "needs_configuration", "unavailable", "done"]
+class QueueConflictView(TypedDict):
+    source_proposals: list[str]
+    conflict: str
+    task: NotRequired[str | None]
+    resolution_batch: NotRequired[str | None]
+class QueueDriveView(TypedDict):
+    batch_ref: str
+    status: QueueDriveStatus
+    reason: NotRequired[str | None]
+    check_work_refs: list[str]
+    receipt_refs: list[str]
+    conflicts: list[QueueConflictView]
+    survivor_batch: NotRequired[str | None]
 class MergeQueueObservation(TypedDict):
     repo: EntityId
     head_commit: str
@@ -10938,6 +10955,7 @@ class MergeQueueObservation(TypedDict):
     pending_slow_batch_refs: list[str]
     batches: list[MergeQueueBatchView]
     verdicts: list[ContractVerdict]
+    drive: list[QueueDriveView]
 class MergeQueueRequeueView(TypedDict):
     source_batch_ref: str
     batch: NotRequired[MergeQueueBatchView | None]
@@ -17065,7 +17083,7 @@ class ConsolidationEnqueueRequest(TypedDict):
     now: NotRequired[int | None]
 class ConsolidationStatusRequest(TypedDict):
     job_ref: str
-DreamerParkCauseView = Literal["provider_unavailable", "executor_error", "checkpoint", "cancelled", "signal", "other"]
+DreamerParkCauseView = Literal["provider_unavailable", "executor_error", "checkpoint", "retry", "cancelled", "signal", "other"]
 class DreamerParkedAttemptView(TypedDict):
     job_ref: str
     cause: DreamerParkCauseView

@@ -15,6 +15,7 @@ use super::{SPACE_PROBE_COHORT_SECS, SpaceProbe, cohort_of};
 use crate::Vault;
 use crate::embed::media::PendingMedia;
 use crate::embed::space::InputKind;
+use crate::embed::{CohortProbe, SpaceMoveCheck};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
@@ -30,6 +31,18 @@ const SWAP_EXPOSURES: [EvalExposureKind; 1] = [EvalExposureKind::Promotion];
 
 /// One probe as the ledger holds it: its id, its source document and its date window.
 type Member = ([u8; 16], EntityId, Range<u64>);
+
+/// A probe id from the 32 hex [`CohortProbe::probe`] holds.
+fn probe_from_hex(hex: &str) -> Option<[u8; 16]> {
+    if hex.len() != 32 {
+        return None;
+    }
+    let mut id = [0_u8; 16];
+    for (byte, pair) in id.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(id)
+}
 
 /// The cut policy (FIX 6744 CALLS): a date window is cut into a cohort only once it has
 /// ended by `now`, as an eval cohort is cut from a past window. Until then its probes have no
@@ -177,6 +190,61 @@ impl ProbeCohortLedger {
         for (kind, members) in self.by_kind(runs) {
             self.record(vault, kind, &members, None, &SWAP_EXPOSURES);
         }
+    }
+
+    /// Keeps on `check` what its swap counts on: its token and, on each kind, the ledger's
+    /// members among its `runs`. A check that kept no metadata keeps nothing.
+    pub(in crate::embed) fn keep_on(
+        &self,
+        check: &mut SpaceMoveCheck,
+        runs: impl Iterator<Item = [u8; 16]>,
+    ) {
+        let Some((token, _)) = &self.check else {
+            return;
+        };
+        check.cohort_check = Some(token.clone());
+        let mut kinds = self.by_kind(runs);
+        for kind in &mut check.kinds {
+            kind.cohort_members = kinds
+                .remove(&kind.kind)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(probe, source, window)| CohortProbe {
+                    probe: bytes_to_hex_lower(&probe),
+                    source,
+                    from: window.start,
+                    until: window.end,
+                })
+                .collect();
+        }
+    }
+
+    /// Counts the owner's yes over `check`, the check of the move to `candidate` it acted on,
+    /// as the swap that check would have decided (FIX 7040): once per cohort the members it
+    /// kept served, under its own token, after the move's own write committed. A check that
+    /// kept no metadata counts nothing. Called outside any transaction.
+    pub(in crate::embed) fn promoted_from(vault: &Vault, candidate: &str, check: &SpaceMoveCheck) {
+        let Some(token) = &check.cohort_check else {
+            return;
+        };
+        let mut ledger = Self {
+            check: Some((token.clone(), candidate.to_owned())),
+            members: BTreeMap::new(),
+            rubrics: BTreeMap::new(),
+        };
+        for kind in &check.kinds {
+            if let Some(rubric) = &kind.rubric {
+                ledger.rubrics.insert(kind.kind, rubric.clone());
+            }
+            for member in &kind.cohort_members {
+                if let Some(probe) = probe_from_hex(&member.probe) {
+                    ledger
+                        .members
+                        .insert(probe, (kind.kind, member.source, member.from..member.until));
+                }
+            }
+        }
+        ledger.promoted(vault, ledger.members.keys().copied());
     }
 
     /// The ledger's members among `probes`, by kind.

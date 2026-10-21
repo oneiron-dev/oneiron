@@ -101,7 +101,10 @@ impl Memory<'_> {
         self.merge_queue_owner(owner)?;
         let repo = self.merge_queue_repo(input.repo)?;
         let queue = self.merge_queue_of(&repo)?;
-        Ok(pointers_view(repo.repo, queue.recover()?))
+        let pointers = queue.recover()?;
+        // A no-op recovery wakes the queue driver too (FIX 6868).
+        self.vault.store.notify_attempt_observers();
+        Ok(pointers_view(repo.repo, pointers))
     }
 
     /// The CALL behind batch formation: one enqueue call is one batch, its

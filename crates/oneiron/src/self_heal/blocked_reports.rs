@@ -327,3 +327,21 @@ pub(crate) fn settle_in_txn(
     PENDING.delete(&vault.store, txn, key)?;
     SETTLED.put(&vault.store, txn, key, &IssueSettled { proposal, at: now })
 }
+
+/// Records the Coach's proposal for a model finding's issue under the issue's id (OF-418 L3),
+/// in the proposal's commit: the settled marker, and nothing else. The issue's row is its
+/// source and stays as it was filed; this marker is what ends its wait.
+pub(crate) fn record_issue_settled_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    issue: &EntityId,
+    proposal: EntityId,
+    now: u64,
+) -> Result<()> {
+    SETTLED.put(
+        &vault.store,
+        txn,
+        issue,
+        &IssueSettled { proposal, at: now },
+    )
+}

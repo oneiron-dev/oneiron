@@ -18,16 +18,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{CYCLE, FreeTimeCycle, ITEM};
+use super::{CYCLE, FreeTimeCycle, ITEM, LONG_RETRY_LINEAGE};
 use crate::attempt_queue::{AttemptId, AttemptRecord, decode_record};
 use crate::{Result, Vault};
 
 /// One attempt row's run, and the try it retries.
 type Link = (Option<String>, Option<[u8; 16]>);
-
-/// A retry lineage of more tries than this is logged, once per restore
-/// (FIX 7006). It is walked whole all the same: this bounds nothing.
-const LONG_RETRY_LINEAGE: usize = 64;
 
 /// What the free-time tries are found by, over the live vault and the image.
 #[derive(Default)]

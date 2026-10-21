@@ -27,10 +27,12 @@ mod decisions;
 mod host_holds;
 mod image;
 mod landing;
+mod pad_custody;
 mod payload;
 mod rebuild;
 mod response_rows;
 mod restore_class;
+mod side_pads;
 mod snapshot;
 mod tiers;
 mod watermark;
@@ -53,6 +55,7 @@ pub use commitment::CheckpointSigner;
 pub use custody_head::*;
 pub use host_holds::{BackupHolds, HostOrderHolds};
 use image::{CheckpointImage, read_image, read_image_required};
+pub use pad_custody::PadRestoreNote;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -91,8 +94,8 @@ enum Custody<'a> {
     Replace(&'a Path, Option<&'a [crate::DreamerHomeNodeCandidate]>),
     /// A copy served beside its source gets custody of its own. It never
     /// holds a key the source's live state, when given, says is destroyed or
-    /// committed to be.
-    Fork(Option<&'a LiveCustody>),
+    /// committed to be; with it, the source's live pad rows (`side_pads`).
+    Fork(Option<(&'a LiveCustody, &'a side_pads::SidePads)>),
     /// As `Keep`, for a restore whose custody is not on this host and finds
     /// no head for it (or carries only the legacy untyped marker), on every
     /// entry point: its claim-bound rows whose keys stayed there are dropped
@@ -277,6 +280,10 @@ pub struct RestoreReport {
     /// The tables a home move carries that this restore took from the image
     /// because the live vault's rows did not read (FIX 5661 C2b).
     pub home_table_notes: Vec<HomeTableNote>,
+    /// The world key pads its image names that it did not land at rest
+    /// (KS-5, FIX 5686 part 2): erased since the image, or withheld by
+    /// their world's sealed copies setting.
+    pub pad_notes: Vec<PadRestoreNote>,
 }
 /// What a restore over a live vault says about a table a home move carries
 /// (FIX 5661 C2b).
@@ -480,6 +487,9 @@ impl Vault {
         image.drop_machine_identity();
         // The copy holds the source's records, so its host orders hold them too.
         host_holds::carry(&mut image.databases, live.host_holds())?;
+        // A pad its forked custody lacks or cannot read comes from the
+        // source's live row (KS-5).
+        let pads = source.live_pads(&image);
         let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
@@ -488,7 +498,7 @@ impl Vault {
             config,
             RestoreReason::Restore,
             restored_at,
-            Custody::Fork(Some(&live)),
+            Custody::Fork(Some((&live, &pads))),
             &BTreeSet::new(),
             budget,
         )?;
@@ -574,7 +584,7 @@ impl Vault {
         crate::store::admit_existing_vault_root(path)?;
         let live = source.capture()?;
         let archive = Self::open_owned(path, config.clone())?;
-        let dropped_gate_decisions = archive.store.activate_archived(&live)?;
+        let (dropped_gate_decisions, erased_pads) = archive.store.activate_archived(&live)?;
         let restored_at = archive.now_recorded_at();
         drop(archive);
         // Reopened, it reads what it holds under its own custody.
@@ -592,6 +602,7 @@ impl Vault {
             custody_note: vault.activation_custody_note(),
             training_note: vault.training_link_restore_notice(),
             home_table_notes: Vec::new(),
+            pad_notes: erased_pads.iter().map(PadRestoreNote::erased).collect(),
         })
     }
     /// Historical content restore beside a live vault: the image's content
