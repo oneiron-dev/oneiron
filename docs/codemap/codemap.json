@@ -2268,7 +2268,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/payload_erase.rs",
@@ -21221,6 +21221,7 @@
      "path": "src/dispatch_byoa/mod.rs",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
+      "crate-vis": 1,
       "mod": 1,
       "re-export": 14
      }
@@ -21353,7 +21354,7 @@
      "path": "src/dispatch_byoa/staged_input.rs",
      "purpose": "A CLI run's job carried as a file in its checkout, never in argv: one argv entry has an OS limit (Linux…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -21647,7 +21648,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 4,
       "re-export": 21
      }
@@ -22114,10 +22115,20 @@
      "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 2,
       "fn": 3,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/settle/keep_approval.rs",
+     "purpose": "A Keep the Gate holds (FIX 5753): the responder's approval of the exact retained alternative its Keep…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -29116,6 +29127,7 @@
       "FeedbackTriageFinding",
       "FeedbackTriageHandoff",
       "FeedbackTriageInput",
+      "FeedbackTriageItem",
       "FeedbackTriageJob",
       "FeedbackTriageOutput",
       "FeedbackTriageResult",
@@ -29127,10 +29139,29 @@
      "surface": {
       "const": 4,
       "crate-vis": 3,
-      "enum": 1,
+      "enum": 2,
       "fn": 2,
-      "re-export": 1,
+      "re-export": 3,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GithubIssueKind",
+      "GithubIssuePage",
+      "GithubIssueRevision",
+      "GithubSweepContinuation"
+     ],
+     "path": "src/feedback/triage/github.rs",
+     "purpose": "The feedback triage's GitHub issue sources (OF-420 T1; ARCH-0056: \"GitHub issues still work",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -29151,6 +29182,22 @@
       "enum": 1,
       "fn": 4,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FeedbackTriageSourceError",
+      "FeedbackTriageSourceErrorKind",
+      "FeedbackTriageSourceFault"
+     ],
+     "path": "src/feedback/triage/source.rs",
+     "purpose": "Each triage source's state beside its continuation: what stopped its last walk, and the retry time the…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "struct": 2
      }
     },
     {
@@ -46103,7 +46150,7 @@
      "path": "src/provenance/mod.rs",
      "purpose": "`edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 4,
       "re-export": 3
      }
@@ -55819,7 +55866,7 @@
      "path": "src/store/pending_gate_consent/tray.rs",
      "purpose": "Pending gate-consent tray lifecycle: put/get/delete, resolution into the decision ledger, and ordered reads",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 2
      }
     },
@@ -63916,7 +63963,7 @@
      "path": "src/vault_cleanup/attempt_retention.rs",
      "purpose": "Reversible retention for private queue records; the serialized attempt is never changed",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 3
      }
     },
@@ -63939,7 +63986,7 @@
      "purpose": "Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs",
      "surface": {
       "const": 13,
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 3,
       "fn": 7,
       "struct": 7
@@ -63952,8 +63999,18 @@
      "path": "src/vault_cleanup/codec_receipts.rs",
      "purpose": "vault_meta row codecs and the digest receipt projector",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_cleanup/erase.rs",
+     "purpose": "An erase reaches cleanup's own rows (FIX 7517)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -63963,7 +64020,7 @@
      "path": "src/vault_cleanup/marks.rs",
      "purpose": "Cleanup marks keyed by id16: a run's archive mark on a completed attempt, and the owner's kept mark on an…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -63973,7 +64030,7 @@
      "path": "src/vault_cleanup/mod.rs",
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 1,
       "re-export": 6
      }
@@ -64062,7 +64119,7 @@
      "path": "src/vault_cleanup/run_record.rs",
      "purpose": "Durable cleanup results close the job-commit → queue-settlement crash gap",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -64096,7 +64153,7 @@
      "path": "src/vault_cleanup/run_snapshot.rs",
      "purpose": "What each cleanup run archived, kept on the run's own RUN row (OF-449)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 4
      }
@@ -68546,7 +68603,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 85,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68693,7 +68750,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 34,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69512,7 +69569,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
     "vault_cleanup": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69591,7 +69648,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4408,
+   "source_files": 4412,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82426,9 +82483,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/feedback_triage.rs",
-     "purpose": "The Coach's feedback triage on the host (OF-420 T1; ARCH-0056: \"We sweep both on a schedule with the triage…",
+     "purpose": "The Coach's feedback triage on the host (OF-420 T1; ARCH-0056: \"GitHub issues still work",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/feedback_triage/github.rs",
+     "purpose": "The feedback sweep's GitHub issue sources (OF-420 T1; ARCH-0056: \"GitHub issues still work",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -88856,15 +88923,16 @@
      "kind": "src",
      "notable": [
       "FeedbackConfig",
-      "FeedbackInboxConfig"
+      "FeedbackInboxConfig",
+      "FeedbackTriageConfig"
      ],
      "path": "src/config/feedback.rs",
      "purpose": "The `[feedback]` section: where the owner's feedback goes (OF-420)",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 2,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -88999,7 +89067,7 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 15,
       "re-export": 26
      }
@@ -91609,6 +91677,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/link.rs",
+     "purpose": "One carrier connection, read and written through its own buffers: its frames, one line each, and a…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -92999,7 +93077,7 @@
      "path": "src/owner/backup/checkpoint_fact.rs",
      "purpose": "Each backup's checkpoint fact beside it (FIX 7327): the signed fact the snapshot's receipt carries (FIX…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -93127,7 +93205,7 @@
      "path": "src/owner/cleanup.rs",
      "purpose": "Cleanup review (ARCH-0073): the archive proposals the cleanup job opened, the digests of what cleanup…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -93749,7 +93827,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 16,
       "re-export": 1,
       "struct": 1
@@ -95073,7 +95151,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 68,
+     "files": 69,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95374,7 +95452,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 78,
+     "files": 79,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -95530,7 +95608,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1042,
+   "source_files": 1044,
    "test_files": 182
   },
   "oneiron-spawn": {
