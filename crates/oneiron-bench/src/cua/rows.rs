@@ -6,10 +6,10 @@ use super::{Result, taskgen::Cell};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Row {
-    pub key: String, pub cell: Cell, pub plan_digest: String, pub config_digest: String,
-    pub engine: String, pub role: String, pub models: Value, pub diagnostic_approximation: bool,
-    pub status: String, pub harness_stop: Option<Value>, pub engine_stop: Value,
-    pub checker: Value, pub measures: Value, pub evidence: PathBuf,
+    pub(crate) key: String, pub(crate) cell: Cell, pub(crate) plan_digest: String, pub(crate) config_digest: String,
+    pub(crate) engine: String, pub(crate) role: String, pub(crate) models: Value, pub(crate) diagnostic_approximation: bool,
+    pub(crate) status: String, pub(crate) harness_stop: Option<Value>, pub(crate) engine_stop: Value,
+    pub(crate) checker: Value, pub(crate) measures: Value, pub(crate) evidence: PathBuf,
 }
 pub(super) fn append(path: &Path, value: &impl Serialize) -> Result<()> {
     let mut file = OpenOptions::new().create(true).append(true).open(path).map_err(|e| e.to_string())?;

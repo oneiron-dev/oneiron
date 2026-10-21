@@ -38,7 +38,8 @@ pub(super) fn isolated(binary: &Path) -> Command {
     let mut command = Command::new("setsid");
     command.arg(binary).stdin(Stdio::null());
     for (key, _) in std::env::vars().filter(|(k,_)| k.starts_with("ONEIRON_")) { command.env_remove(key); }
-    command.env("NO_COLOR", "1");
+    command.env("NO_COLOR", "1")
+        .env("ONEIRON_EGRESS_CONFIG", r#"{"allowed_domains": []}"#);
     command
 }
 async fn once(mut command: Command, deadline: Instant, log: &Path) -> Result<()> {

@@ -67,7 +67,7 @@ pub(super) async fn campaign(plan_path: &Path, binary: &Path, pins: &Path, out: 
         if terminal.contains_key(&key) { continue }
         let engine = config.as_ref().map(|c| c.engine.clone()).unwrap_or_else(|_| frozen["config"]["engine"].as_str().unwrap_or("unattested").into());
         let mut row = Row {key:key.clone(),cell:cell.clone(),plan_digest:plan_digest.clone(),config_digest:config_digest.clone(),
-            engine,role:"generative_reasoner".into(),models:frozen["config"]["arms"][&cell.arm]["routes"].clone(),diagnostic_approximation:cell.arm != "B",status:"assigned".into(),
+            engine,role:frozen["config"]["arms"][&cell.arm]["role"].as_str().unwrap_or("unattested").into(),models:frozen["config"]["arms"][&cell.arm]["routes"].clone(),diagnostic_approximation:false,status:"assigned".into(),
             harness_stop:None,engine_stop:Value::Null,checker:Value::Null,measures:measures::unavailable(),evidence:out.join(&key)};
         if started.contains(&key) {
             rows::blocked(&mut row,"interrupted","previous trial started without a terminal row; no rerun");
@@ -142,7 +142,7 @@ async fn trial(plan: &Plan, config: &Config, binary: &Path, cell: &Cell, row: &m
         served = Some(Served::fresh(binary,&row.evidence,arm,&config.browser,
             startup_deadline.saturating_duration_since(Instant::now()),Duration::from_millis(config.continuation_poll_ms)).await?);
         setup_ms = started.elapsed().as_secs_f64()*1000.0;
-        let task = cell.public_task.replace("{entry_url}",&format!("http://172.30.91.1:8765{}",reset["entry"].as_str().ok_or("reset_entry_missing")?));
+        let task = cell.public_task.replace("{entry_url}",&format!("http://127.0.0.1:8080{}",reset["entry"].as_str().ok_or("reset_entry_missing")?));
         let candidate_start = Instant::now();
         let bridge = served.as_mut().ok_or("served_bridge_missing")?;
         let result: Result<()> = async {
