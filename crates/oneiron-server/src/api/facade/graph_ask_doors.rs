@@ -8,8 +8,9 @@
 //! owner-grade credential that names none; any other credential is refused.
 //! No principal, actor or time comes from the request. `vault.graph.ask`
 //! reads every unit under the credential's own lane, so a narrowed slip asks
-//! inside its narrowing. The standing-question rows store a bare principal
-//! the pump answers for later, so they refuse a narrowed record scope.
+//! inside its narrowing. The standing-question rows store a principal, with
+//! the class it authenticated as (FIX 1588), that the pump answers for later,
+//! so they refuse a narrowed record scope.
 //!
 //! Beside its answer, each door lists the rows that answer names
 //! (`host_door_lists`): an answer's claim, its unit, every source its
@@ -19,24 +20,26 @@
 //! in side tables, which hold no row.
 use std::sync::Arc;
 
+mod question_answers;
+
+pub(crate) use self::question_answers::vault_questions_answers;
+
 use oneiron::llm::decision::questions::{
     AnswerRecord, GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionRecord,
-    QuestionScheduleHead, ScheduledBackfill, answer_records, artifact_ask_records,
-    calibration_pairs, create_question, edit_question, outcome_labels, pause_question,
-    project_bound_outcomes, question_call_budget, read_question, read_question_schedule,
-    refresh_artifact_question_now, refresh_question_with, run_graph_ask_receipted,
-    schedule_backfill, select_graph_units_by_type, standing_ask_route,
+    QuestionScheduleHead, ScheduledBackfill, calibration_pairs, create_question, edit_question,
+    outcome_labels, pause_question, project_bound_outcomes, question_call_budget, read_question,
+    read_question_schedule, refresh_artifact_question_now, refresh_question_with,
+    run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type, standing_ask_route,
 };
 use oneiron::llm::decision::{
     DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion, DecisionRung, TypedDecision,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::receipt::{
-    GraphAdmitRequest, GraphAskOutcome, GraphAskRequest, QuestionAnswer, QuestionAnswersRequest,
-    QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest, QuestionOutcomes,
-    QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
-    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
-    QuestionScheduleRequest,
+    GraphAdmitRequest, GraphAskOutcome, GraphAskRequest, QuestionAnswer, QuestionBackfillRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,
+    QuestionOutcomesProjected, QuestionOutcomesRequest, QuestionPauseRequest, QuestionPaused,
+    QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
@@ -192,8 +195,9 @@ impl GraphAnswerer for AdmittedAnswerer {
 }
 
 /// `vault.questions.create`: a standing question for the caller, at version
-/// 1, unpaused. Its dial must sit inside the host's; the pump answers it as
-/// the caller from then on.
+/// 1, unpaused, keeping the class the caller authenticated as (FIX 1588).
+/// Its dial must sit inside the host's; the pump answers it as the caller,
+/// under that class, from then on.
 /// Beside it, the rows the question names ([`question_rows`]).
 pub(crate) async fn vault_questions_create(
     server: &Arc<SyncServer>,
@@ -212,14 +216,14 @@ async fn vault_questions_create_answer(
     input: QuestionCreateRequest,
 ) -> MemoryResult<QuestionRecord> {
     const VERB: &str = "vault.questions.create";
-    let principal = asker(auth, server, VERB)?.entity_ref();
+    let asker = asker(auth, server, VERB)?;
     let mut definition = input.definition;
     definition.dial = inside_host_dial(server, definition.dial, VERB)?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || -> MemoryResult<QuestionRecord> {
         Ok(create_question(
             server.vault(),
-            principal,
+            asker,
             definition,
             oneiron_vault_contract::now_ts(),
         )?)
@@ -229,8 +233,9 @@ async fn vault_questions_create_answer(
 }
 
 /// `vault.questions.edit`: the caller's standing question's next version,
-/// from a whole replacement definition over `expected_version`. Its dial
-/// must sit inside the host's.
+/// from a whole replacement definition over `expected_version`, keeping the
+/// class the caller authenticated as (FIX 1588). Its dial must sit inside
+/// the host's.
 /// Beside it, the rows the question names ([`question_rows`]).
 pub(crate) async fn vault_questions_edit(
     server: &Arc<SyncServer>,
@@ -249,14 +254,14 @@ async fn vault_questions_edit_answer(
     input: QuestionEditRequest,
 ) -> MemoryResult<QuestionRecord> {
     const VERB: &str = "vault.questions.edit";
-    let principal = asker(auth, server, VERB)?.entity_ref();
+    let asker = asker(auth, server, VERB)?;
     let mut definition = input.definition;
     definition.dial = inside_host_dial(server, definition.dial, VERB)?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || -> MemoryResult<QuestionRecord> {
         Ok(edit_question(
             server.vault(),
-            principal,
+            asker,
             input.id,
             input.expected_version,
             definition,
@@ -374,40 +379,6 @@ async fn vault_questions_read_answer(
     .map_err(|_| internal(VERB))?
 }
 
-/// `vault.questions.answers`: every answer of the caller's standing
-/// question, across its versions, tagged by kind: each graph answer receipt,
-/// then each artifact the question asked at its last ask, with where its
-/// proposal stands ([`QuestionAnswer::union`]).
-/// Beside it, the rows each answer names ([`answer_rows`], and an
-/// artifact ask's artifact and proposal).
-pub(crate) async fn vault_questions_answers(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: QuestionAnswersRequest,
-) -> Listed<Vec<QuestionAnswer>> {
-    naming(
-        vault_questions_answers_answer(server, auth, input).await,
-        |answers| answers.iter().flat_map(question_answer_rows).collect(),
-    )
-}
-
-async fn vault_questions_answers_answer(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: QuestionAnswersRequest,
-) -> MemoryResult<Vec<QuestionAnswer>> {
-    const VERB: &str = "vault.questions.answers";
-    let principal = asker(auth, server, VERB)?.entity_ref();
-    let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<QuestionAnswer>> {
-        let graph = answer_records(server.vault(), principal, input.id)?;
-        let asks = artifact_ask_records(server.vault(), principal, input.id)?;
-        Ok(QuestionAnswer::union(graph, asks))
-    })
-    .await
-    .map_err(|_| internal(VERB))?
-}
-
 /// `vault.questions.refresh`: refreshes the caller's standing question by
 /// hand, now, over every unit its current version covers. The answerer is
 /// the resident pump's: the host's ladder under the question's own dial,
@@ -415,9 +386,10 @@ async fn vault_questions_answers_answer(
 /// principal and climbing to the vault's owners. The caller writes the
 /// answers as the question's principal; another principal's question is not
 /// found, and a paused one answers nothing. An artifact question (FIX 3085)
-/// asks its artifacts now through the pump's own unit decider and answers
-/// where each artifact's last ask stands, as `vault.questions.answers` does;
-/// an artifact whose earlier answers still wait for Keep is not asked again.
+/// asks its artifacts now through the pump's own unit decider, under the
+/// class its version keeps, and answers every ask it has made of them, this
+/// one included, as `vault.questions.answers` lists them unpaged; an
+/// artifact whose earlier answers still wait for Keep is not asked again.
 /// The ladder runs on a blocking thread.
 /// Beside it, the rows each answer names ([`question_answer_rows`]).
 pub(crate) async fn vault_questions_refresh(
@@ -618,33 +590,32 @@ fn decision_rows(decision: &TypedDecision) -> impl Iterator<Item = EntityId> + '
 
 /// The rows a graph ask's outcome names: each answer's ([`answer_rows`]),
 /// each unit that abstained or failed, and each declined unit with its
-/// decision's evidence. A unit the caller cannot read is in none of them.
+/// decision's evidence, a failed ask's as a finished one's (FIX 1582). A
+/// unit the caller cannot read is in none of them.
 fn outcome_rows(outcome: &GraphAskOutcome) -> Vec<EntityId> {
-    match outcome {
+    let (answers, abstained, declined, failed_unit) = match outcome {
         GraphAskOutcome::Done {
             answers,
             abstained,
             declined,
-        } => answers
-            .iter()
-            .flat_map(answer_rows)
-            .chain(abstained.iter().copied())
-            .chain(declined.iter().flat_map(|declined| {
-                decision_rows(&declined.decision).chain(std::iter::once(declined.unit))
-            }))
-            .collect(),
+        } => (answers, abstained, declined, None),
         GraphAskOutcome::Failed {
             failed_unit,
             answers,
             abstained,
+            declined,
             ..
-        } => answers
-            .iter()
-            .flat_map(answer_rows)
-            .chain(abstained.iter().copied())
-            .chain(failed_unit.iter().copied())
-            .collect(),
-    }
+        } => (answers, abstained, declined, *failed_unit),
+    };
+    answers
+        .iter()
+        .flat_map(answer_rows)
+        .chain(abstained.iter().copied())
+        .chain(declined.iter().flat_map(|declined| {
+            decision_rows(&declined.decision).chain(std::iter::once(declined.unit))
+        }))
+        .chain(failed_unit)
+        .collect()
 }
 
 /// The rows a standing question names: its principal, its units and the

@@ -4513,6 +4513,7 @@ class Oneiron:
         def read(self, spec):
             return json.loads(_translate(lambda: self._client.vault_questions_read(json.dumps(spec))))
         def answers(self, spec):
+            """Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each."""
             return json.loads(_translate(lambda: self._client.vault_questions_answers(json.dumps(spec))))
         def refresh(self, spec):
             """Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it."""

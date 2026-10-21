@@ -4,10 +4,7 @@ use super::{
     arrival,
     reader_authority::own_authority_readable_in_txn,
     records::*,
-    store::{
-        AnswerKey, HeadKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_VERSION, VersionKey, encode,
-        secret_scan_before_put,
-    },
+    store::{HeadKey, QUESTION_HEAD, QUESTION_VERSION, VersionKey, encode, secret_scan_before_put},
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
@@ -87,6 +84,9 @@ pub(crate) fn bind_task_answer_in_txn(
             artifacts: Vec::new(),
         },
         created_at: input.now,
+        // A one-off ask keeps no authenticated asker: its principal is the
+        // ask's beneficiary, not the responder who writes its answer.
+        asker_class: None,
     };
     record.definition.validate()?;
     let answer = AnswerRecord {
@@ -183,15 +183,7 @@ pub(crate) fn bind_task_answer_in_txn(
     secret_scan_before_put(&head)?;
     QUESTION_HEAD.put(&vault.store, txn, &HeadKey(input.task), &head)?;
     secret_scan_before_put(&answer)?;
-    QUESTION_ANSWER.put(
-        &vault.store,
-        txn,
-        &AnswerKey {
-            question: input.task,
-            claim: answer.claim,
-        },
-        &answer,
-    )?;
+    super::ask_history::put_graph_answer_in_txn(vault, txn, input.task, input.principal, &answer)?;
     arrival::watch(&vault.store, txn, &record)?;
     Ok(answer)
 }

@@ -37,7 +37,7 @@ use oneiron::code_run::{
 use oneiron::context_board::StreamConnectionId;
 use oneiron::llm::decision::DecisionRung;
 use oneiron::llm::decision::questions::{
-    answer_records, create_question, edit_question, pause_question, read_question,
+    create_question, edit_question, pause_question, question_answers, read_question,
     run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
 };
 use oneiron::llm::media::{AiOperation, Modality};
@@ -571,7 +571,7 @@ fn host_row(
             let request: QuestionCreateRequest = decode(input)?;
             let mut definition = request.definition;
             definition.dial = inside_host_dial(server, definition.dial, verb)?;
-            encode(create_question(vault, principal, definition, now)?)
+            encode(create_question(vault, actor, definition, now)?)
         }
         AgentVerb::VaultQuestionsEdit => {
             let request: QuestionEditRequest = decode(input)?;
@@ -579,7 +579,7 @@ fn host_row(
             definition.dial = inside_host_dial(server, definition.dial, verb)?;
             encode(edit_question(
                 vault,
-                principal,
+                actor,
                 request.id,
                 request.expected_version,
                 definition,
@@ -615,7 +615,7 @@ fn host_row(
         }
         AgentVerb::VaultQuestionsAnswers => {
             let request: QuestionAnswersRequest = decode(input)?;
-            encode(answer_records(vault, principal, request.id)?)
+            encode(question_answers(vault, principal, &request)?)
         }
         AgentVerb::VaultArtifactsReviewSlides => {
             let request: oneiron::blob_artifact::SlideReviewSubmit = decode(input)?;

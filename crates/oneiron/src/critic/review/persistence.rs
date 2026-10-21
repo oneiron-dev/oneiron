@@ -98,6 +98,7 @@ pub(super) fn persist_review(
         };
         let stored = StoredReview {
             principal: request.actor.entity_ref(),
+            principal_class: Some(request.actor.actor_class() as u8),
             dissent: BTreeMap::new(),
             verdict: id.to_hex(),
             triage: triage.clone(),
@@ -184,6 +185,10 @@ pub(super) fn read_reliabilities(
 #[derive(Serialize, Deserialize)]
 struct StoredReview {
     principal: EntityId,
+    /// The class the review's actor authenticated as, the asker class of a dissent
+    /// question it keeps (FIX 1588). None on a review stored before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    principal_class: Option<u8>,
     dissent: BTreeMap<String, ReviewDissent>,
     verdict: String,
     triage: CritiqueTriage,
@@ -408,12 +413,19 @@ pub(super) fn persisted_artifact(
         .ok_or_else(|| invalid_critic_config("artifact is not a finding in this persisted review"))
 }
 
-/// Resume partial dissent retention without creating a second note or question.
+/// Resume partial dissent retention without creating a second note or question: the
+/// review's principal, the class it authenticated as when the review kept one, the
+/// dissent so far and the triage verdict.
 pub(super) fn dissent_state(
     vault: &Vault,
     verdict: &EntityId,
     artifact: &str,
-) -> Result<(EntityId, ReviewDissent, CritiqueVerdict)> {
+) -> Result<(
+    EntityId,
+    Option<crate::EdgeActorClass>,
+    ReviewDissent,
+    CritiqueVerdict,
+)> {
     let txn = vault.store.env.read_txn()?;
     let body = vault
         .get_claim_in_txn(&txn, verdict)?
@@ -437,7 +449,10 @@ pub(super) fn dissent_state(
             question: None,
             settled_fact: None,
         });
-    Ok((stored.principal, state, stored.triage.verdict))
+    let class = stored
+        .principal_class
+        .and_then(crate::EdgeActorClass::try_from_u8);
+    Ok((stored.principal, class, state, stored.triage.verdict))
 }
 
 pub(super) fn save_dissent(vault: &Vault, verdict: &EntityId, state: &ReviewDissent) -> Result<()> {

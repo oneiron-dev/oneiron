@@ -175,6 +175,11 @@ side_tables! {
     /// A standing artifact question's last ask of one artifact: the head versions it read and
     /// the proposal its answers wait under. Key: id16(question) + id16(artifact).
     TYPED_QUESTION_ARTIFACT_ASKED: VaultMeta b"typed_question:artifact_asked:v1:" Named;
+    /// A question's asks in commit order (FIX 2337): each graph answer by its claim, and
+    /// each artifact ask with the pins it read and its proposal, a failed one too. Its
+    /// high-water mark is a `TYPED_QUESTION` row. Key: id16(question) + u64be(sequence).
+    TYPED_QUESTION_ASK_HISTORY: VaultMeta b"typed_question:ask_history:v1:" Named
+        => crate::llm::decision::questions::erase_ask_history_actor_in_txn;
     /// Typed question versions, heads, answers and labels. Key: id16(question) ":version:" u32be.
     /// Pending refresh for a question/unit pair. Key: id16(question) + id16(unit).
     TYPED_QUESTION_PENDING: VaultMeta b"typed_question:pending:v1:" Raw;

@@ -7,7 +7,7 @@ use super::{
     arrival,
     records::*,
     store::{
-        AnswerKey, HeadKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_VERSION, VersionKey, encode,
+        HeadKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_VERSION, VersionKey, encode,
         family_prefix, secret_scan_before_put,
     },
 };
@@ -170,6 +170,9 @@ fn bind_health_answer_in_txn(
             artifacts: Vec::new(),
         },
         created_at: input.now,
+        // A one-off health check keeps no authenticated asker: the engine
+        // writes it for its principal.
+        asker_class: None,
     };
     record.definition.validate()?;
     let answer = AnswerRecord {
@@ -228,15 +231,7 @@ fn bind_health_answer_in_txn(
     secret_scan_before_put(&head)?;
     QUESTION_HEAD.put(&vault.store, txn, &HeadKey(question.id), &head)?;
     secret_scan_before_put(&answer)?;
-    QUESTION_ANSWER.put(
-        &vault.store,
-        txn,
-        &AnswerKey {
-            question: question.id,
-            claim: answer.claim,
-        },
-        &answer,
-    )?;
+    super::ask_history::put_graph_answer_in_txn(vault, txn, question.id, input.principal, &answer)?;
     arrival::watch(&vault.store, txn, &record)?;
     Ok(HealthBound { unit, answer })
 }
