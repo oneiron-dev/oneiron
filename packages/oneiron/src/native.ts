@@ -1129,6 +1129,7 @@ vaultIdentityResolve(input: unknown): unknown
 vaultIdentityEventsGet(input: unknown): unknown
 vaultIdentityProposalsResolve(input: unknown): unknown
 vaultIdentityProposalsForPair(input: unknown): unknown
+connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown
 selfBrowserFind(input: unknown): unknown

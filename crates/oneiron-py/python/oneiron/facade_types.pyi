@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1131 facade rows, 3942 declarations.
-Inputs: 1066 of 1131 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1018 of 1131 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 109; unread shapes: 0.
+Census: 1132 facade rows, 3945 declarations.
+Inputs: 1066 of 1132 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1018 of 1132 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 110; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -19566,6 +19566,14 @@ class IdentityPairProposals(TypedDict):
     b: EntityId
     proposals: list[EntityId]
     distinct_claims: list[EntityId]
+ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
+class ConnectorQuestionAnswer(TypedDict):
+    key: str
+    action: ConnectorAnswerAction
+    content: NotRequired[Any | None]
+class ConnectorAnswerRequest(TypedDict):
+    handle: str
+    answers: list[ConnectorQuestionAnswer]
 class OpenInput(TypedDict):
     url: str
 class TakeoverRecord(TypedDict):

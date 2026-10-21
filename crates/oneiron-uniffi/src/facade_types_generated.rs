@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1131 facade rows, 3924 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1083.
+// UniFFI census: 1132 facade rows, 3927 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1084.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -60001,6 +60001,39 @@ pub struct IdentityPairProposals {
     pub proposals: Vec<String>,
     #[serde(rename = "distinct_claims")]
     pub distinct_claims: Vec<String>,
+}
+
+/// `oneiron::task_verb::sdk_connector_call::ConnectorAnswerAction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConnectorAnswerAction {
+    #[serde(rename = "accept")]
+    Accept,
+    #[serde(rename = "decline")]
+    Decline,
+    #[serde(rename = "cancel")]
+    Cancel,
+}
+
+/// `oneiron::task_verb::sdk_connector_call::ConnectorQuestionAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorQuestionAnswer {
+    #[serde(rename = "key")]
+    pub key: String,
+    #[serde(rename = "action")]
+    pub action: ConnectorAnswerAction,
+    #[serde(rename = "content", default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<crate::WireJson>,
+}
+
+/// `oneiron::task_verb::sdk_connector_call::ConnectorAnswerRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorAnswerRequest {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "answers")]
+    pub answers: Vec<ConnectorQuestionAnswer>,
 }
 
 /// `oneiron_browser::OpenInput`.

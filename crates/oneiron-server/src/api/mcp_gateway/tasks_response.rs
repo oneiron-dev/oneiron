@@ -2091,6 +2091,7 @@ fn mcp_agent_verb_input(
         "vault.identity.events.get" => a.spec.clone().ok_or_else(invalid),
         "vault.identity.proposals.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.identity.proposals.for_pair" => a.spec.clone().ok_or_else(invalid),
+        "connector.answer" => a.spec.clone().ok_or_else(invalid),
         "self.browser.open" => a.spec.clone().ok_or_else(invalid),
         "self.browser.observe" => a.spec.clone().ok_or_else(invalid),
         "self.browser.find" => a.spec.clone().ok_or_else(invalid),
@@ -5511,6 +5512,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.identity.proposals.for_pair" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "connector.answer" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.browser.open" => {
@@ -21421,6 +21425,29 @@ async fn execute_agent_verb_row(
                     server, auth, input,
                 )
                 .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "connector.answer" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("connector.answer", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ConnectorAnswerRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::connector_answer(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "connector.answer",
+                ),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;

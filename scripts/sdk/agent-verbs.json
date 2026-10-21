@@ -13740,7 +13740,14 @@
       "output": "crate::task_verb::sdk::ConnectorCallReply",
       "scope": "Write",
       "context": "run",
-      "effect": "ConnectorAnswer"
+      "effect": "ConnectorAnswer",
+      "host": {
+        "input": "crate::task_verb::sdk::ConnectorAnswerRequest",
+        "description": "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data.",
+        "host_door_caller": true,
+        "host_door_session": false,
+        "host_door_lists": true
+      }
     },
     {
       "name": "vault.worlds.privacy.set",

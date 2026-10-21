@@ -1121,6 +1121,7 @@ pub enum AgentVerb {
     VaultIdentityEventsGet,
     VaultIdentityProposalsResolve,
     VaultIdentityProposalsForPair,
+    ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -2275,6 +2276,7 @@ impl AgentVerb {
         Self::VaultIdentityEventsGet,
         Self::VaultIdentityProposalsResolve,
         Self::VaultIdentityProposalsForPair,
+        Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -3460,6 +3462,7 @@ impl AgentVerb {
             Self::VaultIdentityEventsGet => "vault.identity.events.get",
             Self::VaultIdentityProposalsResolve => "vault.identity.proposals.resolve",
             Self::VaultIdentityProposalsForPair => "vault.identity.proposals.for_pair",
+            Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -4596,6 +4599,7 @@ impl AgentVerb {
                 | Self::VaultIdentityEventsGet
                 | Self::VaultIdentityProposalsResolve
                 | Self::VaultIdentityProposalsForPair
+                | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -5778,6 +5782,7 @@ impl AgentVerb {
                 | Self::VaultIdentityEventsGet
                 | Self::VaultIdentityProposalsResolve
                 | Self::VaultIdentityProposalsForPair
+                | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -7041,6 +7046,7 @@ impl AgentVerb {
                 | Self::VaultIdentityEventsGet
                 | Self::VaultIdentityProposalsResolve
                 | Self::VaultIdentityProposalsForPair
+                | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -7728,6 +7734,7 @@ impl AgentVerb {
                 | Self::VaultIdentityPropose
                 | Self::VaultIdentityUndo
                 | Self::VaultIdentityProposalsResolve
+                | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserClickAt
@@ -8918,6 +8925,7 @@ impl AgentVerb {
             Self::VaultIdentityEventsGet => &["spec"],
             Self::VaultIdentityProposalsResolve => &["spec"],
             Self::VaultIdentityProposalsForPair => &["spec"],
+            Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -10073,6 +10081,7 @@ impl AgentVerb {
             Self::VaultIdentityEventsGet => &["spec"],
             Self::VaultIdentityProposalsResolve => &["spec"],
             Self::VaultIdentityProposalsForPair => &["spec"],
+            Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -13368,6 +13377,9 @@ impl AgentVerb {
             }
             Self::VaultIdentityProposalsForPair => {
                 "The owner reads open merge proposals and effective distinctness claims for an unordered identity pair."
+            }
+            Self::ConnectorAnswer => {
+                "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."
             }
             Self::SelfBrowserOpen => {
                 "Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor."
