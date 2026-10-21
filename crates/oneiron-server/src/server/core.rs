@@ -84,6 +84,13 @@ pub struct SyncServer {
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
     pub(crate) transfers: crate::api::Transfers,
+    /// The machine's memory, leased to work before it allocates (FIX 7649):
+    /// the e-sign doors' spooled bodies read whole take their lease here.
+    pub(crate) memory: crate::machine::MachineMemory,
+    /// The host's renderer line (`limits.renderer_work`, FIX 7653): every
+    /// deck and slide render takes its turn here, round robin across the
+    /// callers it is for, the host's own wakes behind them.
+    pub(crate) renderer_turns: crate::admission::Admission<oneiron::EntityId>,
     /// OF-520 questions retrieval queries past `config.limits` raised.
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
@@ -134,6 +141,9 @@ pub struct SyncServer {
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
+    /// How this process's browser stands (FIX 7670), which each browser
+    /// guest start moves and `Ping` and the owner's status read.
+    pub(crate) browser_readiness: crate::config::browser::BrowserReadinessCell,
     /// The `[desktop]` guest each code run starts for its own desktop verbs.
     /// `None` answers every desktop call `browser_unbound`.
     pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
@@ -406,6 +416,12 @@ impl SyncServer {
             config.limits.decision_reads,
             config.limits.queue_wait(),
         );
+        let renderer_turns = crate::admission::Admission::new(
+            crate::wire_telemetry::LimitRow::RendererWork,
+            Arc::clone(wire_telemetry.limit_questions()),
+            config.limits.renderer_work,
+            config.limits.queue_wait(),
+        );
         // Task work waits in the vault's own line, which the embedded SDK, a
         // code run's own ask and wait and a pumped agent share with the
         // served doors; this server sets its `[limits]` row on it.
@@ -449,6 +465,8 @@ impl SyncServer {
                 Arc::clone(wire_telemetry.limit_questions()),
                 &vault,
             )?,
+            memory: crate::machine::MachineMemory::new(),
+            renderer_turns,
             wire_telemetry,
             vault,
             root_doc,
@@ -477,6 +495,7 @@ impl SyncServer {
             secret_destinations: Default::default(),
             connector_elicitations: Arc::default(),
             browser_guest: None,
+            browser_readiness: Default::default(),
             desktop_guest: None,
             desktop_seats: Arc::default(),
             browser_seats: Arc::default(),
@@ -597,6 +616,12 @@ impl SyncServer {
 
     pub(crate) fn browser_guest(&self) -> Option<&oneiron_browser::BrowserGuest> {
         self.browser_guest.as_ref()
+    }
+
+    /// This process's browser readiness: seeded at start, then moved by
+    /// each browser guest start, and read as it stands.
+    pub(crate) fn browser_readiness(&self) -> &crate::config::browser::BrowserReadinessCell {
+        &self.browser_readiness
     }
 
     /// Gives code runs a desktop guest, from the `[desktop]` section.

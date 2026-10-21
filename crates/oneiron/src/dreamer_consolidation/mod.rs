@@ -127,7 +127,9 @@ pub use roles::{
     RoleBackend, RoleBackends, RoleCall,
 };
 pub use scope_summary_attempt::ScopeSummaryExecutor;
-pub(crate) use scope_summary_attempt::{ScopeSummaryEvidence, scope_summary_evidence_in_txn};
+pub(crate) use scope_summary_attempt::{
+    ScopeSummaryEvidence, arc_evidence_in_txn, scope_summary_evidence_in_txn,
+};
 pub(crate) use settle::keep_approval::{KeepApproval, KeepAs};
 pub use settle::{
     CONFLICT_SETTLE_DIAL, ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions,

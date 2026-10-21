@@ -25,7 +25,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/vault_read/types.rs` | src | s | 8 struct · 2 enum · 3 fn | AskRequest, CodeExecuteRequest, CodeSearchRequest, CoreBatchShortIdHydrateRequest, CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryAffect, CoreQueryRequest +2 | Vault-read request shapes and the view / count-mode knobs they carry |
 | `src/edge.rs` | src | s | 1 enum · 2 fn | EdgeActorClass | Edge vocabulary the write path shares |
 | `src/entity_id.rs` | src | m | 4 struct · 18 fn · 3 const · 2 mod | EntityId, ForeignWorldId, LocalWorldId, ParsedPresentationId | `EntityId` + world-id newtypes + id parsing/hex |
-| `src/entity_id/derived_domains.rs` | src | s | 55 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
+| `src/entity_id/derived_domains.rs` | src | m | 56 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
 | `src/entity_id/serde_hex.rs` | src | s | 4 fn · 1 mod | — | Validated entity-id representation for opt-in domain records |
 | `src/error/artifact.rs` | src | s | 2 enum · 1 fn · 1 crate-vis | ArtifactError, LiveDeckRefusal | Artifact-domain errors: code and blob artifacts, anchors, edit proposals, skills, agent definitions… |
 | `src/error/claim.rs` | src | s | 1 enum · 1 crate-vis | ClaimError | Claim-domain errors: predicate and actor-authority refusals, claim lifecycle transitions, and the… |
@@ -45,7 +45,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate.rs` | src | s | 1 struct | RetrievalFilter | The caller-supplied retrieval filter |
 | `src/identity_topology.rs` | src | s | 2 enum · 4 fn | EntityLifecycleState, IdentityTopologyRejection | Identity-topology lifecycle states and per-op rejections: the values the topology ledger, the sync replay… |
 | `src/lib.rs` | src | s | 23 mod · 2 re-export | — | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… |
-| `src/limit_ask.rs` | src | m | 2 struct · 1 enum · 1 trait · 9 fn | EngineLimit, EngineLimits, LimitAsk, LimitWatch | The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520) |
+| `src/limit_ask.rs` | src | m | 2 struct · 1 enum · 1 trait · 10 fn | EngineLimit, EngineLimits, LimitAsk, LimitWatch | The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520) |
+| `src/limit_ask/cgroup.rs` | src | s | 2 crate-vis | — | The memory cgroup this process runs in (FIX 8067), and what its limits leave (FIX 8066) |
 | `src/limit_ask/engine_rows.rs` | src | m | 2 fn · 1 const | — | The engine rows' tables: every row, its config key and its default (moved out of `limit_ask.rs` whole, so… |
 | `src/limits.rs` | src | s | 3 const | — | Traversal safety caps for the engine's graph walks |
 | `src/memory.rs` | src | s | 7 re-export | — | The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one… |

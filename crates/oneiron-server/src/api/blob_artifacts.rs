@@ -28,8 +28,9 @@ use oneiron::EntityId;
 use oneiron::anchored_annotation::Locator;
 use oneiron::blob_artifact::{
     ArtifactCreateRequest, ArtifactVersionView, BlobArtifactVersion, BlobVersionProvenance,
-    BornFromSource, DeckProposeRejection, DeckTransaction,
+    BornFromArtifact, BornFromSource, DeckProposeRejection, DeckTransaction,
 };
+use oneiron::claim::ScopedRead;
 use oneiron::edge::EdgeActorClass;
 use oneiron::edit_roundtrip::{DeckEditContext, DeckEditOutcome};
 use oneiron::edit_settle::{NativeOutput, SettleConsent};
@@ -209,6 +210,97 @@ async fn blocking<T: Send + 'static>(
         .map_err(|error| core_engine_error(message, error))
 }
 
+/// [`blocking`] for work that reads through the caller's own lane, and so
+/// answers as the API does.
+async fn blocking_read<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| ApiError::internal_server_error("artifact task failed"))?
+}
+
+/// The lane a credential's record caveats are honoured through on these raw
+/// reads (FIX 7645): its own scoped read, which admits only the rows its
+/// grant does, a withheld row reading as a missing one. `None` for a
+/// credential that carries no record caveat, the owner's own root among
+/// them: its reads answer as they always have.
+fn caveat_lane<'a>(
+    vault: &'a oneiron::Vault,
+    auth: &CoreAuth,
+) -> Result<Option<ScopedRead<'a>>, ApiError> {
+    if auth.require_unrestricted_record_scope().is_ok() {
+        return Ok(None);
+    }
+    crate::api::scoped_read_for_core_auth(vault, auth).map(Some)
+}
+
+/// Whether the credential's records caveat names `artifact` (FIX 8068,
+/// Engine 10-22): such a caveat covers that artifact's own version CLAIM and
+/// ASSET rows, so they count as admitted once its lane admits the artifact.
+/// Every other row, another artifact's versions and a trigger's born rows
+/// among them, is judged by the lane as before.
+fn records_name(auth: &CoreAuth, artifact: &EntityId) -> bool {
+    auth.verified_slip()
+        .is_some_and(|proof| proof.claims().records.contains(&artifact.to_hex()))
+}
+
+/// The rows a credential's lane judges for one version of `artifact`: the
+/// artifact alone where its records caveat names it ([`records_name`]),
+/// else the artifact and the version's own `rows`.
+fn version_sources(auth: &CoreAuth, artifact: EntityId, rows: Vec<EntityId>) -> Vec<EntityId> {
+    if records_name(auth, &artifact) {
+        return vec![artifact];
+    }
+    std::iter::once(artifact).chain(rows).collect()
+}
+
+/// What a born-from answer keeps for a credential with record caveats (FIX
+/// 7645): nothing when the trigger it names is withheld; else each born row
+/// its lane admits, and each version whose artifact, CLAIM and content ASSET
+/// it admits (the artifact alone where its records caveat names it, FIX
+/// 8068), all judged in one snapshot. A withheld row leaves no trace: no
+/// count, time or ref of it.
+fn admitted_born_from(
+    vault: &oneiron::Vault,
+    lane: &ScopedRead<'_>,
+    auth: &CoreAuth,
+    source: &BornFromSource,
+    born: Vec<EntityId>,
+    versions: Vec<BornFromArtifact>,
+) -> oneiron::Result<(Vec<EntityId>, Vec<BornFromArtifact>)> {
+    let mut sets = Vec::with_capacity(born.len().saturating_add(versions.len()).saturating_add(1));
+    if let BornFromSource::Trigger(trigger) = source {
+        sets.push(vec![trigger.row()]);
+    }
+    sets.extend(born.iter().map(|id| vec![*id]));
+    let mut listed = Vec::with_capacity(versions.len());
+    for found in versions {
+        // A version gone since the index was read is not listed.
+        if let Some((_, rows)) =
+            vault.blob_artifact_version_rows(&found.artifact_id, Some(found.version))?
+        {
+            sets.push(version_sources(auth, found.artifact_id, rows));
+            listed.push(found);
+        }
+    }
+    let mut admitted = lane.refs_readable_each(&sets)?.into_iter();
+    if matches!(source, BornFromSource::Trigger(_)) && admitted.next() != Some(true) {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let born = born
+        .into_iter()
+        .zip(admitted.by_ref())
+        .filter_map(|(id, kept)| kept.then_some(id))
+        .collect();
+    let versions = listed
+        .into_iter()
+        .zip(admitted)
+        .filter_map(|(found, kept)| kept.then_some(found))
+        .collect();
+    Ok((born, versions))
+}
+
 fn decode_content(content: &str) -> Result<Vec<u8>, ApiError> {
     base64::engine::general_purpose::STANDARD
         .decode(content)
@@ -330,7 +422,7 @@ pub(super) async fn create(
         (status = 400, description = "Malformed artifact id.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 404, description = "No such artifact.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "No such artifact, or one whose rows the credential's record caveats do not all admit.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Artifact read failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -341,8 +433,22 @@ pub(super) async fn view(
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
-    let view = blocking("artifact read failed", move || {
-        server.vault().blob_artifact_view(&id)
+    let view = blocking_read(move || {
+        let vault = server.vault();
+        let view = match caveat_lane(vault, &auth)? {
+            None => vault.blob_artifact_view(&id),
+            // A tree the lane does not admit whole reads as absent; a
+            // records caveat that names the artifact covers its own version
+            // rows (FIX 8068), so the artifact alone is judged.
+            Some(lane) => vault.blob_artifact_view_admitted(&id, |rows| {
+                if records_name(&auth, &id) {
+                    lane.all_refs_readable(std::slice::from_ref(&id))
+                } else {
+                    lane.all_refs_readable(rows)
+                }
+            }),
+        };
+        view.map_err(|error| core_engine_error("artifact read failed", error))
     })
     .await?
     .ok_or_else(|| ApiError::not_found("artifact", Some(artifact.as_str())))?;
@@ -434,12 +540,38 @@ async fn export(
         .map(|s| parse_entity_id_param(s, "principal_ref"))
         .transpose()?;
     let host_owner = host_action.map(|action| action.actor().entity_ref());
-    let file = blocking("artifact export failed", move || {
+    let file = blocking_read(move || {
         let vault = server.vault();
-        let file = vault.export_blob_artifact_as(&id, version, sight)?;
+        let failed = |error: oneiron::Error| core_engine_error("artifact export failed", error);
+        // A credential with record caveats takes the exact version its lane
+        // admits (FIX 7645): the artifact, that version's CLAIM and its
+        // content's ASSET, judged from its metadata before a byte is read,
+        // then that version read and no other. One it withholds reads as
+        // absent.
+        let version = match caveat_lane(vault, &auth)? {
+            None => version,
+            Some(lane) => {
+                let Some((pinned, rows)) = vault
+                    .blob_artifact_version_rows(&id, version)
+                    .map_err(failed)?
+                else {
+                    return Ok(None);
+                };
+                let sources = version_sources(&auth, id, rows);
+                if !lane.all_refs_readable(&sources).map_err(failed)? {
+                    return Ok(None);
+                }
+                Some(pinned)
+            }
+        };
+        let file = vault
+            .export_blob_artifact_as(&id, version, sight)
+            .map_err(failed)?;
         let by = bound.or(host_owner);
         if let (Some(file), Some(by)) = (&file, by) {
-            vault.record_blob_artifact_download(file, &by)?;
+            vault
+                .record_blob_artifact_download(file, &by)
+                .map_err(failed)?;
         }
         Ok(file)
     })
@@ -495,7 +627,7 @@ async fn export(
         (status = 400, description = "Malformed artifact id.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 404, description = "No such artifact version.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "No such artifact version, or one whose rows the credential's record caveats do not all admit.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Artifact export failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -520,7 +652,7 @@ pub(super) async fn export_head(
         (status = 400, description = "Malformed artifact id or version.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 404, description = "No such artifact version.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "No such artifact version, or one whose rows the credential's record caveats do not all admit.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Artifact export failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -544,7 +676,7 @@ pub(super) async fn export_version(
         ("agent_run" = Option<String>, Query, description = "An agent run ref, as its versions' provenance names it.")
     ),
     responses(
-        (status = 200, description = "`born`: the rows the source created; `versions`: every artifact version it made, in artifact then version order.", body = Object, content_type = "application/json"),
+        (status = 200, description = "`born`: the rows the source created; `versions`: every artifact version it made, in artifact then version order. A credential with record caveats is shown only the rows its lane admits, and nothing for a task, ask, run or skill it does not.", body = Object, content_type = "application/json"),
         (status = 400, description = "Name exactly one of task, ask, run, skill or agent_run.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -588,13 +720,23 @@ pub(super) async fn born_from(
             .into());
         }
     };
-    let (born, versions) = blocking("born-from read failed", move || {
+    let (born, versions) = blocking_read(move || {
         let vault = server.vault();
+        let failed = |error: oneiron::Error| core_engine_error("born-from read failed", error);
+        let lane = caveat_lane(vault, &auth)?;
         let born = match &source {
-            BornFromSource::Trigger(trigger) => vault.rows_born_from(&trigger.row())?,
+            BornFromSource::Trigger(trigger) => {
+                vault.rows_born_from(&trigger.row()).map_err(failed)?
+            }
             BornFromSource::AgentRun(_) => Vec::new(),
         };
-        Ok((born, vault.artifacts_born_from(&source)?))
+        let versions = vault.artifacts_born_from(&source).map_err(failed)?;
+        match lane {
+            None => Ok((born, versions)),
+            Some(lane) => {
+                admitted_born_from(vault, &lane, &auth, &source, born, versions).map_err(failed)
+            }
+        }
     })
     .await?;
     Ok(Json(json!({ "born": born, "versions": versions })))
@@ -611,7 +753,7 @@ pub(super) async fn born_from(
         (status = 200, description = "`proposals`: the pending proposals.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed artifact id.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read, or carries record caveats this listing cannot honour yet (record-scope).", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Proposal list failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -621,6 +763,9 @@ pub(super) async fn proposals(
     Path(artifact): Path<String>,
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    // No scoped projection of this listing's sources exists yet, so a
+    // credential with record caveats is refused by name (FIX 7645).
+    auth.require_unrestricted_record_scope()?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
     let pending = blocking("proposal list failed", move || {
         server.vault().pending_proposals(&id)
@@ -955,7 +1100,7 @@ pub(super) async fn restore(
         (status = 200, description = "`unattached`: each thread with its pinned version, place, words snapshot, the version it detached at and any held task.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed artifact id.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read, or carries record caveats this listing cannot honour yet (record-scope).", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Unattached list failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -965,6 +1110,9 @@ pub(super) async fn unattached(
     Path(artifact): Path<String>,
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    // No scoped projection of this listing's sources exists yet, so a
+    // credential with record caveats is refused by name (FIX 7645).
+    auth.require_unrestricted_record_scope()?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
     let threads = blocking("unattached list failed", move || {
         server.vault().unattached_annotation_threads(&id)
@@ -997,7 +1145,7 @@ pub(super) async fn unattached(
         (status = 200, description = "`offers`: each thread, version and place.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed artifact id.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read, or carries record caveats this listing cannot honour yet (record-scope).", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Reattach offers failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -1007,6 +1155,9 @@ pub(super) async fn reattach_offers(
     Path(artifact): Path<String>,
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    // No scoped projection of this listing's sources exists yet, so a
+    // credential with record caveats is refused by name (FIX 7645).
+    auth.require_unrestricted_record_scope()?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
     let offers = blocking("reattach offers failed", move || {
         server.vault().annotation_reattach_offers(&id)

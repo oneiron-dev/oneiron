@@ -469,11 +469,12 @@ async fn facade_call_receipt(
         Some(value) => oneiron::receipt::call_json_digest(value),
         None => oneiron::receipt::call_bytes_digest(&bytes),
     };
-    // OF-568: what the call reads, captured before it runs.
+    // OF-568: what the call reads, captured before it runs. OF-568 L4: the
+    // attempt whose live run it holds, as the hold witnessed it.
     let inputs = call_receipt::action_inputs(&server, &verb, request.as_ref());
-    let mut response = next
-        .run(Request::from_parts(parts, Body::from(bytes)))
-        .await;
+    let (mut response, attempt) =
+        call_receipt::attempt_witnessed(next.run(Request::from_parts(parts, Body::from(bytes))))
+            .await;
     let mut refusal = response.extensions_mut().remove::<FacadeApiError>();
     let status = response.status();
     let mut result_digest = None;
@@ -536,6 +537,7 @@ async fn facade_call_receipt(
             request_digest,
             result_digest,
             inputs,
+            attempt,
             served: Vec::new(),
         },
     );
@@ -1674,6 +1676,11 @@ impl From<MemoryError> for FacadeApiError {
                 browser_doors::browser_refusal_status(code)
                     .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
             }
+            // FIX 7653: a render that ran past its deadline or met a machine
+            // floor is not the caller's fault, and can be asked again.
+            crate::slide_render::RENDER_DEADLINE
+            | crate::slide_render::RENDER_MEMORY_FLOOR
+            | crate::slide_render::RENDER_DISK_FLOOR => StatusCode::SERVICE_UNAVAILABLE,
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };

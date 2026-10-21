@@ -61,6 +61,18 @@ impl SeatDecisions {
         candidates: &[SeatCandidate],
     ) -> Result<(usize, Option<ReasoningEffort>)> {
         let deadline = RetrievalDeadline::hard(Instant::now(), self.budget);
+        self.pick_before(task, candidates, &deadline)
+    }
+
+    /// `pick` under `deadline`, the clock its caller already runs on (FIX 7507):
+    /// both questions share it, so a birth bound by a parent's clock never starts a new
+    /// one. A caller passes its own deadline cut to the seat budget it allows.
+    pub fn pick_before(
+        &self,
+        task: &SeatTask,
+        candidates: &[SeatCandidate],
+        deadline: &RetrievalDeadline,
+    ) -> Result<(usize, Option<ReasoningEffort>)> {
         let ladder = self.ladder.ladder();
         let ask = |question: &DecisionQuestion, chosen: Option<&ModelId>| {
             ladder.run(
@@ -71,7 +83,7 @@ impl SeatDecisions {
                 self.dial,
                 &self.bands,
                 Reversibility::ReversibleRead,
-                &deadline,
+                deadline,
             )
         };
         let model = SEAT_PICK.question(

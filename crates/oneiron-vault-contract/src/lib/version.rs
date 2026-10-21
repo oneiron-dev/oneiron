@@ -226,6 +226,44 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// engine no flag, never a `false`; one that is there holds its one value and
 /// at most one final LF, or the boot is refused, with no reader of another
 /// form kept. No `Ping` field is added and this version stays 3.
+///
+/// Guest runtime fact (FIX 7670): `--guest-runtime-fact`
+/// ([`GUEST_RUNTIME_FACT_ARG`](crate::GUEST_RUNTIME_FACT_ARG)) carries the
+/// trusted supervisor's one observation of the guest runtime it provisioned
+/// for the vault's UID, in [`GuestRuntimeFact`](crate::GuestRuntimeFact)'s
+/// ten closed spellings, one value per spawn. It carries a build floor, at
+/// the engine revision it merged in, with no `Ping` revision field: an
+/// engine before it refuses the flag before it touches anything, and one at
+/// or after it refuses a spelling not among the ten, so a supervisor passes
+/// it only with installed engines at or after the floor. An engine never
+/// requires it: no flag means no observation, never provisioned or disabled.
+/// Provisioned means the image was imported and the observed preconditions
+/// held, never that a guest started, and no fact refuses the vault's start.
+/// This version stays 3.
+///
+/// Browser readiness on `Ping` (FIX 7670): every
+/// [`CtlResponse::Ping`](crate::CtlResponse::Ping) requires `browser`
+/// ([`BrowserReadiness`](crate::BrowserReadiness)), how the vault's browser
+/// stands now, beside the boot-only `readiness`, which does not change. It
+/// carries a build floor, at the engine revision it merged in. Its `state`
+/// and each state's keys are required: `image`, `runtime_fact` (present as
+/// `null` when the supervisor observed none) and, where the state has them,
+/// `tier`, `reason` and `last_observed_at`. A vault built before the floor
+/// sends no `browser`, and no reader that takes such a line as a `Ping` is
+/// kept; the untagged [`CtlResponse`](crate::CtlResponse) still matches it as
+/// `Ok`, which a supervisor never takes for a `Ping`. So a supervisor reads
+/// `browser` only with installed engines at or after the floor, and deploys
+/// them before it moves its contract pin. No browser state fails the ready
+/// handshake, turns `ok` false or asks for a restart. This version stays 3.
+///
+/// Browser readiness on the owner's status (FIX 7670): the authenticated
+/// `GET /v1/owner/status` reply requires `browser`, the same
+/// [`BrowserReadiness`](crate::BrowserReadiness) a managed `Ping` carries,
+/// read from the same value, with the same required keys. It carries a build
+/// floor, at the engine revision it merged in: a client that reads it runs
+/// against an engine at or after the floor, no reader of a status reply
+/// without it is kept, and no default stands in for it. Public `/api/health`
+/// carries none of it. No SDK row is added and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

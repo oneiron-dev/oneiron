@@ -36,6 +36,8 @@ use self::board_setup::{
     mcp_resolve_page,
 };
 pub(crate) use self::code_mode_verbs::{ReaderChildDoor, RunGuests, VerdictAsker};
+// L09's resident_pump `run_bound` calls the strict preflight (CUA E4).
+pub(crate) use self::code_mode_verbs::{WorkflowPreflight, preflight_task_workflow};
 #[cfg(test)]
 pub(crate) use self::device_release::release_hook;
 use self::device_release::{mcp_release_listed, mcp_release_result};
