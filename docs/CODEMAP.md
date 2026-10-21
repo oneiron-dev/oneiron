@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 4627 | 902 | 171 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 4629 | 902 | 171 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 47 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 144 | 18 | 0 |
@@ -185,7 +185,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `merge_queue` | dir | 33 | m | yes | Durable batched speculation over real detached worktrees |
 | `msgpack_shape` | file | 1 | s | — | A budget check of untrusted MessagePack before it is decoded |
 | `note` | file+dir | 55 | m | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
-| `off_record` | dir | 23 | L | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
+| `off_record` | dir | 24 | L | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `office_body` | dir | 21 | XL | yes | Live office bodies (ARCH-0075; ARCH-0077, "Multiplayer: the target body shape"): an imported DOCX, XLSX or… |
 | `origin` | dir | 111 | L | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
 | `outbound` | dir | 45 | m | yes | Outbound action capability manifests and dispatch spine for OF-327 |
@@ -222,7 +222,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `run_tree` | dir | 9 | m | — | Run tree projection and control adapter over generic AttemptQueue rows |
 | `runtime_hooks` | dir | 35 | L | yes | Runtime hooks (ARCH-0080) |
 | `saved_query` | dir | 15 | L | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
-| `scan_check` | file+dir | 2 | m | yes | Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520) |
+| `scan_check` | file+dir | 3 | m | yes | Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520) |
 | `scope_summary` | dir | 20 | L | yes | Retained spawned sub-sessions and Dreamer-composed scope summaries |
 | `secret_custody` | dir | 46 | L | yes | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
 | `secret_lease` | dir | 12 | m | yes | ARCH-0069 secret custody — SECRET-02 (ONE-1920): the T0/T1/T2 materialization rungs behind a single… |

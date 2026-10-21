@@ -1562,7 +1562,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_dag/admission.rs` | src | L | 22 crate-vis | — | Close the legacy ChildOf-only append door after DAG adoption |
 | `src/conversation_dag/branch_scope.rs` | src | s | 2 crate-vis | — | Shared branch ownership and bounded reply-span proof for mint and stored reads |
 | `src/conversation_dag/fixtures.rs` | src | s | 7 crate-vis | — | — |
-| `src/conversation_dag/graph.rs` | src | m | 21 crate-vis | — | Strict transactional graph reads and shared guards |
+| `src/conversation_dag/graph.rs` | src | m | 22 crate-vis | — | Strict transactional graph reads and shared guards |
 | `src/conversation_dag/membership.rs` | src | s | 5 crate-vis | — | Replicated TURN session membership: body carrier and local index reconstruction |
 | `src/conversation_dag/migration.rs` | src | m | 1 fn · 2 crate-vis | — | Idempotent lazy and maintenance migration of legacy conversation turns |
 | `src/conversation_dag/mod.rs` | src | s | 1 mod · 4 re-export · 20 crate-vis | — | Conversation DAG topology, local HEAD state and exact scope resolution |
@@ -3277,6 +3277,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/lifecycle/registry.rs` | src | m | 23 crate-vis | — | In-process session registry, entry state, publish/lookup/membership doors and ref vetting |
 | `src/off_record/lifecycle/retained.rs` | src | s | 1 trait · 1 fn | RetainedCharge | A room stretch's memory, charged to its host's retained-memory line (SCAN C029, FIX 5991) |
 | `src/off_record/lifecycle/room.rs` | src | m | 12 fn · 1 type · 12 crate-vis | — | Participants in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10) |
+| `src/off_record/lifecycle/room/export_roots.rs` | src | s | 2 crate-vis | — | The threads an off-record room's copy carries, for its export's audit and notices (FIX 6427, 6681), split… |
 | `src/off_record/lifecycle/save_grant.rs` | src | m | 5 fn · 9 crate-vis | — | Who may bring a room's talk into this vault (ARCH-0052 #d5-save-grant, owner ruling 2026-10-16): a holder of… |
 | `src/off_record/lifecycle/saving.rs` | src | s | 3 crate-vis | — | Saving a stretch's whole talk (ARCH-0052 D5): which turns one save keeps, and what a saved copy of a turn… |
 | `src/off_record/lifecycle/session.rs` | src | L | 2 struct · 12 fn · 39 crate-vis | OffRecordSession, OffRecordSessionVault | Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close |
@@ -4010,7 +4011,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/saved_query/support.rs` | src | s | 15 crate-vis | — | — |
 | `src/saved_query/sweep.rs` | src | s | 1 struct · 5 fn · 1 const | PersonChanges | The host's saved-query sweep (ARCH-0059 `eval`): the queries a wake evaluates, the people it pages through… |
 | `src/saved_query/tests.rs` | test | m | — | — | — |
-| `src/scan_check.rs` | src | m | 1 struct · 1 enum · 4 fn · 4 const · 9 crate-vis | EngineScan, ScanCheck | Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520) |
+| `src/scan_check.rs` | src | m | 1 struct · 3 fn · 2 const · 1 re-export · 9 crate-vis | ScanCheck | Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520) |
+| `src/scan_check/engine_scan.rs` | src | m | 1 enum · 1 fn · 2 const · 2 crate-vis | EngineScan | The engine scans whose tables grow with use (rule 5), each with its closed code, the threshold it asks past… |
 | `src/scan_check/table_tests.rs` | test | m | — | — | The code's own list of engine scans: none refuses for how many rows it reads (rule 5) |
 | `src/scope_summary/arc.rs` | src | s | 6 crate-vis | — | A conversation's Arc (FIX 7509 P8, ARCH-0026 Dreamer row 4): one stable summary per conversation path… |
 | `src/scope_summary/arc_completion.rs` | src | s | 2 crate-vis | — | An Arc never lands in part (FIX 7509 PR3) |
@@ -5356,7 +5358,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/rooms/audience_events.rs` | src | m | 1 enum · 32 crate-vis | ThreadAudienceHistory | A private thread's audience edits (FIX 5545) |
 | `src/workspace_roster/rooms/audience_find.rs` | src | s | 4 crate-vis | — | What the vault's Owner or an Admin learns of a room's private threads (FIX 5545): that they exist, by root… |
 | `src/workspace_roster/rooms/audience_history.rs` | src | s | 1 struct · 1 fn | ThreadAudienceOpenFullHistoryRequest | OPEN FULL HISTORY, the Owner's alone (owner ruling 2026-10-20, FIX 6383): the explicit act that opens a… |
-| `src/workspace_roster/rooms/audience_notices.rs` | src | m | 1 enum · 6 crate-vis | ThreadNotice | What a private thread's members are told, and the audience its own view shows them (owner ruling 2026-10-20… |
+| `src/workspace_roster/rooms/audience_notices.rs` | src | m | 1 enum · 8 crate-vis | ThreadNotice | What a private thread's members are told, and the audience its own view shows them (owner ruling 2026-10-20… |
 | `src/workspace_roster/rooms/audience_overlay.rs` | src | s | 1 crate-vis | — | A thread turn a session overlay stages (FIX 3122, the rest of FIX 2951) |
 | `src/workspace_roster/rooms/carrier_erase.rs` | src | m | 8 crate-vis | — | A room side row as this vault takes it from a carrier (FIX 4227, 4228): another machine's copy, a window's… |
 | `src/workspace_roster/rooms/fact_subject.rs` | src | s | 1 enum · 1 const · 8 crate-vis | ParticipationKeyErase | Who a participation fact's key names (FIX 4228): a live subject, or no one once that subject was erased |
