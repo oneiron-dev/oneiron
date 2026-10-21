@@ -2744,3 +2744,42 @@ them at `<data_dir>/oneironer/engines.json` and reads no HOME or XDG. Rows
 never go into the shared model root or into a bundle directory. If the rows
 file cannot be written, the server logs a warning, and the next start
 measures again.
+
+Each reference case is timed after 250 ms of idle, as a chat spaces its
+turns. An engine replaces the one ranked above it only when its median is at
+least 3% faster and its 95th percentile at most 5% slower. A row is keyed by
+the bundle's stack and reference, the engine, its runtime and artifact, the
+server build, the OS build and that idle, and is measured again when any of
+them moves; a rows file in an older format is measured over. An engine that
+fails to load or answer keeps no row, so the next start tries it again.
+
+### Workers, live and bulk calls, and receipts
+
+Every tagger call goes through the slot's one dispatcher to a worker. A local
+slot's worker is the engine it serves: with `device = "auto"`, the preferred
+engine that clears the bundle's parity bar; with a named device, that device.
+Only that one model is loaded. An endpoint slot's worker is the endpoint, and
+its receipts do not name a runtime inside it. A worker loads, warms on one
+short untimed call, and takes work once ready; one whose load or warm-up fails
+takes none until the next start.
+
+Calls come in two classes. A live call (the explicit tag door,
+`vault.models.roles.invoke` with a `tag` input) takes a free worker first,
+the calibrated rank choosing among several; when every worker is busy it joins
+the shorter waiting queue. Bulk calls (the tagging worker's backlog and
+feedback redaction) share one queue, which whichever worker frees up takes
+from. A worker takes waiting live calls before any bulk call and never stops
+a call it is running, so steady live traffic holds bulk back. At most 64 live
+and 64 bulk calls are queued or running at once; past that a caller waits for
+room. That bound is the dispatcher's memory only: a turn's tagging marker is
+written when the turn commits and never waits on it, and markers not yet
+claimed stay in the vault for a later pass. No call is refused for a backlog.
+
+Each call names what ran it in an `execution` receipt: `runtime` (`candle` or
+`endpoint`), `compute` (`cpu`, `metal`, `cuda`, or `opaque` for an endpoint),
+`engine` (`candle/metal`, `endpoint`), `pick` (`calibrated`, `free`,
+`shorter_queue`, `fallback` when a better-ranked worker is not ready, or
+`pinned` for a named device or an endpoint), `queue_ms` and `infer_ms`. It is
+on every tagging trace the `vault.tagging.*` reads return, on the tag door's
+`tagged` result, and on a shadow trace. The receipt never enters the answer:
+parity and digests compare the spans, links and mood alone.

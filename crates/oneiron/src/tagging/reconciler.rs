@@ -1,10 +1,8 @@
 //! The drain pass a host worker drives: claim ready markers, read each turn,
 //! call the tagger outside any write transaction, check the answer, settle.
 
-use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Instant;
 
 use super::history;
 use super::input::{TurnInput, turn_input_in_txn, turn_text_in_txn};
@@ -27,7 +25,7 @@ use crate::attempt_queue::{
 };
 use crate::embed::EmbedderLocality;
 use crate::error::{ArtifactError, Error, Result};
-use crate::memory::extraction::{EncoderOutput, ExtractionEncoder};
+use crate::memory::extraction::{EncoderOutput, ExtractionEncoder, ExtractionWork};
 
 const DEFAULT_LEASE_OWNER: &str = "oneironer-tagging";
 const DEFAULT_BATCH_SIZE: usize = 16;
@@ -687,9 +685,7 @@ impl TaggingReconciler {
         trace.input_hash = Some(hash.clone());
         trace.model = Some(self.encoder.model_id().as_str().to_owned());
         pass.calls += 1;
-        let started = Instant::now();
-        let called = std::panic::catch_unwind(AssertUnwindSafe(|| self.encoder.infer(&input)));
-        trace.call_micros = Some(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
+        let called = trace.record_call(|| self.encoder.infer(&input, ExtractionWork::Bulk));
         let output = match called {
             Ok(Ok(output)) => output,
             Ok(Err(error)) => {
@@ -1050,6 +1046,7 @@ fn unreadable_trace(record: &AttemptRecord, prior_retries: u32) -> TaggingTrace 
         input_hash: None,
         try_number: prior_retries.saturating_add(1),
         call_micros: None,
+        execution: None,
         outcome: TaggingOutcome::Unreadable,
     }
 }
