@@ -4,7 +4,9 @@
 
 mod board;
 mod chat_emit;
-pub(crate) use chat_emit::{ChatContextCapture, freeze_chat_context, record_chat_answer};
+pub(crate) use chat_emit::{
+    ChatContextCapture, freeze_chat_context, record_action_answer, record_chat_answer,
+};
 mod cursor;
 mod explain;
 mod history;

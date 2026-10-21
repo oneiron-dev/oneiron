@@ -1,5 +1,5 @@
 //! Authenticated wrong labels emitted by the live weave report: one on a
-//! link, and one on a claim, project or budget item.
+//! link, and one on a claim, project, budget or sieve audit item.
 use super::{ScopedRead, WeaveItem, WeaveReader, WeaveSectionKind, WeaveSectionSpec};
 use crate::EntityId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -16,7 +16,8 @@ const LABELS: SideTable<([u8; EDGE_REF_LEN], EntityId), StoredCorrection, Named>
     SideTable::new(&side_table::WEAVE_WRONG_LINK_LABEL);
 
 /// Wrong-item labels, keyed by the item's id (a claim, project or budget id,
-/// unique across the three), then the label's receipt id.
+/// unique across the three, or a sieve audit's attempt id), then the label's
+/// receipt id.
 const ITEM_LABELS: SideTable<(EntityId, EntityId), StoredItemCorrection, Named> =
     SideTable::new(&side_table::WEAVE_WRONG_ITEM_LABEL);
 
@@ -52,15 +53,19 @@ struct StoredCorrection {
     recorded_at: u64,
 }
 
-/// A claim, project or budget row of a reader's weave report: the item a
-/// wrong-item label names. A budget stands under the project the report
-/// shows it with; its label keys on the budget.
+/// A claim, project, budget or sieve audit row of a reader's weave report:
+/// the item a wrong-item label names. A budget stands under the project the
+/// report shows it with; its label keys on the budget. A sampled sieve audit
+/// is named by the attempt that wrote it, its 16 bytes the key its labels
+/// file under; it is never a claim, and only a SieveScore section's audit
+/// rows answer for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WeaveItemTarget {
     Claim(EntityId),
     Project(EntityId),
     Budget { project: EntityId, budget: EntityId },
+    SieveAudit { attempt: EntityId },
 }
 
 impl WeaveItemTarget {
@@ -79,6 +84,9 @@ impl WeaveItemTarget {
                 project: *project,
                 budget: *budget_ref,
             }),
+            WeaveItem::SieveAudit { attempt, .. } => EntityId::from_bytes(*attempt.as_bytes())
+                .ok()
+                .map(|attempt| Self::SieveAudit { attempt }),
             WeaveItem::Link { .. }
             | WeaveItem::DreamProgress { .. }
             | WeaveItem::AgentHealth { .. } => None,
@@ -89,7 +97,10 @@ impl WeaveItemTarget {
     #[must_use]
     pub fn id(self) -> EntityId {
         match self {
-            Self::Claim(id) | Self::Project(id) | Self::Budget { budget: id, .. } => id,
+            Self::Claim(id)
+            | Self::Project(id)
+            | Self::Budget { budget: id, .. }
+            | Self::SieveAudit { attempt: id } => id,
         }
     }
 }
@@ -114,8 +125,10 @@ struct StoredItemCorrection {
 
 /// A hard delete leaves no wrong label that names `gone`: the labels it
 /// filed as a reader, those on it as a claim, project or budget (and on a
-/// budget shown under it as a project), and those on a link it is an end of.
-/// A row that no longer decodes goes too, since it may name it.
+/// budget shown under it as a project), those on a sieve audit that stands
+/// on it, and those on a link it is an end of. A row that no longer decodes
+/// goes too, since it may name it, and so does an audit's label whose audit
+/// is gone or does not read.
 pub(super) fn erase_weave_labels_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -133,21 +146,45 @@ pub(super) fn erase_weave_labels_in_txn(
         }
     }
     for key in ITEM_LABELS.scan_keys(store, txn, &[])? {
-        if key.0 == *gone
-            || ITEM_LABELS
-                .get_lenient(store, txn, &key)?
-                .is_none_or(|label| {
+        let goes = key.0 == *gone
+            || match ITEM_LABELS.get_lenient(store, txn, &key)? {
+                None => true,
+                Some(label) => {
                     let under = matches!(
                         label.item,
                         WeaveItemTarget::Budget { project, .. } if project == *gone
                     );
-                    label.actor == *gone || under
-                })
-        {
+                    label.actor == *gone || under || audit_label_goes(store, txn, label.item, gone)
+                }
+            };
+        if goes {
             ITEM_LABELS.delete(store, txn, &key)?;
         }
     }
     Ok(())
+}
+
+/// Whether a label on `item` goes with `gone` as a sieve audit's: when its
+/// audit stands on `gone`, or is gone or does not read (it may name `gone`).
+/// Every other item's label keys on its own rows.
+fn audit_label_goes(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    item: WeaveItemTarget,
+    gone: &EntityId,
+) -> bool {
+    let WeaveItemTarget::SieveAudit { attempt } = item else {
+        return false;
+    };
+    let Ok(attempt) = crate::attempt_queue::AttemptId::from_bytes(attempt.as_bytes()) else {
+        return true;
+    };
+    match crate::dreamer_wake::sieve::sieve_audit_in_txn(store, txn, &attempt) {
+        Ok(Some(audit)) => {
+            super::weave_report::sieve_score::sieve_audit_rows(&audit).contains(gone)
+        }
+        Ok(None) | Err(_) => true,
+    }
 }
 
 impl ScopedRead<'_> {
@@ -356,8 +393,9 @@ impl ScopedRead<'_> {
     /// The same check for an item: its own section, read under the reader's
     /// binding and current policy, must show it. A claim reads under its own
     /// predicate, in the first claim section the reader's policy allows; a
-    /// budget must show under the project named with it. An id that is no
-    /// claim fails as an unseen one does.
+    /// budget must show under the project named with it; a sieve audit's
+    /// attempt must name an audit row its SieveScore section admits now. An
+    /// id that is no claim fails as an unseen one does.
     fn require_visible_weave_item_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -390,6 +428,7 @@ impl ScopedRead<'_> {
             }
             WeaveItemTarget::Project(_) => (WeaveSectionKind::Projects, Vec::new()),
             WeaveItemTarget::Budget { .. } => (WeaveSectionKind::Budgets, Vec::new()),
+            WeaveItemTarget::SieveAudit { .. } => (WeaveSectionKind::SieveScore, Vec::new()),
         };
         let recipe = [WeaveSectionSpec {
             kind,
