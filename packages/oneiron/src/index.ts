@@ -3262,7 +3262,7 @@ export class Oneiron {
     call: (input: Facade.ConnectorCallRequest): Facade.ActAnswer<Facade.ConnectorCallReply> => this.#call(() => this.#client.connectorCall(input) as Facade.ActAnswer<Facade.ConnectorCallReply>),
     /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
     schema: (input: Facade.ConnectorSchemaRequest): Facade.ConnectorSchemaReply => this.#call(() => this.#client.connectorSchema(input) as Facade.ConnectorSchemaReply),
-    /** Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it. */
+    /** Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it. */
     call_status: (input: Facade.ConnectorCallStatusRequest): Facade.ConnectorCallStatus => this.#call(() => this.#client.connectorCallStatus(input) as Facade.ConnectorCallStatus),
     outbound: {
       /** Schedules one send through a granted outbound connector, gated and held for delivery. */

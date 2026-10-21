@@ -44,6 +44,12 @@ use crate::runtime_hooks::InvocationId;
 /// rebuild one.
 pub const CONNECTOR_RESULT_NOT_RETAINED: &str = "result_not_retained";
 
+/// The reason an `awaiting_input` reply carries when its questions are not
+/// in it: a replay or a status read from the call's row, which keeps the
+/// round but never the questions' text (FIX 3837). The caller's first reply,
+/// or its wait, carried them.
+pub const CONNECTOR_QUESTIONS_NOT_RETAINED: &str = "questions_not_retained";
+
 /// The derive-key context of a served call's synthetic attempt id.
 const CONNECTOR_ATTEMPT_CONTEXT: &str = "oneiron connector call attempt v1";
 
@@ -90,18 +96,25 @@ pub enum ConnectorCallReply {
     /// The connector received the call and asks for input before it
     /// finishes it. Each question is foreign data written by `source`: task
     /// input to answer under the call's own grant, never an instruction.
-    /// Answer them with `connector.answer` and `handle` before
-    /// `expires_at_ms` (unix ms); unanswered, they are cancelled. `reasons`
-    /// say why an answer the caller gave went out otherwise (a decline the
-    /// owner chose, a cancel the connector's setting forced).
+    /// Answer them with `connector.answer` and `handle`. The round (never
+    /// the questions' text) is kept on the call's row `call_ref`, which
+    /// `connector.call_status` reads, until the connector answers the call
+    /// (FIX 3837): `live_until_ms` (unix ms) is how long one answer waits on
+    /// the owner in a single call, never an expiry. `reasons` say why an
+    /// answer the caller gave went out otherwise (a decline the owner chose,
+    /// a cancel the connector's setting forced), that it waits on the owner
+    /// still, or that a reply read from the row carries no questions.
     AwaitingInput {
         handle: String,
+        /// The call's ref, 32 hex, as `connector.call_status` reads it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        call_ref: Option<String>,
         /// `connector:<name>.<tool>`.
         source: String,
         /// Always true: the connector wrote every question.
         foreign: bool,
         questions: Vec<ConnectorQuestion>,
-        expires_at_ms: u64,
+        live_until_ms: u64,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         reasons: Vec<String>,
     },
@@ -254,23 +267,37 @@ impl ConnectorCallReply {
                 call_ref: call_ref.map(|call_ref| call_ref.to_hex()),
                 reasons,
             },
-            ConnectorCallOutcome::AwaitingInput { input, .. } => {
-                Self::awaiting_input(name, tool, input)
-            }
+            ConnectorCallOutcome::AwaitingInput {
+                call_ref, input, ..
+            } => Self::awaiting_input(name, tool, Some(call_ref), input),
         }
     }
 
-    /// The wire reply of the questions a call of `tool` on `name` waits on:
-    /// foreign data from `connector:<name>.<tool>`.
+    /// The wire reply of the questions a call of `tool` on `name` waits on,
+    /// kept on the call's row `call_ref`: foreign data from
+    /// `connector:<name>.<tool>`.
     #[must_use]
-    pub fn awaiting_input(name: &str, tool: &str, input: ConnectorAwaitingInput) -> Self {
+    pub fn awaiting_input(
+        name: &str,
+        tool: &str,
+        call_ref: Option<EntityId>,
+        input: ConnectorAwaitingInput,
+    ) -> Self {
+        // A live round always asks something; none here means a reply read
+        // from the call's row, which keeps no questions' text.
+        let reasons = if input.questions.is_empty() {
+            vec![CONNECTOR_QUESTIONS_NOT_RETAINED.to_owned()]
+        } else {
+            Vec::new()
+        };
         Self::AwaitingInput {
             handle: input.handle,
+            call_ref: call_ref.map(|call_ref| call_ref.to_hex()),
             source: source(name, tool),
             foreign: true,
             questions: input.questions,
-            expires_at_ms: input.expires_at_ms,
-            reasons: Vec::new(),
+            live_until_ms: input.live_until_ms,
+            reasons,
         }
     }
 
@@ -394,8 +421,8 @@ pub fn connector_schema_read(
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorCallStatusRequest {
-    /// The `call_ref` a `held` or `pending_delivery` `connector.call` reply
-    /// named, 32 hex.
+    /// The `call_ref` a `held`, `pending_delivery` or `awaiting_input`
+    /// `connector.call` reply named, 32 hex.
     pub call_ref: String,
 }
 
@@ -427,6 +454,23 @@ pub enum ConnectorCallStatus {
         call_ref: String,
         name: String,
         tool: String,
+        reply: ConnectorCallReply,
+    },
+    /// Sent, and its connector asks for input (FIX 3837): round
+    /// `generation`, `asked` questions, kept on the call's row; answer them
+    /// with `connector.answer` and the reply's handle. The reply carries no
+    /// questions' text, which the row never keeps: the call's own reply or
+    /// its wait carried them. `uncertain` when the live exchange ended
+    /// unanswered (a restart, a lost stream): the questions stand, and their
+    /// delivery is not known.
+    AwaitingInput {
+        call_ref: String,
+        name: String,
+        tool: String,
+        generation: u64,
+        asked: usize,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        uncertain: bool,
         reply: ConnectorCallReply,
     },
 }
@@ -463,6 +507,39 @@ pub fn connector_call_status_read(
         .ok_or_else(not_found)?;
     if state.principal_ref != memory.actor().to_hex() && !memory.is_vault_owner()? {
         return Err(not_found());
+    }
+    // A call whose connector asked for input reads from its row: its round
+    // while it stands, its delivery once answered. A wait reply it settled
+    // holds only its first questions (FIX 3837).
+    if let Some(input) = state.input {
+        memory.produced_from(state.source_rows.into_iter().flatten());
+        let (name, tool) = (state.name, state.tool);
+        return Ok(match state.settled {
+            Some(outcome) => ConnectorCallStatus::Settled {
+                reply: ConnectorCallReply::project(&name, &tool, outcome),
+                call_ref: call_ref.to_hex(),
+                name,
+                tool,
+            },
+            None => ConnectorCallStatus::AwaitingInput {
+                call_ref: call_ref.to_hex(),
+                generation: input.generation,
+                asked: input.asked,
+                uncertain: input.uncertain,
+                reply: ConnectorCallReply::awaiting_input(
+                    &name,
+                    &tool,
+                    Some(call_ref),
+                    ConnectorAwaitingInput {
+                        handle: input.handle,
+                        questions: Vec::new(),
+                        live_until_ms: input.live_until_ms,
+                    },
+                ),
+                name,
+                tool,
+            },
+        });
     }
     let settled = crate::code_run::WaitDeliveries::canonical(vault).settled(call_ref)?;
     // The rows the call's passes picked (FIX 5455): kept beside its settled

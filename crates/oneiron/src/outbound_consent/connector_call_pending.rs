@@ -68,14 +68,15 @@ impl Vault {
 
     /// The outcome `pending` (the unsettled row `call_ref` names) settles
     /// with once its deadline has passed at `now_ms`; `None` while it may
-    /// still be resumed.
+    /// still be resumed. A call whose connector asked for input never
+    /// expires here: its send was delivered (FIX 3837).
     pub(super) fn expire_connector_call_if_due(
         &self,
         call_ref: &EntityId,
         pending: &PendingConnectorCall,
         now_ms: u64,
     ) -> Result<Option<ConnectorCallOutcome>, IntentLedgerError> {
-        if now_ms < connector_call_deadline(pending.held_at_ms) {
+        if pending.input.is_some() || now_ms < connector_call_deadline(pending.held_at_ms) {
             return Ok(None);
         }
         let record = {
@@ -89,19 +90,23 @@ impl Vault {
             },
             Some(record) => self.expire_admitted_intent(record, now_ms)?,
         };
-        // A resume that settled the row first keeps its own outcome.
+        // A resume that settled the row first keeps its own outcome, and one
+        // that met a connector's questions keeps them (FIX 3837).
         let settled = self.with_write_txn(|txn| {
             let Some(mut row) = PENDING_CALLS.get(&self.store, txn, call_ref)? else {
-                return Ok(settled);
+                return Ok(Some(settled));
             };
+            if row.input.is_some() {
+                return Ok(None);
+            }
             if let Some(known) = row.settled {
-                return Ok(known);
+                return Ok(Some(known));
             }
             row.settled = Some(settled.clone());
             PENDING_CALLS.put(&self.store, txn, call_ref, &row)?;
-            Ok(settled)
+            Ok(Some(settled))
         })?;
-        Ok(Some(settled.outcome()))
+        Ok(settled.map(|settled| settled.outcome()))
     }
 
     /// Stops an expired call's admitted ledger row, if it is still pending,
