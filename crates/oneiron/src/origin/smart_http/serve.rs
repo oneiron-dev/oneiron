@@ -532,7 +532,9 @@ fn run_exchange(
         let pump = scope.spawn(move || pump_request_body(&mut body, stdin));
         let drain = scope.spawn(move || drain_stderr(stderr));
         let door = receive_pack.then(|| {
-            scope.spawn(|| serve_door_window(vault, &repo, hooks, &finished, deadline, context))
+            scope.spawn(|| {
+                serve_door_window(vault, &repo, hooks, &finished, deadline, &progress, context)
+            })
         });
         // The ref list is the one response body this module rewrites, and it
         // is rewritten in flight: the gate holds one pkt-line, never the

@@ -21,6 +21,7 @@
 mod archive;
 mod gzip;
 mod pdf;
+mod retained_iterative;
 
 use super::{release_hit, scan_payload, secret_scan_error};
 use crate::error::{Error, Result};
@@ -47,6 +48,10 @@ pub(super) const MAX_FILE_KEYS: usize = 10_000;
 pub(super) const REASON_UNREADABLE: &str = "gate.secret_scan.container_unreadable";
 /// A container past one of the bounds above.
 pub(super) const REASON_OVER_BUDGET: &str = "gate.secret_scan.container_over_budget";
+/// A container a retained repository read meets inside itself: its whole
+/// bytes are those of a container the walk is already inside (FIX 8031).
+/// An integrity stop, not a bound: the walk reads no further down it.
+const REASON_ARCHIVE_CYCLE: &str = "gate.secret_scan.archive_cycle";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -97,7 +102,8 @@ pub(super) fn holds_spans(bytes: &[u8]) -> bool {
 pub(super) enum Stop {
     /// The door refuses the file with this reason code: a hit, or a
     /// container read no further ([`REASON_UNREADABLE`],
-    /// [`REASON_OVER_BUDGET`]).
+    /// [`REASON_OVER_BUDGET`], and a retained read's
+    /// [`REASON_ARCHIVE_CYCLE`]).
     Refuse(&'static str),
     /// The engine failed, or a reader's own scan refused.
     Fail(Error),
@@ -150,11 +156,14 @@ enum ContainerReadMode {
 
 /// What a walk over one file's tree has left. A member's own walk spends
 /// from it; none starts a budget of its own. A retained repository read
-/// counts against none of it.
+/// counts against none of it, and keeps the containers it is inside.
 struct Budget {
     mode: ContainerReadMode,
     members: usize,
     expanded: usize,
+    /// The BLAKE3 of each container a retained read is inside, the file
+    /// first: this walk's own, never kept or logged.
+    ancestors: Vec<[u8; 32]>,
 }
 
 impl Budget {
@@ -167,6 +176,7 @@ impl Budget {
             mode,
             members: MAX_MEMBERS,
             expanded: MAX_EXPANDED_BYTES,
+            ancestors: Vec::new(),
         }
     }
 
@@ -226,6 +236,31 @@ impl Budget {
         }
         Ok(())
     }
+
+    /// Enters the container whose whole bytes are `bytes`, before its
+    /// members are read (FIX 8031). A retained read already inside a
+    /// container of the same bytes has met a cycle, and reads no further
+    /// down it. Each entry is left once its members are read, so a
+    /// container met again beside itself is read again. A bounded walk
+    /// keeps no ancestry: its own bounds end it.
+    fn enter_container(&mut self, bytes: &[u8]) -> Walked<()> {
+        if self.capped() {
+            return Ok(());
+        }
+        let digest = *blake3::hash(bytes).as_bytes();
+        if self.ancestors.contains(&digest) {
+            return Err(Stop::Refuse(REASON_ARCHIVE_CYCLE));
+        }
+        self.ancestors.push(digest);
+        Ok(())
+    }
+
+    /// Leaves the container entered last.
+    fn leave_container(&mut self) {
+        if !self.capped() {
+            self.ancestors.pop();
+        }
+    }
 }
 
 /// Hands each member under `bytes` to `visit` with its path, depth first in
@@ -241,13 +276,16 @@ pub(super) fn walk_members(
 
 /// [`walk_members`] over a retained repository blob (FIX 7608, rule 5):
 /// every member, at any depth, read whole, with no policy bound. A stop is
-/// a container no reader here reads, or a visitor's own.
+/// a container no reader here reads, one met inside itself
+/// ([`REASON_ARCHIVE_CYCLE`]), or a visitor's own. Its frames are on the
+/// heap ([`retained_iterative`]), so no depth of nesting runs the thread's
+/// stack out.
 pub(super) fn walk_retained_repo_members(
     bytes: &[u8],
     visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
 ) -> Walked<()> {
     let mut budget = Budget::of(ContainerReadMode::RetainedRepo);
-    walk(bytes, &mut Vec::new(), &mut budget, visit)
+    retained_iterative::walk(bytes, &mut budget, visit)
 }
 
 fn walk(
@@ -318,7 +356,11 @@ pub(super) fn masked_retained_repo_copy(bytes: &[u8], places: &KeyPlaces) -> Wal
 
 fn masked_copy_in(bytes: &[u8], places: &KeyPlaces, mut budget: Budget) -> Walked<Vec<u8>> {
     let mut met = 0;
-    let copy = rebuild(bytes, &mut Vec::new(), places, &mut budget, &mut met)?;
+    let copy = if budget.capped() {
+        rebuild(bytes, &mut Vec::new(), places, &mut budget, &mut met)?
+    } else {
+        retained_iterative::rebuild(bytes, places, &mut budget, &mut met)?
+    };
     if met != places.len() {
         return Err(Stop::Fail(Error::CorruptedIndex("masked file member path")));
     }

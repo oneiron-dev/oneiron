@@ -108,6 +108,12 @@ pub(super) const DOOR_WINDOW_POLL: Duration = Duration::from_millis(2);
 /// closed. A push whose door window cannot complete is refused, never admitted.
 pub const DOOR_WINDOW_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// How many of its polls the vetted hook makes between two value-free "still
+/// waiting" lines while the door works on its request (FIX 8034). It paces a
+/// line, not a deadline: the hook waits for the door's answer however long
+/// the door works, and the line proves no progress.
+pub(super) const DOOR_WORK_HEARTBEAT_POLLS: u32 = 2000;
+
 /// How long an exchange may move no byte, in either direction, before its
 /// backend is killed: the door window's family. A transfer that keeps moving,
 /// however slowly, is never cut.

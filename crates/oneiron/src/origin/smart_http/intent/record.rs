@@ -8,7 +8,8 @@ use std::path::Path;
 use super::super::door::DoorAdmissionStamp;
 use super::super::door_window::{DoorWindowReport, held_by_ref, unlandable_ref_reasons};
 use super::super::evidence::{
-    RECEIVE_PACK_ADMISSION_PREDICATE, receive_pack_field, receive_pack_provenance_refused,
+    RECEIVE_PACK_ADMISSION_PREDICATE, ReceivePackScanSummary, receive_pack_field,
+    receive_pack_provenance_refused,
 };
 use super::super::serve_cmd::path_arg;
 #[cfg(test)]
@@ -62,7 +63,7 @@ impl Vault {
         // The serving thread holds the coordinator while this hook runs.
         // Do not acquire that thread's lock here; only verify its epoch.
         self.require_receive_pack_host_at(&root, stamp.origin_authority.as_ref())?;
-        let intent = ReceivePackIntent {
+        let mut intent = ReceivePackIntent {
             operation_id: stamp.operation_id.to_hex(),
             actor_id: stamp.principal_ref().to_owned(),
             repo_root: root_text,
@@ -100,6 +101,8 @@ impl Vault {
                 })
                 .collect(),
             push: stamp.push.clone(),
+            // Set in the writer, from the marks it writes.
+            scan: ReceivePackScanSummary::Clean,
         };
         let key = ReceivePackIntentKey {
             repo_identity_hex: receive_pack_repo_identity_hex(self, &root)?,
@@ -114,7 +117,7 @@ impl Vault {
                 return Err(receive_pack_provenance_refused("intent already exists"));
             }
             self.recheck_git_push_in_txn(wtxn, push, repo, changes)?;
-            record_receive_secret_marks_in_txn(
+            let mark_count = record_receive_secret_marks_in_txn(
                 self,
                 wtxn,
                 stamp,
@@ -122,6 +125,11 @@ impl Vault {
                 marks,
                 &door.ref_updates,
             )?;
+            // The door's disposition makes the push marked, never the count.
+            intent.scan = match marks {
+                Some(_) => ReceivePackScanSummary::Marked { mark_count },
+                None => ReceivePackScanSummary::Clean,
+            };
             INTENTS.put(&self.store, wtxn, &key, &intent)?;
             Ok(())
         })
