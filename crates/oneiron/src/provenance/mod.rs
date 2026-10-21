@@ -220,6 +220,24 @@ pub(crate) fn erase_row_provenance_in_txn(
     row: &EntityId,
     erase: bool,
 ) -> Result<()> {
+    erase_row_provenance_without_attempt_payloads_in_txn(store, txn, row, erase)?;
+    // An erased dispatch target's instructions and briefing leave the attempt
+    // payloads that carry them, on every platform (FIX 7076).
+    if erase {
+        crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, row)?;
+    }
+    Ok(())
+}
+
+/// [`erase_row_provenance_in_txn`] without its attempt payload pass: for a
+/// row that pass itself erases (a BYOA task's staged job, FIX 7502), so no
+/// erase reads the ledger again from inside its own pass.
+pub(crate) fn erase_row_provenance_without_attempt_payloads_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    row: &EntityId,
+    erase: bool,
+) -> Result<()> {
     // A held row keeps its bodies whichever door erases it, as does a pad
     // whose world or sealed claim is held (OF-470); the refusal is queued for
     // the hold log like every other door's.
@@ -246,11 +264,6 @@ pub(crate) fn erase_row_provenance_in_txn(
         crate::llm::erase_step_state_owner_in_txn(store, txn, row)?;
         crate::store::erase_sync_response_owner_in_txn(store, txn, row)?;
         crate::store::erase_response_owner_in_txn(store, txn, row)?;
-    }
-    // An erased dispatch target's instructions and briefing leave the attempt
-    // payloads that carry them, on every platform (FIX 7076).
-    if erase {
-        crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, row)?;
     }
     Ok(())
 }

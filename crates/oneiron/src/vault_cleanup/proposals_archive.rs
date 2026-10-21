@@ -4,9 +4,9 @@ use super::codec_receipts::PROPOSAL;
 use super::person_provenance;
 use super::run_snapshot::{self, CleanupRunSnapshot};
 use super::{
-    ArchivedEntity, CleanupAcceptOutcome, CleanupDecision, CleanupDigest, CleanupProposal,
-    apply_archives_in_txn, cleanup_posture_in_txn, decode_proposal, fresh_row_id,
-    put_digest_in_txn,
+    ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,
+    CleanupProposal, apply_archives_in_txn, cleanup_posture_in_txn, decode_proposal, fresh_row_id,
+    live_slots, put_digest_in_txn,
 };
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -84,7 +84,11 @@ pub(super) fn accept_cleanup_proposal_in_txn(
         ));
     };
     let row = decode_proposal(*proposal, &raw)?;
-    let applied = apply_archives_in_txn(vault, wtxn, &row.attempt, &row.candidates)?;
+    // A candidate an erase reached names no one: nothing is looked up or
+    // archived for it, so accepting never brings it back (FIX 7517).
+    let live: Vec<CleanupCandidate> = row.candidates.iter().flatten().copied().collect();
+    let erased = row.candidates.len() - live.len();
+    let applied = apply_archives_in_txn(vault, wtxn, &row.attempt, &live)?;
     let digest = CleanupDigest {
         id: fresh_row_id(vault)?,
         attempt: Some(row.attempt),
@@ -92,8 +96,8 @@ pub(super) fn accept_cleanup_proposal_in_txn(
         decision: CleanupDecision::ProposalAccepted,
         posture: cleanup_posture_in_txn(vault, wtxn)?,
         at: mutation_recorded_at,
-        archived: applied.archived.clone(),
-        skipped: applied.skipped.clone(),
+        archived: live_slots(applied.archived.clone()),
+        skipped: live_slots(applied.skipped.clone()),
     };
     put_digest_in_txn(vault, wtxn, &digest)?;
     // What the accept archived joins the RUN row of the run that opened the
@@ -106,7 +110,7 @@ pub(super) fn accept_cleanup_proposal_in_txn(
             at: mutation_recorded_at,
             decision: CleanupDecision::ProposalAccepted,
             digest: digest.id,
-            entries: applied.entries,
+            entries: live_slots(applied.entries),
         },
     )?;
     PROPOSAL.delete(&vault.store, wtxn, proposal)?;
@@ -123,6 +127,7 @@ pub(super) fn accept_cleanup_proposal_in_txn(
         proposal: row.id,
         archived: applied.archived,
         skipped: applied.skipped,
+        erased,
         digest: digest.id,
     })
 }
