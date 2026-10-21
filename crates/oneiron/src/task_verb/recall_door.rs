@@ -95,9 +95,12 @@ pub fn recall_at_door(
     recall_at_door_seeded(
         memory,
         input,
-        |query| RecallQueryVectors {
-            text_index: embed(query),
-            media: Vec::new(),
+        |query| {
+            let text_index = embed(query);
+            Ok(RecallQueryVectors {
+                text_index,
+                media: Vec::new(),
+            })
         },
         door,
     )
@@ -106,11 +109,13 @@ pub fn recall_at_door(
 /// [`recall_at_door`] whose host may also embed the query into declared
 /// embedding spaces: on the one-space preset the text slot's space, whose
 /// list recall then searches for every kind of item it holds (OF-370).
-/// `embed` runs only once the request is admitted, as there.
+/// `embed` runs only once the request is admitted, as there. A refusal it
+/// returns (a media embedding the host refused) ends the recall at once,
+/// before any list runs, and is the door's answer (FIX 2160).
 pub fn recall_at_door_seeded(
     memory: &Memory<'_>,
     mut input: RecallRequest,
-    embed: impl FnOnce(&str) -> RecallQueryVectors,
+    embed: impl FnOnce(&str) -> MemoryResult<RecallQueryVectors>,
     door: &RecallDoor<'_>,
 ) -> MemoryResult<crate::memory::MemoryPack> {
     let (limit, clamped) =
@@ -141,7 +146,7 @@ pub fn recall_at_door_seeded(
 fn recall_within_ceiling(
     memory: &Memory<'_>,
     input: RecallRequest,
-    embed: impl FnOnce(&str) -> RecallQueryVectors,
+    embed: impl FnOnce(&str) -> MemoryResult<RecallQueryVectors>,
     door: &RecallDoor<'_>,
 ) -> MemoryResult<crate::memory::MemoryPack> {
     use crate::memory::{RecallRerank, RecallRerankHost, RerankReport, RerankSkip};
@@ -220,7 +225,7 @@ fn recall_within_ceiling(
     {
         return Ok(fallback.clone());
     }
-    let vectors = embed(&input.query);
+    let vectors = embed(&input.query)?;
     let embedding = vectors.text_index.as_deref();
     let media = vectors.media_seeds();
     // Keep admitted evidence ready while the optional host expansion waits.
