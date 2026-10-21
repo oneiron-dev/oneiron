@@ -3822,7 +3822,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/repair/validation.rs` | src | s | 1 crate-vis | — | Structural checks for proposal-only output |
 | `src/self_heal/scheduled.rs` | src | s | 1 struct · 3 fn | SignedDetectorRun | Signed host-scheduled T1 runs |
 | `src/self_heal/served_signals.rs` | src | s | 1 fn · 1 const | — | The served degradation signals (ARCH-0066 §4, OF-298): every tier-1 tripwire whose facts a serving vault… |
-| `src/self_heal/session_text.rs` | src | m | 2 struct · 1 fn | SessionLine, SessionText | What a session judge reads (FIX 2079): every readable line of the conversations a session window's runs were… |
+| `src/self_heal/session_text.rs` | src | m | 2 struct · 1 enum · 1 fn | SessionLine, SessionResult, SessionText | What a session judge reads (FIX 2079): every readable line of the conversations a session window's runs were… |
 | `src/self_heal/sweep.rs` | src | s | 1 struct · 2 fn · 1 const | Tier1Sweep | The Coach's scheduled tier-1 sweep (ARCH-0066 §4) and its proposed-only repair bridge |
 | `src/self_heal/tests.rs` | test | m | — | — | — |
 | `src/self_heal/text_tests.rs` | test | s | 1 crate-vis | — | — |
@@ -4166,11 +4166,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/key_custody/home.rs` | src | s | 4 crate-vis | — | The residence home's side of the residence target (KS-4A2, FIX 5685) |
 | `src/store/key_custody/identity.rs` | src | m | 2 struct · 4 fn · 36 crate-vis | CustodyNamespace, CustodyVaultId | Typed custody identities and their codecs: who a custody entry belongs to (vault, kind, item, generation)… |
 | `src/store/key_custody/log.rs` | src | m | 2 struct · 3 fn · 30 crate-vis | CustodyEpoch, CustodyPosition | The keyless custody log (KS-4, FIX 5685) and the local journal it is kept in, beside the vault and outside… |
-| `src/store/key_custody/mod.rs` | src | s | 1 mod · 31 crate-vis | — | Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault… |
+| `src/store/key_custody/mod.rs` | src | s | 1 mod · 1 re-export · 31 crate-vis | — | Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault… |
 | `src/store/key_custody/outbox/files.rs` | src | s | 11 crate-vis | — | One member's slot in the Hypnos outbox (FIX 5899): the batch directory Hypnos ships, written in the order… |
 | `src/store/key_custody/outbox/mod.rs` | src | s | 3 crate-vis | — | The Hypnos outbox target (FIX 5899): a managed vault's hosted custody holder |
 | `src/store/key_custody/outbox/replay.rs` | src | s | 7 crate-vis | — | The outstanding batch's keyless record, and the intake of its ack (FIX 5899) |
-| `src/store/key_custody/platform.rs` | src | s | 10 crate-vis | — | The one platform seam of key custody's files (KS-2A, Engine 10-20 04:1x): every open, directory sync, lock… |
+| `src/store/key_custody/platform.rs` | src | s | 1 fn · 9 crate-vis | — | The one platform seam of key custody's files (KS-2A, Engine 10-20 04:1x): every open, directory sync, lock… |
 | `src/store/key_custody/protocol.rs` | src | m | 9 struct · 8 enum · 3 trait · 23 fn · 1 const · 2 re-export · 11 crate-vis | AckOperation, AckPosition, AckRecord, AnchorAdvance, AnchorStore, CustodyBatch, CustodySource, CustodyTarget +12 | The KS-4 custody protocol (FIX 5685), public so the holders of a vault's custody outside this crate keep one… |
 | `src/store/key_custody/publish.rs` | src | m | 13 crate-vis | — | Publishing one lineage's custody (KS-4, FIX 5685): its keyless log, then its latest sealed head, to every… |
 | `src/store/key_custody/recipients.rs` | src | s | 7 crate-vis | — | Released escrow recipients a cold managed restore retired (LC FIX 5384/5385), kept in the lineage's exterior… |
@@ -4185,7 +4185,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/local_queue_budget.rs` | src | s | 1 crate-vis | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/store/local_replica.rs` | src | m | 6 crate-vis | — | Local-only removal of one canonical window's replica (OF-534 demotion) |
 | `src/store/local_replica/left_env.rs` | src | m | 3 crate-vis | — | Local purge of a left shared vault's dedicated environment (OF-158) |
-| `src/store/mod.rs` | src | s | 1 mod · 16 re-export · 28 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | s | 1 mod · 17 re-export · 28 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/open_gates/embedding_transform_gates.rs` | src | s | 5 crate-vis | — | The embedding-transform pin: how a vault's vectors were made, beside the model that made them |
 | `src/store/open_gates/hnsw_model_gates.rs` | src | m | 1 fn · 18 crate-vis | — | HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration… |
 | `src/store/open_gates/manifest_storage_gates.rs` | src | m | 31 crate-vis | — | Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage… |

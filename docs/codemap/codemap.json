@@ -49232,11 +49232,13 @@
      "kind": "src",
      "notable": [
       "SessionLine",
+      "SessionResult",
       "SessionText"
      ],
      "path": "src/self_heal/session_text.rs",
      "purpose": "What a session judge reads (FIX 2079): every readable line of the conversations a session window's runs were…",
      "surface": {
+      "enum": 1,
       "fn": 1,
       "struct": 2
      }
@@ -53599,7 +53601,8 @@
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
       "crate-vis": 31,
-      "mod": 1
+      "mod": 1,
+      "re-export": 1
      }
     },
     {
@@ -53639,7 +53642,8 @@
      "path": "src/store/key_custody/platform.rs",
      "purpose": "The one platform seam of key custody's files (KS-2A, Engine 10-20 04:1x): every open, directory sync, lock…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9,
+      "fn": 1
      }
     },
     {
@@ -53819,7 +53823,7 @@
      "surface": {
       "crate-vis": 28,
       "mod": 1,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
