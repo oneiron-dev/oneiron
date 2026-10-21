@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1096 facade rows, 3773 declarations.
+Census: 1096 facade rows, 3777 declarations.
 Inputs: 1031 of 1096 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 983 of 1096 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -2523,6 +2523,16 @@ class TaggingMarkerView(TypedDict):
     created_at: int
     updated_at: int
 TaggingFailureView = TypedDict("TaggingFailureView", {"class": str, "code": NotRequired[str | None], "refusal": NotRequired[str | None]})
+ExecutionRuntime = Literal["candle", "endpoint"]
+ExecutionCompute = Literal["cpu", "metal", "cuda", "opaque"]
+ExecutionPick = Literal["calibrated", "free", "shorter_queue", "fallback", "pinned"]
+class EncoderExecution(TypedDict):
+    runtime: ExecutionRuntime
+    compute: ExecutionCompute
+    engine: str
+    pick: ExecutionPick
+    queue_ms: int
+    infer_ms: int
 class TaggingOutcomeViewSaved(TypedDict):
     outcome: Literal["saved"]
     spans: int
@@ -2580,6 +2590,7 @@ class TaggingTraceView(TypedDict):
     input_hash: NotRequired[str | None]
     try_number: int
     call_micros: NotRequired[int | None]
+    execution: NotRequired[EncoderExecution | None]
     outcome: TaggingOutcomeView
 class TaggingStatusView(TypedDict):
     turn_ref: str
@@ -13295,6 +13306,7 @@ class ModelRoleOutputEmbedded(TypedDict):
 class ModelRoleOutputTagged(TypedDict):
     kind: Literal["tagged"]
     output: EncoderOutput
+    execution: NotRequired[EncoderExecution | None]
 ModelRoleOutput = ModelRoleOutputGenerated | ModelRoleOutputEmbedded | ModelRoleOutputTagged
 class ModelRoleInvocation(TypedDict):
     receipt: ModelRoleReceipt
