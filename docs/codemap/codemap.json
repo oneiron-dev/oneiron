@@ -14580,7 +14580,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
