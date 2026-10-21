@@ -4,21 +4,28 @@
 //! cloud metadata endpoints. A self-hosted node carries no guard: the owner's
 //! own private services stay his to fetch.
 //!
-//! The guard judges RESOLVED addresses, never the URL's spelling. The fetcher
-//! checks every page it is asked for, each crawl page included, before any
-//! rung runs, and refuses it typed ([`WebFetchError::HostedInfrastructure`]).
-//! The host's transport checks every address it connects to, a redirect's
-//! included, through [`HostedEgressGuard::refuses`], and fails that connection
-//! with [`HostedInfrastructureRefusal`], which the rung's diagnostic names.
+//! The guard judges RESOLVED addresses, never the URL's spelling, and reads
+//! the node's own addresses afresh at every check, so an address assigned
+//! after boot is refused too (FIX 6101). The fetcher checks every page it is
+//! asked for, each crawl page included, before any rung runs; it hands each
+//! rung the guard ([`Renderer::render_guarded`]) for the hops and addresses
+//! the rung reaches, and checks the navigation-final URL every rung hands
+//! back. The host's transport checks every address it connects to, a
+//! redirect's included, through [`HostedEgressGuard::refuses_any`], and fails
+//! that connection with [`HostedInfrastructureRefusal`]. Every one of these
+//! refusals ends the ladder typed ([`WebFetchError::HostedInfrastructure`]).
 
 use std::collections::BTreeSet;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 
 use reqwest::Url;
 
-use super::render::redact_url_credentials;
-use super::{WebFetchError, WebFetchResult, WebFetcher};
+use super::render::{redact_url_credentials, validated_web_url};
+use super::{
+    RenderedPage, Renderer, RendererError, RendererErrorKind, RendererResult, WebFetchError,
+    WebFetchResult, WebFetcher,
+};
 
 /// The named reason every hosted-infrastructure refusal carries.
 pub const HOSTED_INFRASTRUCTURE_REASON: &str = "hosted_infrastructure";
@@ -41,18 +48,26 @@ const CLOUD_METADATA_V6: [Ipv6Addr; 2] = [
 ];
 
 /// What a hosted node's fetcher may not reach, judged by resolved address.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone)]
 pub struct HostedEgressGuard {
-    /// The node's own addresses, as its host found them.
-    node: BTreeSet<IpAddr>,
+    /// Reads the node's own addresses as its host finds them now: called at
+    /// every check, never cached, so the guard follows address changes.
+    node: Arc<dyn Fn() -> BTreeSet<IpAddr> + Send + Sync>,
+}
+
+impl std::fmt::Debug for HostedEgressGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostedEgressGuard").finish_non_exhaustive()
+    }
 }
 
 impl HostedEgressGuard {
-    /// A guard that also refuses each of `node`, the node's own addresses.
+    /// A guard that also refuses the node's own addresses, as `node_addresses`
+    /// reads them at each check.
     #[must_use]
-    pub fn new(node: impl IntoIterator<Item = IpAddr>) -> Self {
+    pub fn new(node_addresses: impl Fn() -> BTreeSet<IpAddr> + Send + Sync + 'static) -> Self {
         Self {
-            node: node.into_iter().map(unwrapped).collect(),
+            node: Arc::new(node_addresses),
         }
     }
 
@@ -62,47 +77,98 @@ impl HostedEgressGuard {
     /// (IPv4-mapped, IPv4-compatible, NAT64) judged as itself.
     #[must_use]
     pub fn refuses(&self, ip: IpAddr) -> bool {
-        let ip = unwrapped(ip);
-        self.node.contains(&ip)
-            || match ip {
-                IpAddr::V4(v4) => {
-                    v4.is_loopback()
-                        || v4.octets()[0] == 0
-                        || v4.is_link_local()
-                        || CLOUD_METADATA_V4.contains(&v4)
-                }
-                IpAddr::V6(v6) => {
-                    v6.is_loopback()
-                        || v6.is_unspecified()
-                        || v6.is_unicast_link_local()
-                        || CLOUD_METADATA_V6.contains(&v6)
-                }
-            }
+        self.refuses_any([ip])
     }
 
-    /// Refuses `url` when any address its host resolves to is hosted
+    /// Whether any of `ips` is hosted infrastructure ([`Self::refuses`]),
+    /// reading the node's own addresses at most once for the whole set.
+    #[must_use]
+    pub fn refuses_any(&self, ips: impl IntoIterator<Item = IpAddr>) -> bool {
+        let mut node: Option<BTreeSet<IpAddr>> = None;
+        ips.into_iter().map(unwrapped).any(|ip| {
+            is_infrastructure(ip)
+                || node
+                    .get_or_insert_with(|| (self.node)().into_iter().map(unwrapped).collect())
+                    .contains(&ip)
+        })
+    }
+
+    /// Whether any address `url`'s host resolves to now is hosted
     /// infrastructure. A host that does not resolve is left to the
     /// transport, which fails it as before.
-    pub(super) fn admit(&self, url: &Url) -> WebFetchResult<()> {
+    fn reaches_infrastructure(&self, url: &Url) -> bool {
         let Some(host) = url.host_str() else {
-            return Ok(());
+            return false;
         };
         let literal = host
             .strip_prefix('[')
             .and_then(|inner| inner.strip_suffix(']'))
             .unwrap_or(host);
-        let refused = match literal.parse::<IpAddr>() {
+        match literal.parse::<IpAddr>() {
             Ok(ip) => self.refuses(ip),
             Err(_) => (literal, url.port_or_known_default().unwrap_or(0))
                 .to_socket_addrs()
-                .is_ok_and(|mut addresses| addresses.any(|address| self.refuses(address.ip()))),
-        };
-        if refused {
+                .is_ok_and(|addresses| self.refuses_any(addresses.map(|address| address.ip()))),
+        }
+    }
+
+    /// Refuses `url`, a page the fetcher is asked for, when it resolves to
+    /// hosted infrastructure.
+    pub(super) fn admit(&self, url: &Url) -> WebFetchResult<()> {
+        if self.reaches_infrastructure(url) {
             return Err(WebFetchError::HostedInfrastructure {
                 url: redact_url_credentials(url.as_str()),
             });
         }
         Ok(())
+    }
+
+    /// Refuses the response a rung's client handed back when the address it
+    /// actually came from (`peer`, when the client reports one) is hosted
+    /// infrastructure: a final hop whose name was re-resolved (rebound) after
+    /// any earlier check, whatever client the host supplied.
+    pub(super) fn admit_peer(&self, peer: Option<SocketAddr>, url: &Url) -> RendererResult<()> {
+        if peer.is_some_and(|peer| self.refuses(peer.ip())) {
+            return Err(RendererError::hosted_infrastructure(format!(
+                "the response for {} came from the hosting infrastructure: {HostedInfrastructureRefusal}",
+                redact_url_credentials(url.as_str())
+            )));
+        }
+        Ok(())
+    }
+
+    /// Refuses a page whose navigation-final URL, as its rung reported it,
+    /// resolves to hosted infrastructure.
+    fn admit_landing(&self, page: &RenderedPage) -> RendererResult<()> {
+        let Some(landing) = page.final_url.as_deref().and_then(validated_web_url) else {
+            return Ok(());
+        };
+        if self.reaches_infrastructure(&landing) {
+            return Err(RendererError::hosted_infrastructure(format!(
+                "the rung landed on {}: {HostedInfrastructureRefusal}",
+                redact_url_credentials(landing.as_str())
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Whether `ip`, already unwrapped, is infrastructure on every node: loopback,
+/// "this host", link-local or a cloud metadata endpoint.
+fn is_infrastructure(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.octets()[0] == 0
+                || v4.is_link_local()
+                || CLOUD_METADATA_V4.contains(&v4)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_unicast_link_local()
+                || CLOUD_METADATA_V6.contains(&v6)
+        }
     }
 }
 
@@ -126,8 +192,8 @@ fn unwrapped(ip: IpAddr) -> IpAddr {
 }
 
 /// The refusal a host's transport fails a connection to hosted
-/// infrastructure with (its resolver's, or its redirect policy's), so the
-/// rung's diagnostic names [`HOSTED_INFRASTRUCTURE_REASON`].
+/// infrastructure with (its resolver's, or its redirect policy's); the rung
+/// turns it into a [`RendererErrorKind::HostedInfrastructure`] error.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HostedInfrastructureRefusal;
 
@@ -142,22 +208,54 @@ impl std::fmt::Display for HostedInfrastructureRefusal {
 
 impl std::error::Error for HostedInfrastructureRefusal {}
 
-impl WebFetcher {
-    /// A managed (hosted) node's fetcher: every page it is asked for, each
-    /// crawl page included, is refused before any rung runs when it resolves
-    /// to hosted infrastructure (SCAN C447). A self-hosted node's fetcher
-    /// carries no guard.
+impl RendererError {
+    /// A managed node's egress guard refused a hop, an address or a landing
+    /// this rung reached (SCAN C447). The ladder stops on it and reports
+    /// [`WebFetchError::HostedInfrastructure`]; no lower rung runs.
     #[must_use]
-    pub fn with_hosted_egress_guard(mut self, guard: Arc<HostedEgressGuard>) -> Self {
-        self.egress = Some(guard);
-        self
+    pub fn hosted_infrastructure(message: impl Into<String>) -> Self {
+        Self {
+            kind: RendererErrorKind::HostedInfrastructure,
+            message: message.into(),
+        }
+    }
+}
+
+impl WebFetcher {
+    /// Makes this a managed (hosted) node's fetcher (SCAN C447): every page
+    /// it is asked for, each crawl page included, is refused before any rung
+    /// runs when it resolves to hosted infrastructure; each rung renders with
+    /// the guard ([`Renderer::render_guarded`]); and the navigation-final URL
+    /// each rung hands back is checked too. Takes a shared reference, so a
+    /// host installs it on a ladder it was handed, at first use; a fetcher
+    /// that already carries a guard keeps it. A self-hosted node's fetcher
+    /// carries none.
+    pub fn install_hosted_egress_guard(&self, guard: Arc<HostedEgressGuard>) {
+        // `Err` only hands back `guard` when one is already installed.
+        let _ = self.egress.set(guard);
     }
 
     /// The guard's check of `url`, when this fetcher carries one.
     pub(super) fn admit_destination(&self, url: &Url) -> WebFetchResult<()> {
-        match &self.egress {
+        match self.egress.get() {
             Some(guard) => guard.admit(url),
             None => Ok(()),
         }
+    }
+
+    /// Runs one rung: unguarded on a self-hosted node; on a managed one
+    /// through [`Renderer::render_guarded`], with the navigation-final URL it
+    /// hands back checked as well (FIX 6101).
+    pub(super) fn render_rung(
+        &self,
+        renderer: &dyn Renderer,
+        url: &str,
+    ) -> RendererResult<RenderedPage> {
+        let Some(guard) = self.egress.get() else {
+            return renderer.render(url);
+        };
+        let page = renderer.render_guarded(url, guard)?;
+        guard.admit_landing(&page)?;
+        Ok(page)
     }
 }

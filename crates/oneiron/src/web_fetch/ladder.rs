@@ -14,14 +14,14 @@ use reqwest::Url;
 use serde::Deserialize;
 
 use super::render::{
-    is_web_url, normalize_link_list, normalize_url, renderer_canonical_url, renderer_final_url,
-    validated_web_url,
+    is_web_url, normalize_link_list, normalize_url, redact_url_credentials, renderer_canonical_url,
+    renderer_final_url, validated_web_url,
 };
 use super::{
     ALL_RENDERERS_FAILED_REASON_PREFIX, CROSS_SITE_REDIRECT_REASON, CrawlCompletion,
     CrawlPageFailure, CrawlResult, CrawlScope, FetchResult, Renderer, RendererAttemptFailure,
-    RendererError, RendererKind, RendererResult, WebFetchError, WebFetchResult, WebFetcher,
-    content_hash,
+    RendererError, RendererErrorKind, RendererKind, RendererResult, WebFetchError, WebFetchResult,
+    WebFetcher, content_hash,
 };
 
 /// Ceiling on how many distinct URLs one walk's frontier may hold.
@@ -80,7 +80,9 @@ impl WebFetcher {
             renderer: kind,
             error,
         };
-        let page = renderer.render(url).map_err(as_attempt)?;
+        // On a managed node the rung renders with the egress guard and its
+        // landing is checked too (FIX 6101); a self-hosted one renders as is.
+        let page = self.render_rung(renderer, url).map_err(as_attempt)?;
 
         // `str::len` is a byte count: the threshold compares trimmed Markdown
         // bytes, never characters, and never the untrimmed bytes that are
@@ -140,8 +142,10 @@ impl WebFetcher {
     ///
     /// # Errors
     /// Returns [`WebFetchError::MissingRequiredRenderer`] when a required rung
-    /// has no renderer, and [`WebFetchError::AllRenderersFailed`] with the
-    /// ordered trace when every rung was tried and none produced content.
+    /// has no renderer, [`WebFetchError::HostedInfrastructure`] when a managed
+    /// node's guard refused the page or anything a rung reached, and
+    /// [`WebFetchError::AllRenderersFailed`] with the ordered trace when every
+    /// rung was tried and none produced content.
     pub(super) fn fetch_page(
         &self,
         url: &Url,
@@ -190,6 +194,16 @@ impl WebFetcher {
                 require_witnessed_final_url,
             ) {
                 Ok(success) => return Ok(success),
+                // A managed node's guard refused a hop, an address or a
+                // landing this rung reached (FIX 6101): the ladder ends typed,
+                // and no lower rung is sent after the same destination.
+                Err(RendererAttemptFailure::Error { error, .. })
+                    if error.kind == RendererErrorKind::HostedInfrastructure =>
+                {
+                    return Err(WebFetchError::HostedInfrastructure {
+                        url: redact_url_credentials(&requested),
+                    });
+                }
                 Err(failure) => attempts.push(failure),
             }
         }
