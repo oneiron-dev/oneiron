@@ -21773,7 +21773,7 @@
      "path": "src/dreamer_consolidation/executor.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 1,
       "struct": 1
      }
@@ -21787,9 +21787,19 @@
      "path": "src/dreamer_consolidation/executor/decisions.rs",
      "purpose": "The consolidation's typed questions through the host's ladder: how a conflict set resolves and which…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/decisions/read.rs",
+     "purpose": "The scoped typed read every Dreamer pack shares (OF-498a): questions over a state through the host's ladder…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -21946,7 +21956,7 @@
      "surface": {
       "crate-vis": 26,
       "mod": 4,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -22060,7 +22070,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/parallel.rs",
@@ -22372,8 +22382,8 @@
      "purpose": "The Dreamer's model roles, and the backend each one calls out on",
      "surface": {
       "const": 4,
-      "crate-vis": 2,
-      "fn": 3,
+      "crate-vis": 3,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -22418,23 +22428,43 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_claims.rs",
-     "purpose": "The claims an Arc's call reads (FIX 7509 P8): for every subject the Arc's TURNs name (their `mentions` and…",
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_children.rs",
+     "purpose": "An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): its input does not fit one call on its model…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_chunks.rs",
+     "purpose": "An Arc's sources as members and parts (FIX 7509 PR3, Rule 5): each member's words as its calls show them…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_claims.rs",
+     "purpose": "The claims an Arc's call reads (FIX 7509 P8): for every subject the Arc's TURNs name (their `mentions` and…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/scope_summary_attempt/arc_compose.rs",
      "purpose": "An Arc's composition (FIX 7509 P8, SUMMARY-SOURCE = A)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -22451,10 +22481,40 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_output.rs",
+     "purpose": "An Arc call's reply (FIX 7509 P8, its parts in PR3): `{lines: [{text, turn_refs}], keep, open_turns}`, each…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_reduce.rs",
+     "purpose": "The Arc assembled from its parts (FIX 7509 PR3): no model call, an ordered and lossless assembly",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/arc_review.rs",
+     "purpose": "The calls of an Arc composed in parts (FIX 7509 PR3): one input shape for all of them, so one frame counts…",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/scope_summary_attempt/arc_turns.rs",
      "purpose": "The turns an Arc's reply names to open (FIX 7509 P8): when a line and the claims disagree, the model names…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -22464,7 +22524,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt/chunks.rs",
      "purpose": "A sitting too big for one call on its model (FIX 7509 P7b, Rule 5)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 1
      }
     },
     {
@@ -22475,6 +22535,16 @@
      "purpose": "A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came from by the labels the engine…",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/window.rs",
+     "purpose": "What one summary call may hold on its model (FIX 7509 P7b, shared with the Arc's parts in PR3): the window…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -22560,6 +22630,42 @@
      "purpose": "The sieve audit of an unflagged window (OF-498f, FIX 486): the expensive path reads a source range the cheap…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/sieve_decisions.rs",
+     "purpose": "The sieve's typed questions (OF-498a)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ExtractionPorts",
+      "NeighbourhoodExtraction",
+      "NeighbourhoodExtractionPort",
+      "RoleNeighbourhoodExtractionPort",
+      "RoleSieveNoveltyPort",
+      "SieveNoveltyPort",
+      "SieveRungCall",
+      "SieveRungOutcome",
+      "SieveRungRead",
+      "SliceStep"
+     ],
+     "path": "src/dreamer_consolidation/sieve_ports.rs",
+     "purpose": "The sieve's and a child extraction's injected ports (OF-498a)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 7,
+      "trait": 2,
+      "type": 1
      }
     },
     {
@@ -25530,10 +25636,20 @@
      "path": "src/dreamer_wake/sieve/recipes.rs",
      "purpose": "Durable model-rung inputs, queue spending and unbiased retained-span samples",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 7,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/recipes/consumption.rs",
+     "purpose": "Who carries a spent span (FIX 7498): the nightly child whose branch holds the span's TURN, never the nightly…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -35497,7 +35613,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 40,
+      "const": 44,
       "fn": 1,
       "struct": 1
      }
@@ -35528,6 +35644,16 @@
       "fn": 2,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/generated/score.rs",
+     "purpose": "A generated read's Score question (OF-498a, L06 ack 10-22): one number in the question's range and how sure…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -36774,7 +36900,6 @@
      "path": "src/llm/seat/decisions.rs",
      "purpose": "The seat pick as typed decisions through the host's ladder, and the note seam beside it",
      "surface": {
-      "crate-vis": 1,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -50714,17 +50839,27 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/arc_completion.rs",
+     "purpose": "An Arc never lands in part (FIX 7509 PR3)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/scope_summary/arc_gate.rs",
      "purpose": "An Arc's surprise gate and owed state (FIX 7509 P8, ARCH-0026 #gate): \"It compares the new material against…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/scope_summary/arc_sources.rs",
@@ -50741,6 +50876,26 @@
      "purpose": "An Arc's landing check (FIX 7509 P8), read in the landing writer before its body is minted: no Arc lands…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/arc_work.rs",
+     "purpose": "An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): an Arc whose input does not fit one call on its…",
+     "surface": {
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/arc_work_store.rs",
+     "purpose": "The rows of an Arc's work generations (FIX 7509 PR3): one typed side table, keyed by the generation's id and…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -50797,7 +50952,7 @@
      "path": "src/scope_summary/mod.rs",
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 7
      }
     },
@@ -69827,7 +69982,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 107,
+     "files": 116,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69869,7 +70024,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70170,7 +70325,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 118,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70485,7 +70640,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 17,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70872,7 +71027,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4508,
+   "source_files": 4522,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74002,7 +74157,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 40,
       "trait": 2
      }
@@ -74125,6 +74280,18 @@
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/progress.rs",
+     "purpose": "A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 1
      }
     },
     {
@@ -74413,6 +74580,13 @@
      "layout": "file",
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…"
     },
+    "progress": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]…"
+    },
     "receipt_evidence": {
      "files": 1,
      "impl_vault": false,
@@ -74479,7 +74653,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 44,
+   "source_files": 45,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -78329,7 +78503,7 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 14,
+      "fn": 15,
       "struct": 2,
       "trait": 1,
       "type": 1
@@ -81452,7 +81626,7 @@
      "path": "src/budget.rs",
      "purpose": "One admission budget for every organ: threads, memory, in-flight calls",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 24,
       "fn": 1,
       "struct": 1
      }
@@ -81511,7 +81685,7 @@
      "purpose": "The organ host: install, call, unload, revoke",
      "surface": {
       "crate-vis": 1,
-      "fn": 15,
+      "fn": 16,
       "re-export": 1,
       "struct": 1
      }
@@ -81559,7 +81733,7 @@
      "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
       "mod": 2,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -81598,7 +81772,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OrganService"
@@ -81672,6 +81846,23 @@
      "purpose": "Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FloorRefusal",
+      "MachineFloor",
+      "MemoryGrow"
+     ],
+     "path": "src/resource_memory.rs",
+     "purpose": "`memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -81968,6 +82159,13 @@
      "layout": "file",
      "purpose": "Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call…"
     },
+    "resource_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to…"
+    },
     "route": {
      "files": 1,
      "impl_vault": false,
@@ -82013,7 +82211,7 @@
    },
    "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 31,
+   "source_files": 32,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -82038,8 +82236,23 @@
      "path": "src/lib.rs",
      "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
-      "mod": 3,
-      "re-export": 6
+      "mod": 4,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemoryAnswer",
+      "MemoryAsk"
+     ],
+     "path": "src/memory.rs",
+     "purpose": "The `memory.grow` ask (FIX 7654): an organ reserves the memory its own buffers are about to take, before it…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -82192,6 +82405,13 @@
      "layout": "file",
      "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…"
     },
+    "memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The `memory.grow` ask (FIX 7654): an organ reserves the memory its own buffers are about to take, before it…"
+    },
     "region": {
      "files": 1,
      "impl_vault": false,
@@ -82237,7 +82457,7 @@
    },
    "over_bar": 0,
    "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 8,
+   "source_files": 9,
    "test_files": 2
   },
   "oneiron-py": {
@@ -83205,7 +83425,27 @@
      "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
      "surface": {
       "mod": 2,
-      "re-export": 5
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AdmittedBytes",
+      "SealMemory",
+      "SealMemoryProvider",
+      "SealMemoryRefusal"
+     ],
+     "path": "src/memory.rs",
+     "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)",
+     "surface": {
+      "crate-vis": 14,
+      "enum": 1,
+      "fn": 4,
+      "struct": 2,
+      "trait": 1,
+      "type": 1
      }
     },
     {
@@ -83320,9 +83560,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/decode.rs",
-     "purpose": "Strict loads with every stream decoded whole (Rule 5)",
+     "purpose": "Strict loads with every stream decoded whole (Rule 5), each decode's memory reserved before it is allocated…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -83750,6 +83990,13 @@
      "layout": "file",
      "purpose": "Stable seal error classes and codes (ONE-1837 §6)"
     },
+    "memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)"
+    },
     "native": {
      "files": 44,
      "impl_vault": false,
@@ -83767,7 +84014,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 47,
+   "source_files": 48,
    "test_files": 12
   },
   "oneiron-server": {
@@ -92613,7 +92860,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {

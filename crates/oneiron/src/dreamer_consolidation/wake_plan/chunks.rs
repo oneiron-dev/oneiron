@@ -66,6 +66,8 @@ impl WakePreparationChunks {
     }
 
     /// Queues every chunk in the caller's commit; returns how many were new.
+    /// Each chunk's sibling, new or standing, carries the sieve receipts the
+    /// source carried for its TURNs from this commit on (FIX 7498).
     fn enqueue_in_txn(
         &self,
         vault: &Vault,
@@ -74,6 +76,7 @@ impl WakePreparationChunks {
     ) -> Result<usize> {
         let store = DreamerRunnerStore::new(vault);
         let now = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+        let source = AttemptId::from_bytes(&self.source)?;
         let mut queued = 0_usize;
         for chunk in &self.chunks {
             let outcome = store.enqueue_consolidation_in_txn(
@@ -87,6 +90,25 @@ impl WakePreparationChunks {
                     now,
                 },
             )?;
+            let sibling = match &outcome {
+                EnqueueDreamerAttemptOutcome::Enqueued(status)
+                | EnqueueDreamerAttemptOutcome::Existing(status) => status.attempt.id,
+            };
+            let moved = crate::dreamer_wake::sieve::retarget_consumed_in_txn(
+                &vault.store,
+                txn,
+                source,
+                sibling,
+                &chunk.turn_ids(),
+            )?;
+            if moved > 0 {
+                tracing::debug!(
+                    retry = %bytes_to_hex_lower(&self.source),
+                    sibling = %bytes_to_hex_lower(sibling.as_bytes()),
+                    moved,
+                    "sieve receipts follow their TURNs to the split-off sibling"
+                );
+            }
             if matches!(outcome, EnqueueDreamerAttemptOutcome::Enqueued(_)) {
                 queued += 1;
             }
