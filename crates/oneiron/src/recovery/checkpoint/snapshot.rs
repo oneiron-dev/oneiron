@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use heed::types::Bytes;
+use oneiron_crypto::backup::{BackupEvidence, CheckpointFact, SignedCheckpointFact};
 
 use super::watermark::SnapshotMark;
 use super::{
@@ -265,10 +266,46 @@ impl Vault {
                 return Err(error);
             }
         };
+        // A backup's identity is complete and the chain took it: its
+        // checkpoint fact is signed with the keys that signed it (FIX 7326).
+        // A checkpoint publishes none.
+        let checkpoint_fact = (kind == ArtifactKind::Backup)
+            .then(|| sign_fact(&link.keys, id, &evidence))
+            .flatten();
         Ok(Some(BackupSnapshotReceipt {
             image_digest: blake3::Hash::from(id).to_hex().to_string(),
             covered: mark.covered(own),
             evidence,
+            checkpoint_fact,
         }))
+    }
+}
+
+/// The checkpoint fact of the backup `evidence` describes, whose image is
+/// `id`, signed with `keys`, the keys that signed its commitment. One that
+/// fails is logged and left unavailable: the backup stands without it.
+fn sign_fact(
+    keys: &commitment::SigningKeys,
+    id: [u8; 32],
+    evidence: &BackupEvidence,
+) -> Option<SignedCheckpointFact> {
+    let fact = CheckpointFact {
+        engine_vault_id: evidence.engine_vault_id,
+        checkpoint_id: id,
+        commitment_digest: evidence.commitment_digest,
+        outer_blake3: evidence.outer_blake3,
+        size: evidence.size,
+    };
+    match keys.sign_checkpoint_fact(&fact) {
+        Ok(signed) => Some(signed),
+        Err(error) => {
+            tracing::warn!(
+                reason = "backup_checkpoint_fact_unsigned",
+                kind = ?error.kind(),
+                "the backup landed with no checkpoint fact; its checkpoint id stays unsigned \
+                 beside it"
+            );
+            None
+        }
     }
 }

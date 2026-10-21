@@ -105,6 +105,11 @@ pub struct BackupSnapshotReceipt {
     pub covered: BackupWatermark,
     /// The written artifact's evidence.
     pub evidence: BackupArtifactEvidence,
+    /// The artifact's checkpoint fact (FIX 7326), signed with the keys that
+    /// signed its commitment, for its host to publish beside it: `None` for
+    /// a checkpoint, which publishes none, or where signing it failed, which
+    /// was logged and leaves the backup without one.
+    pub checkpoint_fact: Option<oneiron_crypto::backup::SignedCheckpointFact>,
 }
 
 /// The suffix of the marker beside a label's newest backup:
