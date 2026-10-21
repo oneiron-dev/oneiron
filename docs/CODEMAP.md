@@ -25,7 +25,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 59 | 1 | 1 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 21 | 8 | 0 |
 | [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 111 | 14 | 10 |
-| [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 19 | 10 | 0 |
+| [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 20 | 10 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 11 | 1 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 9 | 2 | 0 |
 | [oneiron-image](codemap/oneiron-image.md) | The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind… | 8 | 4 | 1 |
@@ -40,7 +40,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-llm-own-server](codemap/oneiron-llm-own-server.md) | Own-server LlmBackend | 5 | 2 | 0 |
 | [oneiron-llm-systemone](codemap/oneiron-llm-systemone.md) | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` | 1 | 1 | 0 |
 | [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 5 | 2 | 0 |
-| [oneiron-model](codemap/oneiron-model.md) | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… | 37 | 6 | 0 |
+| [oneiron-model](codemap/oneiron-model.md) | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… | 38 | 6 | 0 |
 | [oneiron-napi](codemap/oneiron-napi.md) | — | 22 | 1 | 2 |
 | [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 32 | 4 | 1 |
 | [oneiron-organ-protocol](codemap/oneiron-organ-protocol.md) | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 9 | 2 | 0 |
@@ -455,7 +455,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `session` | file+dir | 2 | m | RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints |
-| `supervisor` | dir | 14 | m | The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps… |
+| `supervisor` | dir | 15 | m | The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps… |
 | `tick` | dir | 9 | m | Tick sources: what wakes the supervisor (ONE-1684) |
 | `wave` | file+dir | 2 | s | Host-side consumption of a queued planning attempt and live TASK dispatch |
 | `wave_dispatch` | file | 1 | m | Bounded, per-item delivery of durable wave TASKs to a host dispatcher |
@@ -578,7 +578,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `extraction_eval` | file+dir | 3 | m | — |
-| `llm` | dir | 38 | m | Engine-facing LLM invocation seam |
+| `llm` | dir | 39 | m | Engine-facing LLM invocation seam |
 
 ## oneiron-napi
 

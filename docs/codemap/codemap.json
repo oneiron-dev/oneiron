@@ -36447,7 +36447,7 @@
      "surface": {
       "crate-vis": 12,
       "mod": 11,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -36815,7 +36815,7 @@
      "path": "src/llm/run_admission/permit.rs",
      "purpose": "Building a run's permits: the declared teachers, the host's offer, the key's rung, the run's line and the…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5,
       "struct": 1
      }
@@ -66379,7 +66379,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 9,
+      "fn": 11,
       "mod": 1,
       "re-export": 2,
       "struct": 6,
@@ -78623,7 +78623,7 @@
      "path": "src/lib.rs",
      "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -78729,6 +78729,21 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkerProbe",
+      "WorkerSpec"
+     ],
+     "path": "src/supervisor/inference.rs",
+     "purpose": "The model-worker probe seam (FIX 8314, INFERENCE R1): what one worker is declared to be, and the one call…",
+     "surface": {
+      "struct": 1,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -78758,7 +78773,7 @@
      "path": "src/supervisor/mod.rs",
      "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…",
      "surface": {
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -78985,7 +79000,7 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -79015,7 +79030,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 19,
+   "source_files": 20,
    "test_files": 10
   },
   "oneiron-ffi": {
@@ -80393,6 +80408,7 @@
      "path": "src/lib/stream.rs",
      "purpose": "OpenAI chunk decoding with correlated text, reasoning, and tool fragments",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
       "struct": 2
      }
@@ -81066,7 +81082,6 @@
      "path": "src/llm/cache.rs",
      "purpose": "What a backend reported about its prompt cache on one physical model call (FIX 6567, INF 2 step 1): for each…",
      "surface": {
-      "const": 1,
       "enum": 5,
       "fn": 7,
       "struct": 6
@@ -81213,6 +81228,30 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "InferenceCallReceipt",
+      "InferenceEndReason",
+      "QueueWait",
+      "WorkerBuildEvidence",
+      "WorkerDescriptor",
+      "WorkerFailure",
+      "WorkerKind",
+      "WorkerMode",
+      "WorkerReadiness",
+      "WorkerStatus"
+     ],
+     "path": "src/llm/inference.rs",
+     "purpose": "What a model worker is and what one physical call to it reported (FIX 8314, INFERENCE R1): the worker's…",
+     "surface": {
+      "const": 1,
+      "enum": 6,
+      "fn": 6,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -81293,7 +81332,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -81418,7 +81457,7 @@
      "purpose": "—"
     },
     "llm": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -81427,7 +81466,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 37,
+   "source_files": 38,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -94378,7 +94417,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/models/cache_usage.rs",
-     "purpose": "The prompt-cache evidence a house backend's reply carries (FIX 6567, INF 2 step 1), written into its usage…",
+     "purpose": "The inference receipt a house backend's reply carries (FIX 6567, INF 2 step 1; FIX 8314, INFERENCE R1)…",
      "surface": {
       "crate-vis": 4
      }
@@ -94620,7 +94659,7 @@
      "path": "src/models/llama_identity.rs",
      "purpose": "What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -94692,13 +94731,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/openai.rs",
      "purpose": "The OpenAI-compatible transport: any `/v1/chat/completions` server",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
