@@ -1,3 +1,4 @@
+use crate::decode_admission::{self, DecodeAdmission, DecodeAdmissionError};
 use crate::encodings;
 use crate::encodings::cmap::ToUnicodeCMap;
 use crate::encodings::{Differences, Encoding, Glyph};
@@ -776,6 +777,10 @@ impl std::io::Write for LimitedWriter<'_> {
     }
 }
 
+/// The least room the admitted decoders make before each read. An
+/// implementation buffer size: it never limits how much a stream decodes to.
+const ADMITTED_READ_CHUNK: usize = 32 * 1024;
+
 impl Stream {
     pub fn new(mut dict: Dictionary, content: Vec<u8>) -> Stream {
         dict.set("Length", content.len() as i64);
@@ -883,7 +888,7 @@ impl Stream {
     /// [`Stream::decompress_to_writer`], and load documents with
     /// [`crate::LoadOptions::max_decompressed_size`] set.
     pub fn decompressed_content(&self) -> Result<Vec<u8>> {
-        self.decode_filters(None)
+        self.decode_filters_with(None, None)
     }
 
     /// Decode this stream's content, rejecting the stream with
@@ -896,7 +901,7 @@ impl Stream {
     /// more than roughly `max_output` bytes per layer before being rejected,
     /// rather than expanding without limit.
     pub fn decompressed_content_with_limit(&self, max_output: usize) -> Result<Vec<u8>> {
-        self.decode_filters(Some(max_output))
+        self.decode_filters_with(Some(max_output), None)
     }
 
     /// Decode this stream's content into a caller-provided writer, rejecting the
@@ -912,6 +917,35 @@ impl Stream {
         let data = self.decompressed_content_with_limit(max_output)?;
         writer.write_all(&data)?;
         Ok(data.len())
+    }
+
+    /// Decode this stream's content like [`Stream::decompressed_content`],
+    /// asking `admission` before every buffer the decode allocates or grows.
+    /// It sets no size limit of its own. A refusal ends the decode with
+    /// [`Error::DecodeAdmission`]: it never falls back to another codec and
+    /// never returns partial output.
+    pub fn decompressed_content_admitted(&self, admission: &dyn DecodeAdmission) -> Result<Vec<u8>> {
+        self.decode_filters_with(None, Some(admission))
+    }
+
+    /// Decompress in place like [`Stream::decompress_with_limit`] (or
+    /// [`Stream::decompress`] when `limit` is `None`), asking `admission`
+    /// before every buffer the decode allocates or grows.
+    pub(crate) fn decompress_admitted(&mut self, limit: Option<usize>, admission: &dyn DecodeAdmission) -> Result<()> {
+        let data = self.decode_filters_with(limit, Some(admission))?;
+        self.dict.remove(b"DecodeParms");
+        self.dict.remove(b"Filter");
+        self.set_content(data);
+        Ok(())
+    }
+
+    /// The shared decoder entry. Without an admission it is upstream's
+    /// [`Stream::decode_filters`], unchanged.
+    fn decode_filters_with(&self, limit: Option<usize>, admission: Option<&dyn DecodeAdmission>) -> Result<Vec<u8>> {
+        match admission {
+            Some(admission) => self.decode_filters_admitted(limit, admission),
+            None => self.decode_filters(limit),
+        }
     }
 
     /// Shared decoder for [`Stream::decompressed_content`] and its bounded
@@ -954,6 +988,71 @@ impl Stream {
         Ok(output)
     }
 
+    /// The filter names [`Stream::filters`] lists, in a list admitted before
+    /// it is allocated; `None` where `filters` fails.
+    fn filters_admitted(
+        &self, admission: &dyn DecodeAdmission,
+    ) -> std::result::Result<Option<Vec<&[u8]>>, DecodeAdmissionError> {
+        let Ok(filter) = self.dict.get(b"Filter") else {
+            return Ok(None);
+        };
+        let names = if filter.as_name().is_ok() {
+            std::slice::from_ref(filter)
+        } else if let Ok(names) = filter.as_array() {
+            names.as_slice()
+        } else {
+            return Ok(None);
+        };
+        let mut filters = Vec::new();
+        decode_admission::reserve(admission, &mut filters, names.len())?;
+        for name in names {
+            match name.as_name() {
+                Ok(name) => filters.push(name),
+                Err(_) => return Ok(None),
+            }
+        }
+        Ok(Some(filters))
+    }
+
+    /// [`Stream::decode_filters`] with every allocation admitted first. Each
+    /// filter's output stays alive while the next filter builds its own, and
+    /// admissions are never released, so both are admitted together.
+    fn decode_filters_admitted(&self, limit: Option<usize>, admission: &dyn DecodeAdmission) -> Result<Vec<u8>> {
+        let params = self.dict.get(b"DecodeParms").and_then(Object::as_dict).ok();
+        let Some(filters) = self.filters_admitted(admission)? else {
+            // No usable /Filter means the stream is uncompressed, as in `decode_filters`.
+            if let Some(max) = limit
+                && self.content.len() > max
+            {
+                return Err(DecompressError::MemoryLimitExceeded { limit: max }.into());
+            }
+            let output = decode_admission::copy(admission, &self.content)?;
+            admission.decoded(output.len());
+            return Ok(output);
+        };
+
+        let mut input = self.content.as_slice();
+        let mut output = vec![];
+
+        // Filters are in decoding order.
+        for filter in filters {
+            output = match filter {
+                b"FlateDecode" => Self::decompress_zlib_admitted(input, params, limit, admission)?,
+                b"LZWDecode" => Self::decompress_lzw_admitted(input, params, limit, admission)?,
+                b"ASCII85Decode" => Self::decode_ascii85_admitted(input, limit, admission)?,
+                _ => return Err(Error::Unimplemented("decompression algorithms")),
+            };
+            if let Some(max) = limit
+                && output.len() > max
+            {
+                return Err(DecompressError::MemoryLimitExceeded { limit: max }.into());
+            }
+            input = &output;
+        }
+        admission.decoded(output.len());
+        Ok(output)
+    }
+
     /// Read `reader` to end, appending to `output`. When `limit` is `Some(max)`,
     /// at most `max + 1` bytes are read, so an oversized (bomb) stream is
     /// detected via the `> max` check by the caller without ever allocating the
@@ -969,6 +1068,51 @@ impl Stream {
                 reader.read_to_end(output).map(|_| ())
             }
         }
+    }
+
+    /// Make admitted room at the end of `output` for the next read, and return
+    /// the length to read up to: all of the admitted capacity, never past
+    /// `cap`. `None` once `output` already holds `cap` bytes.
+    fn admitted_room(output: &mut Vec<u8>, cap: Option<usize>, admission: &dyn DecodeAdmission) -> Result<Option<usize>> {
+        let room = match cap {
+            Some(cap) => cap.saturating_sub(output.len()).min(ADMITTED_READ_CHUNK),
+            None => ADMITTED_READ_CHUNK,
+        };
+        if room == 0 {
+            return Ok(None);
+        }
+        decode_admission::reserve(admission, output, room)?;
+        Ok(Some(match cap {
+            Some(cap) => output.capacity().min(cap),
+            None => output.capacity(),
+        }))
+    }
+
+    /// [`Stream::read_capped`], growing `output` only through admitted room.
+    /// The outer `Result` is a refused admission, which ends the decode; the
+    /// inner one is the codec's own status, which callers tolerate as before.
+    fn read_admitted<R: std::io::Read>(
+        mut reader: R, output: &mut Vec<u8>, limit: Option<usize>, admission: &dyn DecodeAdmission,
+    ) -> Result<std::io::Result<()>> {
+        // At most `max + 1` bytes, as `read_capped` reads.
+        let cap = limit.map(|max| max.saturating_add(1));
+        while let Some(end) = Self::admitted_room(output, cap, admission)? {
+            let start = output.len();
+            output.resize(end, 0);
+            match reader.read(&mut output[start..]) {
+                Ok(0) => {
+                    output.truncate(start);
+                    break;
+                }
+                Ok(read) => output.truncate(start + read),
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => output.truncate(start),
+                Err(err) => {
+                    output.truncate(start);
+                    return Ok(Err(err));
+                }
+            }
+        }
+        Ok(Ok(()))
     }
 
     fn decompress_lzw(input: &[u8], params: Option<&Dictionary>, limit: Option<usize>) -> Result<Vec<u8>> {
@@ -1017,6 +1161,78 @@ impl Stream {
         output
     }
 
+    /// [`Stream::decompress_lzw`] with the decoder's working state and every
+    /// output allocation admitted first.
+    fn decompress_lzw_admitted(
+        input: &[u8], params: Option<&Dictionary>, limit: Option<usize>, admission: &dyn DecodeAdmission,
+    ) -> Result<Vec<u8>> {
+        use weezl::{BitOrder, decode::Decoder};
+        const MIN_BITS: u8 = 9;
+
+        let early_change = params
+            .and_then(|p| p.get(b"EarlyChange").ok())
+            .and_then(|p| Object::as_i64(p).ok())
+            .map(|v| v != 0)
+            .unwrap_or(true);
+
+        // weezl allocates its code tables and reconstruction buffer here.
+        admission.admit(decode_admission::CODEC_STATE_BYTES)?;
+        let mut decoder = if early_change {
+            Decoder::with_tiff_size_switch(BitOrder::Msb, MIN_BITS - 1)
+        } else {
+            Decoder::new(BitOrder::Msb, MIN_BITS - 1)
+        };
+
+        let output = Self::decompress_lzw_loop_admitted(input, &mut decoder, limit, admission)?;
+        if let Some(max) = limit
+            && output.len() > max
+        {
+            return Err(DecompressError::MemoryLimitExceeded { limit: max }.into());
+        }
+        Self::decompress_predictor_admitted(output, params, admission)
+    }
+
+    /// [`Stream::decompress_lzw_loop`], decoding straight into admitted output
+    /// instead of through weezl's stream adapter, which allocates a 16 MiB
+    /// buffer per decode. On an invalid code the adapter drops what it had
+    /// decoded into that buffer; the same span is dropped here, so without a
+    /// numeric limit the output matches. A refusal is returned; a codec
+    /// failure is logged, as before.
+    fn decompress_lzw_loop_admitted(
+        input: &[u8], decoder: &mut weezl::decode::Decoder, limit: Option<usize>, admission: &dyn DecodeAdmission,
+    ) -> Result<Vec<u8>> {
+        use weezl::LzwStatus;
+        // The stream adapter's buffer size (weezl's `STREAM_BUF_SIZE`).
+        const ADAPTER_BUFFER: usize = 1 << 24;
+
+        // At most `max + 1` bytes, as the bounded writer accepts.
+        let cap = limit.map(|max| max.saturating_add(1));
+        let mut output = Vec::new();
+        let mut read = 0;
+        while let Some(end) = Self::admitted_room(&mut output, cap, admission)? {
+            let start = output.len();
+            output.resize(end, 0);
+            let result = decoder.decode_bytes(&input[read..], &mut output[start..]);
+            read += result.consumed_in;
+            output.truncate(start + result.consumed_out);
+            match result.status {
+                Ok(LzwStatus::Done) => break,
+                Ok(LzwStatus::NoProgress) => {
+                    warn!("No more data but no end marker detected");
+                    break;
+                }
+                Ok(_) if result.consumed_in == 0 && result.consumed_out == 0 => break,
+                Ok(_) => {}
+                Err(err) => {
+                    output.truncate(output.len() / ADAPTER_BUFFER * ADAPTER_BUFFER);
+                    warn!("{err:?}");
+                    break;
+                }
+            }
+        }
+        Ok(output)
+    }
+
     fn decompress_zlib(input: &[u8], params: Option<&Dictionary>, limit: Option<usize>) -> Result<Vec<u8>> {
         use flate2::read::ZlibDecoder;
 
@@ -1048,6 +1264,43 @@ impl Stream {
             return Err(DecompressError::MemoryLimitExceeded { limit: max }.into());
         }
         Self::decompress_predictor(output, params)
+    }
+
+    /// [`Stream::decompress_zlib`] with every allocation admitted first. The
+    /// output grows as it is read, with no speculative starting capacity, and
+    /// the decoders read the input in place rather than through a 32 KiB copy.
+    /// A refusal ends the decode at once: it never reaches the raw-deflate
+    /// fallback, which only a codec failure on empty output takes, as before.
+    fn decompress_zlib_admitted(
+        input: &[u8], params: Option<&Dictionary>, limit: Option<usize>, admission: &dyn DecodeAdmission,
+    ) -> Result<Vec<u8>> {
+        use flate2::bufread::{DeflateDecoder, ZlibDecoder};
+
+        let mut output = Vec::new();
+        if !input.is_empty() {
+            // flate2 allocates the inflate state and its window here.
+            admission.admit(decode_admission::CODEC_STATE_BYTES)?;
+            if let Err(err) = Self::read_admitted(ZlibDecoder::new(input), &mut output, limit, admission)? {
+                warn!("{err}");
+                // Zlib decompression failed (e.g. corrupt adler32 checksum in
+                // encrypted PDFs). Retry with raw deflate, skipping the 2-byte
+                // zlib header and ignoring the checksum.
+                if output.is_empty() && input.len() > 2 {
+                    admission.admit(decode_admission::CODEC_STATE_BYTES)?;
+                    if let Err(raw_err) =
+                        Self::read_admitted(DeflateDecoder::new(&input[2..]), &mut output, limit, admission)?
+                    {
+                        warn!("raw deflate fallback also failed: {raw_err}");
+                    }
+                }
+            }
+        }
+        if let Some(max) = limit
+            && output.len() > max
+        {
+            return Err(DecompressError::MemoryLimitExceeded { limit: max }.into());
+        }
+        Self::decompress_predictor_admitted(output, params, admission)
     }
 
     fn decode_ascii85(input: &[u8], limit: Option<usize>) -> Result<Vec<u8>> {
@@ -1113,6 +1366,67 @@ impl Stream {
         Ok(output)
     }
 
+    /// [`Stream::decode_ascii85`] with each append's growth admitted first.
+    fn decode_ascii85_admitted(input: &[u8], limit: Option<usize>, admission: &dyn DecodeAdmission) -> Result<Vec<u8>> {
+        let mut output = vec![];
+        let mut buffer: u32 = 0;
+        let mut count = 0;
+        // Check for EOD marker
+        let input_no_eod = if input.len() >= 2 && &input[input.len() - 2..] == b"~>" {
+            &input[..input.len() - 2]
+        } else {
+            log::warn!("ASCII85 stream is missing its EOD marker");
+            input
+        };
+        for &ch in input_no_eod {
+            if let Some(max) = limit
+                && output.len() > max
+            {
+                return Err(DecompressError::MemoryLimitExceeded { limit: max }.into());
+            }
+            if ch == b'z' {
+                if count != 0 {
+                    return Err(DecompressError::Ascii85("z character is not allowed in the middle of a group").into());
+                }
+                decode_admission::extend(admission, &mut output, &[0, 0, 0, 0])?;
+                continue;
+            }
+
+            if ch.is_ascii_whitespace() {
+                continue;
+            }
+
+            if !(b'!'..=b'u').contains(&ch) {
+                break;
+            }
+            buffer = buffer
+                .checked_mul(85)
+                .ok_or(DecompressError::Ascii85("multiplication overflow"))?;
+            buffer += (ch - b'!') as u32;
+            count += 1;
+
+            if count == 5 {
+                decode_admission::extend(admission, &mut output, &buffer.to_be_bytes())?;
+                buffer = 0;
+                count = 0;
+            }
+        }
+
+        if count > 0 {
+            for _ in count..5 {
+                buffer = buffer
+                    .checked_mul(85)
+                    .ok_or(DecompressError::Ascii85("multiplication overflow"))?;
+                buffer += 84;
+            }
+
+            let bytes = buffer.to_be_bytes();
+            decode_admission::extend(admission, &mut output, &bytes[..count - 1])?;
+        }
+
+        Ok(output)
+    }
+
     fn decompress_predictor(mut data: Vec<u8>, params: Option<&Dictionary>) -> Result<Vec<u8>> {
         use crate::filters::png;
 
@@ -1129,6 +1443,30 @@ impl Stream {
         } else {
             Ok(data)
         }
+    }
+
+    /// [`Stream::decompress_predictor`] with the PNG predictor's buffers
+    /// admitted. The pixel size is checked arithmetic: one no machine can
+    /// address makes the stream invalid.
+    fn decompress_predictor_admitted(
+        mut data: Vec<u8>, params: Option<&Dictionary>, admission: &dyn DecodeAdmission,
+    ) -> Result<Vec<u8>> {
+        use crate::filters::png;
+
+        if let Some(params) = params {
+            let predictor = params.get(b"Predictor").and_then(Object::as_i64).unwrap_or(1);
+            if (10..=15).contains(&predictor) {
+                let pixels_per_row = max(1, params.get(b"Columns").and_then(Object::as_i64).unwrap_or(1)) as usize;
+                let colors = max(1, params.get(b"Colors").and_then(Object::as_i64).unwrap_or(1)) as usize;
+                let bits = max(8, params.get(b"BitsPerComponent").and_then(Object::as_i64).unwrap_or(8)) as usize;
+                let bytes_per_pixel = colors
+                    .checked_mul(bits)
+                    .ok_or_else(|| Error::InvalidStream("predictor pixel size overflows".to_string()))?
+                    / 8;
+                data = png::decode_frame_admitted(data.as_slice(), bytes_per_pixel, pixels_per_row, admission)?;
+            }
+        }
+        Ok(data)
     }
 
     pub fn decompress(&mut self) -> Result<()> {

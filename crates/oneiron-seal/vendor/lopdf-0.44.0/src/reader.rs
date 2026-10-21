@@ -7,7 +7,7 @@ use std::fs::File;
 #[cfg(not(feature = "async"))]
 use std::io::Read;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -19,6 +19,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::pin;
 
 use crate::common_data_structures;
+use crate::decode_admission::{self, DecodeAdmission, DecodeAdmissionError};
 use crate::encryption::{self, EncryptionState};
 use crate::error::{ParseError, XrefError};
 use crate::load_options::{FilterFunc, LoadOptions};
@@ -86,6 +87,7 @@ impl Document {
             password: options.password,
             strict: options.strict,
             max_decompressed_size: options.max_decompressed_size,
+            decode_admission: options.decode_admission,
         }
         .read(options.filter)
     }
@@ -105,6 +107,7 @@ impl Document {
             password: options.password,
             strict: options.strict,
             max_decompressed_size: options.max_decompressed_size,
+            decode_admission: options.decode_admission,
         }
         .read(options.filter)
     }
@@ -155,6 +158,7 @@ impl Document {
             password: None,
             strict: false,
             max_decompressed_size: None,
+            decode_admission: None,
         }
         .read_metadata()
     }
@@ -170,6 +174,7 @@ impl Document {
             password: Some(password.to_string()),
             strict: false,
             max_decompressed_size: None,
+            decode_admission: None,
         }
         .read_metadata()
     }
@@ -188,6 +193,7 @@ impl Document {
             password,
             strict: false,
             max_decompressed_size: None,
+            decode_admission: None,
         }
         .read_metadata()
     }
@@ -231,6 +237,7 @@ impl Document {
             password: options.password,
             strict: options.strict,
             max_decompressed_size: options.max_decompressed_size,
+            decode_admission: options.decode_admission,
         }
         .read(options.filter)
     }
@@ -250,6 +257,7 @@ impl Document {
             password: options.password,
             strict: options.strict,
             max_decompressed_size: options.max_decompressed_size,
+            decode_admission: options.decode_admission,
         }
         .read(options.filter)
     }
@@ -296,6 +304,7 @@ impl Document {
             password: None,
             strict: false,
             max_decompressed_size: None,
+            decode_admission: None,
         }
         .read_metadata()
     }
@@ -311,6 +320,7 @@ impl Document {
             password: Some(password.to_string()),
             strict: false,
             max_decompressed_size: None,
+            decode_admission: None,
         }
         .read_metadata()
     }
@@ -331,6 +341,7 @@ impl Document {
             password,
             strict: false,
             max_decompressed_size: None,
+            decode_admission: None,
         }
         .read_metadata()
     }
@@ -348,6 +359,7 @@ impl TryInto<Document> for &[u8] {
             password: None,
             strict: false,
             max_decompressed_size: None,
+            decode_admission: None,
         }
         .read(None)
     }
@@ -381,6 +393,7 @@ impl IncrementalDocument {
             password: None,
             strict: false,
             max_decompressed_size: None,
+            decode_admission: None,
         }
         .read(None)?;
 
@@ -424,6 +437,7 @@ impl IncrementalDocument {
             password: None,
             strict: false,
             max_decompressed_size: None,
+            decode_admission: None,
         }
         .read(None)?;
 
@@ -448,6 +462,7 @@ impl TryInto<IncrementalDocument> for &[u8] {
             password: None,
             strict: false,
             max_decompressed_size: None,
+            decode_admission: None,
         }
         .read(None)?;
 
@@ -467,6 +482,11 @@ pub struct Reader<'a> {
     /// `None` (the default) applies no limit; set it to guard against
     /// decompression bombs. See [`crate::LoadOptions`].
     pub max_decompressed_size: Option<usize>,
+    /// Asked before every buffer the load allocates or grows while it decodes
+    /// stream data (object streams, cross-reference streams) or copies stream
+    /// content. `None` (the default) asks nothing. See
+    /// [`crate::LoadOptions::decode_admission`].
+    pub decode_admission: Option<Arc<dyn DecodeAdmission>>,
 }
 
 /// Maximum allowed embedding of literal strings.
@@ -875,11 +895,14 @@ impl Reader<'_> {
 
         for (obj_num, entry) in entries {
             match entry {
-                XrefEntry::Normal { offset, .. } => {
-                    if let Ok((obj_id, raw_bytes)) = self.extract_raw_object(offset as usize) {
+                XrefEntry::Normal { offset, .. } => match self.extract_raw_object(offset as usize) {
+                    Ok((obj_id, raw_bytes)) => {
                         self.raw_objects.insert(obj_id, raw_bytes);
                     }
-                }
+                    // A refused admission ends the load; an unreadable object is skipped, as before.
+                    Err(err @ Error::DecodeAdmission(_)) => return Err(err),
+                    Err(_) => {}
+                },
                 XrefEntry::Compressed { container, index } => {
                     // Store compressed object info for later processing
                     object_streams.push((obj_num, container, index));
@@ -911,9 +934,13 @@ impl Reader<'_> {
                     continue;
                 }
 
-                if let Ok((id, mut obj)) = self.parse_raw_object(raw_bytes) {
-                    let _ = encryption::decrypt_object(state, *obj_id, &mut obj);
-                    self.document.objects.insert(id, obj);
+                match self.parse_raw_object(raw_bytes) {
+                    Ok((id, mut obj)) => {
+                        let _ = encryption::decrypt_object(state, *obj_id, &mut obj);
+                        self.document.objects.insert(id, obj);
+                    }
+                    Err(err @ Error::DecodeAdmission(_)) => return Err(err),
+                    Err(_) => {}
                 }
             }
 
@@ -930,15 +957,17 @@ impl Reader<'_> {
                 if let Some(container_obj) = self.document.objects.get_mut(&(container_id, 0))
                     && let Ok(stream) = container_obj.as_stream_mut()
                 {
-                    match ObjectStream::new_with_limit(stream, self.max_decompressed_size) {
-                        Ok(object_stream) => {
+                    match ObjectStream::new_admitted(stream, self.max_decompressed_size, self.decode_admission.as_deref()) {
+                        Ok(mut object_stream) => {
+                            // Each object number is listed once, so its object moves out instead of being copied.
                             for (obj_num, _index) in objects_in_stream {
                                 let obj_id = (obj_num, 0);
-                                if let Some(obj) = object_stream.objects.get(&obj_id) {
-                                    self.document.objects.insert(obj_id, obj.clone());
+                                if let Some(obj) = object_stream.objects.remove(&obj_id) {
+                                    self.document.objects.insert(obj_id, obj);
                                 }
                             }
                         }
+                        Err(err @ Error::DecodeAdmission(_)) => return Err(err),
                         Err(_e) => {}
                     }
                 }
@@ -969,6 +998,11 @@ impl Reader<'_> {
         let is_encrypted = self.document.trailer.get(b"Encrypt").is_ok();
         let zero_length_streams = Mutex::new(vec![]);
         let object_streams = Mutex::new(vec![]);
+        // The first refused admission. It ends the load: no further object is read.
+        let refused: Mutex<Option<DecodeAdmissionError>> = Mutex::new(None);
+        let refuse = |err: DecodeAdmissionError| {
+            refused.lock().unwrap().get_or_insert(err);
+        };
 
         // Build a map of which container each compressed object belongs to
         // according to the xref. This prevents stale ObjStm copies (e.g., from
@@ -989,10 +1023,17 @@ impl Reader<'_> {
 
         let entries_filter_map = |(_, entry): (&_, &_)| {
             if let XrefEntry::Normal { offset, .. } = *entry {
+                if self.decode_admission.is_some() && refused.lock().unwrap().is_some() {
+                    return None;
+                }
                 // read_object now handles decryption internally
                 let result = self.read_object(offset as usize, None, &mut HashSet::new());
                 let (object_id, mut object) = match result {
                     Ok(obj) => obj,
+                    Err(Error::DecodeAdmission(err)) => {
+                        refuse(err);
+                        return None;
+                    }
                     Err(e) => {
                         // Log error but continue
                         if is_encrypted {
@@ -1010,7 +1051,18 @@ impl Reader<'_> {
 
                 if let Ok(ref mut stream) = object.as_stream_mut() {
                     if stream.dict.has_type(b"ObjStm") && !is_encrypted {
-                        let obj_stream = ObjectStream::new_with_limit(stream, self.max_decompressed_size).ok()?;
+                        let obj_stream = match ObjectStream::new_admitted(
+                            stream,
+                            self.max_decompressed_size,
+                            self.decode_admission.as_deref(),
+                        ) {
+                            Ok(obj_stream) => obj_stream,
+                            Err(Error::DecodeAdmission(err)) => {
+                                refuse(err);
+                                return None;
+                            }
+                            Err(_) => return None,
+                        };
                         let container_id = object_id.0;
                         let mut object_streams = object_streams.lock().unwrap();
                         if let Some(filter_func) = filter_func {
@@ -1064,6 +1116,9 @@ impl Reader<'_> {
                 .filter_map(entries_filter_map)
                 .collect();
         }
+        if let Some(err) = refused.into_inner().unwrap() {
+            return Err(err.into());
+        }
 
         // Only add entries, but never replace entries
         for (id, entry) in object_streams.into_inner().unwrap() {
@@ -1071,7 +1126,10 @@ impl Reader<'_> {
         }
 
         for object_id in zero_length_streams.into_inner().unwrap() {
-            let _ = self.read_stream_content(object_id);
+            // A refused admission for the copy ends the load; other errors leave the stream empty, as before.
+            if let Err(err @ Error::DecodeAdmission(_)) = self.read_stream_content(object_id) {
+                return Err(err);
+            }
         }
 
         Ok(())
@@ -1098,7 +1156,11 @@ impl Reader<'_> {
             return Err(Error::InvalidStream("stream extends after document end.".to_string()));
         }
 
-        stream.set_content(self.buffer[start..end].to_vec());
+        let content = match self.decode_admission.as_deref() {
+            Some(admission) => decode_admission::copy(admission, &self.buffer[start..end])?,
+            None => self.buffer[start..end].to_vec(),
+        };
+        stream.set_content(content);
         Ok(())
     }
 
@@ -1138,10 +1200,23 @@ impl Reader<'_> {
 
         let container_id = (container_id, 0);
         let mut already_seen = HashSet::new();
-        let container_obj = self.get_object(container_id, &mut already_seen)?;
-        let mut container_stream = container_obj.as_stream()?.clone();
-        let object_stream = ObjectStream::new_with_limit(&mut container_stream, self.max_decompressed_size)?;
-        object_stream.objects.get(&id).cloned().ok_or(Error::MissingXrefEntry)
+        // The container is this call's own copy, and so is its object stream:
+        // both move rather than being cloned.
+        let mut container_stream = match self.get_object(container_id, &mut already_seen)? {
+            Object::Stream(stream) => stream,
+            other => {
+                return Err(Error::ObjectType {
+                    expected: "Stream",
+                    found: other.enum_variant(),
+                });
+            }
+        };
+        let mut object_stream = ObjectStream::new_admitted(
+            &mut container_stream,
+            self.max_decompressed_size,
+            self.decode_admission.as_deref(),
+        )?;
+        object_stream.objects.remove(&id).ok_or(Error::MissingXrefEntry)
     }
 
     pub fn get_object(&self, id: ObjectId, already_seen: &mut HashSet<ObjectId>) -> Result<Object> {
@@ -1291,7 +1366,10 @@ impl Reader<'_> {
         }
 
         // Extract raw object bytes (including header and trailer)
-        let raw_bytes = slice[0..end_pos].to_vec();
+        let raw_bytes = match self.decode_admission.as_deref() {
+            Some(admission) => decode_admission::copy(admission, &slice[0..end_pos])?,
+            None => slice[0..end_pos].to_vec(),
+        };
 
         Ok(((obj_num, obj_gen), raw_bytes))
     }

@@ -1,8 +1,11 @@
 use super::{Dictionary, Object, ObjectId, Reader, Stream, StringFormat};
 use crate::Error;
 use crate::content::*;
+use crate::decode_admission::{self, DecodeAdmissionError};
 use crate::error;
+use crate::parser_aux::decode_xref_stream_admitted;
 use crate::xref::*;
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::str::{self, FromStr};
 
@@ -338,25 +341,48 @@ pub(crate) fn dict_dup(input: ParserInput) -> NomResult<Dictionary> {
     .parse(input)
 }
 
-fn stream<'a>(input: ParserInput<'a>, reader: &Reader, already_seen: &mut HashSet<ObjectId>) -> NomResult<'a, Object> {
+/// A stream object. With the reader's decode admission its content copy is
+/// admitted first; a refusal there, or while resolving an indirect `/Length`,
+/// is left in `refused` and fails the parse for good.
+fn stream<'a>(
+    input: ParserInput<'a>, reader: &Reader, already_seen: &mut HashSet<ObjectId>,
+    refused: &Cell<Option<DecodeAdmissionError>>,
+) -> NomResult<'a, Object> {
     let (i, dict) = terminated(dictionary, (space, tag(&b"stream"[..]), space0, eol)).parse(input)?;
 
-    if let Ok(length) = dict.get(b"Length").and_then(|value| {
+    let length = dict.get(b"Length").and_then(|value| {
         if let Ok(id) = value.as_reference() {
             reader.get_object(id, already_seen).and_then(|value| value.as_i64())
         } else {
             value.as_i64()
         }
-    }) {
-        if length < 0 {
-            // artificial error kind is created to allow descriptive nom errors
-            return Err(nom::Err::Failure(NomError::from_error_kind(i, ErrorKind::LengthValue)));
+    });
+    match length {
+        // A refused admission is not an unknown length.
+        Err(Error::DecodeAdmission(err)) => {
+            refused.set(Some(err));
+            Err(nom::Err::Failure(NomError::from_error_kind(i, ErrorKind::Fail)))
         }
-        let (i, data) = terminated(take(length as usize), pair(opt(eol), tag(&b"endstream"[..]))).parse(i)?;
-        Ok((i, Object::Stream(Stream::new(dict, data.to_vec()))))
-    } else {
+        Ok(length) => {
+            if length < 0 {
+                // artificial error kind is created to allow descriptive nom errors
+                return Err(nom::Err::Failure(NomError::from_error_kind(i, ErrorKind::LengthValue)));
+            }
+            let (i, data) = terminated(take(length as usize), pair(opt(eol), tag(&b"endstream"[..]))).parse(i)?;
+            let content = match reader.decode_admission.as_deref() {
+                Some(admission) => match decode_admission::copy(admission, data) {
+                    Ok(content) => content,
+                    Err(err) => {
+                        refused.set(Some(err));
+                        return Err(nom::Err::Failure(NomError::from_error_kind(i, ErrorKind::Fail)));
+                    }
+                },
+                None => data.to_vec(),
+            };
+            Ok((i, Object::Stream(Stream::new(dict, content))))
+        }
         // Return position relative to the start of the stream dictionary.
-        Ok((i, Object::Stream(Stream::with_position(dict, input.len() - i.len()))))
+        Err(_) => Ok((i, Object::Stream(Stream::with_position(dict, input.len() - i.len())))),
     }
 }
 
@@ -406,10 +432,13 @@ pub fn direct_object(input: ParserInput) -> Option<Object> {
     strip_nom(_direct_object(crate::reader::MAX_NESTING_DEPTH)(input))
 }
 
-fn object<'a>(input: ParserInput<'a>, reader: &Reader, already_seen: &mut HashSet<ObjectId>) -> NomResult<'a, Object> {
+fn object<'a>(
+    input: ParserInput<'a>, reader: &Reader, already_seen: &mut HashSet<ObjectId>,
+    refused: &Cell<Option<DecodeAdmissionError>>,
+) -> NomResult<'a, Object> {
     terminated(
         alt((
-            |input| stream(input, reader, already_seen),
+            |input| stream(input, reader, already_seen, refused),
             _direct_objects(crate::reader::MAX_NESTING_DEPTH),
         )),
         space,
@@ -442,12 +471,17 @@ fn _indirect_object<'a>(
     }
 
     let object_offset = input.len() - i.len();
-    let (_, mut object) = terminated(
-        |i: ParserInput<'a>| object(i, reader, already_seen),
+    let refused = Cell::new(None);
+    let parsed = terminated(
+        |i: ParserInput<'a>| object(i, reader, already_seen, &refused),
         (space, opt(tag(&b"endobj"[..])), space),
     )
-    .parse(i)
-    .map_err(|_| Error::IndirectObject { offset })?;
+    .parse(i);
+    // A refused admission is the error, not an invalid object.
+    if let Some(err) = refused.take() {
+        return Err(err.into());
+    }
+    let (_, mut object) = parsed.map_err(|_| Error::IndirectObject { offset })?;
 
     offset_stream(&mut object, object_offset);
 
@@ -529,6 +563,7 @@ fn trailer(input: ParserInput) -> NomResult<Dictionary> {
 }
 
 pub fn xref_and_trailer(input: ParserInput, reader: &Reader) -> crate::Result<(Xref, Dictionary)> {
+    let refused = Cell::new(None);
     let xref_trailer = map(pair(xref, trailer), |(mut xref, trailer)| {
         xref.size = trailer
             .get(b"Size")
@@ -536,26 +571,37 @@ pub fn xref_and_trailer(input: ParserInput, reader: &Reader) -> crate::Result<(X
             .map_err(|_| error::ParseError::InvalidTrailer)? as u32;
         Ok((xref, trailer))
     });
-    alt((
+    let parsed = alt((
         xref_trailer,
         (|input| {
             _indirect_object(input, 0, None, reader, &mut HashSet::new())
                 .map(|(_, obj)| {
                     let res = match obj {
-                        Object::Stream(stream) => decode_xref_stream_with_limit(stream, reader.max_decompressed_size),
+                        Object::Stream(stream) => decode_xref_stream_admitted(
+                            stream,
+                            reader.max_decompressed_size,
+                            reader.decode_admission.as_deref(),
+                        ),
                         _ => Err(crate::error::ParseError::InvalidXref.into()),
                     };
                     (input, res)
                 })
-                .map_err(|_| {
+                .map_err(|err| {
+                    // A refused admission ends the parse; it is not an invalid trailer.
+                    if let Error::DecodeAdmission(err) = err {
+                        refused.set(Some(err));
+                        return nom::Err::Failure(NomError::from_error_kind(input, ErrorKind::Fail));
+                    }
                     // artificial error kind is created to allow descriptive nom errors
                     nom::Err::Error(NomError::from_error_kind(input, ErrorKind::Fail))
                 })
         }),
     ))
-    .parse(input)
-    .map(|(_, o)| o)
-    .map_err(|_| error::ParseError::InvalidTrailer)?
+    .parse(input);
+    if let Some(err) = refused.take() {
+        return Err(err.into());
+    }
+    parsed.map(|(_, o)| o).map_err(|_| error::ParseError::InvalidTrailer)?
 }
 
 pub fn xref_start(input: ParserInput) -> Option<i64> {

@@ -2,6 +2,8 @@ use std::convert::{TryFrom, TryInto};
 use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::mem;
 
+use crate::decode_admission::{self, DecodeAdmission};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterType {
     None,
@@ -108,6 +110,44 @@ pub fn decode_frame(content: &[u8], bytes_per_pixel: usize, pixels_per_row: usiz
                 ErrorKind::InvalidData,
                 format!("invalid PNG filter type ({})", content[pos]),
             ));
+        }
+    }
+    Ok(decoded)
+}
+
+/// [`decode_frame`] with every allocation admitted first: both row buffers
+/// before they are made, and the output before each row grows it. A refusal is
+/// [`crate::Error::DecodeAdmission`]; a short or invalid row is the same
+/// [`crate::Error::IO`] that `decode_frame` gives.
+pub(crate) fn decode_frame_admitted(
+    content: &[u8], bytes_per_pixel: usize, pixels_per_row: usize, admission: &dyn DecodeAdmission,
+) -> crate::Result<Vec<u8>> {
+    let bytes_per_row = bytes_per_pixel
+        .checked_mul(pixels_per_row)
+        .ok_or_else(|| crate::Error::InvalidStream("predictor row size overflows".to_string()))?;
+    let mut previous = Vec::new();
+    decode_admission::reserve(admission, &mut previous, bytes_per_row)?;
+    previous.resize(bytes_per_row, 0_u8);
+    let mut current = Vec::new();
+    decode_admission::reserve(admission, &mut current, bytes_per_row)?;
+    current.resize(bytes_per_row, 0_u8);
+    let mut decoded = Vec::new();
+    let mut pos = 0;
+    while pos < content.len() {
+        if let Ok(filter) = content[pos].try_into() {
+            pos += 1;
+            (&content[pos..]).read_exact(current.as_mut_slice())?;
+            pos += bytes_per_row;
+
+            decode_row(filter, bytes_per_pixel, previous.as_slice(), current.as_mut_slice());
+            decode_admission::extend(admission, &mut decoded, current.as_slice())?;
+            mem::swap(&mut previous, &mut current);
+        } else {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("invalid PNG filter type ({})", content[pos]),
+            )
+            .into());
         }
     }
     Ok(decoded)

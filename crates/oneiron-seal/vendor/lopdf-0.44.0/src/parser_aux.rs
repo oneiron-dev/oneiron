@@ -1,5 +1,6 @@
 use log::warn;
 
+use crate::decode_admission::{self, DecodeAdmission};
 use crate::{Dictionary, Object, ObjectId, Stream, parser};
 use crate::{
     Error, Result,
@@ -610,6 +611,140 @@ pub fn decode_xref_stream_with_limit(mut stream: Stream, max_decompressed_size: 
     dict.remove(b"W");
     dict.remove(b"Index");
     Ok((xref, dict))
+}
+
+/// Decode a cross-reference stream like [`decode_xref_stream_with_limit`],
+/// asking `admission`, when given, before the decode, the `/Index` and `/W`
+/// lists and each parsed entry allocate. A refusal is returned, never replaced
+/// by the default `/Index` or an invalid-xref error. Without an admission this
+/// is `decode_xref_stream_with_limit`.
+pub(crate) fn decode_xref_stream_admitted(
+    mut stream: Stream, max_decompressed_size: Option<usize>, admission: Option<&dyn DecodeAdmission>,
+) -> Result<(Xref, Dictionary)> {
+    let Some(admission) = admission else {
+        return decode_xref_stream_with_limit(stream, max_decompressed_size);
+    };
+    if stream.is_compressed() {
+        stream.decompress_admitted(max_decompressed_size, admission)?;
+    }
+    let mut dict = stream.dict;
+    let mut reader = Cursor::new(stream.content);
+    let size = dict
+        .get(b"Size")
+        .and_then(Object::as_i64)
+        .map_err(|_| ParseError::InvalidXref)?;
+    let mut xref = Xref::new(size as u32, XrefType::CrossReferenceStream);
+    {
+        let section_indice = match dict
+            .get(b"Index")
+            .and_then(|index| parse_integer_array_admitted(index, admission))
+        {
+            Ok(indice) => indice,
+            Err(err @ Error::DecodeAdmission(_)) => return Err(err),
+            Err(_) => {
+                let mut indice = Vec::new();
+                decode_admission::reserve(admission, &mut indice, 2)?;
+                indice.extend([0, size]);
+                indice
+            }
+        };
+        let field_widths = match dict
+            .get(b"W")
+            .and_then(|widths| parse_integer_array_admitted(widths, admission))
+        {
+            Ok(widths) => widths,
+            Err(err @ Error::DecodeAdmission(_)) => return Err(err),
+            Err(_) => return Err(ParseError::InvalidXref.into()),
+        };
+
+        if field_widths.len() < 3
+            || field_widths[0].is_negative()
+            || field_widths[1].is_negative()
+            || field_widths[2].is_negative()
+        {
+            return Err(ParseError::InvalidXref.into());
+        }
+
+        // The widths come from the file: each field is read a byte at a time
+        // rather than through a buffer that wide.
+        let widths = [
+            field_widths[0] as usize,
+            field_widths[1] as usize,
+            field_widths[2] as usize,
+        ];
+
+        // One node of the entry map up front; a share of one before each insert.
+        decode_admission::admit_btree::<u32, XrefEntry>(admission, 0)?;
+        let entry_bytes = decode_admission::btree_entry_bytes::<u32, XrefEntry>();
+
+        for i in 0..section_indice.len() / 2 {
+            let start = section_indice[2 * i];
+            let count = section_indice[2 * i + 1];
+
+            for j in 0..count {
+                let entry_type = if widths[0] != 0 {
+                    read_field(&mut reader, widths[0])?
+                } else {
+                    1
+                };
+                match entry_type {
+                    0 => {
+                        // free object
+                        read_field(&mut reader, widths[1])?;
+                        read_field(&mut reader, widths[2])?;
+                    }
+                    1 => {
+                        // normal object
+                        let offset = read_field(&mut reader, widths[1])?;
+                        let generation = if widths[2] != 0 {
+                            read_field(&mut reader, widths[2])?
+                        } else {
+                            0
+                        } as u16;
+                        admission.admit(entry_bytes)?;
+                        xref.insert((start + j) as u32, XrefEntry::Normal { offset, generation });
+                    }
+                    2 => {
+                        // compressed object
+                        let container = read_field(&mut reader, widths[1])?;
+                        let index = read_field(&mut reader, widths[2])? as u16;
+                        admission.admit(entry_bytes)?;
+                        xref.insert((start + j) as u32, XrefEntry::Compressed { container, index });
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    dict.remove(b"Length");
+    dict.remove(b"W");
+    dict.remove(b"Index");
+    Ok((xref, dict))
+}
+
+/// [`read_big_endian_integer`] over a field `width` bytes wide, read a byte at
+/// a time. The value and the error at the end of the data are the same.
+fn read_field(reader: &mut Cursor<Vec<u8>>, width: usize) -> Result<u32> {
+    let mut value = 0;
+    let mut byte = [0_u8; 1];
+    for _ in 0..width {
+        reader.read_exact(&mut byte)?;
+        value = (value << 8) + u32::from(byte[0]);
+    }
+    Ok(value)
+}
+
+/// [`parse_integer_array`] with the list admitted before it is allocated.
+fn parse_integer_array_admitted(array: &Object, admission: &dyn DecodeAdmission) -> Result<Vec<i64>> {
+    let array = array.as_array()?;
+    let mut out = Vec::new();
+    decode_admission::reserve(admission, &mut out, array.len())?;
+
+    for n in array {
+        out.push(n.as_i64()?);
+    }
+
+    Ok(out)
 }
 
 fn read_big_endian_integer(reader: &mut Cursor<Vec<u8>>, buffer: &mut [u8]) -> Result<u32> {

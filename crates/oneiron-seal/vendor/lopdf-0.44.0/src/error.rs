@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+use crate::decode_admission::DecodeAdmissionError;
 use crate::encodings::cmap::UnicodeCMapError;
 use crate::{ObjectId, encryption};
 
@@ -30,6 +31,10 @@ pub enum Error {
     /// The stream couldn't be decompressed.
     #[error("couldn't decompress stream {0}")]
     Decompress(#[from] DecompressError),
+    /// A decode could not have the memory it asked for (see
+    /// [`crate::DecodeAdmission`]). The decode stopped before allocating.
+    #[error("decode admission refused: {0}")]
+    DecodeAdmission(#[from] DecodeAdmissionError),
     /// Failed to parse input.
     #[error("couldn't parse input: {0}")]
     Parse(#[from] ParseError),

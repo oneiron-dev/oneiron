@@ -1,3 +1,4 @@
+use crate::decode_admission::{self, DecodeAdmission};
 use crate::parser;
 use crate::{Document, Error, Object, ObjectId, Result, Stream};
 use std::collections::BTreeMap;
@@ -121,6 +122,101 @@ impl ObjectStream {
             max_objects: 100,
             compression_level: 6,
         })
+    }
+
+    /// Parse an existing object stream like [`ObjectStream::new_with_limit`],
+    /// asking `admission`, when given, before the decode, the list of object
+    /// numbers and the object map allocate. A refusal is returned, never
+    /// skipped; any other decode failure behaves as in `new_with_limit`.
+    /// Without an admission this is `new_with_limit`.
+    ///
+    /// The objects parsed out of the decoded content allocate their own names,
+    /// strings, arrays and dictionaries without asking.
+    pub(crate) fn new_admitted(
+        stream: &mut Stream, max_decompressed_size: Option<usize>, admission: Option<&dyn DecodeAdmission>,
+    ) -> Result<ObjectStream> {
+        let Some(admission) = admission else {
+            return Self::new_with_limit(stream, max_decompressed_size);
+        };
+        match stream.decompress_admitted(max_decompressed_size, admission) {
+            Ok(()) => {}
+            Err(err @ Error::DecodeAdmission(_)) => return Err(err),
+            // With a limit every decode failure is returned, as in `new_with_limit`.
+            Err(err) if max_decompressed_size.is_some() => return Err(err),
+            // Without one the stream is parsed as it stands, as in `new`.
+            Err(_) => {}
+        }
+
+        if stream.content.is_empty() {
+            return Ok(ObjectStream {
+                objects: BTreeMap::new(),
+                max_objects: 100,
+                compression_level: 6,
+            });
+        }
+
+        let first_offset = stream
+            .dict
+            .get(b"First")
+            .and_then(Object::as_i64)?
+            .try_into()
+            .map_err(|e: TryFromIntError| Error::NumericCast(e.to_string()))?;
+        let index_block = stream
+            .content
+            .get(..first_offset)
+            .ok_or(Error::InvalidOffset(first_offset))?;
+
+        let numbers_str = std::str::from_utf8(index_block).map_err(|e| Error::InvalidObjectStream(e.to_string()))?;
+        let mut numbers: Vec<Option<u32>> = Vec::new();
+        decode_admission::reserve(admission, &mut numbers, numbers_str.split_whitespace().count())?;
+        for number in numbers_str.split_whitespace() {
+            numbers.push(u32::from_str(number).ok());
+        }
+        let len = numbers.len() / 2 * 2; // Ensure only pairs.
+
+        let n = stream.dict.get(b"N").and_then(Object::as_i64)?;
+        if numbers.len().try_into().ok() != n.checked_mul(2) {
+            warn!("object stream: the object stream dictionary specifies a wrong number of objects")
+        }
+
+        // The map's nodes for every pair in the index, before any is inserted.
+        decode_admission::admit_btree::<ObjectId, Object>(admission, len / 2)?;
+        let mut objects = BTreeMap::new();
+        for chunk in numbers[..len].chunks(2) {
+            if let Some((id, object)) = Self::member(stream, first_offset, chunk) {
+                objects.insert(id, object);
+            }
+        }
+
+        Ok(ObjectStream {
+            objects,
+            max_objects: 100,
+            compression_level: 6,
+        })
+    }
+
+    /// The object one `[number, offset]` index pair names, parsed from the
+    /// decoded content as [`ObjectStream::new_with_limit`] parses it.
+    fn member(stream: &Stream, first_offset: usize, chunk: &[Option<u32>]) -> Option<(ObjectId, Object)> {
+        let id = chunk[0]?;
+        let offset = first_offset + chunk[1]? as usize;
+
+        if offset >= stream.content.len() {
+            warn!("out-of-bounds offset in object stream");
+            return None;
+        }
+        // Skip leading whitespace — some PDFs emit newlines before objects in ObjStm
+        let mut start = offset;
+        while start < stream.content.len() && stream.content[start].is_ascii_whitespace() {
+            start += 1;
+        }
+        if start >= stream.content.len() {
+            warn!("only whitespace after offset in object stream");
+            return None;
+        }
+        let object = parser::direct_object(&stream.content[start..])?;
+
+        Some(((id, 0), object))
     }
 
     /// Create a builder for constructing new object streams

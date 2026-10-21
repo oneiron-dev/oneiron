@@ -1,4 +1,6 @@
-use crate::Object;
+use std::sync::Arc;
+
+use crate::{DecodeAdmission, Object};
 
 /// Type alias for the filter function used during PDF loading.
 ///
@@ -49,6 +51,13 @@ pub struct LoadOptions {
     ///
     /// `None` (the default) applies no limit.
     pub max_decompressed_size: Option<usize>,
+    /// Asked before every buffer the load allocates or grows while it decodes
+    /// stream data: object streams, cross-reference streams and the copies of
+    /// stream content the load makes. A refusal ends the load with
+    /// [`crate::Error::DecodeAdmission`].
+    ///
+    /// `None` (the default) asks nothing, and the load runs as without it.
+    pub decode_admission: Option<Arc<dyn DecodeAdmission>>,
 }
 
 impl std::fmt::Debug for LoadOptions {
@@ -58,6 +67,7 @@ impl std::fmt::Debug for LoadOptions {
             .field("filter", &self.filter.map(|_| "fn(..)"))
             .field("strict", &self.strict)
             .field("max_decompressed_size", &self.max_decompressed_size)
+            .field("decode_admission", &self.decode_admission.as_ref().map(|_| "dyn DecodeAdmission"))
             .finish()
     }
 }
