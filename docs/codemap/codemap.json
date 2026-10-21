@@ -63286,7 +63286,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CrawlCompletion",
@@ -63348,8 +63348,8 @@
      "purpose": "The managed (hosted) node's web-fetch egress guard (SCAN C447)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
-      "fn": 3,
+      "crate-vis": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -63373,6 +63373,14 @@
      "surface": {
       "crate-vis": 16
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_fetch/rungs.rs",
+     "purpose": "The built-in rungs' [`Renderer`] impls",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -67693,9 +67701,9 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)"
     },
     "web_fetch": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
@@ -67728,9 +67736,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 186,
+   "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4255,
+   "source_files": 4256,
    "test_files": 902
   },
   "oneiron-android": {
