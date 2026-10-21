@@ -34693,7 +34693,7 @@
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
