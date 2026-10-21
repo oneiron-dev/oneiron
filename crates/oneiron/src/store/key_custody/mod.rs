@@ -12,6 +12,7 @@
 //! (`gate_decision::orcb`) are its first client.
 
 mod anchor;
+mod body_history;
 mod credential_faults;
 mod erase_binding;
 mod files;
@@ -20,6 +21,7 @@ mod fork;
 mod head;
 mod home;
 mod identity;
+mod kept_images;
 mod log;
 mod outbox;
 mod platform;
@@ -51,6 +53,7 @@ pub(crate) use self::identity::{
     CustodyBinding, CustodyId, CustodyKind, CustodySecret, CustodySubject,
 };
 pub(in crate::store) use self::identity::{decode_native_path, encode_native_path};
+pub(crate) use self::kept_images::{BodyLease, ImageHolder, InstanceLeases};
 pub(crate) use self::outbox::OutboxTarget;
 // The one portable directory flush, for the training outbox too (FIX 6880).
 pub use self::platform::sync_dir;
@@ -66,6 +69,7 @@ pub(crate) use self::retirement::arm_before_retire_lock;
 pub(crate) use self::retirement::{
     RetireCause, RetirementIntent, retirement_in_txn, retirement_prefix, retirements_in_rows,
     retirements_in_txn, stage_retirement_in_txn, standing_retirements_in_txn,
+    withdraw_retention_in_txn,
 };
 pub(crate) use self::targets::{MemberProgress, RetirementProgress};
 
@@ -99,6 +103,9 @@ pub(crate) struct KeyCustody {
     /// their last decrypt; the finisher takes the write half before it
     /// touches an entry.
     lock: RwLock<()>,
+    /// The body instances this process's mints, reserves and spills hold
+    /// before a row names them (FIX 6022).
+    leases: std::sync::Arc<InstanceLeases>,
 }
 
 impl KeyCustody {
@@ -118,6 +125,7 @@ impl KeyCustody {
             binding: bound,
             archived_at_open,
             lock: RwLock::new(()),
+            leases: std::sync::Arc::default(),
         })
     }
 

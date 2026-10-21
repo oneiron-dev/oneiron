@@ -26,6 +26,8 @@ pub(crate) fn embeddable_payload_in_txn(
 
 /// [`embeddable_payload_in_txn`] read through `store`: base, or a room's view, whose turns and
 /// messages compose with base. A TURN's text is its shown messages', as `store` holds them.
+/// Beside the payload come the rows it is read from (FIX 7001): the record, and a TURN's
+/// messages whose text it joins.
 pub(super) fn embeddable_payload_in(
     vault: &crate::Vault,
     store: &impl crate::store::ManifestDbs,
@@ -33,7 +35,7 @@ pub(super) fn embeddable_payload_in(
     id: &EntityId,
     entity_type: u8,
     body: &[u8],
-) -> Result<Option<PendingEmbeddingPayload>> {
+) -> Result<Option<(PendingEmbeddingPayload, Vec<EntityId>)>> {
     if entity_type == ENTITY_TYPE_TURN {
         let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, id, false)?
         else {
@@ -43,9 +45,15 @@ pub(super) fn embeddable_payload_in(
             .into_iter()
             .filter_map(|(message, text, _)| Some((message, text?)))
             .collect();
-        return Ok(joined_turn_text(&messages).map(PendingEmbeddingPayload::TurnText));
+        let Some(text) = joined_turn_text(&messages) else {
+            return Ok(None);
+        };
+        let rows: Vec<EntityId> = std::iter::once(*id)
+            .chain(messages.iter().map(|(message, _)| *message))
+            .collect();
+        return Ok(Some((PendingEmbeddingPayload::TurnText(text), rows)));
     }
-    Ok(embeddable_payload(entity_type, body))
+    Ok(embeddable_payload(entity_type, body).map(|payload| (payload, vec![*id])))
 }
 
 /// A TURN's canonical text: its visible MESSAGE children's text in message

@@ -5,7 +5,7 @@
 //! A stored file is no tree: the whole-vault archive carries its bytes beside the
 //! document as they are stored (OF-222), and the tree names them ([`ExportBodyFile`]).
 use std::borrow::Cow;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 
 use rmpv::Value as Mp;
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,9 @@ use crate::batch::secret_scan::{
     release_reads_whole, scan_file_content, scan_undecoded_body,
 };
 use crate::error::{Error, Result};
+
+mod file_stream;
+pub(crate) use file_stream::attaches_as_file_read;
 
 /// How deep an exported tree goes; a deeper node is nulled.
 const TREE_DEPTH: usize = 24;
@@ -89,6 +92,12 @@ impl ExportBodyFile {
         }
     }
 
+    /// The descriptor of a file whose BLAKE3 (lowercase hex) and length the
+    /// caller checked as it spooled the file (FIX 3677).
+    pub(crate) const fn checked(blake3: String, bytes: u64) -> Self {
+        Self { blake3, bytes }
+    }
+
     pub(crate) fn blake3(&self) -> &str {
         &self.blake3
     }
@@ -106,6 +115,21 @@ impl ExportBodyFile {
             None => Err(invalid("file body names no archive file")),
         }
     }
+
+    /// [`Self::read`] as a stream (FIX 3677): `read` runs once over the
+    /// archive file as it is read, and the file is checked to its end
+    /// whether or not `read` reaches it ([`ArchiveFiles::with_file_reader`]).
+    pub(crate) fn with_reader(
+        &self,
+        files: &dyn ArchiveFiles,
+        read: &mut dyn FnMut(&mut dyn Read) -> Result<()>,
+    ) -> Result<()> {
+        match files.file_len(&self.blake3) {
+            Some(bytes) if bytes == self.bytes => files.with_file_reader(&self.blake3, read),
+            Some(_) => Err(invalid("file body length disagrees with its archive file")),
+            None => Err(invalid("file body names no archive file")),
+        }
+    }
 }
 
 /// OF-222 (CALLS "OF-222 binary bodies"): whether a whole-vault archive carries
@@ -115,6 +139,7 @@ impl ExportBodyFile {
 /// MessagePack is still a file. The hub source carrier and package envelope,
 /// the pack source and the archived receipt source keep their own adapters; a
 /// birth source is JSON, so the text test keeps it. Text keeps the inline path.
+/// [`attaches_as_file_read`] judges a body alike as it streams (FIX 3677).
 pub(crate) fn attaches_as_file(entity_type: u8, body: &[u8]) -> bool {
     entity_type == crate::registry::ENTITY_TYPE_ASSET
         && std::str::from_utf8(body).is_err()
@@ -242,7 +267,8 @@ impl ExportBody {
     /// [`Self::validate`] with the archive's verified files (OF-222): a file
     /// body is an ASSET's, names one of them at its length, and holds bytes
     /// the serializer attaches ([`attaches_as_file`]), so no owning adapter's
-    /// body or text passes as a file.
+    /// body or text passes as a file. The file is judged as it streams from
+    /// the archive, checked to its end, never held whole (FIX 3677).
     pub(crate) fn validate_in(&self, entity_type: u8, files: &dyn ArchiveFiles) -> Result<()> {
         let Self::File(file) = self else {
             return self.validate(entity_type);
@@ -250,7 +276,12 @@ impl ExportBody {
         if entity_type != crate::registry::ENTITY_TYPE_ASSET {
             return Err(invalid("file body attached to non-asset kind"));
         }
-        if !attaches_as_file(entity_type, &file.read(files)?) {
+        let mut attaches = false;
+        file.with_reader(files, &mut |body| {
+            attaches = attaches_as_file_read(entity_type, body)?;
+            Ok(())
+        })?;
+        if !attaches {
             return Err(invalid("file body is not one the serializer attaches"));
         }
         Ok(())

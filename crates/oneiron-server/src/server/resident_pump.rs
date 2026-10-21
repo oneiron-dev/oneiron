@@ -30,6 +30,7 @@
 //! line, and a planned team's leader runs with the exact pattern pack its
 //! launch froze (DOOR-111 S4c, `pattern_launch`).
 mod browser_workflow;
+mod child_pin;
 mod craft;
 pub(super) mod pattern_launch;
 
@@ -48,7 +49,7 @@ use oneiron::agent_dispatch::{
     agent_dispatch_actor,
 };
 use oneiron::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, SetAttemptResult,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, ReadSetProducer, SetAttemptResult,
 };
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
@@ -61,8 +62,7 @@ use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confessio
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
 use oneiron::engine_executor::continuation::{fork_executor_run, run_continuation};
 use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EnteredRun, RunCompaction,
-    entered_run,
+    EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, RunCompaction,
 };
 use oneiron::failure_ladder::{
     DetectorTier, FailureEscalationMode, FailureLadderOutcome, FailureScope, FailureScopePolicy,
@@ -78,8 +78,7 @@ use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::self_heal::audit::AttemptConfession;
 use oneiron::task_type::TaskTypeRef;
 use oneiron::{
-    DreamerRunnerStore, EntityId, LlmError, ModelId, ModelLocality, RetryableLlmError, Vault,
-    WriteActor,
+    DreamerRunnerStore, EntityId, LlmError, ModelId, RetryableLlmError, Vault, WriteActor,
 };
 use tokio::sync::broadcast;
 
@@ -585,40 +584,25 @@ fn run_bound(
     // FIX 2310 (OF-541 PR H): a planned child no seat binds runs its plan's
     // pick exactly where its provider routes that model so and its frozen
     // definition lists it; else the provider's own model, each call another
-    // model answers marked on its receipts. The pin is decided at the
-    // child's first entry alone (Engine C3), before its list holds it. A
-    // later entry keeps what its record was first entered under, read once
-    // its task is whole below, and only then is it held to its list.
-    let plan = status
+    // model answers marked on its receipts. Its row keeps the binding its
+    // first entry chose (FIX 7720, 7721), and a continuation takes its
+    // source's (FIX 7723): no later entry decides it again.
+    let pin = status
         .input
         .plan
         .as_ref()
-        .filter(|_| !continues && model_seat.is_none());
-    let mut reentered = None;
-    let mut planned = None;
-    if let Some(plan) = plan {
-        match entered_run(vault, run_id) {
-            Ok(None) => {
-                planned = Some(first_entry_pin(
-                    vault,
-                    provider,
-                    definition,
-                    run_id,
-                    &plan.plan.model,
-                    &mut config,
-                ));
-            }
-            Ok(Some(entered)) => reentered = Some(entered),
-            Err(error) => {
-                tracing::warn!(%error, run = %run_id.to_hex(), "a planned child's replay record did not read; it runs as it would today");
-                planned = Some(PlannedModel {
-                    child: run_id,
-                    pick: plan.plan.model.clone(),
-                    exact: false,
-                });
-            }
-        }
-    }
+        .filter(|_| model_seat.is_none())
+        .map(|plan| {
+            child_pin::select(
+                vault,
+                provider,
+                &status.attempt,
+                definition,
+                &plan.plan.model,
+                continues,
+                &mut config,
+            )
+        });
     if let Some(seat) = &model_seat {
         ensure_listed(definition, seat.model()).map_err(text)?;
         let lease_owner = status
@@ -646,9 +630,12 @@ fn run_bound(
         {
             tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a wake's model change was not noted in the agent's diary");
         }
-    } else if reentered.is_none() {
+    } else {
         hold_seatless_to_list(vault, actor, definition, &config.model)?;
     }
+    // Held to its list, the binding is frozen on the row and noted in the
+    // agent's diary before any pack loads (FIX 7720, 7726).
+    let planned = pin.map(|pin| pin.bind(vault, &status.attempt, actor, run_id, &mut config));
     // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
     // pack its launch froze, its SKILL.md before any other skill's body; a
     // continued run's task, its source's fork, already holds it there.
@@ -698,19 +685,6 @@ fn run_bound(
                 revision,
             ));
         }
-    }
-    // A planned child's later entry (Engine C3), its task now whole.
-    if let (Some(plan), Some(entered)) = (plan, &reentered) {
-        planned = Some(later_entry_pin(
-            vault,
-            provider,
-            definition,
-            entered,
-            run_id,
-            &plan.plan.model,
-            &mut config,
-        ));
-        hold_seatless_to_list(vault, actor, definition, &config.model)?;
     }
     // Its model calls and its reader children spend under the attempt's
     // scope. An unmetered attempt's calls stay on the provider's meter, and
@@ -794,6 +768,15 @@ fn run_bound(
         // thread the entry ran its calls on.
         finalize_step_captures(vault);
         let outcome = outcome?;
+        // The rows its tool answers were served from, each time the run
+        // stops (FIX 7017). Capture only: a set not recorded stays unknown,
+        // and the run goes on.
+        let rows = outcome.replay_record.agent_verb_rows();
+        let id = status.attempt.id;
+        if let Err(error) = vault.record_attempt_sources(id, ReadSetProducer::TOOL_ANSWERS, rows) {
+            tracing::warn!(kind = ?error.kind(), "a resident run's tool answer rows were not recorded");
+            let _ = vault.record_attempt_sources(id, ReadSetProducer::TOOL_ANSWERS, None);
+        }
         match outcome.status {
             EngineExecutorStatus::Yielded { .. } => full = 0,
             EngineExecutorStatus::WindowFull { .. }
@@ -900,88 +883,6 @@ fn hold_seatless_to_list(
         tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a listed agent's seatless run's owner note was not recorded");
     }
     Ok(())
-}
-
-/// Every route a model can be served on: a planned child's later entry reads
-/// which one its first entry pinned (Engine C3).
-const LOCALITIES: [ModelLocality; 3] = [
-    ModelLocality::OnDevice,
-    ModelLocality::OwnServer,
-    ModelLocality::ThirdParty,
-];
-
-/// Where `provider` routes `pick`, a planned child's model, exactly, when
-/// the child's frozen definition lists it too (FIX 2310, Engine C1/C2). A
-/// provider that lists no model routes none: the child runs as today.
-fn exact_route(
-    vault: &Vault,
-    provider: &dyn McpCodeModeProvider,
-    definition: &AgentDefinition,
-    pick: &ModelId,
-) -> Option<ModelLocality> {
-    provider
-        .planned_route(vault, pick)
-        .filter(|_| ensure_listed(definition, pick).is_ok())
-}
-
-/// A planned child's pin at its first entry (FIX 2310): its plan's pick,
-/// on the route its provider serves it on, when [`exact_route`] finds one;
-/// else `config` stays as today's, and the provider's own model runs.
-fn first_entry_pin(
-    vault: &Vault,
-    provider: &dyn McpCodeModeProvider,
-    definition: &AgentDefinition,
-    child: EntityId,
-    pick: &ModelId,
-    config: &mut EngineExecutorConfig,
-) -> PlannedModel {
-    let route = exact_route(vault, provider, definition, pick);
-    if let Some(locality) = route {
-        config.model = pick.clone();
-        config.model_locality = locality;
-    }
-    PlannedModel {
-        child,
-        pick: pick.clone(),
-        exact: route.is_some(),
-    }
-}
-
-/// A planned child's pin at a later entry (Engine C3): the config its
-/// record was first entered under, never decided again. The template's is
-/// tried first; a pick that is the template's own model, on the route it is
-/// served on now, runs exactly, as at a first entry, since the config is the
-/// same either way. Then the pick on each route. With none of them, the
-/// template, and the run resumes as it does today.
-fn later_entry_pin(
-    vault: &Vault,
-    provider: &dyn McpCodeModeProvider,
-    definition: &AgentDefinition,
-    entered: &EnteredRun<'_>,
-    child: EntityId,
-    pick: &ModelId,
-    config: &mut EngineExecutorConfig,
-) -> PlannedModel {
-    let exact = if entered.under(config) {
-        config.model == *pick
-            && exact_route(vault, provider, definition, pick) == Some(config.model_locality)
-    } else {
-        let mut pinned = config.clone();
-        pinned.model = pick.clone();
-        let found = LOCALITIES.into_iter().any(|locality| {
-            pinned.model_locality = locality;
-            entered.under(&pinned)
-        });
-        if found {
-            *config = pinned;
-        }
-        found
-    };
-    PlannedModel {
-        child,
-        pick: pick.clone(),
-        exact,
-    }
 }
 
 /// One entry of the run, as `execute_code` enters its runs, but bound to the

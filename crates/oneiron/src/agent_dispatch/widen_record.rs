@@ -13,7 +13,7 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 
 use super::workflow_record::WorkflowTaskBinding;
-use super::{AgentDispatchTarget, AgentSpawnContext, DispatchAgent};
+use super::{AgentDispatchTarget, AgentSpawnContext, DirectSpawnReceipt, DispatchAgent};
 
 /// Pending context-widen proposal record. Key: `blake3` hash of the dedupe
 /// key or full intent.
@@ -189,8 +189,8 @@ impl WidenIntent {
                 plan: self.plan.clone(),
                 objectives: self.objectives.clone(),
                 comm: self.comm,
-                // An approved widening's child carries no direct spawn
-                // receipt: the intent does not keep one.
+                // The enclosing record attaches its saved direct spawn
+                // receipt ([`WidenRecord::dispatch`]); the intent keeps none.
                 direct_spawn: None,
             },
         ))
@@ -263,6 +263,10 @@ pub(super) struct WidenRecord {
     pub recorded_at: u64,
     pub landed: Option<WidenLanding>,
     pub declined: Option<WidenDecline>,
+    /// FIX 7443: the direct spawn receipt the first proposing call staged,
+    /// which the approved child carries. Outside the request, so neither the
+    /// proposal's id nor a retry's compare reads it.
+    pub direct_spawn: Option<DirectSpawnReceipt>,
 }
 
 /// `intent` as [`WIDEN`] stores it (FIX 2314): read through the side-row
@@ -290,12 +294,25 @@ pub(super) fn admitted_intent_in(
         recorded_at: 0,
         landed: None,
         declined: None,
+        direct_spawn: None,
     };
     WIDEN.admit(vault, wtxn, &unkeyed, &mut record)?;
     Ok(record.request.intent)
 }
 
 impl WidenRecord {
+    /// The approved child's dispatch: the intent's, carrying the direct
+    /// spawn receipt this record saved (FIX 7443).
+    pub(super) fn dispatch(
+        &self,
+        proposal_id: &str,
+        now: u64,
+    ) -> Result<(DispatchAgent, AgentSpawnContext)> {
+        let (input, mut spawn) = self.request.intent.dispatch(proposal_id, now)?;
+        spawn.direct_spawn.clone_from(&self.direct_spawn);
+        Ok((input, spawn))
+    }
+
     /// A proposal settles once: approved and landed, or declined.
     pub(super) fn validate_settlement(&self) -> Result<()> {
         if self.landed.is_some() && self.declined.is_some() {

@@ -50,9 +50,9 @@ impl TargetRecipients {
         }
     }
 
-    /// The digest of the policy both heads follow: the worlds each leaves
-    /// the pads of out, then the credentials whose keys each may carry
-    /// (KS-6), and whether a root is there to carry them to, in order.
+    /// The digest of the policy both heads follow: each group's recovery
+    /// root by id, the worlds each leaves the pads of out, then the
+    /// credentials whose keys each may carry (KS-6), in order.
     fn policy(&self) -> [u8; 32] {
         policy_digest(
             &[
@@ -61,20 +61,30 @@ impl TargetRecipients {
                 &self.own.credentials_eligible,
                 &self.hosted.credentials_eligible,
             ],
-            [self.own.root.is_some(), self.hosted.root.is_some()],
+            [&self.own, &self.hosted].map(|group| group.root.as_ref().map(|(id, _)| *id)),
         )
     }
 }
 
-fn policy_digest(sets: &[&BTreeSet<[u8; 16]>], rooted: [bool; 2]) -> [u8; 32] {
+fn policy_digest(sets: &[&BTreeSet<[u8; 16]>], roots: [Option<[u8; 32]>; 2]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(POLICY_CONTEXT);
-    // A root decides whether a credential's keys may ride at all (KS-6); a
-    // vault with no eligible credential keeps its pad-only digest.
-    let credentials = sets.iter().skip(2).any(|set| !set.is_empty());
-    if credentials {
-        hasher.update(&[u8::from(rooted[0]), u8::from(rooted[1])]);
+    // Each group's recovery root by identity, not presence alone (FIX
+    // 7995): a changed root moves the policy, so every head is sealed to the
+    // new kit and acknowledged again. A root also decides whether a
+    // credential's keys may ride at all (KS-6).
+    for root in roots {
+        match root {
+            Some(id) => {
+                hasher.update(&[1]);
+                hasher.update(&id);
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
     }
+    let credentials = sets.iter().skip(2).any(|set| !set.is_empty());
     let hashed = if credentials { sets.len() } else { 2 };
     for worlds in sets.iter().take(hashed).copied() {
         hasher.update(&(worlds.len() as u64).to_be_bytes());

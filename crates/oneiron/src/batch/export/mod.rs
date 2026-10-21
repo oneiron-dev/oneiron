@@ -53,6 +53,7 @@ use crate::store::{STORAGE_ABI_VERSION, STORAGE_SCHEMA_VERSION};
 #[cfg(test)]
 use std::collections::BTreeSet;
 
+mod asset_reserve;
 mod document_import;
 mod document_snapshot;
 mod document_types;
@@ -64,8 +65,10 @@ mod expression_import;
 mod expression_import_tests;
 mod provenance_import;
 mod result_reserve;
+mod snapshot_body;
 pub(crate) use document_snapshot::{ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotRun};
 pub use document_types::*;
+pub(crate) use snapshot_body::ExportSnapshotEntityBody;
 #[cfg(test)]
 mod document_tests;
 
