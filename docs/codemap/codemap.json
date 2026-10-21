@@ -2555,6 +2555,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityWorkPolicy",
+      "AuthorityWorkWaitExpired"
+     ],
+     "path": "src/authority/admission.rs",
+     "purpose": "Measured admission for authority work (Phase2 A: FIX 7906, 7909, 7911, 7912, 7921, 7922, 7930)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 4,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -3552,8 +3568,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 33,
-      "re-export": 59
+      "crate-vis": 34,
+      "re-export": 60
      }
     },
     {
@@ -32438,7 +32454,7 @@
      "path": "src/identity.rs",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -38713,17 +38729,31 @@
      "path": "src/memory/origin_doors/mod.rs",
      "purpose": "Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication…",
      "surface": {
-      "re-export": 6
+      "re-export": 8
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/origin_doors/operations.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 3,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CodeExportPreviewProof"
+     ],
+     "path": "src/memory/origin_doors/preview.rs",
+     "purpose": "The exact export preview doors (FIX 6869, G4 PR3): `vault.code.export.preview` and…",
+     "surface": {
+      "enum": 1,
+      "fn": 3
      }
     },
     {
@@ -42228,10 +42258,69 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/origin/export_input.rs",
+     "purpose": "What an engine commit export stands on (FIX 6869, G4 PR3): the shared load the exporter and the exact…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/origin/export_parent.rs",
      "purpose": "CALL G \"import export parents\" (FIX 6869, G4 PR1): the Git parents of an import-bound tested revision's…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/export_preview.rs",
+     "purpose": "The exact export preview (FIX 6869, G4 PR3): what `vault.code.export` would write for one explicit sealed…",
+     "surface": {
+      "crate-vis": 6,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/export_preview/handles.rs",
+     "purpose": "A preview's identity and its byte handles (FIX 6869, G4 PR3, CALL O)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeExportBlockingSource",
+      "CodeExportByteHandle",
+      "CodeExportFileBytes",
+      "CodeExportFileDelta",
+      "CodeExportFileIdentity",
+      "CodeExportFileReadAnswer",
+      "CodeExportFileReadRequest",
+      "CodeExportPreview",
+      "CodeExportPreviewAnswer",
+      "CodeExportPreviewBlockReason",
+      "CodeExportPreviewBlocker",
+      "CodeExportPreviewHold",
+      "CodeExportPreviewRequest",
+      "CodeExportSide"
+     ],
+     "path": "src/origin/export_preview/types.rs",
+     "purpose": "The wire shapes of the exact export preview (FIX 6869, G4 PR3)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 5,
+      "struct": 9
      }
     },
     {
@@ -42506,7 +42595,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
       "crate-vis": 6,
-      "mod": 14,
+      "mod": 15,
       "re-export": 2
      }
     },
@@ -51127,7 +51216,7 @@
      "path": "src/secret_custody/transition.rs",
      "purpose": "OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as a custody…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -51149,6 +51238,16 @@
      "purpose": "The bytes of a custody transition: its strict codec, the transcript its signature covers, and the value…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/transition/pieces.rs",
+     "purpose": "A custody transition in pieces (CALLS `Phase2 custody pieces request bound`, Engine 10-22 02:2x; FIX 7906…",
+     "surface": {
+      "crate-vis": 23
      }
     },
     {
@@ -62148,7 +62247,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1156
+      "fn": 1158
      }
     },
     {
@@ -66225,7 +66324,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 16,
+      "fn": 17,
       "struct": 4,
       "trait": 2
      }
@@ -69157,7 +69256,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 191,
+     "files": 192,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69934,7 +70033,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 245,
+     "files": 246,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69976,7 +70075,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 102,
+     "files": 106,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70235,7 +70334,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70615,7 +70714,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4491,
+   "source_files": 4498,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70712,7 +70811,7 @@
      "path": "src/authority/checkpoint_policy.rs",
      "purpose": "The owner's choice of his vault's checkpoint root policy (mesh PR2c, §A 06, K06), and its wire codec",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 2,
       "fn": 5,
       "struct": 2
@@ -70918,7 +71017,7 @@
      "path": "src/authority/machine_profile.rs",
      "purpose": "The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 5,
       "enum": 3,
       "fn": 8,
@@ -71040,7 +71139,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CustodyChange",
@@ -71053,7 +71152,7 @@
       "const": 2,
       "crate-vis": 3,
       "enum": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -71218,7 +71317,7 @@
      "path": "src/authority/world_privacy.rs",
      "purpose": "A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may…",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 2,
       "enum": 4,
       "fn": 3,
@@ -71984,7 +72083,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cua/provider_gate.rs",
@@ -72014,7 +72113,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cua/run.rs",
@@ -72024,7 +72123,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cua/served.rs",
@@ -72927,7 +73026,7 @@
     "cua": {
      "files": 12,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Synthetic browser bench: engine outcomes are not oracle passes"
     },
@@ -80733,7 +80832,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1127
+      "fn": 1129
      }
     },
     {
@@ -81948,7 +82047,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1128
+      "fn": 1130
      }
     },
     {
@@ -86275,13 +86374,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/origin_doors.rs",
      "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
@@ -90276,7 +90375,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LimitsConfig"
@@ -96965,7 +97064,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 52,
+   "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1058,
    "test_files": 182
@@ -97770,8 +97869,22 @@
       "CodeDiffRequest",
       "CodeDiffView",
       "CodeDocumentFrontier",
+      "CodeExportBlockingSource",
+      "CodeExportByteHandle",
+      "CodeExportFileBytes",
+      "CodeExportFileDelta",
+      "CodeExportFileIdentity",
+      "CodeExportFileReadAnswer",
+      "CodeExportFileReadRequest",
+      "CodeExportPreview",
+      "CodeExportPreviewAnswer",
+      "CodeExportPreviewBlockReason",
+      "CodeExportPreviewBlocker",
+      "CodeExportPreviewHold",
+      "CodeExportPreviewRequest",
       "CodeExportRequest",
       "CodeExportResult",
+      "CodeExportSide",
       "CodeFileChange",
       "CodeFileDiffView",
       "CodeFileEdit",
@@ -101058,8 +101171,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 940,
-      "struct": 2950
+      "enum": 945,
+      "struct": 2959
      }
     },
     {
