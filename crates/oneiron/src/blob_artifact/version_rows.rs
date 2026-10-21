@@ -73,4 +73,30 @@ impl Vault {
         };
         Ok(Some((version, blob_version_rows(&record)?)))
     }
+
+    /// Whether `id` is one of `artifact`'s own version rows in `rtxn`, a
+    /// version's CLAIM or its content's ASSET (FIX 8245): a version record
+    /// of `artifact` names it, and that record is bound to its persisted
+    /// version claim on `artifact`
+    /// ([`Vault::blob_artifact_version_metadata_in_txn`]). The metadata alone
+    /// decides it, never a caller's say or a walk through provenance; a row
+    /// of no version of `artifact` is `false`.
+    pub(crate) fn artifact_version_covers_record_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        artifact: &EntityId,
+        id: &EntityId,
+    ) -> Result<bool> {
+        for entry in VERSIONS.iter_from(&self.store, rtxn, artifact.as_bytes())? {
+            let ((_, version), record) = entry?;
+            if blob_version_rows(&record)?.contains(id)
+                && self
+                    .blob_artifact_version_metadata_in_txn(rtxn, artifact, version)?
+                    .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }

@@ -13283,10 +13283,10 @@
     },
     {
       "name": "vault.voices.packs.put",
-      "description": "The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op.",
+      "description": "A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op.",
       "input": "crate::task_verb::sdk::VoiceBankPackPutRequest",
       "output": "crate::task_verb::sdk::VoiceBankPackReceipt",
-      "call": "crate::task_verb::sdk::put_voice_bank_pack_as(memory.vault(), &memory.embedded_owner(\"vault.voices.packs.put\")?, input)?",
+      "call": "crate::task_verb::sdk::put_voice_bank_pack(memory, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -13298,7 +13298,7 @@
     },
     {
       "name": "vault.voices.render_consent",
-      "description": "The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs.",
+      "description": "A person records the render decision on their own voice, or a designed voice's creator on that voice with no basis: a grant names the farthest locality its refs reach; a withdrawal drops each target clone. It joins the render history.",
       "input": "crate::task_verb::sdk::VoiceRenderConsentRequest",
       "output": "crate::task_verb::sdk::VoiceRenderConsentReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.render_consent\", &input)?",
@@ -13313,7 +13313,7 @@
     },
     {
       "name": "vault.voices.targets.provision",
-      "description": "The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call.",
+      "description": "The caller's own voice, a person's or a designed voice its creator made, cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality first.",
       "input": "crate::task_verb::sdk::VoiceTargetProvisionRequest",
       "output": "crate::task_verb::sdk::VoiceTargetReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.targets.provision\", &input)?",
@@ -13328,7 +13328,7 @@
     },
     {
       "name": "vault.voices.targets.evict",
-      "description": "The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay.",
+      "description": "A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay.",
       "input": "crate::task_verb::sdk::VoiceTargetEvictRequest",
       "output": "crate::task_verb::sdk::VoiceTargetEvictReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.targets.evict\", &input)?",
@@ -13343,10 +13343,25 @@
     },
     {
       "name": "vault.voices.inspect",
-      "description": "The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone.",
+      "description": "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone.",
       "input": "crate::task_verb::sdk::VoiceBankInspectRequest",
       "output": "crate::task_verb::sdk::VoiceBankInspection",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.inspect\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.voices.lineage",
+      "description": "A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call.",
+      "input": "crate::task_verb::sdk::VoiceRenderLineageRequest",
+      "output": "Vec<crate::task_verb::sdk::VoiceRenderEventView>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.lineage\", &input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",

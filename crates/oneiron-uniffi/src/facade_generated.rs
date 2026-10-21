@@ -4256,6 +4256,11 @@ export_facade! {
     let output = client.vault_voices_inspect(&input)?;
     crate::codec::lift_record("vault.voices.inspect", &output)
 };
+"vault.voices.lineage" => fn vault_voices_lineage(&self, input: VoiceRenderLineageRequest) -> Vec<VoiceRenderEventView> = |client| {
+    let input: oneiron::task_verb::sdk::VoiceRenderLineageRequest = crate::codec::lower_record("vault.voices.lineage", input)?;
+    let output = client.vault_voices_lineage(&input)?;
+    crate::codec::lift_record("vault.voices.lineage", &output)
+};
 "ai.transcribe" => fn ai_transcribe(&self, input: AiCallRequest) -> AiAnswer = |client| {
     let input: oneiron::task_verb::sdk::AiCallRequest = crate::codec::lower_record("ai.transcribe", input)?;
     let output = client.ai_transcribe(&input)?;

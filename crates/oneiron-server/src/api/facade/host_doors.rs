@@ -79,7 +79,7 @@ pub(crate) use super::shared_member_doors::*;
 pub(crate) use super::shared_policy_doors::*;
 // The trusted-contact doors (DOOR-140, OF-527) too.
 pub(crate) use super::trusted_contact_doors::*;
-// The owner's voice-bank doors (DOOR-143) too.
+// The voice-bank doors (DOOR-143, FIX 4393) too.
 pub(crate) use super::voice_bank_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::asr_doors::*;
@@ -1816,11 +1816,6 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.notes.history_purge"
         | "vault.notes.history_purge_execute"
         | "vault.notes.history_purge_receipts"
-        | "vault.voices.packs.put"
-        | "vault.voices.render_consent"
-        | "vault.voices.targets.provision"
-        | "vault.voices.targets.evict"
-        | "vault.voices.inspect"
         | "vault.runs.program_hold.release"
         | "ai.voice.asr.open"
         | "ai.voice.asr.hypothesis"
@@ -1868,6 +1863,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
+        // The voice bank's rows (FIX 4393): a live person on their own proof,
+        // owner or not, or a designed voice's creator on its own credential;
+        // the bank binds each act to the voice's subject or creator.
+        "vault.voices.packs.put"
+        | "vault.voices.render_consent"
+        | "vault.voices.targets.provision"
+        | "vault.voices.targets.evict"
+        | "vault.voices.inspect"
+        | "vault.voices.lineage" => super::voice_bank_doors::voice_bank_admits(server, auth, verb),
         // The exact publish rows (FIX 6866): the owner, or a bound principal
         // whose one Grant the engine door admits in its own snapshot.
         "vault.code.origin.publish.request"

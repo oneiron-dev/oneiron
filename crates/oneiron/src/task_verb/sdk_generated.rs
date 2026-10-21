@@ -4718,6 +4718,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.voices.lineage",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VoiceRenderLineageRequest,
+                >(),
+            ),
+            (
                 "ai.transcribe",
                 crate::code_run::vault_read::request_schema::<AiCallRequest>(),
             ),
@@ -7094,6 +7100,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.voices.targets.provision",
     "vault.voices.targets.evict",
     "vault.voices.inspect",
+    "vault.voices.lineage",
     "vault.graph.admit",
     "vault.questions.outcomes",
     "vault.questions.outcomes.project",
@@ -9039,6 +9046,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.voices.inspect" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::VoiceBankInspection,
+        >(),
+        "vault.voices.lineage" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::VoiceRenderEventView>,
         >(),
         "vault.graph.admit" => {
             crate::code_run::vault_read::request_schema::<crate::receipt::GraphAskOutcome>()
@@ -15646,6 +15656,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.voices.lineage" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.transcribe" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20447,6 +20464,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.voices.inspect" => {
             let _input: crate::task_verb::sdk::VoiceBankInspectRequest = decode(value.clone())?;
         }
+        "vault.voices.lineage" => {
+            let _input: crate::task_verb::sdk::VoiceRenderLineageRequest = decode(value.clone())?;
+        }
         "ai.transcribe" => {
             let _input: AiCallRequest = decode(value.clone())?;
         }
@@ -23183,6 +23203,7 @@ pub fn invoke(
         }
         "vault.voices.targets.evict" => encode(vault_voices_targets_evict(memory, decode(value)?)?),
         "vault.voices.inspect" => encode(vault_voices_inspect(memory, decode(value)?)?),
+        "vault.voices.lineage" => encode(vault_voices_lineage(memory, decode(value)?)?),
         "ai.transcribe" => encode(ai_transcribe(memory, decode(value)?)?),
         "ai.embed" => encode(ai_embed(memory, decode(value)?)?),
         "ai.video" => encode(ai_video(memory, decode(value)?)?),
@@ -30925,11 +30946,7 @@ pub fn vault_voices_packs_put(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::VoiceBankPackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::VoiceBankPackReceipt> {
-    crate::task_verb::sdk::put_voice_bank_pack_as(
-        memory.vault(),
-        &memory.embedded_owner("vault.voices.packs.put")?,
-        input,
-    )
+    crate::task_verb::sdk::put_voice_bank_pack(memory, input)
 }
 pub fn vault_voices_render_consent(
     memory: &Memory<'_>,
@@ -30954,6 +30971,12 @@ pub fn vault_voices_inspect(
     input: crate::task_verb::sdk::VoiceBankInspectRequest,
 ) -> MemoryResult<crate::task_verb::sdk::VoiceBankInspection> {
     crate::task_verb::sdk::host_only(memory, "vault.voices.inspect", &input)
+}
+pub fn vault_voices_lineage(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::VoiceRenderLineageRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::VoiceRenderEventView>> {
+    crate::task_verb::sdk::host_only(memory, "vault.voices.lineage", &input)
 }
 pub fn ai_transcribe(
     memory: &Memory<'_>,

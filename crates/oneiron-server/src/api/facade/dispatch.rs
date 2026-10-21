@@ -26735,6 +26735,37 @@ async fn vault_voices_inspect(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_voices_lineage(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.voices.lineage")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.voices.lineage", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.voices.lineage", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_voices_lineage(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn ai_transcribe(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -36749,6 +36780,7 @@ pub(crate) async fn call_verb(
         }
         "vault.voices.targets.evict" => vault_voices_targets_evict(server, call, input).await,
         "vault.voices.inspect" => vault_voices_inspect(server, call, input).await,
+        "vault.voices.lineage" => vault_voices_lineage(server, call, input).await,
         "ai.transcribe" => ai_transcribe(server, call, input).await,
         "ai.embed" => ai_embed(server, call, input).await,
         "ai.video" => ai_video(server, call, input).await,

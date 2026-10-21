@@ -7484,6 +7484,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_voices_lineage(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.voices.lineage", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_transcribe(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.transcribe", js_json(input))

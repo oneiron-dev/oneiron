@@ -7,7 +7,6 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 use super::invalid;
-use super::rows::ACTOR_CLAIM_MAX_CITED_EVIDENCE;
 
 const KEY_LANE: &str = "lane";
 pub(super) const KEY_RECEIPTS: &str = "receipts";
@@ -45,9 +44,10 @@ pub(super) enum ActorClaimLane {
 }
 /// The trace a row rests on, plus when it was observed.
 ///
-/// Constructed through the two lane constructors — there is no "no evidence"
+/// Constructed through the lane constructors — there is no "no evidence"
 /// shape, because a row with nothing to cite is the thing the doctrine header
-/// exists to refuse.
+/// exists to refuse. Every citation is kept, however many (Engine 10-21,
+/// Rule 5): a count is no reason to drop a trace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActorClaimEvidence {
     pub(super) lane: ActorClaimLane,
@@ -58,9 +58,6 @@ impl ActorClaimEvidence {
     pub fn task(receipts: Vec<String>, at: u64) -> Result<Self> {
         if receipts.is_empty() {
             return Err(invalid("a task-lane actor row must cite a receipt"));
-        }
-        if receipts.len() > ACTOR_CLAIM_MAX_CITED_EVIDENCE {
-            return Err(invalid("actor row cites more evidence than the bound"));
         }
         Ok(Self {
             lane: ActorClaimLane::Task { receipts },
@@ -74,9 +71,6 @@ impl ActorClaimEvidence {
         if receipts.is_empty() {
             return Err(invalid("an amendment-lane actor row must cite a receipt"));
         }
-        if receipts.len() > ACTOR_CLAIM_MAX_CITED_EVIDENCE {
-            return Err(invalid("actor row cites more evidence than the bound"));
-        }
         Ok(Self {
             lane: ActorClaimLane::Amendment { receipts },
             at,
@@ -87,9 +81,6 @@ impl ActorClaimEvidence {
     pub fn chat(session: EntityId, turns: Vec<EntityId>, at: u64) -> Result<Self> {
         if turns.is_empty() {
             return Err(invalid("a chat-lane actor row must cite a turn"));
-        }
-        if turns.len() > ACTOR_CLAIM_MAX_CITED_EVIDENCE {
-            return Err(invalid("actor row cites more evidence than the bound"));
         }
         Ok(Self {
             lane: ActorClaimLane::Chat { session, turns },
@@ -109,6 +100,17 @@ impl ActorClaimEvidence {
                 ClaimSource::ToolOutput
             }
             // A distilled note is model-written prose over turns.
+            ActorClaimLane::Chat { .. } => ClaimSource::Generated,
+        }
+    }
+
+    /// The `src` a row resting on this lane is stamped with (FIX 8641): a
+    /// TASK or amendment row is the engine's own observation of receipts it
+    /// holds, a CHAT note is model-written prose over turns. Derived here,
+    /// beside [`Self::lineage`], so no caller can pass a flattering one.
+    pub(super) const fn source(&self) -> ClaimSource {
+        match self.lane {
+            ActorClaimLane::Task { .. } | ActorClaimLane::Amendment { .. } => ClaimSource::Observed,
             ActorClaimLane::Chat { .. } => ClaimSource::Generated,
         }
     }
