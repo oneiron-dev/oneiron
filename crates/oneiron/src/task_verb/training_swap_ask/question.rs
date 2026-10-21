@@ -26,9 +26,10 @@ fn role_name(role: ModelRole) -> String {
 /// measured yet, so it reads unknown; the question never claims the trained
 /// model is not worse.
 pub(super) fn swap_question_text(run: &TrainingRun, expected: &SwapExpectation) -> Result<String> {
-    let (role, _) = run.plan.target.role_binding().ok_or_else(|| {
-        Error::InvalidConfig("a question head has no role swap question".into())
-    })?;
+    let (role, _) =
+        run.plan.target.role_binding().ok_or_else(|| {
+            Error::InvalidConfig("a question head has no role swap question".into())
+        })?;
     let result = run.result.as_ref().ok_or_else(not_scored)?;
     let evaluation = run.evaluation.as_ref().ok_or_else(not_scored)?;
     let start = &run.plan.starting_checkpoint;

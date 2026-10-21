@@ -369,7 +369,11 @@ fn hash_from_hex(field: &str, value: &str) -> oneiron::Result<[u8; 32]> {
         .ok()
         .filter(|hash| hash.to_hex().as_str() == value)
         .map(|hash| *hash.as_bytes())
-        .ok_or_else(|| invalid(format!("the trainer's receipt {field} is not a 64-hex hash")))
+        .ok_or_else(|| {
+            invalid(format!(
+                "the trainer's receipt {field} is not a 64-hex hash"
+            ))
+        })
 }
 
 /// The worker's terminal result as the engine's return. A failed or

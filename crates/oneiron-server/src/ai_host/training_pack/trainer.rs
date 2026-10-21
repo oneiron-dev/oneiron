@@ -14,12 +14,12 @@ use std::path::Path;
 use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
 
+use oneiron::Vault;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::training_pack::{
-    CheckpointFileKind, CheckpointFilePin, SourcePin, TrainOutput, TrainRequest,
-    TrainingConnector, TrainingFuture, TrainingPlan,
+    CheckpointFileKind, CheckpointFilePin, SourcePin, TrainOutput, TrainRequest, TrainingConnector,
+    TrainingFuture, TrainingPlan,
 };
-use oneiron::Vault;
 use serde_json::Value;
 
 use super::wire::{
@@ -214,8 +214,11 @@ fn outstanding() -> oneiron::Error {
 /// The starting checkpoint as an Oneironer bundle: exactly its manifest,
 /// config, tokenizer and trunk, from one source.
 fn base_files(files: &[CheckpointFilePin]) -> oneiron::Result<BaseFiles<'_>> {
-    let [manifest, config, tokenizer, trunk] = BASE_FILES
-        .map(|(name, kind)| files.iter().find(|file| file.name == name && file.kind == kind));
+    let [manifest, config, tokenizer, trunk] = BASE_FILES.map(|(name, kind)| {
+        files
+            .iter()
+            .find(|file| file.name == name && file.kind == kind)
+    });
     let refused = || {
         invalid(
             "a question head starts from an Oneironer bundle: exactly oneironer.json, \

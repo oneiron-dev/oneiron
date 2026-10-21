@@ -23,8 +23,8 @@ use axum::routing::post;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::task_verb::TrainingSwapAskView;
 use oneiron::training_pack::{
-    ExportCheck, HeldOutResult, QuestionTarget, RoleSwapReceipt, SwapChoice,
-    TrainingAuthorization, TrainingHold, TrainingState, ViewedSwap,
+    ExportCheck, HeldOutResult, QuestionTarget, RoleSwapReceipt, SwapChoice, TrainingAuthorization,
+    TrainingHold, TrainingState, ViewedSwap,
 };
 use serde::{Deserialize, Serialize};
 
