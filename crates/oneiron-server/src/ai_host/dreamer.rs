@@ -617,6 +617,7 @@ impl ObservedFactory {
         if let Some(instruction) = &self.summary_instruction {
             factory = factory.with_scope_summary_instruction(instruction.clone());
         }
+        factory = factory.with_model_windows(self.windows.clone());
         if let Some(instruction) = &self.person_about_instruction {
             factory = factory.with_person_about_instruction(instruction.clone());
         }

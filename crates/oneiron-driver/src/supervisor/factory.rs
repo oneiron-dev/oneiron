@@ -1,4 +1,5 @@
 //! Per-pass attempt-executor factory trait and default implementation.
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
@@ -184,6 +185,10 @@ pub struct ConsolidationExecutorFactory {
     /// The host's instruction for declared scope summaries. `None` leaves a
     /// declaration unable to run; the host refuses declarations up front.
     summary_instruction: Option<String>,
+    /// The tokens one call's input may fill on each served model, as the
+    /// host counts them. Empty by default: a sitting's summary then reads
+    /// the vault's own row for its model (FIX 7509 P7b).
+    model_windows: BTreeMap<ModelId, u64>,
     /// The host's wording for PERSON `about` lines. `None` writes them with
     /// the engine's own.
     person_about_instruction: Option<String>,
@@ -221,6 +226,7 @@ impl ConsolidationExecutorFactory {
             weave_recipe_runtime: None,
             connector_event_responder: None,
             summary_instruction: None,
+            model_windows: BTreeMap::new(),
             person_about_instruction: None,
             wave_planner: None,
             wave_dispatch: None,
@@ -295,6 +301,15 @@ impl ConsolidationExecutorFactory {
     #[must_use]
     pub fn with_scope_summary_instruction(mut self, instruction: String) -> Self {
         self.summary_instruction = Some(instruction);
+        self
+    }
+
+    /// The tokens one call's input may fill on each served model, as the
+    /// host counts them: a sitting too big for one call on its model pages
+    /// its TURNs to that window (FIX 7509 P7b).
+    #[must_use]
+    pub fn with_model_windows(mut self, windows: BTreeMap<ModelId, u64>) -> Self {
+        self.model_windows = windows;
         self
     }
 
@@ -439,7 +454,8 @@ impl ConsolidationExecutorFactory {
                     extraction_egress: narrative.inference.extraction_egress,
                 },
                 self.summary_instruction.as_deref(),
-            );
+            )
+            .with_window_tokens(self.model_windows.get(narrative.model).copied());
             // PEOPLE `about` lines ride the same narrative role.
             let inner = PersonAboutExecutor::new(
                 inner,
