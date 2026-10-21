@@ -24,6 +24,10 @@ A `response_format` schema constrains the answer only, never the thought.
 
 A request body may come gzip- or zstd-encoded (`body_codec.py`); one in a
 codec this server cannot read is answered 415.
+
+Each reply's `usage` carries the prompt-cache evidence of every Job the
+request ran, read from each Job's final event, with the server's identity and
+the Generator's epoch (`cache_usage.py`, FIX 6567).
 """
 import argparse
 import collections
@@ -36,6 +40,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import cache_usage
 from body_codec import UnsupportedEncoding, decode_body
 from jinja2 import Environment
 from exllamav3 import Cache, CacheLayer_quant, Config, Generator, Job, LLGuidanceFilter, Model, Tokenizer
@@ -131,7 +136,8 @@ def load(args):
     target = Model.from_config(target_config, component="text")
     tokenizer = Tokenizer(target_config)
     template_path = Path(args.target_dir) / "chat_template.jinja"
-    template = Environment().from_string(template_path.read_text(encoding="utf-8"))
+    template_source = template_path.read_text(encoding="utf-8")
+    template = Environment().from_string(template_source)
     template.environment.globals["raise_exception"] = raise_template_error
 
     draft = draft_cache = None
@@ -168,6 +174,17 @@ def load(args):
                           num_draft_tokens=depth or None,
                           cpu_cache_size=0, recurrent_cache_size=args.recurrent_cache_gib * 1024**3,
                           record_draft_stats=True)
+    # What answers every request from here on, its epoch minted with the
+    # Generator: the caches and Generator as built above, and the server's
+    # settings (FIX 6567).
+    identity = cache_usage.BackendIdentity(
+        args.target_dir, template_source,
+        cache_settings={"layer": "quant", "k_bits": 8, "v_bits": 8, "page_tokens": PAGE,
+                        "cache_tokens": cache_tokens, "max_batch_size": batch, "max_history": depth,
+                        "draft_cache": draft is not None, "cpu_cache_size": 0,
+                        "recurrent_cache_size": args.recurrent_cache_gib * 1024**3},
+        server_settings={"context": args.context, "draft": draft is not None, "draft_tokens": depth,
+                         "max_in_flight": batch})
     stop_ids = set()
     eos = getattr(target_config, "eos_token_id", None)
     for token in eos if isinstance(eos, list) else [eos]:
@@ -179,7 +196,7 @@ def load(args):
             stop_ids.add(int(ids[0]))
     print(f"SERVER_READY model={args.model_id} context={args.context} cache_tokens={cache_tokens} "
           f"in_flight={batch} depth={depth} stop_ids={sorted(stop_ids)}", flush=True)
-    return Server(args, tokenizer, template, generator, sorted(stop_ids))
+    return Server(args, tokenizer, template, generator, sorted(stop_ids), identity)
 
 
 def make_sampler(body):
@@ -298,6 +315,8 @@ class Request:
         self.first = "reason" if self.thinking and self.cap > 0 else "answer"
         self.answer_prompt = None
         self.answer_ids = None
+        # The digest of its effective execution, for its cache record.
+        self.execution_mode = None
         self.events = queue.SimpleQueue()
         self.cancelled = threading.Event()
         self.ended = False
@@ -317,6 +336,8 @@ class Request:
         self.peak = 0
         self.released = False
         self.timings = {"prefill": 0.0, "generate": 0.0, "enqueued": 0.0, "accepted": 0, "rejected": 0}
+        # Each ended Job's pass, from its final event, in order (FIX 6567).
+        self.passes = []
 
 
 class Scheduler:
@@ -334,12 +355,13 @@ class Scheduler:
     request at the head of the queue stops admission until what is in flight
     has ended, then goes in alone; the requests behind it wait for it."""
 
-    def __init__(self, generator, tokenizer, encode, stop_ids, max_in_flight):
+    def __init__(self, generator, tokenizer, encode, stop_ids, max_in_flight, identity):
         self.generator = generator
         self.tokenizer = tokenizer
         self.encode = encode
         self.stop_ids = stop_ids
         self.max_in_flight = max_in_flight
+        self.identity = identity
         self.depth = int(generator.num_draft_tokens)
         self.pool_pages = int(generator.pagetable.max_pages)
         # Shared with the handlers, under `cond`.
@@ -628,6 +650,7 @@ class Scheduler:
         req.events.put(("content", text))
 
     def _end_phase(self, req, final):
+        req.passes.append(cache_usage.job_pass(req.phase, req.thinking, final))
         req.spent += int(final.get("new_tokens", 0))
         timings = req.timings
         timings["prefill"] += float(final.get("time_prefill", 0.0))
@@ -656,6 +679,7 @@ class Scheduler:
         spent = req.spent
         usage = {"prompt_tokens": prompt_tokens, "completion_tokens": spent,
                  "total_tokens": prompt_tokens + spent}
+        cache_usage.add_evidence(usage, prompt_tokens, req.passes, self.identity.record(req.execution_mode))
         stats = {
             "prompt_n": prompt_tokens,
             "prompt_per_second": prompt_tokens / timings["prefill"] if timings["prefill"] > 0 else None,
@@ -718,13 +742,14 @@ class Scheduler:
 
 
 class Server:
-    def __init__(self, args, tokenizer, template, generator, stop_ids):
+    def __init__(self, args, tokenizer, template, generator, stop_ids, identity):
         self.model_id = args.model_id
         self.context = args.context
         self.default_max_tokens = args.default_max_tokens
         self.tokenizer = tokenizer
         self.template = template
-        self.scheduler = Scheduler(generator, tokenizer, self.encode, stop_ids, args.max_in_flight)
+        self.identity = identity
+        self.scheduler = Scheduler(generator, tokenizer, self.encode, stop_ids, args.max_in_flight, identity)
 
     def encode(self, text):
         return self.tokenizer.encode(text, encode_special_tokens=True, add_bos=False).cpu()
@@ -766,6 +791,7 @@ class Server:
             raise RequestError(f"{SOLO_FIELD} must be true or false")
         samplers = {"reason": make_sampler(body), "answer": make_sampler(body)}
         req = Request(request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo)
+        req.execution_mode = self.identity.execution_mode(template_kwargs, solo)
         if not req.thinking:
             req.answer_prompt = prompt
             req.answer_ids = ids

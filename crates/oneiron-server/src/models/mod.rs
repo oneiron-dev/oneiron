@@ -33,6 +33,7 @@ mod anthropic;
 mod broker;
 mod broker_context;
 mod broker_media;
+mod cache_usage;
 mod catalog;
 mod cooldown;
 mod decision_read;

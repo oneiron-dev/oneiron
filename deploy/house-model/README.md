@@ -155,6 +155,54 @@ invariance does not hold at four in flight for a long or multi-turn request:
 the same request can answer differently batched than alone. So identity
 checks run solo, and every other call shares the batch.
 
+## Cache evidence in `usage`
+
+Every EXL3 reply's `usage`, plain or streamed, says what each Job of the
+request read from the prompt cache (FIX 6567; `cache_usage.py` builds it):
+
+- `prompt_tokens`, `completion_tokens` and `total_tokens` keep their meaning:
+  `prompt_tokens` is the request's own prompt.
+- `prompt_tokens_details.cached_tokens` is what the FIRST Job read from the
+  cache, given only when that Job ran over the request's own prompt (a
+  thinking request's reasoning pass, or the one pass of any other request)
+  and its counts agree. `prompt_tokens` less it is what that pass computed.
+  A zero thinking budget's first Job is already the answer's re-encode, so
+  its reply has none.
+- `cache_calls` holds one record, in the form the engine puts on the call's
+  run receipt (`RunTokenUsage.cache_calls`): `backend` `exl3`,
+  `logical_prompt_tokens`, `passes` and `identity`.
+  - `passes` has one entry per Job, in order: `reasoning`, `answer` (the
+    re-encode of prompt, thought and close) or `prompt`. Each has the Job's
+    own `input_tokens`, `cache_read_tokens` (exllamav3's `cached_tokens`,
+    whole pages included), `cached_pages`, `computed_input_tokens` (input
+    less read: logical work, not a kernel's tensor count), `prefill_us`,
+    `generate_us` (per-Job intervals, not exclusive GPU time),
+    `counter_source` `exl3_job`, and `outcome`: `hit`, `recompute`, or
+    `unknown` when a count is missing or the read exceeds the input. A count
+    the Job did not report is left out, never written as zero.
+  - `identity` holds SHA-256 digests of what answered: `template`, the chat
+    template's bytes; `tokenizer`, the target directory's tokenizer files
+    and `config.json`; `runtime`, the installed exllamav3, torch and Python
+    versions as reported; `cache_mode`, the caches' settings; and
+    `execution_mode`, the server's settings with the request's
+    `chat_template_kwargs` and solo flag. `backend_epoch` is 32 hex digits
+    minted once when the Generator is built, so a restart is a new epoch.
+    No weights digest is supplied, so no `model` digest is given. Nothing
+    in it reads the `model` a request names.
+
+`timings` keeps its meaning: `prompt_n` is still the logical prompt.
+
+`llama-server` reports its own counts: what it read as
+`usage.prompt_tokens_details.cached_tokens` and `timings.cache_n`, what it
+computed as `timings.prompt_n`. The engine builds
+the same record from them (`backend` `llama_cpp`, one `prompt` pass), and a
+read is `unknown` when those counts disagree. Its only identity is `runtime`,
+a digest of the reply's `system_fingerprint` (a build, not an incarnation).
+llama.cpp reports no epoch, so none is recorded. `tokens_cached` is the
+slot's occupancy, which counts generated tokens, and is never read as cache
+hits. Each decision-read answer gets a `label_read` record the same way, from
+its native `tokens_evaluated` and `timings`, with no identity.
+
 ## Compressed requests
 
 Both servers decode a request body sent gzip- or zstd-encoded (OF-604), so

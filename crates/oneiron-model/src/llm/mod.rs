@@ -17,6 +17,7 @@ pub use bus::{LlmEventBus, StreamSubscription, TerminalSink};
 pub use subscribers::{ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker};
 mod budget;
 mod burst_inputs;
+mod cache;
 mod call;
 mod defaults;
 pub use defaults::{
@@ -70,6 +71,12 @@ pub use budget::{
 pub use budget::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
 pub use self::burst_inputs::{NormalizedBurstInputs, normalized_burst_inputs};
+
+// FIX 6567: the cache evidence a backend reports on a physical call.
+pub use self::cache::{
+    CACHE_CALLS_KEY, CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch,
+    CacheEvidenceError, CacheIdentity, CacheOutcome, CachePassReport, CachePassUsage, CachePhase,
+};
 
 pub use self::backend::{
     BrokerIsolation, BudgetLease, LlmBackend, LlmGenerateFuture, LlmResult, LlmStream,

@@ -6,7 +6,8 @@ use std::sync::Mutex;
 use serde::Serialize;
 
 use super::super::{
-    BrokerIsolation, BudgetDenied, LlmInputUsage, LlmOutputUsage, ModelId, ModelLocality,
+    BrokerIsolation, BudgetDenied, CacheCallUsage, LlmInputUsage, LlmOutputUsage, ModelId,
+    ModelLocality,
 };
 use super::admission::{RunAttribution, RunDenied};
 use super::declaration::{DeclarationEditor, LeaseUnit};
@@ -105,6 +106,11 @@ pub struct RunStreamUsage {
 pub struct RunTokenUsage {
     pub input: LlmInputUsage,
     pub output: LlmOutputUsage,
+    /// What the backend reported about its prompt cache on this call (FIX
+    /// 6567): each native request's passes, counts and identity digests, typed
+    /// and content-free. Empty when it reported none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cache_calls: Vec<CacheCallUsage>,
 }
 
 /// Everything one permit binds.

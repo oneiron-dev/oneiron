@@ -33,6 +33,7 @@ use oneiron::llm::{
 };
 use serde_json::{Value as JsonValue, json};
 
+use super::cache_usage::{label_read, put_cache_calls, take_cache_calls};
 use super::catalog::engine_model_id;
 use super::http::{HttpFailure, KeyStyle, ProviderHttp};
 use crate::config::models::{
@@ -560,16 +561,20 @@ fn normalized(logprobs: &[f64]) -> Vec<f64> {
 
 /// Prompt tokens in, and at least the one position read out: a read that
 /// generates no text still costs its forward pass. An answer without both
-/// counts is refused, so its caller charges the read's reservation.
+/// counts is refused, so its caller charges the read's reservation. Its
+/// cache read is llama.cpp's own `timings.cache_n` when the answer's counts
+/// agree, beside the answer's cache record (FIX 6567).
 fn usage(body: &JsonValue) -> LlmResult<LlmUsage> {
     let count = |key: &str| {
         body.get(key)
             .and_then(JsonValue::as_u64)
             .ok_or_else(|| failed(LabelReadFailure::Malformed))
     };
+    let (cache_read, raw_provider) = label_read(body);
     Ok(LlmUsage {
         input: LlmInputUsage {
             total: count("tokens_evaluated")?,
+            cache_read,
             ..LlmInputUsage::default()
         },
         output: LlmOutputUsage {
@@ -577,17 +582,22 @@ fn usage(body: &JsonValue) -> LlmResult<LlmUsage> {
             text: 0,
             reasoning: 0,
         },
-        raw_provider: body
-            .get("timings")
-            .map_or(JsonValue::Null, |timings| json!({ "timings": timings })),
+        raw_provider,
     })
 }
 
-/// A retried read's cost: both calls' tokens, and each call's timings.
+/// A retried read's cost: both calls' tokens and cache reads, each call's
+/// timings, and both calls' cache records, listed once at the top.
 fn retried(top_k: LlmUsage, full: LlmUsage) -> LlmUsage {
+    let (mut top_k_raw, mut full_raw) = (top_k.raw_provider, full.raw_provider);
+    let mut calls = take_cache_calls(&mut top_k_raw);
+    calls.extend(take_cache_calls(&mut full_raw));
+    let mut raw_provider = json!({"top_k": top_k_raw, "full": full_raw});
+    put_cache_calls(&mut raw_provider, calls);
     LlmUsage {
         input: LlmInputUsage {
             total: top_k.input.total.saturating_add(full.input.total),
+            cache_read: top_k.input.cache_read.saturating_add(full.input.cache_read),
             ..LlmInputUsage::default()
         },
         output: LlmOutputUsage {
@@ -595,24 +605,31 @@ fn retried(top_k: LlmUsage, full: LlmUsage) -> LlmUsage {
             text: 0,
             reasoning: 0,
         },
-        raw_provider: json!({"top_k": top_k.raw_provider, "full": full.raw_provider}),
+        raw_provider,
     }
 }
 
-/// A pack's cost: every question's tokens, retries included, and each
-/// question's own timings. The answers ran side by side, so their times
-/// overlap and are kept apart, not summed.
+/// A pack's cost: every question's tokens and cache reads, retries included,
+/// each question's own timings, and every answer's cache record, listed once
+/// at the top. The answers ran side by side, so their times overlap and are
+/// kept apart, not summed.
 fn pack_usage(reads: Vec<LlmUsage>) -> LlmUsage {
-    let (mut input, mut output) = (0_u64, 0_u64);
+    let (mut input, mut cache_read, mut output) = (0_u64, 0_u64, 0_u64);
     let mut timings = Vec::with_capacity(reads.len());
-    for read in reads {
+    let mut calls = Vec::new();
+    for mut read in reads {
         input = input.saturating_add(read.input.total);
+        cache_read = cache_read.saturating_add(read.input.cache_read);
         output = output.saturating_add(read.output.total);
+        calls.extend(take_cache_calls(&mut read.raw_provider));
         timings.push(read.raw_provider);
     }
+    let mut raw_provider = json!({ "questions": timings });
+    put_cache_calls(&mut raw_provider, calls);
     LlmUsage {
         input: LlmInputUsage {
             total: input,
+            cache_read,
             ..LlmInputUsage::default()
         },
         output: LlmOutputUsage {
@@ -620,7 +637,7 @@ fn pack_usage(reads: Vec<LlmUsage>) -> LlmUsage {
             text: 0,
             reasoning: 0,
         },
-        raw_provider: json!({ "questions": timings }),
+        raw_provider,
     }
 }
 
