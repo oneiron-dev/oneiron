@@ -141,8 +141,8 @@ impl ConsolidationExecutor<'_> {
             .map(|slice| {
                 let citations = Arc::clone(&citations);
                 let scope = slice.scope.clone();
-                let labels = &slice.labels;
-                move |response: &crate::LlmResponse| citations.check(response, &scope, labels)
+                let labels = slice.labels.clone();
+                move |response: &crate::LlmResponse| citations.check(response, &scope, &labels)
             })
             .collect();
         let jobs = requests
