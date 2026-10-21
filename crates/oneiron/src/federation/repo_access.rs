@@ -27,7 +27,9 @@
 //! error on a path that answers today.
 
 use crate::Vault;
-use crate::authority::principal_standing_in_txn;
+use crate::authority::{
+    NoStanding, PACT_STANDING_LAPSED, principal_standing_in_txn, principal_standing_or_lapse_in_txn,
+};
 use crate::codebase::RepoRef;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
@@ -47,6 +49,10 @@ const NOT_IN_AUDIENCE: &str =
 /// A mint names repo bounds whose anchor is no repo of that PROJECT.
 const NOT_IN_PROJECT: &str =
     "repo bounds name a live CODE_ARTIFACT that belongs to the live PROJECT they name";
+/// No single live Grant from an Owner lists a review policy door's verb
+/// vault-wide for its caller (FIX 8268); the code leads the text.
+const QUEUE_REVIEW_POLICY_NOT_GRANTED: &str = "queue_review_policy_not_granted: no \
+     single live Grant an Owner gave this caller lists the verb without repo bounds";
 
 /// What one admitted repo act stands on, as the caller's snapshot read it.
 #[derive(Debug, Clone)]
@@ -299,6 +305,55 @@ impl Vault {
             }));
         }
         Ok(Err(refusal))
+    }
+}
+
+// The vault-wide merge queue review policy doors' seam (FIX 8268, an L02
+// addition): no existing body above changes.
+impl Vault {
+    /// Admits `actor`, of `class` (the ones the host bound, never a
+    /// request's), to the vault-wide review policy door `verb`
+    /// (`vault.code.merge_queue.review_policy.get` or `.set`) under one
+    /// owner's agent Grant, in the caller's snapshot `txn`: the shipped
+    /// principal rule first ([`principal_standing_or_lapse_in_txn`]), then
+    /// the first live Grant, in id order, that alone stands for the actor and
+    /// `verb` ([`AgentGrantStanding::stands_in_txn`]), stands under this
+    /// vault's own rule, and carries no repo bounds: a vault setting is no
+    /// one repo's. Grants are never unioned and a repo Grant is not this
+    /// authority. The Owner's own proof never comes here.
+    ///
+    /// `Ok(Ok(grant))` names the admitting Grant; `Ok(Err(reason))` is
+    /// [`PACT_STANDING_LAPSED`] when a shared vault's pact lapse alone took
+    /// the Grant, else [`QUEUE_REVIEW_POLICY_NOT_GRANTED`].
+    ///
+    /// # Errors
+    /// A store, fold or clock failure; never a refusal.
+    pub(crate) fn admit_queue_review_policy_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        verb: &str,
+    ) -> Result<std::result::Result<EntityId, &'static str>> {
+        match principal_standing_or_lapse_in_txn(self, txn, actor, class, verb)? {
+            Ok(_) => {}
+            Err(NoStanding::PactStandingLapsed) => return Ok(Err(PACT_STANDING_LAPSED)),
+            Err(NoStanding::NotStanding) => return Ok(Err(QUEUE_REVIEW_POLICY_NOT_GRANTED)),
+        }
+        let now = self.instant_in_txn(txn)?.secs();
+        let owners = crate::policy_model::owners_in_txn(self, txn)?;
+        let shared = self
+            .shared_vault_creation_in_txn(txn)?
+            .map(|creation| creation.vault_id);
+        for standing in self.agent_grants_in_txn(txn)? {
+            if standing.grant.repo_bounds.is_none()
+                && standing.stands_in_txn(self, txn, actor, verb, now, &owners)
+                && self.agent_grant_stands_in_txn(txn, &standing, shared)?
+            {
+                return Ok(Ok(standing.id));
+            }
+        }
+        Ok(Err(QUEUE_REVIEW_POLICY_NOT_GRANTED))
     }
 }
 

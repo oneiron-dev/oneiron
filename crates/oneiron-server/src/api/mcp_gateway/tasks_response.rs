@@ -199,10 +199,10 @@ pub(crate) async fn execute_mcp_generated_verb(
                 })?;
                 (output, source, carrier, epoch.or(task_epoch))
             };
-            // An act whose rows are unknown answers off this device only that
-            // it ran (FIX 5988); a read releases as before.
+            // An act whose rows are unknown (FIX 5988), or held (FIX 8171), answers
+            // off this device only that it ran; a read releases as before.
             let (output, rows) =
-                super::served_rows::unknown_act_answer(args.tool.name, actor, output, served)?;
+                super::served_rows::held_act_answer(server, args.tool.name, actor, output, served)?;
             let snapshot = McpPageSnapshot {
                 output: output.clone(),
                 source,
@@ -329,7 +329,7 @@ pub(crate) fn mcp_scoped_read<'a>(
         .credential_read_key(proof)
         .map_err(|error| mcp_engine_error("credential read key failed", error))?
         .ok_or_else(refused)?;
-    Ok(vault.scoped_read(key.at(actor.locality())))
+    Ok(vault.scoped_read(key.for_destination(&actor.destination())))
 }
 
 pub(crate) fn mcp_actor_result(actor: &McpResolvedActor) -> Value {
@@ -444,6 +444,7 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
         | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
         | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
+        | oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
         _ => -32602,
@@ -463,6 +464,11 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         // management; an agent reads the name, not the sentence.
         oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => {
             Some("off_record_room_management_consent_unavailable")
+        }
+        // FIX 7650: a foreign guest's proposal spool met the host's disk
+        // floor; the agent reads the name, not the sentence.
+        oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR => {
+            Some("sandbox_proposal_disk_floor")
         }
         _ => None,
     };
@@ -1540,6 +1546,8 @@ fn mcp_agent_verb_input(
         "vault.code.merge_queue.diagnose" => a.spec.clone().ok_or_else(invalid),
         "vault.code.merge_queue.check_status" => a.spec.clone().ok_or_else(invalid),
         "vault.code.checks.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.merge_queue.review_policy.get" => Ok(Value::Object(serde_json::Map::new())),
+        "vault.code.merge_queue.review_policy.set" => a.spec.clone().ok_or_else(invalid),
         "vault.code.merge_queue.export_green" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.create" => a.spec.clone().ok_or_else(invalid),
@@ -4154,6 +4162,10 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.code.checks.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.code.merge_queue.review_policy.get" => {}
+        "vault.code.merge_queue.review_policy.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.code.merge_queue.export_green" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -6251,6 +6263,9 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_inbox_concern_move(&memory, input)
                 .map_err(mcp_facade_error)?;
+            server
+                .ai
+                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -15445,6 +15460,60 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_checks_get(server, auth, input).await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.merge_queue.review_policy.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.code.merge_queue.review_policy.get",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_merge_queue_review_policy_get(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.code.merge_queue.review_policy.get",
+                    ),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.merge_queue.review_policy.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.code.merge_queue.review_policy.set",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::merge_queue_doors::QueueReviewPolicySetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_merge_queue_review_policy_set(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.code.merge_queue.review_policy.set",
+                    ),
+                    input,
+                )
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;

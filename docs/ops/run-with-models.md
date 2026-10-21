@@ -523,10 +523,12 @@ login prefix, say). The answer is kept, and the receipt records both names under
 configured, counted from 0, the same numbering `GET /v1/ai/status` lists;
 `failed_rungs` counts the rungs that were tried and failed before it.
 
-A call's settled run receipt also lists what its backend reported about its
-prompt cache, under `usage.cache_calls` (FIX 6567): for each native request,
-each pass's input, cache-read and computed tokens, its times, an outcome
-(`hit`, `recompute` or `unknown`) and digests of what answered. The house
+A call's settled run receipt also lists what its backend reported, under
+`usage.inference_calls` (FIX 6567, FIX 8314), one record per physical backend
+request: the worker that answered (its kind, the digests of what answered and
+how its build was evidenced), and each pass's input, cache-read and computed
+tokens, its times and an outcome (`hit`, `recompute` or `unknown`). The
+settled run event carries the same records as `inference_calls`. The house
 EXL3 server and llama.cpp report them (deploy/house-model/README.md, "Cache
 evidence in `usage`"); a call to any other provider keeps its standard
 cached-read count and lists none. A count a backend did not report stays
@@ -1405,7 +1407,7 @@ request reads the state once; it is not a promise that the shared prefix is
 evaluated once. Each answer's cache read is llama.cpp's own `timings.cache_n`,
 counted on the read's usage when it agrees with the answer's other counts,
 and each answer, a retry included, lists its own record in
-`usage.cache_calls`. decide()'s pack is the call's questions in order, each joint
+`usage.inference_calls`. decide()'s pack is the call's questions in order, each joint
 with "does this need more thinking?", then "ask a person?" when the surface
 asks it. A call past the decision policy's questions-per-call row (16 by
 default) goes as several packs in turn, each with its own "ask a person?"

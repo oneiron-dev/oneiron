@@ -1,5 +1,6 @@
 //! MESSAGE terminal commits join the common EntityDoc storage transaction.
-//! Only the stream witness path calls this adapter, after the canonical ceiling.
+//! The stream witness path calls this adapter after the canonical ceiling;
+//! a quote of an atomic MESSAGE births its document here too (FIX 7743).
 use super::storage::ENTITY_DOC_HEAD;
 use super::{EntityDoc, TextField, invalid, storage};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -16,6 +17,95 @@ pub(crate) fn birth_message_stream_in_txn(
     entity: &EntityId,
     actor: WriteActor,
     at: u64,
+) -> Result<()> {
+    birth_message_in_txn(vault, txn, entity, actor, at, "entity_doc.message_stream")
+}
+
+/// Whether a quote of the atomic MESSAGE `entity` by `citer` can birth its
+/// document in `author`'s name (FIX 7743): no document stands yet, its body
+/// is the canonical envelope a stream birth takes, its text passes the scan
+/// every document write takes, no pin a window carried here already sits on
+/// it (the birth pins its body quotes under their citers), and both actors
+/// are live and active as their class, as the birth's peer binding and the
+/// citation pin require. `false` keeps the quote on its hash-bound span, as
+/// today; it is never a refusal. Only a store failure is an error.
+pub(crate) fn quote_birth_admits_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+    author: WriteActor,
+    citer: WriteActor,
+) -> Result<bool> {
+    if ENTITY_DOC_HEAD.contains(&vault.store, txn, &HexId(*entity))? {
+        return Ok(false);
+    }
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, entity)?
+    else {
+        return Ok(false);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Ok(false);
+    };
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE
+        || crate::gate::validate_canonical_witness_message_body(body).is_err()
+    {
+        return Ok(false);
+    }
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut std::io::Cursor::new(body))
+    else {
+        return Ok(false);
+    };
+    let Some(text) = fields
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("content"))
+        .and_then(|(_, value)| value.as_str())
+    else {
+        return Ok(false);
+    };
+    let carried = super::pins::ENTITY_DOC_PIN.scan_from(
+        &vault.store,
+        txn,
+        format!("{}:", entity.to_hex()).as_bytes(),
+    )?;
+    Ok(carried.is_empty()
+        && crate::batch::secret_scan::scan_content_in_txn(&vault.store, txn, text.as_bytes())
+            .is_ok()
+        && super::forks::validate_actor(vault, txn, author).is_ok()
+        && super::forks::validate_actor(vault, txn, citer).is_ok())
+}
+
+/// Births, in a quote's writer, the document of the atomic MESSAGE `entity`
+/// its first quote anchors to (FIX 7743, Engine B1), unless one stands now:
+/// in `author`'s name, the MESSAGE's own, at its own time, as a stream would
+/// have born it. Its caller ran [`quote_birth_admits_in`] in this same
+/// transaction, and the quote asks no edit grant. The MESSAGE's earlier body
+/// quotes are pinned at the birth frontier, as a stream birth pins them.
+pub(crate) fn ensure_quote_document_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+    author: WriteActor,
+) -> Result<()> {
+    if ENTITY_DOC_HEAD.contains(&vault.store, txn, &HexId(*entity))? {
+        return Ok(());
+    }
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, entity)?
+        .ok_or(Error::EntityNotFound)?;
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("message header"))?;
+    let at = header.occurred_start;
+    birth_message_in_txn(vault, txn, entity, author, at, "entity_doc.message_quote")
+}
+
+/// A MESSAGE document's birth from its canonical text, through `door`.
+fn birth_message_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+    actor: WriteActor,
+    at: u64,
+    door: &str,
 ) -> Result<()> {
     if ENTITY_DOC_HEAD.contains(&vault.store, txn, &HexId(*entity))? {
         return Err(invalid("stream birth cannot replace an existing document"));
@@ -63,14 +153,7 @@ pub(crate) fn birth_message_stream_in_txn(
         generation: 0,
         pending: 0,
     };
-    storage::stamp_document_birth(
-        &vault.store,
-        txn,
-        entity,
-        actor,
-        at,
-        "entity_doc.message_stream",
-    )?;
+    storage::stamp_document_birth(&vault.store, txn, entity, actor, at, door)?;
     storage::persist(vault, txn, entity, &mut head, &doc, None)?;
     // Quotes taken of the atomic text are pinned at the birth frontier,
     // before any appended delta moves the head.

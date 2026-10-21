@@ -13,10 +13,13 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::EdgeActorClass;
 use oneiron::dreamer_runner::maintenance::agent_health::{
     AgentHealthCardView, AgentHealthMove, AgentHealthOutcome, ConcernApplyOutcome,
-    ConcernApplyRequest, ConcernCardSummary, ConcernMove, ConcernMoveOutcome,
+    ConcernApplyRequest, ConcernCardSummary, ConcernMove, ConcernMoveLink, ConcernMoveOutcome,
+    ConcernMoveRequest,
 };
+use oneiron::memory::MemoryError;
 use serde::Deserialize;
 
 use super::{OwnerReply, blocking, owner};
@@ -99,28 +102,36 @@ async fn set_outcome(
     Ok(Json(card))
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ConcernMoveBody {
-    /// The card's `health:` handle, the row's `payload_ref`.
-    card: String,
-    /// `ask_coach`.
-    r#move: ConcernMove,
+fn move_error(error: MemoryError) -> OwnerError {
+    match error.code.as_str() {
+        oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
+        oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Changed(error.message),
+        _ => OwnerError::Refused(error.message),
+    }
 }
 
-/// `POST /v1/owner/inbox/concern/move`: takes one of the card's moves. Only
-/// `ask_coach` runs here; asking again on the same evidence returns the
-/// standing ask.
+/// `POST /v1/owner/inbox/concern/move`: takes one of the card's moves, with
+/// `self.inbox.concern.move`'s input. `ask_coach` asks the Coach; asking
+/// again on the same evidence returns the standing ask. A `note` goes to the
+/// card's agent as the owner's own message, and a `steer` to its TASK's live
+/// run as the owner's steer; a resend with the same key returns the first
+/// receipt.
 async fn take_move(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConcernMoveBody>, JsonRejection>,
+    payload: Result<Json<ConcernMoveRequest>, JsonRejection>,
 ) -> OwnerReply<ConcernMoveOutcome> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
+    let locality = auth.locality();
+    let host = Arc::clone(&server);
     let outcome = blocking(move || -> OwnerResult<ConcernMoveOutcome> {
-        let ConcernMove::AskCoach = request.r#move;
         let vault = server.vault();
+        if !matches!(request.r#move, ConcernMove::AskCoach) {
+            return vault
+                .apply_concern_move(&owner, locality, &request)
+                .map_err(move_error);
+        }
         let Some(card) = vault.agent_health_card(&request.card)? else {
             return Err(OwnerError::NotFound("concern_card", request.card));
         };
@@ -138,6 +149,14 @@ async fn take_move(
         }
     })
     .await?;
+    // A note landed a turn: its producer wakes after the commit, as the
+    // message path's does.
+    if let ConcernMoveOutcome::Applied { receipt, .. } = &outcome
+        && matches!(receipt.link, ConcernMoveLink::Note { .. })
+    {
+        host.ai
+            .turn_landed_by(host.vault(), receipt.actor, EdgeActorClass::Human);
+    }
     Ok(Json(outcome))
 }
 

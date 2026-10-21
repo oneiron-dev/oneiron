@@ -17,6 +17,7 @@ use axum::extract::rejection::QueryRejection;
 use axum::response::Json;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::{Stream, stream};
+use oneiron::task_verb::run_cancel::RunCancelOutcome;
 use oneiron::task_verb::run_control::RunControl;
 use serde::Deserialize;
 use serde::Serialize;
@@ -24,6 +25,8 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use utoipa::IntoParams;
 use utoipa::ToSchema;
+
+mod cancel;
 
 pub(crate) const CORE_RUN_TREE_RUN_ID_MAX_BYTES: usize = 128;
 
@@ -96,6 +99,10 @@ pub(crate) struct CoreRunTreeInterventionResponse {
     kind: CoreRunTreeInterventionKind,
     /// Durable effect of the request.
     effect: CoreRunTreeInterventionEffect,
+    /// The Proposed `tasks.cancel` claim a cancel became (FIX 8219), when
+    /// the caller does not stand to stop the branch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proposal_ref: Option<String>,
     /// Fresh snapshot for the affected run, when the attempt row has a run id.
     tree: Option<CoreRunTreeResponse>,
 }
@@ -113,6 +120,8 @@ pub(crate) enum CoreRunTreeInterventionEffect {
     AlreadyCancelled,
     Redirected,
     AlreadyRedirected,
+    /// A cancel the caller does not stand to make: nothing changed (FIX 8219).
+    Proposed,
 }
 
 /// Runtime attempt tree response.
@@ -378,7 +387,7 @@ pub(crate) async fn core_run_tree_observe(
     path = "/v1/core/run-tree/intervene",
     request_body(content = CoreRunTreeInterventionRequest, content_type = "application/json"),
     responses(
-        (status = 200, description = "Intervention applied idempotently and recorded on the backing attempt row.", body = CoreRunTreeInterventionResponse, content_type = "application/json"),
+        (status = 200, description = "Intervention applied idempotently and recorded on the backing attempt row; a cancel by a caller that neither is the vault owner nor owns the TASK, run or spawn answers `proposed` with its `proposal_ref` and changes nothing (FIX 8219).", body = CoreRunTreeInterventionResponse, content_type = "application/json"),
         (status = 400, description = "Malformed intervention or invalid lifecycle transition.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write; or, for pause and resume, the caller is neither the vault owner, the host root, nor the owner of the TASK the job realizes.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -436,6 +445,19 @@ pub(crate) async fn core_run_tree_intervene(
         (oneiron::AttemptInterventionKind::Resume, None) => {
             Ok(core_run_control(&server, &auth, input, RunControl::Resume)?)
         }
+        // FIX 8219: cancel takes the caller-bound cancel door.
+        (oneiron::AttemptInterventionKind::Cancel, None) => {
+            match cancel::bound_actor(&server, &auth) {
+                // FIX 8219: no actor to own a proposal, so today's immediate cancel.
+                None => queue.intervene(input),
+                Some(actor) => match cancel::core_run_cancel(&server, &auth, actor, input)? {
+                    RunCancelOutcome::Applied(outcome) => Ok(outcome),
+                    RunCancelOutcome::Proposed { proposal_ref } => {
+                        return Ok(Json(cancel::proposed(attempt_id, req.kind, proposal_ref)));
+                    }
+                },
+            }
+        }
         (_, None) => queue.intervene(input),
     };
     let outcome = result
@@ -464,6 +486,7 @@ pub(crate) async fn core_run_tree_intervene(
         run_id,
         kind: req.kind,
         effect: core_run_tree_intervention_effect(outcome.effect),
+        proposal_ref: None,
         tree,
     }))
 }

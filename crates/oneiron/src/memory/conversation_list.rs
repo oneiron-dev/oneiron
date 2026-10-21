@@ -659,6 +659,35 @@ impl Memory<'_> {
     }
 }
 
+impl crate::Vault {
+    /// Whether `reader` would see the conversation `id` in its own list,
+    /// judged in the snapshot `txn` by the list's own rule (`sight_in`): the
+    /// owner sees every conversation, a room shows only to a member or on a
+    /// grant that opens its relationship, and any other conversation shows.
+    /// A reader no one names is no member and holds no grant. A gone row is
+    /// not seen. The conversation-record GET admits by it (FIX 8153), so a
+    /// conversation absent from the list is absent there too.
+    pub(crate) fn conversation_list_sees_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        reader: Option<(EntityId, crate::edge::EdgeActorClass)>,
+    ) -> MemoryResult<bool> {
+        let Some(stored) = self.store.port_entity_record(txn, &id)? else {
+            return Ok(false);
+        };
+        let Some((actor, class)) = reader else {
+            return Ok(ConversationBody::from_bytes(&stored.body)
+                .is_ok_and(|body| !is_room_kind(body.kind)));
+        };
+        let memory = self.memory(actor, class);
+        let mut grants = None;
+        Ok(memory
+            .sight_in(txn, id, &stored.body, &mut grants)?
+            .is_some())
+    }
+}
+
 /// Whether a conversation of `kind` is relationship data: a group, a channel
 /// or a mirror.
 fn is_room_kind(kind: ConversationKind) -> bool {

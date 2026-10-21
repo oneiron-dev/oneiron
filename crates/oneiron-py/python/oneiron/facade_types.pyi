@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1129 facade rows, 3928 declarations.
-Inputs: 1064 of 1129 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1016 of 1129 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1131 facade rows, 3944 declarations.
+Inputs: 1066 of 1131 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1018 of 1131 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -512,6 +512,36 @@ class HealthSilenceActivity(TypedDict):
     stream_at: NotRequired[int | None]
     tool_finished_at: NotRequired[int | None]
     other_session: NotRequired[HealthOtherSession | None]
+class ConcernMoveBasis(TypedDict):
+    digest: str
+RunSignalState = Literal["Pending", "Settled", "RefusedCancelUnavailable"]
+class ConcernMoveLinkNote(TypedDict):
+    kind: Literal["note"]
+    room: str
+    turn: NotRequired[str | None]
+    messages: list[str]
+class ConcernMoveLinkSteer(TypedDict):
+    kind: Literal["steer"]
+    task_ref: str
+    branch: str
+    run_id: str
+    key: str
+    state: RunSignalState
+    run_differs_from_card_attempt: bool
+ConcernMoveLink = ConcernMoveLinkNote | ConcernMoveLinkSteer
+class ConcernMoveReceipt(TypedDict):
+    actor: EntityId
+    actor_class: str
+    at: int
+    key: str
+    payload: str
+    observed: NotRequired[ConcernMoveBasis | None]
+    current: ConcernMoveBasis
+    evidence_changed: bool
+    task: NotRequired[EntityId | None]
+    subject: EntityId
+    attempt: NotRequired[EntityId | None]
+    link: ConcernMoveLink
 class AgentHealthCard(TypedDict):
     subject: EntityId
     signal: AgentHealthSignal
@@ -544,6 +574,7 @@ class AgentHealthCard(TypedDict):
     review_outcomes: list[HealthReviewReceipt]
     causes: list[HealthCauseSource]
     silence: NotRequired[HealthSilenceActivity | None]
+    moves_taken: list[ConcernMoveReceipt]
 RunTreeStatus = Literal["queued", "running", "paused", "completed", "failed", "cancelled", "abandoned"]
 class RunTreeTimestamps(TypedDict):
     created_at: int
@@ -605,6 +636,7 @@ class AgentHealthCardView(TypedDict):
     run_tree: NotRequired[AgentHealthRunTree | None]
     skills: NotRequired[list[AgentHealthLoadedSkill]]
     prompt_inject: NotRequired[AgentHealthPromptInject | None]
+    basis: ConcernMoveBasis
 ConcernOutcome = Literal["confirmed", "dismissed", "unresolved"]
 class ConcernOutcomeRequest(TypedDict):
     card: str
@@ -616,13 +648,32 @@ class ConcernCardSummary(TypedDict):
     tone: str
     outcome: str
     evidence: int
-ConcernMove = Literal["ask_coach"]
+class ConcernMoveNoteBody(TypedDict):
+    key: str
+    text: str
+    from_project: NotRequired[str | None]
+    to_project: NotRequired[str | None]
+class ConcernMoveNote(TypedDict):
+    note: ConcernMoveNoteBody
+class ConcernMoveSteerBody(TypedDict):
+    key: str
+    instruction: str
+class ConcernMoveSteer(TypedDict):
+    steer: ConcernMoveSteerBody
+ConcernMove = Literal["ask_coach"] | ConcernMoveNote | ConcernMoveSteer
 class ConcernMoveRequest(TypedDict):
     card: str
     move: ConcernMove
-class ConcernMoveOutcome(TypedDict):
+    basis: NotRequired[ConcernMoveBasis | None]
+class ConcernMoveOutcomeAskCoach(TypedDict):
+    kind: Literal["ask_coach"]
     card: str
     ask: AgentHealthCoachAsk
+class ConcernMoveOutcomeApplied(TypedDict):
+    kind: Literal["applied"]
+    card: str
+    receipt: ConcernMoveReceipt
+ConcernMoveOutcome = ConcernMoveOutcomeAskCoach | ConcernMoveOutcomeApplied
 class DiagnosticsListRequest(TypedDict):
     event_class: NotRequired[str | None]
     actor_ref: NotRequired[str | None]
@@ -1229,7 +1280,6 @@ class SteerRequest(TypedDict):
     task_ref: str
     instruction: str
     key: str
-RunSignalState = Literal["Pending", "Settled", "RefusedCancelUnavailable"]
 class SteerReceipt(TypedDict):
     task_ref: str
     branch: str
@@ -1573,7 +1623,7 @@ class TaskAskStatusSettled(TypedDict):
 class TaskAskStatusWorldPrivacy(TypedDict):
     WorldPrivacy: WorldPrivacyWaitResult
 TaskAskStatus = TaskAskStatusPending | TaskAskStatusChanged | TaskAskStatusSettled | TaskAskStatusWorldPrivacy
-StrictDenial = Literal["rule_abstained", "no_rule", "image"]
+StrictDenial = Literal["rule_abstained", "no_rule", "image", "field_generation_requires_model"]
 class AskUpReasonAsked(TypedDict):
     why: Literal["asked"]
     ladder: NotRequired[str | None]
@@ -1586,8 +1636,38 @@ class AskUpReasonWrongAnswer(TypedDict):
 class AskUpReasonStrict(TypedDict):
     why: Literal["strict"]
     denied: StrictDenial
-AskUpReason = AskUpReasonAsked | AskUpReasonLooks | AskUpReasonNoAnswer | AskUpReasonWrongAnswer | AskUpReasonStrict
+class AskUpReasonReobserve(TypedDict):
+    why: Literal["reobserve"]
+AskUpReason = AskUpReasonAsked | AskUpReasonLooks | AskUpReasonNoAnswer | AskUpReasonWrongAnswer | AskUpReasonStrict | AskUpReasonReobserve
 ClockScope = Literal["wait", "navigation", "decision"]
+TextSource = Literal["supplied", "reference", "template", "generated"]
+class FieldTextReasonNoText(TypedDict):
+    why: Literal["no_text"]
+class FieldTextReasonMissingSlot(TypedDict):
+    why: Literal["missing_slot"]
+    slot: str
+class FieldTextReasonUnclosedSlot(TypedDict):
+    why: Literal["unclosed_slot"]
+class FieldTextReasonNotAnOption(TypedDict):
+    why: Literal["not_an_option"]
+    source: TextSource
+class FieldTextReasonSecretField(TypedDict):
+    why: Literal["secret_field"]
+class FieldTextReasonWriterUnavailable(TypedDict):
+    why: Literal["writer_unavailable"]
+class FieldTextReasonWriterRefused(TypedDict):
+    why: Literal["writer_refused"]
+class FieldTextReasonWriterFailed(TypedDict):
+    why: Literal["writer_failed"]
+class FieldTextReasonCheckedNo(TypedDict):
+    why: Literal["checked_no"]
+class FieldTextReasonCheckAbstained(TypedDict):
+    why: Literal["check_abstained"]
+class FieldTextReasonCheckFailed(TypedDict):
+    why: Literal["check_failed"]
+class FieldTextReasonPageRejected(TypedDict):
+    why: Literal["page_rejected"]
+FieldTextReason = FieldTextReasonNoText | FieldTextReasonMissingSlot | FieldTextReasonUnclosedSlot | FieldTextReasonNotAnOption | FieldTextReasonSecretField | FieldTextReasonWriterUnavailable | FieldTextReasonWriterRefused | FieldTextReasonWriterFailed | FieldTextReasonCheckedNo | FieldTextReasonCheckAbstained | FieldTextReasonCheckFailed | FieldTextReasonPageRejected
 class BatchStopCausePostconditionUnmet(TypedDict):
     cause: Literal["postcondition_unmet"]
 class BatchStopCauseLocatorMissing(TypedDict):
@@ -1606,6 +1686,7 @@ class BatchStopCauseTakenOver(TypedDict):
     cause: Literal["taken_over"]
 class BatchStopCauseFieldText(TypedDict):
     cause: Literal["field_text"]
+    reason: FieldTextReason
 class BatchStopCauseNoProgress(TypedDict):
     cause: Literal["no_progress"]
 class BatchStopCauseBrowser(TypedDict):
@@ -1629,7 +1710,11 @@ class TaskWorkflowHandoffUnreadableBody(TypedDict):
     id: EntityId
 class TaskWorkflowHandoffUnreadable(TypedDict):
     unreadable: TaskWorkflowHandoffUnreadableBody
-TaskWorkflowHandoff = Literal["goal_unmet"] | TaskWorkflowHandoffProgram | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+TaskWorkflowHandoff = Literal["goal_unmet", "interrupted"] | TaskWorkflowHandoffProgram | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+class TaskWorkflowOutcomeStartedBody(TypedDict):
+    at: int
+class TaskWorkflowOutcomeStarted(TypedDict):
+    started: TaskWorkflowOutcomeStartedBody
 class TaskWorkflowOutcomeDoneBody(TypedDict):
     receipt_ref: EntityId
 class TaskWorkflowOutcomeDone(TypedDict):
@@ -1639,7 +1724,7 @@ class TaskWorkflowOutcomeHandoffBody(TypedDict):
     receipt_ref: EntityId
 class TaskWorkflowOutcomeHandoff(TypedDict):
     handoff: TaskWorkflowOutcomeHandoffBody
-TaskWorkflowOutcome = Literal["pending"] | TaskWorkflowOutcomeDone | TaskWorkflowOutcomeHandoff
+TaskWorkflowOutcome = Literal["pending"] | TaskWorkflowOutcomeStarted | TaskWorkflowOutcomeDone | TaskWorkflowOutcomeHandoff
 class TaskWorkflowStatus(TypedDict):
     attempt_ref: str
     requested: EntityId
@@ -10224,7 +10309,7 @@ class CodeProposalSubmitRequest(TypedDict):
     content: list[int]
     message: str
     op_provenance: CodeOpProvenance
-    catalog: LensCatalog
+    catalog: NotRequired[LensCatalog | None]
 class CodeProposalSubmitted(TypedDict):
     proposal: EntityId
     repo: EntityId
@@ -10748,11 +10833,19 @@ class CodeImportAnchor(TypedDict):
     receive_provenance: EntityId
     snapshot: EntityId
     snapshot_fork_hash: str
+RepoFileProjectionKind = Literal["masked", "opaque"]
+class RepoFileProjectionView(TypedDict):
+    kind: RepoFileProjectionKind
+    source_blob: str
+    copy_blake3: str
+    copy_size_bytes: int
+    way_out: str
 class CodeSnapshotFile(TypedDict):
     path: str
     content_hash_blake3: str
     size_bytes: int
     mode: int
+    projection: NotRequired[RepoFileProjectionView | None]
 class CodeImportManifestFile(TypedDict):
     git_oid: str
     file: CodeSnapshotFile
@@ -11253,6 +11346,7 @@ class CodeViewFileBytes(TypedDict):
     path: str
     bytes: list[int]
     sha256: str
+    projection: NotRequired[RepoFileProjectionView | None]
 class CodeSecretTaintRef(TypedDict):
     secret_ref: str
     rotation_generation: int
@@ -11485,6 +11579,26 @@ class CodeCheckReceiptView(TypedDict):
     work_ref: str
     receipt_ref: str
     receipts: list[CodeCheckAttemptView]
+QueueReviewPolicyState = Literal["absent", "set", "unreadable"]
+QueueReviewMode = Literal["land_on_green", "review", "held"]
+class QueueReviewThresholds(TypedDict):
+    critics: NotRequired[int]
+    votes: NotRequired[int]
+class QueueReviewPolicy(TypedDict):
+    catalog: LensCatalog
+    thresholds: QueueReviewThresholds
+    set_by: EntityId
+    set_at: int
+class QueueReviewPolicyView(TypedDict):
+    state: QueueReviewPolicyState
+    mode: QueueReviewMode
+    policy: NotRequired[QueueReviewPolicy | None]
+    hold: NotRequired[str | None]
+class QueueReviewPolicyInput(TypedDict):
+    catalog: LensCatalog
+    thresholds: NotRequired[QueueReviewThresholds]
+class QueueReviewPolicySetRequest(TypedDict):
+    policy: NotRequired[QueueReviewPolicyInput | None]
 class MergeQueueGreenExportRequest(TypedDict):
     repo: EntityId
     served_repo: str
@@ -18297,6 +18411,10 @@ class WakeRecipePolicy(TypedDict):
     arc_min_new_statements: int
     arc_child_calls_per_wake: int
     audit_window_instruction: str
+    follower_enabled: bool
+    follower_instruction: str
+    follower_keyframe_instruction: str
+    follower_sizing_bytes_per_token: int
     thing_child_code_mode: bool
     thing_child_instruction: str
     thing_child_input_window_divisor: int
@@ -19600,6 +19718,8 @@ class EffectReceipt(TypedDict):
     engine: NotRequired[BrowserEngine | None]
     fact: NotRequired[ActionFact | None]
     engine_switch: NotRequired[EngineSwitchRecord | None]
+    text_source: NotRequired[TextSource | None]
+    text_ref: NotRequired[str | None]
     duration_ms: int
 class SecretParam(TypedDict):
     name: str
@@ -19758,6 +19878,16 @@ class DecideStep(TypedDict):
     secret: NotRequired[str | None]
     clear: NotRequired[bool]
     option: NotRequired[str | None]
+class TextReference(TypedDict):
+    id: str
+    text: str
+class FieldSpec(TypedDict):
+    supplied: NotRequired[str | None]
+    references: NotRequired[list[TextReference]]
+    template: NotRequired[str | None]
+    generate: NotRequired[bool]
+    instruction: NotRequired[str | None]
+    enum_values: NotRequired[list[str] | None]
 class BatchStepOpen(TypedDict):
     step: Literal["open"]
     url: str
@@ -19806,7 +19936,11 @@ class BatchStepScroll(TypedDict):
     ref: NotRequired[str | None]
 class BatchStepDecide(DecideStep):
     step: Literal["decide"]
-BatchStep = BatchStepOpen | BatchStepClick | BatchStepType | BatchStepSelect | BatchStepWaitFor | BatchStepExpect | BatchStepScreenshot | BatchStepKey | BatchStepHotkey | BatchStepScroll | BatchStepDecide
+class BatchStepFill(TypedDict):
+    step: Literal["fill"]
+    ref: str
+    field: FieldSpec
+BatchStep = BatchStepOpen | BatchStepClick | BatchStepType | BatchStepSelect | BatchStepWaitFor | BatchStepExpect | BatchStepScreenshot | BatchStepKey | BatchStepHotkey | BatchStepScroll | BatchStepDecide | BatchStepFill
 class BatchInput(TypedDict):
     subgoal: NotRequired[str | None]
     steps: list[BatchStep]

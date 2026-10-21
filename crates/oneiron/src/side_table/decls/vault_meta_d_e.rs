@@ -106,6 +106,15 @@ side_tables! {
     CRITIC_ARTIFACT: VaultMeta b"dreamer:critic:v1:" Named Authored;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
+    /// FIX 7510: one admitted source observation of a follower session, its exact rendered bytes
+    /// and source pins. Key: hash32(session) + u64be(frame ordinal).
+    DREAMER_FOLLOWER_FRAME: VaultMeta b"dreamer:follower:frame:v1:" Named Admitted;
+    /// FIX 7510: one follower model result: a suffix's batch readings with its cache evidence, or
+    /// a keyframe's folded text. Key: id16(attempt) + u64be(session sequence).
+    DREAMER_FOLLOWER_RESULT: VaultMeta b"dreamer:follower:result:v1:" Named Authored;
+    /// FIX 7510: one follower session's cursors, prefix digest, epoch, keyframe ref, writer fence
+    /// and prepared suffix. Key: hash32(session).
+    DREAMER_FOLLOWER_STATE: VaultMeta b"dreamer:follower:state:v1:" Named Engine;
     /// FIX 4453: the last owner-set free-time boundary this node opened a cycle for, and the
     /// cycle still open. Key: id16 (agent definition).
     DREAMER_FREE_TIME_CLOCK: VaultMeta b"dreamer:free_time:clock:v1:" Named;
@@ -404,6 +413,9 @@ side_tables! {
     /// Where the current reconciled embedding vector was filled (on-device/owner-server/third-party).
     /// Key: id16.
     EMBEDDING_LOCALITY: VaultMeta b"embedding/locality/" Raw;
+    /// The device family and runtime that computed each media vector in a declared space, outside
+    /// the space identity (ARCH-0036; FIX 7796). Key: space key16 + id16.
+    EMBEDDING_MEDIA_DEVICE: VaultMeta b"embedding/media_device/" Named;
     /// A document a declared space's model refused by its content, with the BLAKE3 of the bytes
     /// it refused; the media backfill skips it until they change (OF-370). Key: space key16 +
     /// id16.
