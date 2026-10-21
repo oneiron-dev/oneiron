@@ -45,6 +45,9 @@ pub struct ScopedReadActorKey {
     pub(super) owner_exemption: Option<EntityId>,
     /// The room turn this key reads inside, when a host bound one.
     pub(super) room_turn: Option<Box<RoomTurnCeiling>>,
+    /// The room whose signed facets a named-room read outside a turn reads
+    /// inside (FIX 643); see [`Self::within_room_facets`].
+    pub(super) room_facets: Option<EntityId>,
     /// The worlds this read asked for (ARCH-0022). Every row it serves,
     /// ranked or reached through the graph, lies in one of them.
     pub(super) worlds: Option<crate::pipeline::WorldAuthoritySet>,
@@ -370,6 +373,7 @@ impl ScopedReadActorKey {
             owner: None,
             owner_exemption: None,
             room_turn: None,
+            room_facets: None,
             worlds: None,
             destination: crate::settings::ReadDestination::on_device(),
             host_action: None,
@@ -407,6 +411,7 @@ impl ScopedReadActorKey {
             owner: Some(owner),
             owner_exemption: None,
             room_turn: None,
+            room_facets: None,
             worlds: None,
             destination: crate::settings::ReadDestination::on_device(),
             host_action: None,
@@ -508,6 +513,16 @@ impl ScopedReadActorKey {
     /// The room turn this key reads inside, when a host bound one.
     pub(crate) fn room_turn(&self) -> Option<&RoomTurnCeiling> {
         self.room_turn.as_deref()
+    }
+
+    /// Read inside `room`'s signed facets as each snapshot finds them, as a
+    /// turn in it does (FIX 643): a named-room read outside a turn keeps every
+    /// other term it has. Like every facet bound, it only narrows, and the
+    /// owner's key reads past it.
+    #[must_use]
+    pub(crate) fn within_room_facets(mut self, room: EntityId) -> Self {
+        self.room_facets = Some(room);
+        self
     }
 
     /// Read only rows in `worlds`, each where `record_world_in` places it: a
