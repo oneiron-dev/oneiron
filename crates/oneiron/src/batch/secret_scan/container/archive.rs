@@ -69,7 +69,11 @@ fn declared_entries(bytes: &[u8]) -> Option<u64> {
 
 fn open<'b>(bytes: &'b [u8], budget: &Budget) -> Walked<ZipArchive<Cursor<&'b [u8]>>> {
     let declared = declared_entries(bytes).ok_or_else(unreadable)?;
-    if usize::try_from(declared).map_or(true, |declared| declared > budget.members) {
+    let declared = usize::try_from(declared).map_err(|_| over_budget())?;
+    if budget
+        .members_left()
+        .is_some_and(|members| declared > members)
+    {
         return Err(over_budget());
     }
     let archive = ZipArchive::new(Cursor::new(bytes)).map_err(|_| unreadable())?;
