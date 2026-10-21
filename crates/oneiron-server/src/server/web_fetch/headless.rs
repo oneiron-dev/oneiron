@@ -16,6 +16,10 @@
 //! has returned. No request of a render runs after its answer. A refusal any
 //! of its work gave answers the render, whatever the page showed, and so
 //! ends the fetch's ladder.
+//!
+//! A render's guest start moves the server's browser readiness (FIX 7670):
+//! a start that stops, by the phase it stopped at, and a guest whose driver
+//! attached. What the page does after that moves nothing.
 
 mod handler;
 mod relay;
@@ -35,28 +39,37 @@ use oneiron_browser::{
     HandleRetention, OpenInput, RenderedDocument,
 };
 use oneiron_container::{EgressRelay, GuestSeccomp, GuestSpec, ImageRef};
+use oneiron_vault_contract::BrowserUnavailableReason;
 use tokio::sync::watch;
 
 use self::handler::PageRequests;
 use self::relay::HeadlessRelay;
+use crate::config::browser::BrowserReadinessCell;
 use crate::server::HandleLine;
 
 /// The host's headless browser for the fetch ladder's second rung: each
 /// render starts its own guest from `guest`, charges its live handles to
 /// `handles`, and charges its guest's network work to the floor `vault`'s
-/// host lent.
+/// host lent. Each guest start moves `readiness`.
 pub(super) struct GuestHeadless {
     guest: BrowserGuest,
     handles: HandleLine,
     vault: Arc<Vault>,
+    readiness: BrowserReadinessCell,
 }
 
 impl GuestHeadless {
-    pub(super) fn new(guest: BrowserGuest, handles: HandleLine, vault: Arc<Vault>) -> Self {
+    pub(super) fn new(
+        guest: BrowserGuest,
+        handles: HandleLine,
+        vault: Arc<Vault>,
+        readiness: BrowserReadinessCell,
+    ) -> Self {
         Self {
             guest,
             handles,
             vault,
+            readiness,
         }
     }
 
@@ -124,7 +137,13 @@ impl GuestHeadless {
         } else {
             None
         };
-        let mut session = start_guest(&self.guest, relay, self.handles.charge(), handler)?;
+        let mut session = start_guest(
+            &self.guest,
+            relay,
+            self.handles.charge(),
+            handler,
+            &self.readiness,
+        )?;
         let read = session
             .open(OpenInput {
                 url: url.to_owned(),
@@ -163,20 +182,24 @@ impl HeadlessRenderer for GuestHeadless {
 /// engine's tier selector, as a code run's guest starts, behind `relay`,
 /// and attaches it: with no starter, as one render switches no engine, and
 /// with `requests` where the render is guarded. The guest mounts no fixture.
+/// Each phase's outcome moves `readiness`.
 fn start_guest(
     guest: &BrowserGuest,
     relay: Arc<dyn EgressRelay>,
     retention: Box<dyn HandleRetention>,
     requests: Option<Arc<dyn BrowserRequestHandler>>,
+    readiness: &BrowserReadinessCell,
 ) -> Result<BrowserSession, BrowserError> {
     let backend = select_backend_for_session(
         SandboxGuestTier::Untrusted,
         guest.runtime.clone(),
         &guest.image,
     )
+    .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::SandboxUnavailable))
     .map_err(|error| BrowserError::Unavailable(error.to_string()))?;
     let spec = GuestSpec {
         image: ImageRef::pinned(&guest.image)
+            .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::GuestStartFailed))
             .map_err(|error| BrowserError::Unavailable(error.to_string()))?,
         user: (10001, 10001),
         limits: guest.limits,
@@ -190,8 +213,11 @@ fn start_guest(
     let command = guest.engine.guest_argv(egress.max_response_bytes);
     let transport = backend
         .start_session(&spec, &command, Arc::clone(&relay))
+        .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::GuestStartFailed))
         .map_err(|error| BrowserError::Unavailable(error.to_string()))?;
     BrowserSession::attach(guest, transport, relay, retention, None, requests)
+        .inspect(|session| readiness.started(session.manifest()))
+        .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::DriverAttachFailed))
 }
 
 /// One render's custody of its guest's network, shared by its request

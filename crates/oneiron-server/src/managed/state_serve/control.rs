@@ -46,6 +46,9 @@ impl ManagedState {
                 pid: std::process::id(),
                 contract_version: CONTRACT_VERSION,
                 readiness: self.readiness.clone(),
+                // How the browser stands now, read as the last guest start
+                // left it (FIX 7670); no state of it turns `ok` false.
+                browser: self.server.browser_readiness().snapshot(),
                 managed_backup: self.backup_facts.clone(),
                 settings_paths_revision: Some(SETTINGS_PATHS_REVISION),
                 artifact_internal_host_revision: Some(ARTIFACT_INTERNAL_HOST_REVISION),

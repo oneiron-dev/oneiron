@@ -65,6 +65,7 @@ impl SyncServer {
                         guest.clone(),
                         HandleLine::of(self),
                         Arc::clone(self.vault()),
+                        self.browser_readiness().clone(),
                     )
                 });
                 let fetcher = default_web_fetcher(guard.as_ref(), headless)?;

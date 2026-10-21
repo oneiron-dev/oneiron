@@ -3,7 +3,8 @@
 //! readiness rather than a provider call: it starts this host's `[browser]`
 //! guest on the browser engine it names, through the engine's sandbox
 //! selector, attaches the driver to a blank page, and closes the session.
-//! The check guest has no egress at all: it visits no site.
+//! The check guest has no egress at all: it visits no site. Its start moves
+//! the server's browser readiness, as every browser guest start does.
 //! `native_mail.jmap` connects to the `[native_mail]` server with the stored
 //! credential, as the native mail host does, and reads its domain; it sends
 //! no mail and changes no DNS.
@@ -26,8 +27,10 @@ use oneiron_container::{
     EgressRelay, GuestSeccomp, GuestSpec, HostNetFloor, HttpRequest, HttpResponse, ImageRef,
     SessionManifest, UnmeteredFloor,
 };
+use oneiron_vault_contract::BrowserUnavailableReason;
 
 use crate::config::NativeMailConfig;
+use crate::config::browser::BrowserReadinessCell;
 use crate::server::SyncServer;
 
 /// What the owner's setup doors check a connection with on this host.
@@ -36,6 +39,8 @@ pub(crate) struct HostConnectionChecks {
     browser: Option<BrowserGuest>,
     /// The retained line the readiness session's live handles are charged to.
     browser_handles: crate::server::HandleLine,
+    /// The server's browser readiness the readiness session's start moves.
+    browser_readiness: BrowserReadinessCell,
     native_mail: Option<NativeMailConfig>,
 }
 
@@ -45,6 +50,7 @@ impl HostConnectionChecks {
             provider: ProviderConnectionChecks::new()?,
             browser: server.browser_guest().cloned(),
             browser_handles: crate::server::HandleLine::of(server),
+            browser_readiness: server.browser_readiness().clone(),
             native_mail: server.config.native_mail.clone(),
         })
     }
@@ -62,7 +68,11 @@ impl PackConnectionVerifier for HostConnectionChecks {
                     .browser
                     .as_ref()
                     .ok_or_else(|| "this host has no [browser] guest configured".to_owned())?;
-                browser_session_ready(guest, self.browser_handles.charge())
+                browser_session_ready(
+                    guest,
+                    self.browser_handles.charge(),
+                    &self.browser_readiness,
+                )
             }
             NATIVE_MAIL_JMAP_CHECK => {
                 let server = self
@@ -132,19 +142,24 @@ fn native_mail_ready(
 }
 
 /// Starts one browser session the way a code run does, and closes it. The
-/// evidence is the digest of what the guest's fence proved.
+/// evidence is the digest of what the guest's fence proved. Each phase's
+/// outcome moves `readiness` (FIX 7670), and leaves the check's own answer
+/// as it was.
 fn browser_session_ready(
     guest: &BrowserGuest,
     retention: Box<dyn HandleRetention>,
+    readiness: &BrowserReadinessCell,
 ) -> Result<PackConnectionEvidence, String> {
     let backend = select_backend_for_session(
         SandboxGuestTier::Untrusted,
         guest.runtime.clone(),
         &guest.image,
     )
+    .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::SandboxUnavailable))
     .map_err(|error| format!("no sandbox can start the browser guest: {error}"))?;
     let spec = GuestSpec {
         image: ImageRef::pinned(&guest.image)
+            .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::GuestStartFailed))
             .map_err(|error| format!("the browser guest image is not pinned: {error}"))?,
         user: (10001, 10001),
         limits: guest.limits,
@@ -159,10 +174,13 @@ fn browser_session_ready(
     let command = guest.engine.guest_argv(egress.max_response_bytes);
     let transport = backend
         .start_session(&spec, &command, Arc::clone(&relay))
+        .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::GuestStartFailed))
         .map_err(|error| format!("the browser guest did not start: {error}"))?;
     // No starter: the readiness session serves no engine switch. No request
     // handler: its pages take its relay.
     let session = BrowserSession::attach(guest, transport, relay, retention, None, None)
+        .inspect(|session| readiness.started(session.manifest()))
+        .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::DriverAttachFailed))
         .map_err(|error| format!("the browser driver did not open a page: {error}"))?;
     let manifest = session.manifest().clone();
     drop(session);

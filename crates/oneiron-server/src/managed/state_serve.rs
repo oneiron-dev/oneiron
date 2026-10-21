@@ -969,7 +969,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             config
                 .browser
                 .as_ref()
-                .map(crate::config::BrowserConfig::guest),
+                .and_then(crate::config::BrowserConfig::guest),
         )
         .with_desktop_guest(
             config
@@ -984,6 +984,12 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             }
         }))
         .with_feedback_triage(config.feedback.triage.clone());
+    // Its browser readiness starts from the `[browser]` section, its runtime
+    // binding and the runtime fact the supervisor observed for this vault's
+    // UID (FIX 7670). No state of it stops this start.
+    sync_server
+        .browser_readiness()
+        .seed(config.browser.as_ref(), managed.guest_runtime_fact);
     // The owner's `[models] extraction_egress` opt-in, as plain serve
     // installs it (FIX 6621): off, nonlocal extraction stays refused.
     if config

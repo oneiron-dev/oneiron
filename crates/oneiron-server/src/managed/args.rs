@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use oneiron::federation::derivation::DerivationOwner;
-use oneiron_vault_contract::{CONTRACT_VERSION, valid_vault_name};
+use oneiron_vault_contract::{CONTRACT_VERSION, GuestRuntimeFact, valid_vault_name};
 
 use crate::config::{KeystoreBackend, KeystoreConfig, ServeArgs, ServeConfig};
 
@@ -291,6 +291,9 @@ pub struct ManagedArgs {
     pub container_home: Option<PathBuf>,
     /// Its `XDG_RUNTIME_DIR` (`--container-runtime-dir`), checked the same way.
     pub container_runtime_dir: Option<PathBuf>,
+    /// The supervisor's guest runtime fact for the vault's UID
+    /// (`--guest-runtime-fact`), which seeds the browser's readiness.
+    pub guest_runtime_fact: Option<GuestRuntimeFact>,
 }
 
 impl ManagedArgs {
@@ -421,6 +424,7 @@ impl ManagedArgs {
             // Nor are the container CLI's directories (FIX 6876).
             container_home: args.container_home.clone(),
             container_runtime_dir: args.container_runtime_dir.clone(),
+            guest_runtime_fact: args.guest_runtime_fact,
         };
         if managed
             .artifact_socket

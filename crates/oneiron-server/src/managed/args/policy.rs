@@ -280,6 +280,12 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.container_runtime_dir.is_some(),
         ArgvUse::Read,
     ),
+    // The supervisor's guest runtime fact for the vault's UID (FIX 7670).
+    (
+        "guest-runtime-fact",
+        |args| args.guest_runtime_fact.is_some(),
+        ArgvUse::Read,
+    ),
     // The bind: the supervisor's socket, never a host:port.
     (
         "host",
