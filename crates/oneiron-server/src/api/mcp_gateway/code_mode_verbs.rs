@@ -130,6 +130,8 @@ struct RunBrowser {
     /// The host's retained line a browser this door starts charges its live
     /// handles to (C013).
     handles: crate::server::HandleLine,
+    /// The server's browser readiness each guest it starts moves (FIX 7670).
+    readiness: crate::config::browser::BrowserReadinessCell,
 }
 
 impl Drop for RunBrowser {
@@ -187,6 +189,20 @@ impl RunGuestSession for DesktopSession {
     }
 }
 
+/// A run guest's start that stopped: the error its caller answers, and the
+/// phase it stopped at, which a browser's start gives the server's browser
+/// readiness (FIX 7670). A desktop's start keeps the error alone.
+struct GuestStartFailure {
+    phase: oneiron_vault_contract::BrowserUnavailableReason,
+    error: BrowserError,
+}
+
+impl From<GuestStartFailure> for BrowserError {
+    fn from(failure: GuestStartFailure) -> Self {
+        failure.error
+    }
+}
+
 /// Starts one run's guest from a pinned image through the engine's tier
 /// selector, behind the run's egress proxy, on `command`, and receipts its
 /// manifest.
@@ -198,15 +214,20 @@ fn start_run_guest(
     limits: GuestLimits,
     fixture: Option<&PathBuf>,
     command: &[std::ffi::OsString],
-) -> Result<(SessionTransport, Arc<dyn EgressRelay>), BrowserError> {
+) -> Result<(SessionTransport, Arc<dyn EgressRelay>), GuestStartFailure> {
     use oneiron::code_sandbox::{SandboxGuestTier, microvm::select_backend_for_session};
     use oneiron_container::{GuestSeccomp, GuestSpec, ImageRef};
-    let unavailable = |e: String| BrowserError::Unavailable(e);
+    use oneiron_vault_contract::BrowserUnavailableReason as Phase;
+    let unavailable = |phase, e: String| GuestStartFailure {
+        phase,
+        error: BrowserError::Unavailable(e),
+    };
     let backend =
         select_backend_for_session(SandboxGuestTier::Untrusted, runtime.to_path_buf(), image)
-            .map_err(|e| unavailable(e.to_string()))?;
+            .map_err(|e| unavailable(Phase::SandboxUnavailable, e.to_string()))?;
     let spec = GuestSpec {
-        image: ImageRef::pinned(image).map_err(|e| unavailable(e.to_string()))?,
+        image: ImageRef::pinned(image)
+            .map_err(|e| unavailable(Phase::GuestStartFailed, e.to_string()))?,
         user: (10001, 10001),
         limits,
         seccomp: GuestSeccomp::EngineFence,
@@ -220,16 +241,16 @@ fn start_run_guest(
             Arc::clone(vault),
             run_id,
             oneiron::code_sandbox::egress::EgressConfig::from_env()
-                .map_err(|e| unavailable(e.to_string()))?,
+                .map_err(|e| unavailable(Phase::GuestStartFailed, e.to_string()))?,
         )
         .with_fixture(fixture.cloned()),
     );
     let transport = backend
         .start_session(&spec, command, Arc::clone(&relay))
-        .map_err(|e| unavailable(e.to_string()))?;
+        .map_err(|e| unavailable(Phase::GuestStartFailed, e.to_string()))?;
     vault
         .append_sandbox_manifest_receipt(run_id, &transport.manifest)
-        .map_err(|e| unavailable(e.to_string()))?;
+        .map_err(|e| unavailable(Phase::SessionReceiptFailed, e.to_string()))?;
     Ok((transport, relay))
 }
 
@@ -567,6 +588,7 @@ struct RunFreshGuest {
     run_id: oneiron::EntityId,
     guest: BrowserGuest,
     handles: crate::server::HandleLine,
+    readiness: crate::config::browser::BrowserReadinessCell,
     decider: LadderDecider,
     invocation: Option<InvocationId>,
 }
@@ -586,6 +608,7 @@ impl FreshGuest for RunFreshGuest {
             self.run_id,
             &guest,
             &self.handles,
+            &self.readiness,
             requests,
         )?;
         let writer = ReceiptWriter::new(
@@ -620,6 +643,7 @@ impl RunBrowser {
             run_id,
             policy_set: AtomicBool::new(false),
             handles: crate::server::HandleLine::of(server),
+            readiness: server.browser_readiness().clone(),
         })
     }
 
@@ -635,6 +659,7 @@ impl RunBrowser {
             run_id: self.run_id,
             guest: self.guest.clone(),
             handles: self.handles.clone(),
+            readiness: self.readiness.clone(),
             decider,
             invocation,
         }
@@ -658,6 +683,7 @@ impl RunBrowser {
                 self.run_id,
                 &self.guest,
                 &self.handles,
+                &self.readiness,
                 None,
             )?;
             *session = Some(started);

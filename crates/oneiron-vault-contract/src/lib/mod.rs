@@ -87,8 +87,9 @@ pub mod commitment;
 mod tests;
 
 pub use self::ctl::{
-    CtlBound, CtlBoundKind, CtlBoundPhase, CtlBoundResource, CtlRefusal, CtlRefusalKind,
-    CtlRequest, CtlResponse, CtlResumeOn, FacilityNotice, FacilityReason, LegalHoldsNotProven,
+    BrowserReadiness, BrowserTier, BrowserUnavailableReason, CtlBound, CtlBoundKind, CtlBoundPhase,
+    CtlBoundResource, CtlRefusal, CtlRefusalKind, CtlRequest, CtlResponse, CtlResumeOn,
+    FacilityNotice, FacilityReason, GUEST_RUNTIME_FACT_ARG, GuestRuntimeFact, LegalHoldsNotProven,
     LegalHoldsWire, ManagedFacility, ManagedReadiness, REAP_PAUSE_REFUSAL, ShedBlockerWire,
     ShedCause, ShedStatus, TRAINING_PURGE_RECEIPT_PENDING, TRAINING_PURGE_REJECTED,
     TRAINING_PURGE_UNSENT, TrainingPurgeState, TrainingPurgeStateWire,

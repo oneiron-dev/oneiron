@@ -134,6 +134,9 @@ pub struct SyncServer {
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
+    /// How this process's browser stands (FIX 7670), which each browser
+    /// guest start moves and `Ping` and the owner's status read.
+    pub(crate) browser_readiness: crate::config::browser::BrowserReadinessCell,
     /// The `[desktop]` guest each code run starts for its own desktop verbs.
     /// `None` answers every desktop call `browser_unbound`.
     pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
@@ -477,6 +480,7 @@ impl SyncServer {
             secret_destinations: Default::default(),
             connector_elicitations: Arc::default(),
             browser_guest: None,
+            browser_readiness: Default::default(),
             desktop_guest: None,
             desktop_seats: Arc::default(),
             browser_seats: Arc::default(),
@@ -597,6 +601,12 @@ impl SyncServer {
 
     pub(crate) fn browser_guest(&self) -> Option<&oneiron_browser::BrowserGuest> {
         self.browser_guest.as_ref()
+    }
+
+    /// This process's browser readiness: seeded at start, then moved by
+    /// each browser guest start, and read as it stands.
+    pub(crate) fn browser_readiness(&self) -> &crate::config::browser::BrowserReadinessCell {
+        &self.browser_readiness
     }
 
     /// Gives code runs a desktop guest, from the `[desktop]` section.
