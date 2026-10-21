@@ -142,6 +142,7 @@ use crate::temporal::TimeRange;
 mod admission;
 mod basis;
 mod decision;
+mod deferred_approval;
 mod goal_axis;
 mod ledger;
 mod live;
@@ -149,6 +150,7 @@ mod measurement;
 mod preflight;
 mod project_goal;
 mod tradeoff;
+mod tradeoff_capacity;
 mod verdict;
 
 pub(crate) use decision::score_gate_skill_edit_as_owner;
@@ -233,8 +235,8 @@ use basis::{
     held_out_receipts_in_txn, host_replay_scorer, validate_score,
 };
 use decision::{
-    accepted_in_cycle_in_txn, approval_deferral_in_txn, close_answered_proposal_in_txn,
-    judge_cadence_allows_in_txn, readable_target, standing_verdict_in_txn,
+    approval_deferral_in_txn, close_answered_proposal_in_txn, readable_target,
+    standing_verdict_in_txn,
 };
 use goal_axis::{
     GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, goal_id_in_txn,
