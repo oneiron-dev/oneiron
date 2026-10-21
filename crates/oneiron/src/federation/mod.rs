@@ -13,6 +13,12 @@ mod agent_grant;
 pub(crate) use agent_grant::{
     AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, agent_grants_for_store_in_txn,
 };
+// Who may delete one record the cleanup archived (OF-449 L4).
+mod archive_delete;
+pub(crate) use archive_delete::{
+    ArchiveDeleteAuthority, ArchiveDeleteCaller, ArchiveDeleteRefusal, ArchiveDeleteRole,
+    require_archive_delete_in_txn,
+};
 mod connect_grant;
 pub use connect_grant::ConnectGrantMinted;
 pub(crate) use connect_grant::{

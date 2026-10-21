@@ -207,7 +207,7 @@ fn principal_standing_or_lapse_in(
 /// active agent definition the archive has not taken, acting as an agent, or
 /// a base agent's MACHINE principal, which acts as the system class. The
 /// cleanup-archive marker is read as every module outside deletion reads it.
-fn live_agent_principal_in(
+pub(crate) fn live_agent_principal_in(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,

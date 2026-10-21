@@ -470,6 +470,8 @@ vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultRootsRequestsCancel(input: unknown): unknown
 vaultCleanupRun(input: unknown): unknown
+vaultArchiveDeletePreview(input: unknown): unknown
+vaultArchiveDeleteConfirm(input: unknown): unknown
 vaultUsageEventsUndecodable(input: unknown): unknown
 vaultUsageEventsRemoveUndecodable(input: unknown): unknown
 vaultEntitiesMention(input: unknown): unknown

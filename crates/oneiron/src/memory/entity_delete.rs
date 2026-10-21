@@ -2,9 +2,12 @@
 
 use super::support::verify_deletion_authority_in_txn;
 use super::{DeleteReceipt, Memory, MemoryError, MemoryResult, SafeDeleteReason};
-use crate::deletion::{DeleteEntityOptions, DeleteEntityPreview};
+use crate::deletion::{
+    DeleteEntityOptions, DeleteEntityPreview, DeletionGateContext, GuestRevokeAuthority,
+};
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::federation::ArchiveDeleteAuthority;
 use crate::write_envelope::WriteActor;
 
 impl Memory<'_> {
@@ -79,6 +82,80 @@ impl Memory<'_> {
     ) -> MemoryResult<DeleteReceipt> {
         let gate = self.evaluate_deletion_gate()?;
         let id = self.resolve_ref(entity_ref)?;
+        // The owner deleting in person on a host that bound its slip issuer
+        // withdraws a Connect guest PERSON's grants with it (FIX 3875).
+        let guest_revoke = self
+            .owner_authorship()
+            .zip(self.host_slip_issuer)
+            .map(|(owner, issuer)| GuestRevokeAuthority { owner, issuer });
+        self.safe_delete_gated(
+            &id,
+            reason,
+            gate,
+            &|txn| verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class),
+            check,
+            stop_check_after_soft_scrub,
+            claim,
+            guest_revoke,
+        )
+    }
+
+    /// The archive delete's checked execution (OF-449 L4): a user hard
+    /// delete of `id` under the caller's archive-delete `authority`, never
+    /// the owner predicate. The gate records the role and Grant `authority`
+    /// admitted in its own snapshot, and each write before publication reads
+    /// it again and must find the same ones, else this record is refused as
+    /// changed; `check` is rechecked there too. Withdrawing a Connect guest's
+    /// grants is the owner's own delete, so none is withdrawn here.
+    pub(super) fn safe_delete_archive_checked(
+        &self,
+        id: EntityId,
+        authority: &dyn Fn(&heed::RoTxn<'_>) -> MemoryResult<ArchiveDeleteAuthority>,
+        check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<(DeleteReceipt, ArchiveDeleteAuthority)> {
+        let (gate, admitted) = self.evaluate_archive_delete_gate(authority)?;
+        let same = |txn: &heed::RoTxn<'_>| -> MemoryResult<()> {
+            if authority(txn)? == admitted {
+                return Ok(());
+            }
+            Err(MemoryError::new(
+                super::MEMORY_CODE_FORBIDDEN,
+                "archive_delete_changed: the role or Grant that admitted this delete changed \
+                 before it committed",
+                &["Preview the archived record again, then confirm it."],
+            ))
+        };
+        let receipt = self.safe_delete_gated(
+            &id,
+            SafeDeleteReason::UserHardDelete,
+            gate,
+            &same,
+            check,
+            false,
+            None,
+            None,
+        )?;
+        Ok((receipt, admitted))
+    }
+
+    /// The gated delete both doors share: `authority` and `check` rerun in
+    /// each write before publication, `check` only until the soft scrub
+    /// when `stop_check_after_soft_scrub`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one gated deletion tail for the owner's and the archive's doors"
+    )]
+    fn safe_delete_gated(
+        &self,
+        id: &EntityId,
+        reason: SafeDeleteReason,
+        gate: DeletionGateContext,
+        authority: &dyn Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
+        check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
+        stop_check_after_soft_scrub: bool,
+        claim: Option<crate::deletion::DeletionClaim<'_>>,
+        guest_revoke: Option<GuestRevokeAuthority<'_>>,
+    ) -> MemoryResult<DeleteReceipt> {
         // Keep the exact binding-layer refusal while the engine sees a typed
         // concurrent-write stand-in. Both callbacks are invoked only under
         // the deletion rail's writer transaction.
@@ -87,22 +164,14 @@ impl Memory<'_> {
             *refusal.borrow_mut() = Some(err);
             Error::ConcurrentWrite("deletion authority or preview changed before commit")
         };
-        let reverify = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
-            verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class)
-                .map_err(&map_refusal)
-        };
+        let reverify =
+            |txn: &heed::RoTxn<'_>| -> Result<(), Error> { authority(txn).map_err(&map_refusal) };
         let recheck =
             |txn: &heed::RoTxn<'_>| -> Result<(), Error> { check(txn).map_err(&map_refusal) };
         let both = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
             reverify(txn)?;
             recheck(txn)
         };
-        // The owner deleting in person on a host that bound its slip issuer
-        // withdraws a Connect guest PERSON's grants with it (FIX 3875).
-        let guest_revoke = self
-            .owner_authorship()
-            .zip(self.host_slip_issuer)
-            .map(|(owner, issuer)| crate::deletion::GuestRevokeAuthority { owner, issuer });
         let gated = if stop_check_after_soft_scrub {
             crate::deletion::GatedDeletion::with_pre_scrub_check(gate, &reverify, &recheck)
         } else {
@@ -112,7 +181,7 @@ impl Memory<'_> {
         .with_guest_revoke(guest_revoke);
         let outcome = self
             .vault
-            .delete_entity_with_reason_gated(&id, reason.delete_reason(), gated)
+            .delete_entity_with_reason_gated(id, reason.delete_reason(), gated)
             .map_err(|err| refusal.take().unwrap_or_else(|| MemoryError::from(err)))?;
         Ok(DeleteReceipt {
             existed: outcome.existed,

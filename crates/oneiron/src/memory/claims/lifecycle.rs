@@ -56,6 +56,32 @@ impl Memory<'_> {
         ))
     }
 
+    /// [`Self::evaluate_deletion_gate`] for an archive delete (OF-449 L4):
+    /// `authority` is read in the gate's own snapshot in place of the owner
+    /// binding, and the decision record states the role and Grant it
+    /// admitted. [`Self::evaluate_deletion_gate`] is unchanged.
+    pub(in crate::memory) fn evaluate_archive_delete_gate(
+        &self,
+        authority: &dyn Fn(
+            &heed::RoTxn<'_>,
+        ) -> MemoryResult<crate::federation::ArchiveDeleteAuthority>,
+    ) -> MemoryResult<(
+        DeletionGateContext,
+        crate::federation::ArchiveDeleteAuthority,
+    )> {
+        let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let admitted = authority(&rtxn)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
+        let context = DeletionGateContext::new_archive(
+            self.actor,
+            self.actor_class,
+            crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            policy.read_frontier_hash()?,
+            admitted,
+        );
+        Ok((context, admitted))
+    }
+
     /// Commits claims through the gated candidate path, one individually
     /// gated write per element (C3: per-element decisions; one bad element
     /// never sinks the others). A refused element answers its typed refusal

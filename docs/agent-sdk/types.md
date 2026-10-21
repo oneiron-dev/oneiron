@@ -1087,6 +1087,8 @@ class Oneiron:
         @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs": ...
         @property
+        def archive(self) -> "Oneiron._VaultArchiveVerbs": ...
+        @property
         def usage(self) -> "Oneiron._VaultUsageVerbs": ...
         @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
@@ -2386,6 +2388,14 @@ class Oneiron:
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
+    class _VaultArchiveVerbs:
+        @property
+        def delete(self) -> "Oneiron._VaultArchiveDeleteVerbs": ...
+    class _VaultArchiveDeleteVerbs:
+        def preview(self, spec: Facade.ArchiveDeletePreviewRequest) -> Facade.ArchiveDeletePreviewView:
+            """Previews explicit archived records under the caller's delete authority."""
+        def confirm(self, spec: Facade.ArchiveDeleteConfirmRequest) -> Facade.ArchiveDeleteBatchResult:
+            """Deletes explicit archived records under the caller's current delete authority and returns each receipt."""
     class _VaultUsageVerbs:
         @property
         def events(self) -> "Oneiron._VaultUsageEventsVerbs": ...

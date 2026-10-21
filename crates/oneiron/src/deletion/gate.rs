@@ -21,6 +21,9 @@ pub(crate) struct DeletionGateContext {
     read_frontier_hash: [u8; 32],
     room_role: Option<crate::conversation::RoomRole>,
     room: Option<EntityId>,
+    /// The role and Grant an archive delete was admitted under (OF-449 L4),
+    /// in place of the owner binding; `None` on every other delete.
+    archive: Option<crate::federation::ArchiveDeleteAuthority>,
 }
 
 /// The facade's gated-deletion carrier: the evaluated decision record PLUS the
@@ -83,17 +86,26 @@ impl<'a> GatedDeletion<'a> {
         Some((self.context.room?, self.context.room_role?))
     }
 
-    /// Who a legal-hold refusal of this delete names. A room delete is a
-    /// member's; a human's delete with no room passed the owner binding this
-    /// gate carries.
+    /// Who a legal-hold refusal of this delete names. An archive delete is
+    /// its admitted role's; a room delete is a member's; a human's delete
+    /// with no room passed the owner binding this gate carries.
     pub(super) fn hold_actor(&self) -> crate::store::legal_hold::HoldActor {
         use crate::deletion::LegalHoldActorKind as Kind;
+        use crate::federation::ArchiveDeleteRole as Role;
         let kind = match (self.context.actor_class, self.context.room_role) {
             (EdgeActorClass::Agent, _) => Kind::Agent,
             (EdgeActorClass::System, _) => Kind::Unattributed,
             (EdgeActorClass::Human, Some(_)) => Kind::Member,
             (EdgeActorClass::Human, None) => Kind::Owner,
         };
+        let kind = self
+            .context
+            .archive
+            .map_or(kind, |archive| match archive.role() {
+                Role::Owner => Kind::Owner,
+                Role::Admin | Role::Member => Kind::Member,
+                Role::Agent => Kind::Agent,
+            });
         crate::store::legal_hold::HoldActor::new(kind, Some(self.context.actor.to_hex()))
     }
 
@@ -290,6 +302,27 @@ impl DeletionGateContext {
             read_frontier_hash,
             room_role: None,
             room: None,
+            archive: None,
+        }
+    }
+
+    /// An archive delete's evidence: the role and Grant `authority`
+    /// admitted, which its decision record states.
+    pub(crate) fn new_archive(
+        actor: EntityId,
+        actor_class: EdgeActorClass,
+        policy_manifest_version: String,
+        read_frontier_hash: [u8; 32],
+        authority: crate::federation::ArchiveDeleteAuthority,
+    ) -> Self {
+        Self {
+            archive: Some(authority),
+            ..Self::new(
+                actor,
+                actor_class,
+                policy_manifest_version,
+                read_frontier_hash,
+            )
         }
     }
 
@@ -308,6 +341,7 @@ impl DeletionGateContext {
             read_frontier_hash,
             room_role: Some(role),
             room: Some(room),
+            archive: None,
         }
     }
 
@@ -333,10 +367,16 @@ impl DeletionGateContext {
             decision_id: GateDecisionId::from_bytes(request_id),
             created_at,
             outcome: "allow".to_owned(),
-            reason_codes: self.room_role.map_or_else(
-                || vec!["gate.allow.owner_delete".to_owned()],
-                |role| vec![format!("gate.allow.room_{role:?}").to_lowercase()],
-            ),
+            reason_codes: match self.archive {
+                Some(archive) => vec![format!(
+                    "gate.allow.archive_delete_{}",
+                    archive.role().as_str()
+                )],
+                None => self.room_role.map_or_else(
+                    || vec!["gate.allow.owner_delete".to_owned()],
+                    |role| vec![format!("gate.allow.room_{role:?}").to_lowercase()],
+                ),
+            },
             receipt_reasons: Vec::new(),
             system_notices: Vec::new(),
             actor_class: self.actor_class.gate_actor_class().to_owned(),
@@ -344,7 +384,10 @@ impl DeletionGateContext {
             content_kind: "deletion".to_owned(),
             policy_manifest_version: self.policy_manifest_version.clone(),
             claim_id: None,
-            grant_ref: None,
+            grant_ref: self
+                .archive
+                .and_then(|archive| archive.grant())
+                .map(|grant| grant.to_hex()),
             diff_handle: diff.finalize().to_vec(),
             read_frontier_hash: self.read_frontier_hash,
             redacted_at: None,

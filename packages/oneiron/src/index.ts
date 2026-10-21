@@ -1536,6 +1536,14 @@ export class Oneiron {
       /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
       run: (input: Facade.CleanupRunRequest): Facade.CleanupRunView => this.#call(() => this.#client.vaultCleanupRun(input) as Facade.CleanupRunView),
     },
+    archive: {
+      delete: {
+        /** Previews explicit archived records under the caller's delete authority. */
+        preview: (input: Facade.ArchiveDeletePreviewRequest): Facade.ArchiveDeletePreviewView => this.#call(() => this.#client.vaultArchiveDeletePreview(input) as Facade.ArchiveDeletePreviewView),
+        /** Deletes explicit archived records under the caller's current delete authority and returns each receipt. */
+        confirm: (input: Facade.ArchiveDeleteConfirmRequest): Facade.ArchiveDeleteBatchResult => this.#call(() => this.#client.vaultArchiveDeleteConfirm(input) as Facade.ArchiveDeleteBatchResult),
+      },
+    },
     usage: {
       events: {
         /** Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb. */
