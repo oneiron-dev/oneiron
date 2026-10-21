@@ -13,6 +13,7 @@
 mod admitted;
 mod brokered;
 mod endpoint;
+pub(crate) use endpoint::reported_mark;
 mod remote;
 pub(crate) use local::model_manager;
 pub(crate) use local::prepare as prepare_local;

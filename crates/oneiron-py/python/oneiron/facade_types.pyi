@@ -18402,6 +18402,10 @@ class WakeRecipePolicy(TypedDict):
     arc_min_new_statements: int
     arc_child_calls_per_wake: int
     audit_window_instruction: str
+    follower_enabled: bool
+    follower_instruction: str
+    follower_keyframe_instruction: str
+    follower_sizing_bytes_per_token: int
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
 class SieveLeaseRequest(TypedDict):

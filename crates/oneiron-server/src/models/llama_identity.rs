@@ -22,7 +22,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use oneiron::llm::{CacheDigest, CacheEpoch, CacheIdentity, LlamaAlias, parse_llama_alias};
+use oneiron::llm::{
+    CacheDigest, CacheEpoch, CacheIdentity, LlamaAlias, WorkerBuildEvidence, parse_llama_alias,
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::sync::OnceCell;
@@ -93,6 +95,29 @@ pub(super) struct AnsweringIdentity {
 }
 
 impl AnsweringIdentity {
+    /// The identity `returned`, a reply's own `model`, names when no manifest
+    /// can be looked up for it (a brokered reply, which comes from no origin
+    /// this server reaches): the launch's epoch alone. `None` when it is not
+    /// a launch alias.
+    pub(super) fn epoch_only(returned: &str) -> Option<Self> {
+        parse_llama_alias(returned).map(|alias| Self {
+            epoch: alias.epoch,
+            manifest: None,
+        })
+    }
+
+    /// How the answering launch's build is known (FIX 8314): verified
+    /// artifacts only when its manifest resolved and verified (its bytes'
+    /// digest, its epoch and the route's configured wire id) and lists the
+    /// build it attests; unknown otherwise, an epoch-only first answer of a
+    /// launch included.
+    pub(super) fn build_evidence(&self) -> WorkerBuildEvidence {
+        match self.manifest.as_deref() {
+            Some(manifest) if manifest.runtime.is_some() => WorkerBuildEvidence::VerifiedArtifacts,
+            _ => WorkerBuildEvidence::Unknown,
+        }
+    }
+
     /// A chat answer's identity: the server rendered its prompt with the
     /// chat template the manifest names.
     pub(super) fn for_chat(&self) -> CacheIdentity {

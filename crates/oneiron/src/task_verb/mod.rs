@@ -398,6 +398,7 @@ mod sdk_shared_policy;
 mod sdk_skill_attribution;
 mod sdk_skill_defaults;
 mod sdk_skill_execution;
+mod sdk_skill_fork;
 mod sdk_skills;
 mod sdk_standing;
 mod sdk_support_grant;
