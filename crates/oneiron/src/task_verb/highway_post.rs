@@ -430,7 +430,8 @@ impl Memory<'_> {
         admit_task_parent(self, post.parent_ref)?;
         let type_ref = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            post.brief.validate_in(self.vault(), &txn)?;
+            post.brief
+                .validate_in(self.vault(), &txn, Some(post.assignee))?;
             brief_type_ref_in(self.vault(), &txn, &post.brief)?
         };
         let digest = request_digest(self.actor(), &key, &post)?;
@@ -497,6 +498,11 @@ impl Memory<'_> {
                 != PolicyApprovalCeiling::Auto
             {
                 return Ok(PostDirect::Gated);
+            }
+            // CUA E4: a binding is judged again in the writer that mints its
+            // TASK; an unbound brief is not read again here.
+            if let Some(binding) = &post.brief.context.workflow {
+                binding.validate_in(self.vault(), &*wtxn, Some(post.assignee))?;
             }
             record_task_create(
                 self.vault(),
@@ -1008,7 +1014,7 @@ impl Memory<'_> {
                     "Post a new task for new work.",
                 ));
             }
-            next.validate_in(self.vault(), &txn)?;
+            next.validate_in(self.vault(), &txn, body.assignee)?;
             body.brief.as_ref().map_or(0, |brief| brief.rev)
         };
         let digest = brief_digest(&next);
@@ -1112,7 +1118,8 @@ impl Memory<'_> {
         let type_ref = brief_type_ref_in(self.vault(), &*wtxn, &post.brief)?;
         let spec = create_spec_of(post, self.actor(), type_ref, now);
         let validated = validate_task_create_in(self.vault(), &*wtxn, &spec, now)?;
-        post.brief.validate_in(self.vault(), &*wtxn)?;
+        post.brief
+            .validate_in(self.vault(), &*wtxn, Some(post.assignee))?;
         self.mint_task_with_brief_at_in_txn(
             wtxn,
             (task_ref, self.actor()),
@@ -1321,7 +1328,7 @@ fn settle_brief(
     let memory = vault.memory(proposer, class);
     revision
         .brief
-        .validate_in(vault, wtxn)
+        .validate_in(vault, wtxn, body.assignee)
         .map_err(settle_refusal)?;
     body.brief = Some(StoredBrief {
         rev: held.saturating_add(1),

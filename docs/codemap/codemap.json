@@ -6949,7 +6949,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 2,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -7291,14 +7291,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SignatureImagePlan"
+     ],
      "path": "src/blob_artifact/esign/signature_image.rs",
      "purpose": "Capability-bound, decoded and re-encoded signature images",
      "surface": {
       "crate-vis": 2,
-      "fn": 2
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -7377,7 +7380,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArtifactExport",
@@ -7391,7 +7394,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 4
      }
     },
@@ -7540,7 +7543,8 @@
      "path": "src/blob_artifact/version_rows.rs",
      "purpose": "The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -8846,10 +8850,10 @@
      "path": "src/browser_library.rs",
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 2,
       "enum": 5,
-      "fn": 12,
+      "fn": 13,
       "struct": 3
      }
     },
@@ -12448,7 +12452,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 14,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -17519,10 +17523,20 @@
      "purpose": "Guided pack setup's grants and connection checks (OF-378)",
      "surface": {
       "const": 8,
-      "crate-vis": 6,
+      "crate-vis": 5,
       "fn": 6,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/setup/sent_check.rs",
+     "purpose": "`self.use`'s own provider checks (OF-560, FIX 4491, FIX 7647): the same read-only provider call a pack setup…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -35954,7 +35968,7 @@
      "surface": {
       "crate-vis": 11,
       "mod": 11,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -43792,6 +43806,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound_consent/connector_call_output.rs",
+     "purpose": "A connector call's reply after its send (FIX 7646, FIX 7647): the host that sent it cleared it of the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound_consent/connector_call_pending.rs",
      "purpose": "Expiry of held and pending-delivery connector calls (ONE-2510)",
      "surface": {
@@ -50942,7 +50966,7 @@
       "crate-vis": 9,
       "enum": 2,
       "fn": 2,
-      "re-export": 1,
+      "re-export": 2,
       "static": 1,
       "struct": 3
      }
@@ -50970,6 +50994,26 @@
      "purpose": "`self.use` under a secret grant (FIX 4313): the holder names a grant in place of a handle",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "KeptSentValue",
+      "SecretClearValueSource",
+      "SecretReleasePolicy",
+      "SentPresentation",
+      "SentValue"
+     ],
+     "path": "src/secret_custody/use_handle/output.rs",
+     "purpose": "What comes back from a send that presented a custody value, cleared of that value (FIX 7646, FIX 7647)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 9,
+      "struct": 3
      }
     },
     {
@@ -60431,15 +60475,35 @@
       "QueueTaskBrief",
       "SpawnPins",
       "StoredBrief",
-      "TypeRef"
+      "TypeRef",
+      "WorkflowBinding"
      ],
      "path": "src/task_verb/brief.rs",
      "purpose": "The queue task brief (OF-220): the typed why-carrier one TASK holds",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
-      "fn": 4,
-      "struct": 14
+      "fn": 5,
+      "struct": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TaskWorkflowAttempt",
+      "TaskWorkflowCheck",
+      "TaskWorkflowPin",
+      "TaskWorkflowReport",
+      "TaskWorkflowUnavailable"
+     ],
+     "path": "src/task_verb/browser_workflow.rs",
+     "purpose": "A TASK's bound library program, pinned per try (CUA E4; DESIGN-2 §2, owner C1 = A)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 3,
+      "fn": 12,
+      "struct": 2
      }
     },
     {
@@ -60828,7 +60892,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -60900,15 +60964,18 @@
       "TaskReportBody",
       "TaskStatusQuery",
       "TaskStatusView",
-      "TaskVia"
+      "TaskVia",
+      "TaskWorkflowHandoff",
+      "TaskWorkflowOutcome",
+      "TaskWorkflowStatus"
      ],
      "path": "src/task_verb/highway_types.rs",
      "purpose": "The task highway's typed calls, durable handles, outcomes and status view (OF-220)",
      "surface": {
       "crate-vis": 11,
-      "enum": 6,
-      "fn": 1,
-      "struct": 10
+      "enum": 8,
+      "fn": 2,
+      "struct": 11
      }
     },
     {
@@ -60963,10 +61030,10 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 43,
+      "crate-vis": 44,
       "fn": 1,
       "mod": 5,
-      "re-export": 27
+      "re-export": 28
      }
     },
     {
@@ -61259,7 +61326,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RunnerDoneAnswer",
@@ -61269,7 +61336,7 @@
      "purpose": "A runner's \"Done means met?\", answered before it settles (OF-533)",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -69116,7 +69183,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69683,7 +69750,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69921,7 +69988,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70131,7 +70198,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 205,
+     "files": 206,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70301,7 +70368,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4465,
+   "source_files": 4469,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73244,7 +73311,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 14,
+      "re-export": 15,
       "struct": 40,
       "trait": 2
      }
@@ -73276,7 +73343,7 @@
       "crate-vis": 5,
       "enum": 1,
       "fn": 3,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 14,
       "trait": 1
      }
@@ -73299,6 +73366,23 @@
       "enum": 4,
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FiledWorkflow",
+      "LibraryRunMode",
+      "RunOutcome"
+     ],
+     "path": "src/library/live_run.rs",
+     "purpose": "A library run (CUA E2): strict, where only a rule answers its routine steps and a step only a model could…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -73477,6 +73561,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AskUpReason",
+      "BatchStopCause",
+      "CheckReceipt",
+      "ClockScope",
+      "FailedStepReceipt",
+      "StrictDenial",
+      "StrictDenied"
+     ],
+     "path": "src/stop.rs",
+     "purpose": "Why a batch stopped (CUA E2): one typed cause per stop, beside the stable refusal code a program already…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 6,
+      "enum": 4,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "EngineSwitchRecord",
       "StoragePhase",
       "SwitchCarried",
@@ -73547,7 +73653,7 @@
      "purpose": "What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page…"
     },
     "library": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -73609,6 +73715,13 @@
      "layout": "file+dir",
      "purpose": "A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules…"
     },
+    "stop": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Why a batch stopped (CUA E2): one typed cause per stop, beside the stable refusal code a program already…"
+    },
     "switch": {
      "files": 1,
      "impl_vault": false,
@@ -73619,7 +73732,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 38,
+   "source_files": 40,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -74569,7 +74682,7 @@
      "purpose": "The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520)",
      "surface": {
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 2,
       "trait": 1
      }
@@ -79780,6 +79893,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CacheBackend",
+      "CacheCallUsage",
+      "CacheCounterSource",
+      "CacheDigest",
+      "CacheEpoch",
+      "CacheEvidenceError",
+      "CacheIdentity",
+      "CacheOutcome",
+      "CachePassReport",
+      "CachePassUsage",
+      "CachePhase"
+     ],
+     "path": "src/llm/cache.rs",
+     "purpose": "What a backend reported about its prompt cache on one physical model call (FIX 6567, INF 2 step 1): for each…",
+     "surface": {
+      "const": 1,
+      "enum": 5,
+      "fn": 7,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -80000,7 +80138,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -80125,7 +80263,7 @@
      "purpose": "—"
     },
     "llm": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -80134,7 +80272,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 35,
+   "source_files": 36,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -84752,7 +84890,7 @@
      "path": "src/api/esign/ingress.rs",
      "purpose": "Token-first ingress at the public signing doors (FIX 3808, Engine rulings 10-18 and 10-19)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 14
      }
     },
     {
@@ -90228,6 +90366,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/connector_call_host/presenting.rs",
+     "purpose": "What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/connector_call_settle.rs",
      "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…",
      "surface": {
@@ -91585,13 +91733,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 21
      }
     },
     {
@@ -92861,6 +93009,16 @@
      "purpose": "A `key_secret` provider's media leg (OF-131): each exchange a media adapter makes is one credential-broker…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/cache_usage.rs",
+     "purpose": "The prompt-cache evidence a house backend's reply carries (FIX 6567, INF 2 step 1), written into its usage…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -95988,7 +96146,7 @@
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
     "connector_call_host": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -96186,7 +96344,7 @@
     "machine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
@@ -96205,7 +96363,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 49,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -96347,7 +96505,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1049,
+   "source_files": 1051,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -96732,6 +96890,7 @@
       "AskPrior",
       "AskRole",
       "AskTo",
+      "AskUpReason",
       "AsofScrubberAtom",
       "AsrCloseRequest",
       "AsrClosed",
@@ -96793,6 +96952,7 @@
       "BatchOutput",
       "BatchState",
       "BatchStep",
+      "BatchStopCause",
       "BeginMessageStreamRequest",
       "Birth",
       "BlindCampaignJudgeInput",
@@ -97046,6 +97206,7 @@
       "ChatProjection",
       "ChatRole",
       "ChatStop",
+      "CheckReceipt",
       "CheckoutAction",
       "CheckoutClaimInput",
       "CheckoutClass",
@@ -97097,6 +97258,7 @@
       "CleanupPosture",
       "CleanupRunView",
       "ClickInput",
+      "ClockScope",
       "CloseLensFrameReply",
       "ClusterClaimInput",
       "ClusterCohort",
@@ -97835,6 +97997,7 @@
       "ExtractionDefault",
       "FactKind",
       "FactSource",
+      "FailedStepReceipt",
       "FamilyDecision",
       "FamilyPurpose",
       "FanoutAckRequest",
@@ -98349,6 +98512,7 @@
       "LibraryRetiredInput",
       "LibraryRetiredOutput",
       "LibraryRunInput",
+      "LibraryRunMode",
       "LibraryRunOutput",
       "LiftCause",
       "LiftCauseCount",
@@ -99986,6 +100150,7 @@
       "StreamFinality",
       "StreamFinalityReason",
       "StreamSyncVisibility",
+      "StrictDenial",
       "SubgoalStatus",
       "SubscriptionScope",
       "SufficiencyCard",
@@ -100129,6 +100294,9 @@
       "TaskWaitRequest",
       "TaskWaveReceipt",
       "TaskWaveRequest",
+      "TaskWorkflowHandoff",
+      "TaskWorkflowOutcome",
+      "TaskWorkflowStatus",
       "TasksOverflow",
       "TasksSection",
       "TeacherProbeApproval",
@@ -100371,6 +100539,7 @@
       "WitnessAssertions",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
+      "WorkflowBinding",
       "WorkflowCheck",
       "WorkflowDispatchRequest",
       "WorkflowPersonDispatchRequest",
@@ -100423,8 +100592,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 933,
-      "struct": 2942
+      "enum": 940,
+      "struct": 2946
      }
     },
     {
