@@ -38,6 +38,7 @@ mod observation;
 #[cfg(feature = "driver")]
 mod outline;
 mod receipt_evidence;
+mod request;
 mod retention;
 mod row;
 #[cfg(feature = "driver")]
@@ -61,6 +62,9 @@ pub use observation::{
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
 pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};
+pub use request::DestinationRefusal;
+#[cfg(feature = "driver")]
+pub use request::{BrowserRequestHandler, RenderedDocument};
 pub use retention::HandleRetention;
 pub use row::{Row, RowFieldGap, RowGapField, RowGapReason};
 #[cfg(feature = "driver")]
@@ -1117,6 +1121,11 @@ pub enum BrowserError {
         "the host's memory floor admits no more live handles for this browser now; handles already given out still work"
     )]
     MemoryFloor,
+    /// FIX 7122: the host's request handler refused a page request's
+    /// destination by the host's own rule, in the host's own words. It
+    /// carries the host's refusal; it is no refusal class of the browser's.
+    #[error("the host refused a page request's destination: {0}")]
+    DestinationRefused(DestinationRefusal),
 }
 
 /// One verb's observation as its answer pages it: `act`'s observation, as
@@ -1777,6 +1786,7 @@ impl BrowserError {
             Self::BrowserTakenOver(_) => "browser_taken_over",
             Self::TreeCut(_) => "desktop_tree_cut",
             Self::MemoryFloor => "browser_memory_floor",
+            Self::DestinationRefused(_) => "browser_destination_refused",
         }
     }
 }

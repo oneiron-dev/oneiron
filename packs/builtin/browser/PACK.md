@@ -24,3 +24,14 @@ The owner can take a run's desktop or browser over, asked by the agent's
 `self.desktop.handover` or `self.browser.handover` or not, and hand it back; the
 takeover's record is its receipt. A browser takeover is how a person signs in or
 clicks pay inside the same page the agent filled.
+
+A run browser starts on the engine the host names, Lightpanda when it names none.
+The agent moves the page to the other engine with `self.browser.switch_engine`,
+giving its reason, beside `self.browser.handover`; nothing switches by itself, and
+a step the running engine does not serve is refused with words naming
+`self.browser.switch_engine` as the way out. A switch starts a new guest on the
+other engine under the same grant and carries the page into it: its URL, its
+scroll, the cookies, and the local and session storage of the origins the tab
+visited. The run keeps its presses, receipts and any takeover record. Whatever is
+not carried exactly is listed in the switch receipt, and a switch that fails
+leaves the page where it was.
