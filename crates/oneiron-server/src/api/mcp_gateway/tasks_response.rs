@@ -199,10 +199,10 @@ pub(crate) async fn execute_mcp_generated_verb(
                 })?;
                 (output, source, carrier, epoch.or(task_epoch))
             };
-            // An act whose rows are unknown answers off this device only that
-            // it ran (FIX 5988); a read releases as before.
+            // An act whose rows are unknown (FIX 5988), or held (FIX 8171), answers
+            // off this device only that it ran; a read releases as before.
             let (output, rows) =
-                super::served_rows::unknown_act_answer(args.tool.name, actor, output, served)?;
+                super::served_rows::held_act_answer(server, args.tool.name, actor, output, served)?;
             let snapshot = McpPageSnapshot {
                 output: output.clone(),
                 source,
@@ -329,7 +329,7 @@ pub(crate) fn mcp_scoped_read<'a>(
         .credential_read_key(proof)
         .map_err(|error| mcp_engine_error("credential read key failed", error))?
         .ok_or_else(refused)?;
-    Ok(vault.scoped_read(key.at(actor.locality())))
+    Ok(vault.scoped_read(key.for_destination(&actor.destination())))
 }
 
 pub(crate) fn mcp_actor_result(actor: &McpResolvedActor) -> Value {
@@ -444,6 +444,7 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
         | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
         | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
+        | oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
         _ => -32602,
@@ -463,6 +464,11 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         // management; an agent reads the name, not the sentence.
         oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => {
             Some("off_record_room_management_consent_unavailable")
+        }
+        // FIX 7650: a foreign guest's proposal spool met the host's disk
+        // floor; the agent reads the name, not the sentence.
+        oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR => {
+            Some("sandbox_proposal_disk_floor")
         }
         _ => None,
     };

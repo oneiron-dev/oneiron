@@ -921,7 +921,7 @@ export class Oneiron {
       archive: (input: Facade.HubSkillRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsArchive(input) as Facade.SkillLibraryView),
       /** The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring. */
       restore: (input: Facade.SkillLibraryRestoreRequest): Facade.SkillLibraryRestoreReceipt => this.#call(() => this.#client.vaultSkillsRestore(input) as Facade.SkillLibraryRestoreReceipt),
-      /** The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
+      /** The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
       fork: (input: Facade.SkillLibraryForkRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsFork(input) as Facade.SkillLibraryView),
       rules: {
         /** The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose. */
@@ -1328,7 +1328,7 @@ export class Oneiron {
       },
     },
     trusted_contacts: {
-      /** The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
+      /** A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
       name: (input: Facade.TrustedContactNameRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsName(input) as Facade.TrustedContact),
       /** A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential. */
       list: (input: Facade.TrustedContactsRequest): Facade.TrustedContact[] => this.#call(() => this.#client.vaultTrustedContactsList(input) as Facade.TrustedContact[]),
@@ -1337,7 +1337,7 @@ export class Oneiron {
       /** Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close. */
       revoke: (input: Facade.TrustedContactRevokeRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsRevoke(input) as Facade.TrustedContact),
       dial: {
-        /** The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
+        /** A person changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
         set: (input: Facade.TrustedContactDialRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsDialSet(input) as Facade.TrustedContact),
       },
       tier: {
@@ -1345,9 +1345,9 @@ export class Oneiron {
         set: (input: Facade.TrustedContactTierRequest): Facade.TrustedContactTierSet => this.#call(() => this.#client.vaultTrustedContactsTierSet(input) as Facade.TrustedContactTierSet),
       },
       concern: {
-        /** The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
+        /** A person reads their own open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
         asks: (input: Facade.TrustedContactAsksRequest): Facade.TrustedContactAsk[] => this.#call(() => this.#client.vaultTrustedContactsConcernAsks(input) as Facade.TrustedContactAsk[]),
-        /** The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
+        /** A person answers one of their own open asks, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
         authorize: (input: Facade.TrustedContactAuthorizeRequest): Facade.TrustedContactAuthorization => this.#call(() => this.#client.vaultTrustedContactsConcernAuthorize(input) as Facade.TrustedContactAuthorization),
         /** The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices. */
         propose: (input: Facade.TrustedContactConcernRequest): Facade.TrustedContactConcernProposal => this.#call(() => this.#client.vaultTrustedContactsConcernPropose(input) as Facade.TrustedContactConcernProposal),
@@ -1416,7 +1416,7 @@ export class Oneiron {
         save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomSaved => this.#call(() => this.#client.vaultOffRecordRoomsSave(input) as Facade.OffRecordRoomSaved),
         /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
         save_from_here: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSaveFromHere(input) as Facade.OffRecordRoomView),
-        /** A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in. */
+        /** A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in. */
         export: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomExport => this.#call(() => this.#client.vaultOffRecordRoomsExport(input) as Facade.OffRecordRoomExport),
         /** An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms. */
         suggest_save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSuggestSave(input) as Facade.OffRecordRoomView),
@@ -1667,7 +1667,7 @@ export class Oneiron {
       policy: {
         /** The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions. */
         get: (input: Facade.PolicyManifestRead): Facade.PolicyManifestsView => this.#call(() => this.#client.vaultGatePolicyGet(input) as Facade.PolicyManifestsView),
-        /** The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
+        /** The owner, or an Admin or Delegate holding the policy power, installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
         put: (input: Facade.PolicyManifestPut): Facade.PolicyManifestReceipt => this.#call(() => this.#client.vaultGatePolicyPut(input) as Facade.PolicyManifestReceipt),
         /** Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert. */
         propose: (input: Facade.PolicyManifestPropose): Facade.PolicyManifestReceipt => this.#call(() => this.#client.vaultGatePolicyPropose(input) as Facade.PolicyManifestReceipt),
@@ -3057,18 +3057,18 @@ export class Oneiron {
       crop: (input: Facade.LiveRunRequest<Facade.CropInput>): Facade.BrowserImageOutput => this.#call(() => this.#client.selfBrowserCrop(input) as Facade.BrowserImageOutput),
       /** Zooms into a rectangle of a held image. */
       zoom: (input: Facade.LiveRunRequest<Facade.ZoomInput>): Facade.BrowserImageOutput => this.#call(() => this.#client.selfBrowserZoom(input) as Facade.BrowserImageOutput),
-      /** Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a failed_receipt. */
+      /** Runs one batched browser program for a subgoal in the attached run's browser; fill types supplied, reference, template or checked written text (receipt text_source, text_ref); a failing or no_progress stop returns a failed_receipt. */
       batch: (input: Facade.LiveRunRequest<Facade.BatchInput>): Facade.BrowserBatchOutput => this.#call(() => this.#client.selfBrowserBatch(input) as Facade.BrowserBatchOutput),
       library: {
         /** The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
         find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>): Facade.BrowserLibraryFindOutput => this.#call(() => this.#client.selfBrowserLibraryFind(input) as Facade.BrowserLibraryFindOutput),
-        /** Offers a solved run's program to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires what it repairs. */
+        /** Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires. */
         propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>): Facade.BrowserLibraryProposeOutput => this.#call(() => this.#client.selfBrowserLibraryPropose(input) as Facade.BrowserLibraryProposeOutput),
         /** Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had. */
         retire: (input: Facade.LiveRunRequest<Facade.LibraryRetireInput>): Facade.BrowserLibraryRetireOutput => this.#call(() => this.#client.selfBrowserLibraryRetire(input) as Facade.BrowserLibraryRetireOutput),
         /** The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why. */
         retired: (input: Facade.LiveRunRequest<Facade.LibraryRetiredInput>): Facade.BrowserLibraryRetiredOutput => this.#call(() => this.#client.selfBrowserLibraryRetired(input) as Facade.BrowserLibraryRetiredOutput),
-        /** Runs a replay library program in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; no_progress hands up; 3 strict misses retire it drift. */
+        /** Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift. */
         run: (input: Facade.LiveRunRequest<Facade.LibraryRunInput>): Facade.BrowserLibraryRunOutput => this.#call(() => this.#client.selfBrowserLibraryRun(input) as Facade.BrowserLibraryRunOutput),
       },
       /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */

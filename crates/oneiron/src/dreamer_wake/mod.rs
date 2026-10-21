@@ -11,6 +11,7 @@
 mod arc_backstop;
 mod deadline;
 mod driver;
+pub(crate) mod follower;
 mod grain;
 mod legibility;
 mod night_step;
@@ -92,7 +93,8 @@ pub(crate) fn erase_in_txn(
             sieve::owe_read_in_txn(store, txn, turn)?;
         }
     }
-    Ok(())
+    // The follower's frames and keyframes of these words go too (FIX 7510).
+    follower::erase_in_txn(store, txn, &turns)
 }
 
 /// The window demotion hook (OF-534), in the remover's transaction before

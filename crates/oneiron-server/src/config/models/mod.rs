@@ -128,6 +128,7 @@ struct DreamerFile {
     task_prompt_file: Option<PathBuf>,
     person_about_prompt: Option<String>,
     person_about_prompt_file: Option<PathBuf>,
+    urgent_digest_question: Option<String>,
     /// The owner's BYO runner seats (OF-137): ordered named runners, the
     /// official seats registered as named providers, and what a spent seat
     /// does. Labels and custody handles only; no vendor login can be
@@ -277,6 +278,9 @@ pub struct DreamerSettings {
     /// The wording a PERSON's `about` lines are written with (ARCH-0067).
     /// Without one, the engine's own (`PERSON_ABOUT_INSTRUCTION`).
     pub person_about_instruction: Option<String>,
+    /// The wording of the urgent digest's harm question (OF-194). Without
+    /// one, the host's shipped wording.
+    pub urgent_digest_question: Option<String>,
     /// The owner's BYO runner-seat policy (OF-137), validated at load: the
     /// ordered named runners Dreamer work may be dispatched to and where
     /// the work goes when a seat's quota is spent. Without one, the
@@ -411,6 +415,10 @@ impl ModelsFile {
                 self.dreamer.person_about_prompt_file,
                 base,
             )?,
+            urgent_digest_question: self
+                .dreamer
+                .urgent_digest_question
+                .filter(|text| !text.trim().is_empty()),
             runner_seats: self.dreamer.runner_seats,
         };
         if let Some(runner_seats) = &dreamer.runner_seats {

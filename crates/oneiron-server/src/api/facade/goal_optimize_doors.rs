@@ -1,8 +1,8 @@
 //! Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof.
 use std::sync::Arc;
 
-use oneiron::EntityId;
-use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError};
+use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
+use oneiron::{EdgeActorClass, EntityId};
 use oneiron::task_verb::sdk::{self, *};
 
 use super::host_doors::Listed;
@@ -230,18 +230,66 @@ pub(crate) async fn vault_skills_optimize_preferences_set(
     .await
 }
 
+/// Who lists and picks tradeoff asks on the typed doors (FIX 8178): the
+/// owner, under its proof, as before; else the person or agent the
+/// credential binds, as `/v1/core/skills/tradeoff-asks` admits it, whose
+/// reached responsible role the engine checks as its authorization. A
+/// caller that is neither keeps the owner refusal it had.
+pub(super) enum Picker {
+    Owner(oneiron::consent::AuthenticatedOwner),
+    Holder(oneiron::WriteActor),
+}
+
+pub(super) fn picker(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<Picker> {
+    super::owner_binding::facade_owner(server, auth, verb)
+        .map(Picker::Owner)
+        .or_else(|refusal| match super::facade_actor(server, auth) {
+            Ok((actor, class @ (EdgeActorClass::Human | EdgeActorClass::Agent))) => {
+                Ok(Picker::Holder(oneiron::WriteActor::new(actor, class)))
+            }
+            _ => Err(refusal),
+        })
+}
+
+/// `act` off the runtime as [`picker`] admits the caller.
+async fn picked<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&SyncServer, &Picker) -> MemoryResult<(T, Vec<EntityId>)> + Send + 'static,
+) -> Listed<T> {
+    let picker = match picker(server, auth, verb) {
+        Ok(picker) => picker,
+        Err(refusal) => return (Err(refusal), Vec::new()),
+    };
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || match act(&server, &picker) {
+        Ok((answer, rows)) => (Ok(answer), rows),
+        Err(error) => (Err(error), Vec::new()),
+    })
+    .await
+    .unwrap_or_else(|_| (Err(super::host_doors::internal(verb)), Vec::new()))
+}
+
 pub(crate) async fn vault_skills_optimize_tradeoff_asks(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EmptyRequest,
 ) -> Listed<Vec<SkillOptimizeTradeoffAskView>> {
-    owner_call(
+    picked(
         server,
         auth,
         "vault.skills.optimize.tradeoff_asks",
-        move |server, owner| {
+        move |server, picker| {
             let _ = input;
-            let answer = sdk::skill_optimize_tradeoff_asks_as_owner(server.vault(), owner)?;
+            let answer = match picker {
+                Picker::Owner(owner) => {
+                    sdk::skill_optimize_tradeoff_asks_as_owner(server.vault(), owner)?
+                }
+                Picker::Holder(by) => {
+                    sdk::skill_optimize_tradeoff_asks_for(server.vault(), &by.entity_ref())?
+                }
+            };
             let rows = answer
                 .iter()
                 .map(|view| view.ask.question.proposal)
@@ -257,12 +305,19 @@ pub(crate) async fn vault_skills_optimize_tradeoff_asks_pick(
     auth: &CoreAuth,
     input: SkillOptimizeTradeoffPickRequest,
 ) -> Listed<oneiron::task_verb::sdk::SkillOptimizeResultView> {
-    owner_call(
+    picked(
         server,
         auth,
         "vault.skills.optimize.tradeoff_asks.pick",
-        move |server, owner| {
-            let answer = sdk::skill_optimize_tradeoff_pick_as_owner(server.vault(), owner, &input)?;
+        move |server, picker| {
+            let answer = match picker {
+                Picker::Owner(owner) => {
+                    sdk::skill_optimize_tradeoff_pick_as_owner(server.vault(), owner, &input)?
+                }
+                Picker::Holder(by) => {
+                    sdk::skill_optimize_tradeoff_pick_by(server.vault(), by, &input)?
+                }
+            };
             let rows = answer.rows();
             Ok((answer, rows))
         },

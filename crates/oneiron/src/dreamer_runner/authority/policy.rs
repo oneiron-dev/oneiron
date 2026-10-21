@@ -116,6 +116,12 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         super::super::maintenance::identity::IDENTITY_RECHECK_FACET => {
             Some(super::super::maintenance::identity::IDENTITY_RECHECK_FACET)
         }
+        super::super::maintenance::digest::DIGEST_ASSESS_FACET => {
+            Some(super::super::maintenance::digest::DIGEST_ASSESS_FACET)
+        }
+        super::super::maintenance::digest::DIGEST_URGENT_FACET => {
+            Some(super::super::maintenance::digest::DIGEST_URGENT_FACET)
+        }
         crate::consult_ladder::DREAMER_MAGISTRATE_ATTEMPT_TYPE => {
             Some(crate::consult_ladder::DREAMER_MAGISTRATE_ATTEMPT_TYPE)
         }
