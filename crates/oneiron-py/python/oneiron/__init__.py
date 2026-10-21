@@ -5445,7 +5445,7 @@ class Oneiron:
             """Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor."""
             return json.loads(_translate(lambda: self._client.self_browser_open(json.dumps(spec))))
         def observe(self, spec):
-            """Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched."""
+            """Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its handle."""
             return json.loads(_translate(lambda: self._client.self_browser_observe(json.dumps(spec))))
         def find(self, spec):
             """Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page."""
@@ -5457,7 +5457,7 @@ class Oneiron:
             """Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor."""
             return json.loads(_translate(lambda: self._client.self_browser_click_at(json.dumps(spec))))
         def type(self, spec):
-            """Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next."""
+            """Types text, or the value a run-bound secret handle names, into one page target by live ref or locator, observing the result as an edit of the caller's base; a gone ref acts on its locator's row as rebound; long observations page."""
             return json.loads(_translate(lambda: self._client.self_browser_type(json.dumps(spec))))
         def select(self, spec):
             """Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor."""
@@ -5466,7 +5466,7 @@ class Oneiron:
             """Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next."""
             return json.loads(_translate(lambda: self._client.self_browser_wait_for(json.dumps(spec))))
         def expect(self, spec):
-            """Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings."""
+            """Checks that a page row, by live ref or locator, is present or absent, and holds a given value or, compared unread, the secret a run-bound handle names; a ref whose node is gone is checked on its locator's row and listed in rebindings."""
             return json.loads(_translate(lambda: self._client.self_browser_expect(json.dumps(spec))))
         def screenshot(self, spec):
             """Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope."""
@@ -5481,7 +5481,7 @@ class Oneiron:
             """Zooms into a rectangle of a held image."""
             return json.loads(_translate(lambda: self._client.self_browser_zoom(json.dumps(spec))))
         def batch(self, spec):
-            """Runs one batched program of browser steps for a subgoal in the attached run's browser, stopping at the first failing step with its stop_cause and a failed_receipt of missed checks and the page; elapsed_ms times it, duration_ms each effect."""
+            """Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle, stopping at the first failing step with its stop_cause and a failed_receipt of missed checks and the page."""
             return json.loads(_translate(lambda: self._client.self_browser_batch(json.dumps(spec))))
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs":
@@ -5499,7 +5499,7 @@ class Oneiron:
             """The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."""
             return json.loads(_translate(lambda: self._client.self_browser_library_find(json.dumps(spec))))
         def propose(self, spec):
-            """Offers a solved run's program to the attached run's replay library; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance."""
+            """Offers a solved run's program to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires what it repairs."""
             return json.loads(_translate(lambda: self._client.self_browser_library_propose(json.dumps(spec))))
         def retire(self, spec):
             """Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."""
@@ -5508,7 +5508,7 @@ class Oneiron:
             """The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."""
             return json.loads(_translate(lambda: self._client.self_browser_library_retired(json.dumps(spec))))
         def run(self, spec):
-            """Runs a replay library program live in the attached run's browser, strict (rules only; a step needing a model asks up at zero tokens) or assisted, by default as its proof allows; model_free reads receipts; 3 strict misses retire it drift."""
+            """Runs a replay library program live in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, as its proof allows; secret slots take run-bound handles; 3 strict misses retire it drift."""
             return json.loads(_translate(lambda: self._client.self_browser_library_run(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:

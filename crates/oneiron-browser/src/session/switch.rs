@@ -37,6 +37,7 @@ use crate::cdp::{Visits, web_origin};
 use crate::driver::CdpDriver;
 use crate::request::Custody;
 use crate::retention::HandleRetention;
+use crate::secret::Secrets;
 use crate::stop::elapsed_ms;
 use crate::{
     BrowserDriver, BrowserEngine, BrowserError, EffectReceipt, EngineSwitchRecord, Observation,
@@ -420,18 +421,27 @@ fn adapt(cookies: &[Value], to: BrowserEngine) -> (Vec<Value>, Vec<SwitchNotCarr
 /// whole read, filling `record`'s lists; its pipe's storage reads go to
 /// `sink`, kept from its commit. Its pipe holds the session's `custody`
 /// from its attach, before any of its pages loads: the host's request
-/// handler, if any, takes its every request as the source's (FIX 7122). A
-/// hard step that went wrong halts it, and the target drops with it.
+/// handler, if any, takes its every request as the source's (FIX 7122).
+/// Its driver holds the session's `secrets`, so its first read's secrets
+/// become handles of the same run (FIX 8028). A hard step that went wrong
+/// halts it, and the target drops with it.
 fn stage(
     starter: &mut dyn BrowserGuestStarter,
     wait_cap: Duration,
     state: &Exported,
     sink: Option<Sink>,
-    custody: &Custody,
+    (custody, secrets): (&Custody, &Secrets),
     record: &mut EngineSwitchRecord,
 ) -> Result<(EngineGuest, Observation), Halt> {
     let started = switch_commit_policy(SwitchStage::Start, starter.start(record.to))?;
-    let attached = EngineGuest::attach(record.to, started, wait_cap, sink, custody.clone());
+    let attached = EngineGuest::attach(
+        record.to,
+        started,
+        wait_cap,
+        sink,
+        custody.clone(),
+        secrets.clone(),
+    );
     let mut target = switch_commit_policy(SwitchStage::Attach, attached)?;
     let (kept, losses) = (&mut record.carried, &mut record.not_carried);
     seed_state(&target.driver, record.to, state, kept, losses)?;
@@ -599,7 +609,7 @@ impl BrowserSession {
             wait_cap,
             &state,
             sink.clone(),
-            &self.custody,
+            (&self.custody, &self.secrets),
             &mut record,
         );
         drop(charge);
