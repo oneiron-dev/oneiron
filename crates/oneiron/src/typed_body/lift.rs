@@ -78,10 +78,18 @@ fn body_in_txn(
     }
 }
 
-/// `doc`'s state as the write door reads it whole, and each text in it.
+/// `doc`'s state as the write door reads it whole, and each text in it. A
+/// deck's log keeps each operation as its JSON spelling, and a view shows
+/// the values it decodes to, so the decoded operations stand beside the
+/// stored state and each of their strings is a text marked under its own
+/// hash (FIX 2940); the stored spelling stays a text too.
 fn state_of(doc: &LoroDoc) -> Result<(serde_json::Value, Vec<String>)> {
-    let state = serde_json::to_value(doc.get_deep_value())
+    let mut state = serde_json::to_value(doc.get_deep_value())
         .map_err(|_| Error::InvariantViolation("typed body state did not encode"))?;
+    let ops = crate::office_body::deck_log_ops(&state);
+    if !ops.is_empty() {
+        state = serde_json::Value::Array(vec![state, serde_json::Value::Array(ops)]);
+    }
     let mut texts = Vec::new();
     collect_texts(&state, &mut texts);
     Ok((state, texts))
@@ -213,7 +221,8 @@ fn body_texts_in_txn(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Resul
 
 /// The custody records the marks of a typed body's lifted texts name: each
 /// key once, in custody-id order. Only
-/// [`Vault::typed_body_lifted_sources_in_txn`] makes one, so a read's sight
+/// [`Vault::typed_body_lifted_sources_in_txn`] and
+/// [`Vault::typed_body_read_lifted_in_txn`] make one, so a read's sight
 /// ([`Vault::typed_body_sight`]) is judged over the keys the body holds,
 /// never over keys a caller names.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,6 +238,26 @@ impl LiftedSources {
     pub(crate) fn keys(&self) -> &[EntityId] {
         &self.0
     }
+}
+
+/// The custody records the marks of `texts` name, a key in a marked member
+/// included: each key once, in custody-id order.
+fn sources_in_txn(store: &Store, txn: &RoTxn<'_>, texts: &[String]) -> Result<LiftedSources> {
+    let mut keys = Vec::new();
+    for text in texts {
+        let hash = blake3::hash(text.as_bytes());
+        let Some(mark) = masked_file_in_txn(store, txn, hash.as_bytes())? else {
+            continue;
+        };
+        let marked = mark
+            .keys
+            .iter()
+            .chain(mark.members.iter().flat_map(|member| member.keys.iter()));
+        keys.extend(marked.map(|key| key.custody));
+    }
+    keys.sort_unstable();
+    keys.dedup();
+    Ok(LiftedSources(keys))
 }
 
 impl Vault {
@@ -251,20 +280,62 @@ impl Vault {
         txn: &RoTxn<'_>,
         entity: &EntityId,
     ) -> Result<LiftedSources> {
-        let mut keys = Vec::new();
-        for text in body_texts_in_txn(&self.store, txn, entity)? {
-            let hash = blake3::hash(text.as_bytes());
-            let Some(mark) = masked_file_in_txn(&self.store, txn, hash.as_bytes())? else {
-                continue;
-            };
-            let marked = mark
-                .keys
-                .iter()
-                .chain(mark.members.iter().flat_map(|member| member.keys.iter()));
-            keys.extend(marked.map(|key| key.custody));
+        sources_in_txn(
+            &self.store,
+            txn,
+            &body_texts_in_txn(&self.store, txn, entity)?,
+        )
+    }
+
+    /// The keys the lifted texts a read of `entity`'s typed body may show
+    /// hold, and their custody records, from one list of texts read in
+    /// `txn`, the snapshot the read projects its view in: the live body's
+    /// and each open fork's, and with `at`, the document a read at an
+    /// earlier frontier projects (FIX 2939). A value only that version held
+    /// reads as its handle, and a read's sight judges each key it masks.
+    pub(crate) fn typed_body_read_lifted_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        entity: &EntityId,
+        at: Option<&LoroDoc>,
+    ) -> Result<(LiftedKeys, LiftedSources)> {
+        let mut texts = body_texts_in_txn(&self.store, txn, entity)?;
+        if let Some(doc) = at {
+            texts.extend(state_of(doc)?.1);
         }
-        keys.sort_unstable();
-        keys.dedup();
-        Ok(LiftedSources(keys))
+        let sources = sources_in_txn(&self.store, txn, &texts)?;
+        Ok((LiftedKeys::of_in_txn(&self.store, txn, texts)?, sources))
+    }
+
+    /// Whether `doc`, a typed body at an earlier frontier, holds a text with
+    /// a hit the write door finds that no mark covers yet.
+    pub(crate) fn typed_body_unmarked_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        doc: &LoroDoc,
+    ) -> Result<bool> {
+        Ok(carrier_texts_hit_in_txn(&self.store, txn, &state_of(doc)?.1)?.is_some())
+    }
+
+    /// Marks the keys of each text in `doc`, `entity`'s typed body at an
+    /// earlier frontier, in the caller's transaction, as the lift sweep
+    /// marks its live body's: under each text's hash, the live body's row
+    /// named as where they were found (FIX 2939). Only custody and span rows
+    /// are written; the stored document stays as it is, and a hit no text's
+    /// mark places is left unplaced.
+    pub(crate) fn mark_typed_body_at_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        entity: &EntityId,
+        doc: &LoroDoc,
+    ) -> Result<()> {
+        mark_state_in_txn(
+            self,
+            txn,
+            &side_table::TYPED_BODY_DOC,
+            entity.as_bytes(),
+            doc,
+        )?;
+        Ok(())
     }
 }

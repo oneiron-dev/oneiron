@@ -685,6 +685,27 @@ fn entries<T: DeserializeOwned>(list: &LoroList) -> Result<Vec<T>> {
         .collect()
 }
 
+/// Each operation the log of a deck body holds, decoded as [`read`] decodes
+/// it, as JSON: the values a decoded view of the log shows, for the lift to
+/// mark beside the stored spelling (OF-067, FIX 2940). `state` is a typed
+/// body's whole state as JSON; it is read only, and anything but a schema-1
+/// deck body has none. An entry that does not decode, which [`read`]
+/// refuses, shows nothing.
+pub(crate) fn deck_log_ops(state: &serde_json::Value) -> Vec<serde_json::Value> {
+    let office = &state[OFFICE];
+    if office[KIND] != "pptx" || office[SCHEMA_KEY] != SCHEMA {
+        return Vec::new();
+    }
+    let Some(log) = state[LOG].as_array() else {
+        return Vec::new();
+    };
+    log.iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter_map(|entry| serde_json::from_str::<LoggedOp>(entry).ok())
+        .filter_map(|op| serde_json::to_value(op).ok())
+        .collect()
+}
+
 fn encode<T: Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|_| invalid("deck body encoding"))
 }
