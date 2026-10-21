@@ -2,27 +2,29 @@
 //! terminal receipt, and at each Dreamer wake while it runs, over what it has
 //! streamed so far (agent-mind §3: "On each terminal receipt", "During long
 //! attempts"). It runs the per-attempt detectors on that attempt's own
-//! evidence (its run's calls and checks, its waits, its sealed receipt, its
-//! widen proposals and its TASK's done evidence) and lands their findings on
-//! the nightly review's cards, so a repeat merges into the same DIAGNOSTIC
-//! and the same card.
+//! evidence (its run's calls and checks, the call receipts that name it, its
+//! waits, its sealed receipt, its widen proposals and its TASK's done
+//! evidence) and lands their findings on the nightly review's cards, so a
+//! repeat merges into the same DIAGNOSTIC and the same card.
 //!
-//! A call receipt names no attempt, so the call-receipt `loop` and
-//! `failed_check_repeat` halves stay with the nightly review. So do
+//! Its call receipts are those that name it at the lease generation it is
+//! reviewed under (OF-568 L4, `call_evidence`): a terminal review's is the
+//! one it settled under, a live review's the one it holds. The call-receipt
+//! `loop` and the call half of `failed_check_repeat` judge that stream,
+//! whole. A call that names no attempt stays with the nightly review, and
+//! `silent` reads its actor's newest call, as the nightly review does. So do
 //! `duplicate_work`, which pairs an attempt against every run in the review
 //! window, `cost_spike`, whose baseline is every retained run of the task
 //! type, and the TTL climb over every card. Its output is the nightly
 //! review's cards and DIAGNOSTICs, nothing else.
 
-use std::collections::BTreeMap;
-
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Attempts, CALL_RECEIPTS, COACH_AGENT_HEALTH_FACET, DialBook, Dispatched, Dispatches, Traps,
-    check_repeat, land, long_wait_findings, misalignment_findings, run_loop, silent_findings,
-    unsupported_done_findings, widen_denial_findings,
+    Attempts, COACH_AGENT_HEALTH_FACET, DialBook, Dispatched, Dispatches, Traps, call_evidence,
+    call_loop, check_repeat, entity, land, long_wait_findings, misalignment_findings, run_loop,
+    silent_findings, unsupported_done_findings, widen_denial_findings,
 };
 use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
@@ -32,10 +34,9 @@ use crate::dreamer_runner::{
     decode_dreamer_attempt_payload,
 };
 use crate::entity_id::bytes_to_hex_lower;
-use crate::limit_ask::EngineLimit;
 use crate::llm::open_trap_waits;
-use crate::receipt::CallReceipt;
-use crate::{EntityId, Error, Result, Vault};
+use crate::receipt::CallAttemptRef;
+use crate::{Error, Result, Vault};
 
 /// Dedupe namespace of a terminal review: one per attempt and the lease
 /// generation it settled under.
@@ -82,8 +83,19 @@ fn decode(input: &Value) -> Result<HealthReviewInput> {
 /// Runs one `coach.agent_health` job on its input. Returns the cards it
 /// touched.
 pub(crate) fn review(vault: &Vault, input: &Value, now: u64) -> Result<u64> {
-    let attempt = match decode(input)? {
-        HealthReviewInput::Nightly => return super::run(vault, now),
+    let (attempt, generation) = match decode(input)? {
+        HealthReviewInput::Nightly => {
+            // Outcome receipts whose learning row did not land go first,
+            // whether or not any scope is reviewed. A failure here is logged
+            // and never stops the review.
+            if let Err(error) = super::outcomes::reproject_pending(vault, now) {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "agent-health review receipts not re-applied"
+                );
+            }
+            return super::run(vault, now);
+        }
         HealthReviewInput::Terminal {
             attempt,
             generation,
@@ -95,7 +107,7 @@ pub(crate) fn review(vault: &Vault, input: &Value, now: u64) -> Result<u64> {
                 receipt = ?receipt,
                 "agent-health review at a terminal receipt"
             );
-            attempt
+            (attempt, Some(generation))
         }
         HealthReviewInput::Live { attempt, wake } => {
             tracing::debug!(
@@ -103,10 +115,10 @@ pub(crate) fn review(vault: &Vault, input: &Value, now: u64) -> Result<u64> {
                 wake = %bytes_to_hex_lower(wake.as_bytes()),
                 "agent-health review at a Dreamer wake"
             );
-            attempt
+            (attempt, None)
         }
     };
-    review_attempt(vault, attempt, now)
+    review_attempt(vault, attempt, generation, now)
 }
 
 /// Whether `record` is an agent dispatch, the only work the check judges.
@@ -119,8 +131,15 @@ fn agent_work(record: &AttemptRecord) -> bool {
 /// The review of one attempt: the per-attempt detectors over its own
 /// evidence, landed on the nightly review's cards. The card's subject is the
 /// dispatch's own actor and nobody else: an attempt whose dispatch names no
-/// actor is reviewed unattributed, and that is no finding and no card.
-fn review_attempt(vault: &Vault, attempt: AttemptId, now: u64) -> Result<u64> {
+/// actor is reviewed unattributed, and that is no finding and no card. Its
+/// calls are those that name it at `generation`, the lease generation a
+/// terminal review settled under; a live review reads the one it holds now.
+fn review_attempt(
+    vault: &Vault,
+    attempt: AttemptId,
+    generation: Option<u32>,
+    now: u64,
+) -> Result<u64> {
     let queue = AttemptQueue::new(vault);
     let Some(record) = queue.get(attempt)? else {
         return Ok(0);
@@ -139,6 +158,7 @@ fn review_attempt(vault: &Vault, attempt: AttemptId, now: u64) -> Result<u64> {
     let actor = dispatch.actor;
     let leased = record.state == AttemptState::Leased;
     let claimed = record.claimed_at.unwrap_or(record.updated_at);
+    let generation = generation.unwrap_or(record.attempt_count);
     attempts.insert(key, record);
     let dispatched = Dispatches::from([(key, dispatch)]);
     let book = DialBook::read(vault, &dispatched)?;
@@ -156,18 +176,27 @@ fn review_attempt(vault: &Vault, attempt: AttemptId, now: u64) -> Result<u64> {
             traps.entry(key).or_default().push(wait);
         }
     }
-    // A leased attempt's actor's newest call says it is not silent. That
-    // call is read as activity only: a call receipt names no attempt.
-    let activity = if leased {
-        newest_call(vault, actor, claimed)?
-    } else {
-        BTreeMap::new()
-    };
-    let unbound = BTreeMap::new();
+    // The calls whose receipts name this attempt at its generation, whole,
+    // and for a leased attempt its actor's newest call since its claim: that
+    // call says it is not silent, whatever attempt it names, as in the
+    // nightly review.
+    let witness = entity(attempt).map(|attempt| CallAttemptRef {
+        attempt,
+        generation,
+    });
+    let calls =
+        call_evidence::attempt_calls(vault, actor, witness, since, leased.then_some(claimed))?;
+    let streams = calls.streams();
     let mut findings = run_loop::run_loop_findings(vault, &dispatched, &attempts, &book, since)?;
+    findings.extend(call_loop::loop_findings(
+        &streams,
+        &dispatched,
+        &attempts,
+        &book,
+    ));
     findings.extend(check_repeat::check_repeat_findings(
         vault,
-        &unbound,
+        &streams,
         &dispatched,
         &attempts,
         &book,
@@ -175,7 +204,7 @@ fn review_attempt(vault: &Vault, attempt: AttemptId, now: u64) -> Result<u64> {
     )?);
     findings.extend(silent_findings(
         vault,
-        &activity,
+        &calls.activity,
         &dispatched,
         &attempts,
         &traps,
@@ -203,6 +232,7 @@ fn review_attempt(vault: &Vault, attempt: AttemptId, now: u64) -> Result<u64> {
         &dispatched,
         &attempts,
         since,
+        now,
     )?);
     land(
         vault,
@@ -214,34 +244,6 @@ fn review_attempt(vault: &Vault, attempt: AttemptId, now: u64) -> Result<u64> {
         now,
         false,
     )
-}
-
-/// The actor's newest call receipt at or after `since`, read newest first.
-fn newest_call(
-    vault: &Vault,
-    actor: EntityId,
-    since: u64,
-) -> Result<BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let mut calls = BTreeMap::new();
-    let mut read: u64 = 0;
-    for row in CALL_RECEIPTS.iter_rev_from(&vault.store, &rtxn, &[])? {
-        read += 1;
-        let Ok((id, receipt)) = row else {
-            continue;
-        };
-        if receipt.at < since {
-            break;
-        }
-        if receipt.actor_class == "agent"
-            && EntityId::from_hex(&receipt.actor_ref).ok() == Some(actor)
-        {
-            calls.insert(actor, vec![(id, receipt)]);
-            break;
-        }
-    }
-    let _ = vault.measure_limit(EngineLimit::MaintenanceScanRows, read);
-    Ok(calls)
 }
 
 /// Queues one review on the maintenance lane, in the caller's write.

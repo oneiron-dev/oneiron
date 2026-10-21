@@ -741,7 +741,7 @@ impl BrowserDriver for BrowserSession {
         if let Some(site) = site_of(&observation.url)
             && let Some(library) = self.library.as_mut()
         {
-            observation.library = library.find(&site, None).unwrap_or_default();
+            observation.library = library.find(&site, None, None).unwrap_or_default();
         }
         Ok(observation)
     }
@@ -889,7 +889,7 @@ impl BrowserDriver for BrowserSession {
         };
         let library = self.library.as_mut().ok_or_else(no_library)?;
         Ok(LibraryFindOutput {
-            workflows: library.find(&site, input.subgoal.as_deref())?,
+            workflows: library.find(&site, input.subgoal.as_deref(), input.type_ref.as_deref())?,
             site,
         })
     }

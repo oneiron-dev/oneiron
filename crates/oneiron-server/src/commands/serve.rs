@@ -265,7 +265,7 @@ pub(crate) async fn build_server(
             config
                 .browser
                 .as_ref()
-                .map(crate::config::BrowserConfig::guest),
+                .and_then(crate::config::BrowserConfig::guest),
         )
         .with_desktop_guest(
             config
@@ -283,6 +283,11 @@ pub(crate) async fn build_server(
             }
         }))
         .with_feedback_triage(config.feedback.triage.clone());
+    // Its browser readiness starts from the `[browser]` section and its
+    // runtime binding, with no supervisor's runtime fact (FIX 7670).
+    sync_server
+        .browser_readiness()
+        .seed(config.browser.as_ref(), None);
     // `[models] extraction_egress = true` is the owner's opt-in for
     // extraction to leave the device (FIX 6621): the raw `/v1/llm` routes
     // and every door that reads the host's predicate admit it, still within

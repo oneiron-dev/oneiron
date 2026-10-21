@@ -314,6 +314,13 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn planner(&self) -> Option<&crate::config::models::PlannerSettings> {
         None
     }
+    /// The runs' browser planner states (CUA E5): one per run, beside its
+    /// browser seat, which the run's guest door binds and feeds and this
+    /// provider's backend routes each step's call by, on the same meter and
+    /// payer. `None`: every step's call takes the chat role, as before.
+    fn browser_planner(&self) -> Option<&crate::ai_host::browser_planner::BrowserPlannerRuns> {
+        None
+    }
     /// Where this provider's own backend serves `pick`, a planned child's
     /// model, when it lists that model and can route it exactly now (FIX
     /// 2310, Engine C1/C2). `None`, as for a provider with no list: the child
