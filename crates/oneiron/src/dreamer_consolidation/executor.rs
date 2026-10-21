@@ -7,7 +7,9 @@ mod merge_resolution;
 pub use decisions::ConsolidationDecisions;
 use merge_resolution::MergeResolution;
 
-use super::evidence::{ExtractedCandidate, VerifiedCandidate, VerifiedEvidenceSet};
+use super::evidence::{
+    ExtractedCandidate, ResolvedConflictOutput, VerifiedCandidate, VerifiedEvidenceSet,
+};
 use super::resources::BranchResources;
 use super::roles::{DREAMER_VERDICT_ROLE, RoleBackends, RoleCall};
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
@@ -164,8 +166,10 @@ impl ConsolidationExecutor<'_> {
         let mut dropped: BTreeSet<usize> = BTreeSet::new();
         let mut merged: Vec<VerifiedCandidate> = Vec::new();
         let mut escalated: Vec<(ReflectionGap, VerifiedEvidenceSet)> = Vec::new();
-        // An accumulated member keeps the pack that kept it.
+        // An accumulated member keeps the pack that kept it, and the first
+        // try's open marker its conflict answers (FIX 7325).
         let mut kept_by: BTreeMap<usize, Vec<KeptDecision>> = BTreeMap::new();
+        let mut answered: BTreeMap<usize, Vec<ResolvedConflictOutput>> = BTreeMap::new();
         let mut waiting = false;
 
         for conflict in &conflicts {
@@ -192,6 +196,14 @@ impl ConsolidationExecutor<'_> {
                 for member in &members[1..] {
                     join_decisions(&mut candidate.proposal.decisions, &member.decisions);
                 }
+                let answer = ResolvedConflictOutput::of_first_try(
+                    ctx.vault,
+                    conflict,
+                    step_identity.0,
+                    vec![candidate.claim_id],
+                    "fast_path",
+                );
+                candidate.answers.extend(answer);
                 dropped.extend(conflict.candidate_indexes.iter().copied());
                 merged.push(candidate);
                 continue;
@@ -296,8 +308,16 @@ impl ConsolidationExecutor<'_> {
             match resolution {
                 // Keep every member, each with the pack that kept it.
                 MergeResolution::Accumulate => {
+                    let answer = ResolvedConflictOutput::of_first_try(
+                        ctx.vault,
+                        conflict,
+                        step_identity.0,
+                        members.iter().map(|member| member.claim_id).collect(),
+                        "accumulate",
+                    );
                     for index in &conflict.candidate_indexes {
                         join_decisions(kept_by.entry(*index).or_default(), &answers.decisions);
+                        answered.entry(*index).or_default().extend(answer.clone());
                     }
                 }
                 MergeResolution::Merge {
@@ -326,7 +346,7 @@ impl ConsolidationExecutor<'_> {
                         .into());
                     }
                     dropped.extend(conflict.candidate_indexes.iter().copied());
-                    merged.push(merged_candidate(
+                    let mut output = merged_candidate(
                         &selected,
                         &members,
                         &prior_heads,
@@ -334,7 +354,18 @@ impl ConsolidationExecutor<'_> {
                         decisions,
                         step_identity.0,
                         ctx.now_ms,
-                    )?);
+                    )?;
+                    // The marker is the original conflict's, minted before
+                    // a cross-predicate selection moved its identity.
+                    let answer = ResolvedConflictOutput::of_first_try(
+                        ctx.vault,
+                        conflict,
+                        step_identity.0,
+                        vec![output.claim_id],
+                        answers.resolution.as_deref().unwrap_or("merge"),
+                    );
+                    output.answers.extend(answer);
+                    merged.push(output);
                 }
                 MergeResolution::Escalate => {
                     // A durable outage fallback is still an unresolved question,
@@ -370,6 +401,9 @@ impl ConsolidationExecutor<'_> {
             .map(|(index, mut candidate)| {
                 if let Some(decisions) = kept_by.get(&index) {
                     join_decisions(&mut candidate.proposal.decisions, decisions);
+                }
+                if let Some(bound) = answered.remove(&index) {
+                    candidate.answers.extend(bound);
                 }
                 candidate
             })
@@ -550,6 +584,7 @@ fn merged_candidate(
             decisions,
         },
         evidence: combined,
+        answers: Vec::new(),
     })
 }
 

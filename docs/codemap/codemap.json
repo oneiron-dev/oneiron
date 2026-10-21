@@ -18530,6 +18530,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/room_verbs/upkeep_posture.rs",
+     "purpose": "The posture a room host's upkeep voice speaks under (ARCH-0067 §8, OF-417): the mode…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/room_verbs_tests.rs",
@@ -21294,7 +21304,7 @@
      "path": "src/dreamer_consolidation/evidence.rs",
      "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 34
      }
     },
     {
@@ -22273,7 +22283,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DreamerRunContext",
@@ -22341,6 +22351,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_promotion/resolved_outputs.rs",
+     "purpose": "A conflict a retried try answered closes the open marker its first try left (FIX 7325, Engine 10-21)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22367,6 +22387,16 @@
      "path": "src/dreamer_promotion/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_promotion/writer.rs",
+     "purpose": "The one-candidate promotion writer and its landed re-read",
+     "surface": {
+      "crate-vis": 4
+     }
     },
     {
      "bucket": "s",
@@ -22905,7 +22935,7 @@
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
       "const": 31,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 12,
       "trait": 1
      }
@@ -23504,13 +23534,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/room_upkeep.rs",
      "purpose": "Room upkeep (ARCH-0067 §8, ARCH-0079, OF-417): \"The engine performs every room's mechanical upkeep, and a…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -60417,7 +60447,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1147
+      "fn": 1149
      }
     },
     {
@@ -64570,7 +64600,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
       "crate-vis": 28,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -65480,7 +65510,7 @@
       "crate-vis": 41,
       "enum": 2,
       "fn": 6,
-      "re-export": 19,
+      "re-export": 20,
       "struct": 6
      }
     },
@@ -65715,9 +65745,36 @@
      "path": "src/workspace_roster/rooms/upkeep.rs",
      "purpose": "What a room's upkeep reads (ONEIRON-ARCH-0067 §8: the engine performs every room's mechanical upkeep, and a…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 6,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomUpkeepNudge",
+      "RoomUpkeepPendingRequest",
+      "RoomUpkeepVoiceReceipt",
+      "RoomUpkeepVoiceRequest"
+     ],
+     "path": "src/workspace_roster/rooms/upkeep_voice.rs",
+     "purpose": "The room host's upkeep voice (ARCH-0067 §8, OF-417): \"The engine performs every room's mechanical upkeep…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/upkeep_voice_guard.rs",
+     "purpose": "What a room host's upkeep voice must still hold in the write it lands in (OF-417)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -67644,7 +67701,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67777,9 +67834,9 @@
      "purpose": "ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth…"
     },
     "dreamer_promotion": {
-     "files": 8,
+     "files": 10,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
@@ -68778,7 +68835,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 110,
+     "files": 112,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68799,9 +68856,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 184,
+   "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4343,
+   "source_files": 4348,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71495,6 +71552,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cdp/requests.rs",
+     "purpose": "Each paused request's custody (FIX 7122), on the routing of both transports",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71511,7 +71578,7 @@
      "path": "src/cdp/storage.rs",
      "purpose": "What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -71573,6 +71640,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/document.rs",
+     "purpose": "What the driver reads for a host's rendered document, and its load wait with the host's custody of the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71629,7 +71706,7 @@
      "path": "src/driver/storage.rs",
      "purpose": "The driver's reads of a page's storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on both…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -71723,7 +71800,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 12,
+      "re-export": 14,
       "struct": 40,
       "trait": 2
      }
@@ -71816,6 +71893,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BrowserRequestHandler",
+      "DestinationRefusal",
+      "RenderedDocument"
+     ],
+     "path": "src/request.rs",
+     "purpose": "A host's custody of a browser session's requests (FIX 7122)",
+     "surface": {
+      "crate-vis": 6,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "HandleRetention"
      ],
      "path": "src/retention.rs",
@@ -71872,13 +71965,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session/request.rs",
+     "purpose": "The session's side of the host's custody of its requests (FIX 7122, `crate::request`): the destination…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/session/storage.rs",
      "purpose": "The session's per-origin storage snapshots (FIX 6680, BROWSER-SPLIT PR3b): what an engine switch carries of…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -71930,7 +72034,7 @@
      "purpose": "Repeat screenshots (AB-004)"
     },
     "cdp": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -71944,7 +72048,7 @@
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -71999,6 +72103,13 @@
      "layout": "file",
      "purpose": "An effect receipt's screenshot kept past its session (FIX 2150)"
     },
+    "request": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A host's custody of a browser session's requests (FIX 7122)"
+    },
     "retention": {
      "files": 1,
      "impl_vault": false,
@@ -72014,7 +72125,7 @@
      "purpose": "A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX…"
     },
     "session": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -72030,7 +72141,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 32,
+   "source_files": 36,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -78622,7 +78733,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1118
+      "fn": 1120
      }
     },
     {
@@ -79837,7 +79948,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1119
+      "fn": 1121
      }
     },
     {
@@ -97552,6 +97663,10 @@
       "RoomTrunkHeader",
       "RoomTurn",
       "RoomTurnRequest",
+      "RoomUpkeepNudge",
+      "RoomUpkeepPendingRequest",
+      "RoomUpkeepVoiceReceipt",
+      "RoomUpkeepVoiceRequest",
       "RoomWaitKind",
       "RootRequestCancelRequest",
       "RouteObservation",
@@ -98487,7 +98602,7 @@
      "purpose": "—",
      "surface": {
       "enum": 924,
-      "struct": 2898
+      "struct": 2902
      }
     },
     {

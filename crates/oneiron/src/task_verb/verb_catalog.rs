@@ -772,6 +772,8 @@ pub enum AgentVerb {
     VaultRoomsHost,
     VaultRoomsHostPin,
     VaultRoomsHostHand,
+    VaultRoomsUpkeepPending,
+    VaultRoomsUpkeepVoice,
     VaultRoomsSharing,
     VaultCompanionsSharingGet,
     VaultCompanionsSharingSet,
@@ -1913,6 +1915,8 @@ impl AgentVerb {
         Self::VaultRoomsHost,
         Self::VaultRoomsHostPin,
         Self::VaultRoomsHostHand,
+        Self::VaultRoomsUpkeepPending,
+        Self::VaultRoomsUpkeepVoice,
         Self::VaultRoomsSharing,
         Self::VaultCompanionsSharingGet,
         Self::VaultCompanionsSharingSet,
@@ -3077,6 +3081,8 @@ impl AgentVerb {
             Self::VaultRoomsHost => "vault.rooms.host",
             Self::VaultRoomsHostPin => "vault.rooms.host.pin",
             Self::VaultRoomsHostHand => "vault.rooms.host.hand",
+            Self::VaultRoomsUpkeepPending => "vault.rooms.upkeep.pending",
+            Self::VaultRoomsUpkeepVoice => "vault.rooms.upkeep.voice",
             Self::VaultRoomsSharing => "vault.rooms.sharing",
             Self::VaultCompanionsSharingGet => "vault.companions.sharing.get",
             Self::VaultCompanionsSharingSet => "vault.companions.sharing.set",
@@ -4228,6 +4234,8 @@ impl AgentVerb {
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
+                | Self::VaultRoomsUpkeepPending
+                | Self::VaultRoomsUpkeepVoice
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
                 | Self::VaultCompanionsSharingSet
@@ -5397,6 +5405,8 @@ impl AgentVerb {
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
+                | Self::VaultRoomsUpkeepPending
+                | Self::VaultRoomsUpkeepVoice
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
                 | Self::VaultCompanionsSharingSet
@@ -5837,6 +5847,7 @@ impl AgentVerb {
                 | Self::VaultProjectsProposals
                 | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
+                | Self::VaultRoomsUpkeepPending
                 | Self::SelfSkillsCallables
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
@@ -6660,6 +6671,8 @@ impl AgentVerb {
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
+                | Self::VaultRoomsUpkeepPending
+                | Self::VaultRoomsUpkeepVoice
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
                 | Self::VaultCompanionsSharingSet
@@ -7468,6 +7481,7 @@ impl AgentVerb {
                 | Self::VaultMessagesReact
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
+                | Self::VaultRoomsUpkeepVoice
                 | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
@@ -8486,6 +8500,8 @@ impl AgentVerb {
             Self::VaultRoomsHost => &["spec"],
             Self::VaultRoomsHostPin => &["spec"],
             Self::VaultRoomsHostHand => &["spec"],
+            Self::VaultRoomsUpkeepPending => &["spec"],
+            Self::VaultRoomsUpkeepVoice => &["spec"],
             Self::VaultRoomsSharing => &["room_ref"],
             Self::VaultCompanionsSharingGet => &["spec"],
             Self::VaultCompanionsSharingSet => &["spec"],
@@ -9628,6 +9644,8 @@ impl AgentVerb {
             Self::VaultRoomsHost => &["spec"],
             Self::VaultRoomsHostPin => &["spec"],
             Self::VaultRoomsHostHand => &["spec"],
+            Self::VaultRoomsUpkeepPending => &["spec"],
+            Self::VaultRoomsUpkeepVoice => &["spec"],
             Self::VaultRoomsSharing => &["room_ref"],
             Self::VaultCompanionsSharingGet => &["spec"],
             Self::VaultCompanionsSharingSet => &["spec"],
@@ -12256,6 +12274,12 @@ impl AgentVerb {
             }
             Self::VaultRoomsHostHand => {
                 "The room's current host hands the hosting duty to another agent that may host."
+            }
+            Self::VaultRoomsUpkeepPending => {
+                "The room upkeep nudges addressed to the caller for rooms it hosts now, that its lane reads and no voice has used yet."
+            }
+            Self::VaultRoomsUpkeepVoice => {
+                "The room's current host voices one upkeep nudge addressed to it as its own reply to the newest turn of the nudge's thread."
             }
             Self::VaultRoomsSharing => {
                 "A room's effective sharing scope and why it is clamped, for a member of the room."

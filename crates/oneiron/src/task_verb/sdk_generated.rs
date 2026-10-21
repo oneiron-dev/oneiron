@@ -4270,6 +4270,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.rooms.upkeep.pending",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::RoomUpkeepPendingRequest,
+                >(),
+            ),
+            (
+                "vault.rooms.upkeep.voice",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::RoomUpkeepVoiceRequest,
+                >(),
+            ),
+            (
                 "vault.rooms.sharing",
                 crate::code_run::vault_read::request_schema::<RoomRefRequest>(),
             ),
@@ -14973,6 +14985,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.rooms.upkeep.pending" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.upkeep.voice" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.rooms.sharing" => {
             properties.insert(
                 "room_ref".to_owned(),
@@ -19994,6 +20020,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.host.hand" => {
             let _input: crate::workspace_roster::RoomHostHand = decode(value.clone())?;
         }
+        "vault.rooms.upkeep.pending" => {
+            let _input: crate::workspace_roster::RoomUpkeepPendingRequest = decode(value.clone())?;
+        }
+        "vault.rooms.upkeep.voice" => {
+            let _input: crate::workspace_roster::RoomUpkeepVoiceRequest = decode(value.clone())?;
+        }
         "vault.rooms.sharing" => {
             let _input: RoomRefRequest = decode(value.clone())?;
         }
@@ -22805,6 +22837,8 @@ pub fn invoke(
         "vault.rooms.host" => encode(vault_rooms_host(memory, decode(value)?)?),
         "vault.rooms.host.pin" => encode(vault_rooms_host_pin(memory, decode(value)?)?),
         "vault.rooms.host.hand" => encode(vault_rooms_host_hand(memory, decode(value)?)?),
+        "vault.rooms.upkeep.pending" => encode(vault_rooms_upkeep_pending(memory, decode(value)?)?),
+        "vault.rooms.upkeep.voice" => encode(vault_rooms_upkeep_voice(memory, decode(value)?)?),
         "vault.rooms.sharing" => encode(vault_rooms_sharing(memory, decode(value)?)?),
         "vault.companions.sharing.get" => {
             encode(vault_companions_sharing_get(memory, decode(value)?)?)
@@ -30044,6 +30078,18 @@ pub fn vault_rooms_host_hand(
     input: crate::workspace_roster::RoomHostHand,
 ) -> MemoryResult<crate::workspace_roster::RoomStanding> {
     memory.rooms_host_hand(&input)
+}
+pub fn vault_rooms_upkeep_pending(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::RoomUpkeepPendingRequest,
+) -> MemoryResult<Vec<crate::workspace_roster::RoomUpkeepNudge>> {
+    memory.rooms_upkeep_pending(&input)
+}
+pub fn vault_rooms_upkeep_voice(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::RoomUpkeepVoiceRequest,
+) -> MemoryResult<crate::workspace_roster::RoomUpkeepVoiceReceipt> {
+    memory.rooms_upkeep_voice(&input)
 }
 pub fn vault_rooms_sharing(
     memory: &Memory<'_>,
