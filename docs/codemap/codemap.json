@@ -36255,8 +36255,9 @@
       "const": 4,
       "crate-vis": 2,
       "enum": 6,
-      "fn": 11,
-      "struct": 15
+      "fn": 12,
+      "struct": 15,
+      "type": 1
      }
     },
     {
@@ -36450,6 +36451,7 @@
       "DecisionClass",
       "DecisionDial",
       "DecisionQuestion",
+      "DecisionQuestionInput",
       "DecisionReceipt",
       "DecisionRung",
       "DecisionTime",
@@ -36471,8 +36473,8 @@
      "surface": {
       "crate-vis": 4,
       "enum": 8,
-      "fn": 12,
-      "struct": 13
+      "fn": 13,
+      "struct": 14
      }
     },
     {
@@ -62929,7 +62931,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1160
+      "fn": 1161
      }
     },
     {
@@ -63960,7 +63962,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VoiceBankClipInput",
@@ -63969,6 +63971,7 @@
       "VoiceBankPackReceipt",
       "VoiceRenderConsentReceipt",
       "VoiceRenderConsentRequest",
+      "VoiceRenderLineageRequest",
       "VoiceTargetEvictReceipt",
       "VoiceTargetEvictRequest",
       "VoiceTargetProvisionRequest",
@@ -63977,12 +63980,12 @@
       "VoiceVendorEviction"
      ],
      "path": "src/task_verb/sdk_voice_bank.rs",
-     "purpose": "The owner's voice-bank rows (DOOR-143, e2e VOICE-02): `vault.voices.packs.put` banks a reference pack of the…",
+     "purpose": "The voice-bank rows (DOOR-143, e2e VOICE-02, FIX 4393, 4396): `vault.voices.packs.put` banks a reference…",
      "surface": {
       "enum": 1,
-      "fn": 5,
+      "fn": 7,
       "re-export": 1,
-      "struct": 11
+      "struct": 12
      }
     },
     {
@@ -66743,6 +66746,7 @@
       "VoiceRefFence",
       "VoiceRefOrigin",
       "VoiceRefPack",
+      "VoiceRefSubjectKind",
       "VoiceRegisterClip",
       "VoiceRenderConsent",
       "VoiceRenderDecision",
@@ -66754,10 +66758,26 @@
      "purpose": "Private per-vault voice reference bank",
      "surface": {
       "crate-vis": 5,
-      "enum": 1,
-      "fn": 10,
-      "re-export": 1,
+      "enum": 2,
+      "fn": 11,
+      "re-export": 3,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceBankActor",
+      "VoiceCreator"
+     ],
+     "path": "src/voice_identity/ref_bank/actor.rs",
+     "purpose": "Who acts on a voice through the bank's typed doors (FIX 4393)",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -66773,10 +66793,26 @@
       "VoiceTargetInspection"
      ],
      "path": "src/voice_identity/ref_bank/owner_acts.rs",
-     "purpose": "The owner's own doors onto the voice bank (DOOR-143, e2e VOICE-02)",
+     "purpose": "The typed doors onto the voice bank (DOOR-143, e2e VOICE-02, FIX 4393)",
      "surface": {
-      "fn": 6,
+      "fn": 7,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceDroppedTargetView",
+      "VoiceRenderConsentWrite",
+      "VoiceRenderEventReceipt",
+      "VoiceRenderEventView"
+     ],
+     "path": "src/voice_identity/ref_bank/render_history.rs",
+     "purpose": "A voice's render history (FIX 4396)",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 4
      }
     },
     {
@@ -71372,7 +71408,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
     "voice_identity": {
-     "files": 12,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71430,7 +71466,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4555,
+   "source_files": 4557,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81805,7 +81841,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1131
+      "fn": 1132
      }
     },
     {
@@ -83066,7 +83102,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1132
+      "fn": 1133
      }
     },
     {
@@ -87952,9 +87988,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/voice_bank_doors.rs",
-     "purpose": "The owner's voice-bank host doors (DOOR-143, e2e VOICE-02): `vault.voices.packs.put`, `.render_consent`…",
+     "purpose": "The voice-bank host doors (DOOR-143, e2e VOICE-02, FIX 4393, 4396): `vault.voices.packs.put`…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -99433,6 +99469,7 @@
       "DecisionClass",
       "DecisionDial",
       "DecisionQuestion",
+      "DecisionQuestionInput",
       "DecisionReceipt",
       "DecisionRung",
       "DecisionTime",
@@ -101058,7 +101095,8 @@
       "QuestionBackfillRequest",
       "QuestionCreateRequest",
       "QuestionCriteria",
-      "QuestionDefinition",
+      "QuestionDefinitionDecisionQuestion",
+      "QuestionDefinitionDecisionQuestionInput",
       "QuestionEditRequest",
       "QuestionMedia",
       "QuestionOutcomes",
@@ -102197,13 +102235,17 @@
       "VoiceClipSummary",
       "VoiceConsentBasis",
       "VoiceConsentState",
+      "VoiceDroppedTargetView",
       "VoiceIdentityView",
       "VoiceLineAtom",
       "VoicePackSummary",
       "VoiceRefOrigin",
+      "VoiceRefSubjectKind",
       "VoiceRenderConsentReceipt",
       "VoiceRenderConsentRequest",
       "VoiceRenderConsentView",
+      "VoiceRenderEventView",
+      "VoiceRenderLineageRequest",
       "VoiceTargetCloneView",
       "VoiceTargetEvictReceipt",
       "VoiceTargetEvictRequest",
@@ -102355,8 +102397,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 954,
-      "struct": 2972
+      "enum": 955,
+      "struct": 2977
      }
     },
     {
