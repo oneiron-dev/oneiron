@@ -25,6 +25,7 @@
 //! exactly the carrier identity its queued round selected.
 
 mod assembly;
+mod branch;
 pub(crate) mod branch_scope;
 mod call_labels;
 pub mod confession;
@@ -85,6 +86,7 @@ mod weave_lens;
 #[cfg(test)]
 mod tests;
 
+pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub(crate) use conflict::topic_key_canonical_bytes;
 pub use conflict::*;
 pub use executor::*;

@@ -144,7 +144,7 @@ impl ConsolidationExecutor<'_> {
         parsed: Vec<ParsedCandidate<'_>>,
         corrections: &[Correction],
         mut skipped: usize,
-        partition: &ConsolidationPartitionKey,
+        partition: &BranchAxes,
         resources: &BranchResources<'_>,
         attempt_id: crate::attempt_queue::AttemptId,
         now_ms: u64,
@@ -207,7 +207,7 @@ pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
 fn build_candidate(
     parsed: ParsedCandidate<'_>,
     correction: &Correction,
-    partition: &ConsolidationPartitionKey,
+    partition: &BranchAxes,
     resources: &BranchResources<'_>,
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
@@ -231,7 +231,7 @@ fn build_resolved(
     parsed: ParsedCandidate<'_>,
     corrects: Option<&crate::dreamer_consolidation::PriorHead>,
     decisions: &[KeptDecision],
-    partition: &ConsolidationPartitionKey,
+    partition: &BranchAxes,
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
 ) -> Result<super::super::evidence::ExtractedCandidate> {
@@ -252,7 +252,7 @@ fn resolve_proposal(
     parsed: ParsedCandidate<'_>,
     corrects: Option<&crate::dreamer_consolidation::PriorHead>,
     decisions: &[KeptDecision],
-    partition: &ConsolidationPartitionKey,
+    partition: &BranchAxes,
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
 ) -> Result<(

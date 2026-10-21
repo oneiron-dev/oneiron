@@ -16,10 +16,11 @@ use super::roles::{DREAMER_VERDICT_ROLE, RoleBackends, RoleCall};
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
+use super::branch::BranchAxes;
 use super::conflict::{ConflictIdentity, ConflictSet, candidate_facts, deterministic_claim_id};
 use super::failure_rules::{self, Stage};
 use super::gap::{ReflectionGap, ReflectionGapKind};
-use super::partition::{ConsolidationPartitionKey, decode_partition_payload};
+use super::partition::decode_partition_payload;
 use super::provenance::{
     ConsolidationProvenanceHop, ConsolidationSink, KeptDecision, PromotionCandidate,
     join_decisions, source_meet,
@@ -762,7 +763,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
 
         if attempt.status.payload.attempt_type == DREAMER_GAP_SCAN_ATTEMPT_TYPE {
             // Gap-scan child attempt: deterministic detectors + queue upsert.
-            let (_, turn_ids, _) = decode_partition_payload(&attempt.status.payload.input)?;
+            let turn_ids = decode_partition_payload(&attempt.status.payload.input)?.turn_ids();
             let mut working_set = Vec::new();
             for turn_id in &turn_ids {
                 let facts = read_turn_facts(ctx.vault, turn_id)?;

@@ -21582,6 +21582,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "BranchTurn",
+      "ConsolidationBranchPlan",
+      "ConversationPart"
+     ],
+     "path": "src/dreamer_consolidation/branch.rs",
+     "purpose": "One consolidation branch (FIX 7524): a nightly thing's turns across every conversation it appears in…",
+     "surface": {
+      "crate-vis": 16,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/branch_scope.rs",
      "purpose": "Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis",
@@ -21834,7 +21850,7 @@
      "surface": {
       "crate-vis": 26,
       "mod": 4,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -21865,6 +21881,16 @@
      "purpose": "Nightly fan-in over child proposals",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/nightly_merge/chunks.rs",
+     "purpose": "Which unlisted siblings a nightly merge fans in beside its listed children (FIX 7495, FIX 7524): a retry of…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -21958,9 +21984,24 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11,
-      "fn": 7,
+      "crate-vis": 10,
+      "fn": 6,
+      "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PartitionThing"
+     ],
+     "path": "src/dreamer_consolidation/partition/payload.rs",
+     "purpose": "The consolidation payload codec (FIX 7524): a branch's world and facet, the thing a nightly child is cut…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -22092,14 +22133,24 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 36,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resources/parts.rs",
+     "purpose": "A branch's declared sources (FIX 7524): every part's conversation and its queued TURNs, pinned at one revision",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -22613,7 +22664,27 @@
      "path": "src/dreamer_consolidation/wake_plan/chunks.rs",
      "purpose": "Rule 5 for a selection retry's source budget (L02-38): `max_sources` is a work size, never a total",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/wake_plan/retry.rs",
+     "purpose": "A selection retry's widening, part by part (FIX 7524)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/wake_plan/sources.rs",
+     "purpose": "A multi-part branch's parts at the wake's one pin (FIX 7524, Engine ruling B)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -24807,6 +24878,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/nightly/exposure.rs",
+     "purpose": "What each planned TURN's text may be read beside in another conversation (FIX 7524, Engine ruling C): its…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/nightly/things.rs",
@@ -69131,7 +69212,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 96,
+     "files": 102,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69173,7 +69254,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70174,9 +70255,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 182,
+   "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4455,
+   "source_files": 4462,
    "test_files": 902
   },
   "oneiron-android": {
