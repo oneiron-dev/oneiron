@@ -2,6 +2,8 @@
 //! Calls use the host's existing extraction and verdict roles; receipts and
 //! wake charges use the same durable step layer as consolidation.
 
+mod audit;
+
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -51,9 +53,17 @@ impl ConsolidationExecutor<'_> {
                 "sieve rungs do not accept a branch scope".into(),
             ));
         }
-        let input: RungInput =
-            serde_json::from_str(attempt.status.payload.input.as_str().ok_or_else(invalid)?)
-                .map_err(|_| invalid())?;
+        let payload = attempt.status.payload.input.as_str().ok_or_else(invalid)?;
+        let input: RungInput = match serde_json::from_str(payload) {
+            Ok(input) => input,
+            // An unflagged window's audit rides the same attempt type with
+            // its own input (OF-498f); every span input reads as before.
+            Err(_) => {
+                let window: sieve::WindowAuditInput =
+                    serde_json::from_str(payload).map_err(|_| invalid())?;
+                return self.run_sieve_window_audit(attempt, ctx, window).await;
+            }
+        };
         if let Some(completed_units) =
             sieve::rung_result_units(ctx.vault, attempt.status.attempt.id)?
         {
