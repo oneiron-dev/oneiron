@@ -1,5 +1,6 @@
 //! Owner policy and checker host doors. HTTP, SDK and MCP use the same
-//! unattenuated owner credential as the neighboring setting doors.
+//! unattenuated owner credential as the neighboring setting doors; a policy
+//! put also admits a person holding the policy power (FIX 8177).
 use std::sync::Arc;
 
 use oneiron::EntityId;
@@ -54,20 +55,48 @@ pub(crate) async fn vault_gate_policy_get(
     (answer, rows)
 }
 
+/// Who puts a gate policy manifest (FIX 8177): the owner under its proof,
+/// as before (`true`), or a person on their own verified slip (`false`),
+/// whose policy power the manifest writer finds again in its own write
+/// transaction; neither an Admin nor a Delegate label admits anyone by
+/// itself. Anyone else keeps the owner refusal it had.
+pub(super) fn policy_putter(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<(AuthenticatedOwner, bool)> {
+    super::owner_binding::facade_owner(server, auth, verb)
+        .map(|owner| (owner, true))
+        .or_else(|refusal| {
+            super::shared_act_doors::person(server, auth, verb)
+                .map(|person| (person, false))
+                .map_err(|_| refusal)
+        })
+}
+
 pub(crate) async fn vault_gate_policy_put(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: PolicyManifestPut,
 ) -> Listed<PolicyManifestReceipt> {
-    let answer = as_owner(
-        server,
-        auth,
-        "vault.gate.policy.put",
-        move |server, owner| {
-            policy_manifest_doors::put_policy_manifest_as_owner(server.vault(), owner, input)
-        },
-    )
-    .await;
+    const VERB: &str = "vault.gate.policy.put";
+    let answer = match policy_putter(server, auth, VERB) {
+        Err(refusal) => Err(refusal),
+        Ok((proof, owner)) => {
+            let server = Arc::clone(server);
+            tokio::task::spawn_blocking(move || {
+                let vault = server.vault();
+                let put = if owner {
+                    policy_manifest_doors::put_policy_manifest_as_owner(vault, &proof, input)
+                } else {
+                    policy_manifest_doors::put_policy_manifest_as_holder(vault, &proof, input)
+                };
+                put.map_err(MemoryError::from)
+            })
+            .await
+            .unwrap_or_else(|_| Err(internal(VERB)))
+        }
+    };
     let rows = answer
         .as_ref()
         .ok()

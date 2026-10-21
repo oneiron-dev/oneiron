@@ -1,0 +1,39 @@
+#!/bin/bash
+# The last step on the image tree ($BUILDROOT): drop what is per-machine,
+# secret or build-time state. Licence files (usr/share/doc/*/copyright) and
+# dpkg's database stay. mkosi then clamps every mtime to SOURCE_DATE_EPOCH.
+set -euo pipefail
+
+root=${BUILDROOT:?}
+
+# An empty machine-id: whatever starts the guest supplies one; none is baked in.
+: > "$root/etc/machine-id"
+if [ -f "$root/var/lib/dbus/machine-id" ] && [ ! -L "$root/var/lib/dbus/machine-id" ]; then
+  rm -f "$root/var/lib/dbus/machine-id"
+fi
+
+# Random seeds, credentials and keys.
+rm -f "$root/var/lib/systemd/random-seed" "$root/var/lib/random-seed" \
+      "$root/var/lib/systemd/credential.secret"
+rm -rf "$root/etc/credstore" "$root/etc/credstore.encrypted" \
+       "$root/usr/lib/credstore" "$root/usr/lib/credstore.encrypted"
+rm -f "$root"/etc/ssh/ssh_host_*_key "$root"/etc/ssh/ssh_host_*_key.pub \
+      "$root/etc/ssl/private/ssl-cert-snakeoil.key" "$root/etc/ssl/certs/ssl-cert-snakeoil.pem"
+rm -rf "$root/root/.gnupg" "$root/root/.cache" "$root/root/.bash_history" "$root/root/.wget-hsts"
+
+# Package-manager lists and caches, logs, the ldconfig aux cache, backups.
+for dir in var/lib/apt/lists var/cache/apt var/log var/cache/debconf/tmp; do
+  if [ -d "$root/$dir" ] && [ ! -L "$root/$dir" ]; then
+    find "$root/$dir" -mindepth 1 -delete
+  fi
+done
+rm -f "$root/var/cache/ldconfig/aux-cache" "$root"/var/cache/debconf/*-old \
+      "$root"/var/lib/dpkg/*-old "$root/etc/passwd-" "$root/etc/group-" \
+      "$root/etc/shadow-" "$root/etc/gshadow-"
+
+# Scratch: these are tmpfs mounts at run time.
+for dir in tmp var/tmp; do
+  if [ -d "$root/$dir" ] && [ ! -L "$root/$dir" ]; then
+    find "$root/$dir" -mindepth 1 -delete
+  fi
+done

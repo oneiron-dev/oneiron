@@ -138,14 +138,20 @@ where
                     &response.body,
                 ));
             }
-            parse_openai_chat_response(&response.body)
+            // The answer's inference receipts name the model this call was
+            // admitted for (FIX 8314); a worker's wire names none.
+            let mut answer = parse_openai_chat_response(&response.body)?;
+            answer.usage.bind_inference_model(&request.model);
+            Ok(answer)
         })
     }
 
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         let wire_request = build_openai_chat_request(&self.config, &request, true)?;
         let provider_stream = self.transport.stream(wire_request, lease)?;
-        Ok(LlmStream::new(OpenAiCompatLlmStream::new(provider_stream)))
+        Ok(LlmStream::new(
+            OpenAiCompatLlmStream::new(provider_stream).bound_to(request.model),
+        ))
     }
 }
 

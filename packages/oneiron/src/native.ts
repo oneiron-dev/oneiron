@@ -882,6 +882,7 @@ vaultVoicesRenderConsent(input: unknown): unknown
 vaultVoicesTargetsProvision(input: unknown): unknown
 vaultVoicesTargetsEvict(input: unknown): unknown
 vaultVoicesInspect(input: unknown): unknown
+vaultVoicesLineage(input: unknown): unknown
 aiTranscribe(input: unknown): unknown
 aiEmbed(input: unknown): unknown
 aiVideo(input: unknown): unknown
