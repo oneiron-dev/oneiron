@@ -27095,7 +27095,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 3,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -27111,11 +27111,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "EnteredRun"
+     ],
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 25,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -35930,7 +35934,7 @@
       "const": 1,
       "crate-vis": 9,
       "enum": 1,
-      "fn": 24,
+      "fn": 25,
       "re-export": 1,
       "struct": 3
      }
@@ -92248,17 +92252,18 @@
       "McpCodeExecutionHost",
       "McpCodeExecutionRequest",
       "McpCodeModeProvider",
-      "McpEngineNativeCodeHost"
+      "McpEngineNativeCodeHost",
+      "PlannedModel"
      ],
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 7,
-      "struct": 3,
+      "struct": 4,
       "trait": 2,
-      "type": 2
+      "type": 4
      }
     },
     {
@@ -92350,7 +92355,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 7,
       "struct": 1
      }
@@ -92854,7 +92859,7 @@
      "path": "src/models/raw.rs",
      "purpose": "The raw `/v1/llm` routes' models and their own meter",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -94564,7 +94569,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/server/resident_pump.rs",
@@ -95933,7 +95938,7 @@
     "server": {
      "files": 57,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Sync server state and maintenance jobs, split by concern"
     },
