@@ -177,7 +177,8 @@ impl Carrier {
     /// The host's session for the VM bound to `vault`, until the guest
     /// closes the connection. A hello naming another vault is refused; a
     /// backup label the welcomed guest names is kept for `vault` before
-    /// anything after it is taken.
+    /// anything after it is taken. Until one is, the session's backup sets
+    /// wait and its other kinds go on.
     pub(super) fn host_session<S: Read + Write>(
         &mut self,
         link: &mut Link<S>,
@@ -217,11 +218,12 @@ impl Carrier {
             wire_revision: VM_OUTBOX_WIRE_REVISION,
         })?;
         link.flush()?;
+        self.await_backup_label();
         loop {
             match link.read()? {
                 None => return Ok(()),
                 Some(VmOutboxFrame::BackupRegistered { label }) => {
-                    self.bind_backup_label(vault, label)?;
+                    self.bind_backup_label(vault, label);
                 }
                 Some(VmOutboxFrame::Transfer(first)) => self.receive_set(link, first)?,
                 Some(VmOutboxFrame::Pull) => {
@@ -486,7 +488,8 @@ impl Carrier {
 
     /// The answer `transfer` gets without a change here, if it gets one: a
     /// replay of one taken before, one a newer change already passed, or one
-    /// with nowhere to go yet.
+    /// with nowhere to go yet, a backup set's while the session's backup
+    /// label is not kept included.
     fn decide(
         &self,
         transfer: &VmOutboxDescriptor,
@@ -499,6 +502,9 @@ impl Carrier {
                 "the registered backup plan",
                 "this end carries no backup of that label yet",
             ));
+        }
+        if let Some(waits) = self.backup_waits(transfer.kind) {
+            return Some(waits.clone());
         }
         let record = self.store.get(transfer.kind, &transfer.member);
         if let Some(received) = &record.received

@@ -38,7 +38,7 @@ pub use self::host::{VmOutboxAttachment, VmOutboxHostRoots, read_vm_backup_label
 
 use self::local::Owner;
 use self::store::Store;
-use oneiron_vault_contract::vm_outbox::{VmOutboxKind, VmOutboxSide};
+use oneiron_vault_contract::vm_outbox::{VmOutboxKind, VmOutboxOutcome, VmOutboxSide};
 use std::collections::HashMap;
 use std::fs::File;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -79,6 +79,10 @@ struct Carrier {
     said: HashMap<(VmOutboxKind, String), String>,
     /// When each set the other end deferred goes again, and its step.
     paced: HashMap<(VmOutboxKind, String), (Instant, Duration)>,
+    /// The host's, for its session: why the backup sets wait while no
+    /// backup label the guest named this session is kept; `None` once one
+    /// is, and always on the guest.
+    backup_wait: Option<VmOutboxOutcome>,
 }
 
 impl Carrier {
@@ -97,6 +101,7 @@ impl Carrier {
             gate,
             said: HashMap::new(),
             paced: HashMap::new(),
+            backup_wait: None,
         }
     }
 

@@ -15,7 +15,9 @@
 //! in the carrier's records, for the vault the attachment is bound to, and
 //! [`read_vm_backup_label`] reads it (FIX 7046). It proves the label the
 //! expected VM's carrier reported, not a signed fact of the backups: a node
-//! still checks each held artifact's commitment against its own pins.
+//! still checks each held artifact's commitment against its own pins. Until
+//! a session keeps the label its guest names, that session's backup sets
+//! wait, deferred, and its other kinds go on (FIX 7127).
 
 use super::local::{Owner, make_dir_at, open_dir_path};
 use super::store::{self, BackupLabelBinding, Store};
@@ -23,7 +25,9 @@ use super::transfer::Link;
 use super::{Carrier, Gate, Mode, Roots};
 use crate::managed::listener::bind_unix_socket;
 use oneiron_vault_contract::backup_handoff::{BACKUP_HANDOFF_DIR, backup_handoff_dir};
-use oneiron_vault_contract::vm_outbox::{VmOutboxKind, VmOutboxSide};
+use oneiron_vault_contract::vm_outbox::{
+    VmOutboxDeferral, VmOutboxKind, VmOutboxOutcome, VmOutboxSide,
+};
 use serde::Deserialize;
 use std::fs::File;
 use std::os::unix::fs::PermissionsExt;
@@ -33,6 +37,9 @@ use std::time::Duration;
 
 /// A failed accept is retried after this pause rather than in a hot loop.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
+/// What a backup label binding's wait is said under: its record's name,
+/// which no backup member's can be.
+const BINDING_SAID: &str = "backup-label.json";
 
 /// Where the host keeps one VM's outbox, kind by kind: the trees its own
 /// shippers already read, and the carrier's records. A kind left out is one
@@ -197,25 +204,91 @@ fn valid_backup_label(label: &str) -> bool {
 }
 
 impl Carrier {
-    /// Keeps `label`, which the guest named as its engine's registered
-    /// backup label, for `vault`, the attachment's own, before the session
-    /// goes on. A label the guest's endpoint would never register, or a
-    /// record that cannot be written, ends the session; the guest names it
-    /// again on its next. A draining end records nothing new.
-    pub(super) fn bind_backup_label(&mut self, vault: &str, label: String) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            valid_backup_label(&label),
-            "the guest named a backup label that is not one plain path part"
-        );
-        let gate = Arc::clone(&self.gate);
-        let held = gate.hold();
-        if *held != Mode::Draining {
-            self.store.bind_backup_label(BackupLabelBinding {
-                vault: vault.to_owned(),
-                label,
-            })?;
-        }
-        drop(held);
-        Ok(())
+    /// Opens a session's wait for its backup label: the backup sets wait
+    /// until the guest names one this session keeps, whatever an earlier
+    /// session kept.
+    pub(super) fn await_backup_label(&mut self) {
+        self.backup_wait = Some(VmOutboxOutcome::deferred(
+            VmOutboxDeferral::TargetUnavailable,
+            "the guest's backup label registration",
+            "the guest has not named a backup label this session kept",
+        ));
     }
+
+    /// Why `kind`'s sets wait in this session, when it is a backup kind and
+    /// no label the guest named this session is kept: such a set is taken
+    /// whole and answered with this, and none is sent. `None` on the guest,
+    /// whose sets never wait on it.
+    pub(super) fn backup_waits(&self, kind: VmOutboxKind) -> Option<&VmOutboxOutcome> {
+        match kind {
+            VmOutboxKind::Backup | VmOutboxKind::BackupStageAck => self.backup_wait.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Keeps `label`, which the guest named as its engine's registered
+    /// backup label, for `vault`, the attachment's own, and ends the
+    /// session's wait for one. A label the guest's endpoint would never
+    /// register, or a record that cannot be written, keeps the backup sets
+    /// waiting, said once, while the session goes on; the guest names it
+    /// again on its next turn. A record kept for an earlier label is not
+    /// this one's. A draining end records nothing new, so its sets wait too.
+    pub(super) fn bind_backup_label(&mut self, vault: &str, label: String) {
+        let waits = if valid_backup_label(&label) {
+            let gate = Arc::clone(&self.gate);
+            let held = gate.hold();
+            let written = if *held == Mode::Draining {
+                Some(VmOutboxOutcome::deferred(
+                    VmOutboxDeferral::Draining,
+                    "this end's stop",
+                    "the carrier records nothing new while it stops",
+                ))
+            } else {
+                self.store
+                    .bind_backup_label(BackupLabelBinding {
+                        vault: vault.to_owned(),
+                        label,
+                    })
+                    .err()
+                    .map(|error| binding_outcome(&error))
+            };
+            drop(held);
+            written
+        } else {
+            Some(VmOutboxOutcome::deferred(
+                VmOutboxDeferral::TargetUnavailable,
+                "the guest's backup label",
+                "the guest named a backup label that is not one plain path part",
+            ))
+        };
+        match &waits {
+            Some(VmOutboxOutcome::Deferred {
+                code,
+                bound,
+                detail,
+            }) => self.say(
+                VmOutboxKind::Backup,
+                BINDING_SAID,
+                &format!("its backup label is not kept ({code:?}) on {bound}: {detail}"),
+            ),
+            _ => self.settled(VmOutboxKind::Backup, BINDING_SAID),
+        }
+        self.backup_wait = waits;
+    }
+}
+
+/// A binding record that did not write, as a deferral naming its bound.
+fn binding_outcome(error: &std::io::Error) -> VmOutboxOutcome {
+    if matches!(error.raw_os_error(), Some(libc::ENOSPC | libc::EDQUOT)) {
+        return VmOutboxOutcome::deferred(
+            VmOutboxDeferral::Capacity,
+            "free space on the host's carrier record filesystem",
+            "the filesystem is full; the backup sets are kept",
+        );
+    }
+    VmOutboxOutcome::deferred(
+        VmOutboxDeferral::Io,
+        "the host's backup label record",
+        &error.to_string(),
+    )
 }
