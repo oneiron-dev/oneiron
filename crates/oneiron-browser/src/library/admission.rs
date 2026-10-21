@@ -79,8 +79,12 @@ pub enum AdmissionRefusal {
     },
     /// No fresh guest ran the replay: the host gives none, or one did not
     /// start (`start`), or did not take the carried cookies (`cookies`).
-    /// `code` is the browser's refusal code there.
-    FreshGuest { stage: SwitchStage, code: String },
+    /// `code` is the browser's refusal code there, and `detail` its words.
+    FreshGuest {
+        stage: SwitchStage,
+        code: String,
+        detail: String,
+    },
     /// The library refused the `supersedes` link to `workflow`.
     Supersedes {
         workflow: String,

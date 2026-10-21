@@ -19575,6 +19575,7 @@ class AdmissionRefusalFreshGuest(TypedDict):
     cause: Literal["fresh_guest"]
     stage: SwitchStage
     code: str
+    detail: str
 class AdmissionRefusalSupersedes(TypedDict):
     cause: Literal["supersedes"]
     workflow: str

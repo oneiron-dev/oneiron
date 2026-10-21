@@ -297,26 +297,26 @@ pub enum Filing {
     Refused(SupersedeRefusal),
 }
 
-/// A program a `supersedes` link names, as its site's library holds it.
-enum Named {
+/// The program a `supersedes` link names, as its site's library holds it.
+enum Predecessor {
     Live(WorkflowRecord),
     Retired(RetiredWorkflow),
 }
 
 /// The program `id` names among `site`'s, live or retired, in `txn`.
-fn named_in_txn(
+fn predecessor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     site: &str,
     id: EntityId,
-) -> Result<Option<Named>> {
+) -> Result<Option<Predecessor>> {
     if let Some(record) = WORKFLOWS.get(&vault.store, txn, &(site_key(site), id))? {
-        return Ok(Some(Named::Live(record)));
+        return Ok(Some(Predecessor::Live(record)));
     }
     let retired = RETIRED.get(&vault.store, txn, &id)?;
     Ok(retired
         .filter(|trace| trace.record.site == site)
-        .map(Named::Retired))
+        .map(Predecessor::Retired))
 }
 
 /// Files `program` for `site` once both checks passed (`proof`), from
@@ -369,9 +369,9 @@ pub fn file_workflow(
         decisions,
     )?;
     vault.with_write_txn_grouped(|wtxn| {
-        let named = match supersedes {
-            Some(old) => match named_in_txn(vault, wtxn, site, old)? {
-                Some(named) => Some(named),
+        let predecessor = match supersedes {
+            Some(old) => match predecessor_in_txn(vault, wtxn, site, old)? {
+                Some(predecessor) => Some(predecessor),
                 None => return Ok(Filing::Refused(SupersedeRefusal::NotOnSite)),
             },
             None => None,
@@ -392,22 +392,24 @@ pub fn file_workflow(
                 ..record
             };
             WORKFLOWS.put(vault, wtxn, &(site_key(site), record.id), &record)?;
-            let superseded = named.map(|_| SupersedeOutcome::Dropped);
+            let superseded = predecessor.map(|_| SupersedeOutcome::Dropped);
             return Ok(Filing::Filed {
                 id: record.id,
                 superseded,
             });
         }
         let id = EntityId::now();
-        let (mut recent, retire, superseded) = match named {
-            Some(Named::Live(old)) => {
+        let (mut recent, retire, superseded) = match predecessor {
+            Some(Predecessor::Live(old)) => {
                 if RETIRE_FILER_ONLY && !old.filed_by.is(by) {
                     return Ok(Filing::Refused(SupersedeRefusal::NotFiler));
                 }
                 let recent = old.recent.clone();
                 (recent, Some(old), Some(SupersedeOutcome::Retired))
             }
-            Some(Named::Retired(old)) => (old.record.recent, None, Some(SupersedeOutcome::Linked)),
+            Some(Predecessor::Retired(old)) => {
+                (old.record.recent, None, Some(SupersedeOutcome::Linked))
+            }
             None => (Vec::new(), None, None),
         };
         if superseded.is_some() {

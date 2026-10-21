@@ -3857,7 +3857,7 @@ declare namespace Sdk {
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null };
   type WorkflowCheck = "solved" | "replay" | "held_out" | "fresh_guest" | "supersedes";
   type SupersedeRefusal = "malformed" | "not_on_site" | "same_record" | "not_filer";
-  type AdmissionRefusal = { cause: "held_out"; used: string[]; missing: string[]; unknown: string[]; same: string[] } | { cause: "fresh_guest"; stage: SwitchStage; code: string } | { cause: "supersedes"; workflow: string; why: SupersedeRefusal };
+  type AdmissionRefusal = { cause: "held_out"; used: string[]; missing: string[]; unknown: string[]; same: string[] } | { cause: "fresh_guest"; stage: SwitchStage; code: string; detail: string } | { cause: "supersedes"; workflow: string; why: SupersedeRefusal };
   type ReplayGuest = { engine: BrowserEngine; carried: SwitchCarried[]; not_carried: SwitchNotCarried[] };
   type SupersedeOutcome = "retired" | "linked" | "dropped";
   type ProposeOutput = { admitted: boolean; workflow?: string | null; refused_by?: WorkflowCheck | null; refusal?: AdmissionRefusal | null; unmet?: number[]; replay?: BatchOutput | null; replay_guest?: ReplayGuest | null; superseded?: SupersedeOutcome | null };

@@ -7659,7 +7659,7 @@ export type WorkflowCheck = "solved" | "replay" | "held_out" | "fresh_guest" | "
 /** `oneiron_browser::library::admission::SupersedeRefusal` */
 export type SupersedeRefusal = "malformed" | "not_on_site" | "same_record" | "not_filer"
 /** `oneiron_browser::library::admission::AdmissionRefusal` */
-export type AdmissionRefusal = { cause: "held_out"; used: string[]; missing: string[]; unknown: string[]; same: string[] } | { cause: "fresh_guest"; stage: SwitchStage; code: string } | { cause: "supersedes"; workflow: string; why: SupersedeRefusal }
+export type AdmissionRefusal = { cause: "held_out"; used: string[]; missing: string[]; unknown: string[]; same: string[] } | { cause: "fresh_guest"; stage: SwitchStage; code: string; detail: string } | { cause: "supersedes"; workflow: string; why: SupersedeRefusal }
 /** `oneiron_browser::library::admission::ReplayGuest` */
 export type ReplayGuest = { engine: BrowserEngine; carried: SwitchCarried[]; not_carried: SwitchNotCarried[] }
 /** `oneiron_browser::library::admission::SupersedeOutcome` */

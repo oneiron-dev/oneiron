@@ -604,8 +604,11 @@ pub(crate) fn check_solved<D: BrowserDriver + ?Sized>(
 /// A proposal's answer when no fresh guest ran its replay: the host gives
 /// none, or one did not start or take the carried cookies, at `stage`.
 pub(crate) fn no_fresh_guest(stage: SwitchStage, error: &BrowserError) -> ProposeOutput {
-    let code = error.code().to_owned();
-    let refusal = AdmissionRefusal::FreshGuest { stage, code };
+    let refusal = AdmissionRefusal::FreshGuest {
+        stage,
+        code: error.code().to_owned(),
+        detail: error.to_string(),
+    };
     refused(WorkflowCheck::FreshGuest, Some(refusal))
 }
 

@@ -17,6 +17,7 @@
 //! to the proposing page, nor to another engine.
 
 use super::BrowserSession;
+use super::storage::OriginSnapshots;
 use super::switch::{Halt, hold, seed_state};
 use crate::library::{check_solved, no_fresh_guest, replay_and_file};
 use crate::request::BrowserRequestHandler;
@@ -71,8 +72,18 @@ fn fresh_guest_state_policy(
 }
 
 impl BrowserSession {
-    /// Gives the session the host's start path for a proposal's fresh guest.
+    /// Gives the session the host's start path for a proposal's fresh
+    /// guest. A session that kept no storage snapshots (its host gave it no
+    /// engine-switch starter) keeps them from now on, charged to the fresh
+    /// guest's line, so an admission carries its visited origins' stores as
+    /// a switch would; `switch_engine` still needs the starter.
     pub fn set_fresh_guest(&mut self, fresh: Box<dyn FreshGuest>) {
+        if self.snapshots.is_none() {
+            let collector = OriginSnapshots::collector(fresh.state_charge());
+            OriginSnapshots::landed(&collector, self.receipt_seq);
+            self.driver.collect(OriginSnapshots::sink(&collector));
+            self.snapshots = Some(collector);
+        }
         self.fresh = Some(fresh);
     }
 

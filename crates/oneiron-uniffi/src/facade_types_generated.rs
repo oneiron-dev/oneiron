@@ -60513,6 +60513,8 @@ pub enum AdmissionRefusal {
         stage: SwitchStage,
         #[serde(rename = "code")]
         code: String,
+        #[serde(rename = "detail")]
+        detail: String,
     },
     #[serde(rename = "supersedes")]
     Supersedes {
