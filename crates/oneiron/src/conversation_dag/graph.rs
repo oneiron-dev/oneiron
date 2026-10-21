@@ -2,9 +2,9 @@
 
 use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, RegistryError, Result};
-use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -151,6 +151,70 @@ pub(crate) fn edge_ids(
     Ok(ids)
 }
 
+/// Starts counting one DAG walk of `scope`, its conversation or, for a walk
+/// that knows none, the record it starts from (rule 5). The walk reads every
+/// row it needs in its caller's snapshot; past its threshold row it asks
+/// whether everything is okay. No count refuses it.
+pub(crate) fn walk_count(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    scope: &EntityId,
+) -> Result<ScanCount> {
+    ScanCount::start(store, txn, EngineScan::DagWalkRecords, scope.as_bytes())
+}
+
+fn edge_direction(incoming: bool) -> EdgeDirection {
+    if incoming {
+        EdgeDirection::In
+    } else {
+        EdgeDirection::Out
+    }
+}
+
+/// Every `kind` edge of `id`, one way, however many: the complete read a DAG
+/// walk makes, each row checked as [`edge_ids`] checks it and counted in
+/// `walk`.
+pub(crate) fn all_edge_ids(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    kind: EdgeKind,
+    incoming: bool,
+    walk: &mut ScanCount,
+) -> Result<Vec<EntityId>> {
+    let mut ids = Vec::new();
+    for entry in store.port_edges(txn, id, edge_direction(incoming), Some(kind), None)? {
+        walk.row();
+        let edge = entry?;
+        if edge.kind != kind {
+            return Err(Error::CorruptedIndex("conversation DAG edge"));
+        }
+        ids.push(edge.target);
+    }
+    Ok(ids)
+}
+
+/// Whether `id` has any `kind` edge, one way. The first row answers, checked
+/// as [`edge_ids`] checks each row.
+pub(crate) fn has_edge(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    kind: EdgeKind,
+    incoming: bool,
+) -> Result<bool> {
+    let Some(entry) = store
+        .port_edges(txn, id, edge_direction(incoming), Some(kind), None)?
+        .next()
+    else {
+        return Ok(false);
+    };
+    if entry?.kind != kind {
+        return Err(Error::CorruptedIndex("conversation DAG edge"));
+    }
+    Ok(true)
+}
+
 pub(crate) fn conversation_of(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -215,7 +279,8 @@ pub(crate) fn parent(
 }
 
 /// Walks backwards from a leaf, proving live membership, cardinality and
-/// acyclicity at every step. No partial result is ever returned.
+/// acyclicity at every step. It reads the whole chain, however long, and
+/// counts it (rule 5). No partial result is ever returned.
 pub(crate) fn chain(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -229,13 +294,13 @@ pub(crate) fn chain(
         if !seen.insert(id) {
             return Err(RegistryError::CycleDetected.into());
         }
-        if records.len() >= MAX_ANCESTOR_DEPTH {
-            return Err(Error::IndexOverflow("conversation_dag_walk"));
-        }
         require_member(store, txn, conversation, &id)?;
         records.push(id);
         cursor = parent(store, txn, &id)?;
     }
+    let mut walk = walk_count(store, txn, conversation)?;
+    walk.rows(records.len());
+    walk.defer(store);
     records.reverse();
     Ok(records)
 }

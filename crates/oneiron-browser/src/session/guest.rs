@@ -14,6 +14,7 @@ use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
 use crate::request::Custody;
 use crate::retention::HandleRetention;
+use crate::secret::Secrets;
 use oneiron_container::{EgressRelay, SessionLease, SessionManifest, SessionTransport};
 use std::sync::Arc;
 use std::time::Duration;
@@ -52,13 +53,16 @@ impl EngineGuest {
     /// backend proved: its pipe on the engine's transport, behind the run's
     /// relay or the host's request handler the session's `custody` holds
     /// (FIX 7122), keeping its pages' storage reads through `sink` when the
-    /// session keeps snapshots, and its first page readied as every page is.
+    /// session keeps snapshots, holding the secrets its reads find through
+    /// the session's `secrets` (FIX 8028), and its first page readied as
+    /// every page is.
     pub(crate) fn attach(
         engine: BrowserEngine,
         started: StartedGuest,
         wait_cap: Duration,
         sink: Option<Sink>,
         custody: Custody,
+        secrets: Secrets,
     ) -> Result<Self, BrowserError> {
         let StartedGuest {
             transport,
@@ -80,7 +84,7 @@ impl EngineGuest {
         if let Some(sink) = sink {
             pipe.collect(sink);
         }
-        let driver = CdpDriver::attach(pipe, engine, wait_cap, retention)?;
+        let driver = CdpDriver::attach(pipe, engine, wait_cap, retention, secrets)?;
         Ok(Self {
             driver,
             lease,

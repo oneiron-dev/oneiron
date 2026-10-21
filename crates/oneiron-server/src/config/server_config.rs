@@ -153,6 +153,10 @@ pub struct SyncServerConfig {
     /// hub or name) adds to it. Empty: every pack organ build is third
     /// party; a seal organ program the host names stays first party.
     pub trusted_organ_builds: std::collections::BTreeSet<String>,
+    /// The private origins a managed node's egress guard admits, from
+    /// `--hosted-private-origin` in managed boot alone (FIX 7657); empty
+    /// everywhere else, and no config file, settings file or environment sets it.
+    pub hosted_private_origins: std::collections::BTreeSet<oneiron::web_fetch::HostedPrivateOrigin>,
 }
 
 /// Who authenticates the requests a server takes, as its serve entry
@@ -210,6 +214,7 @@ impl Default for SyncServerConfig {
             ingress: IngressAuth::Configured,
             merge_queue: None,
             trusted_organ_builds: std::collections::BTreeSet::new(),
+            hosted_private_origins: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -295,6 +300,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("ingress", &self.ingress)
             .field("merge_queue", &self.merge_queue)
             .field("trusted_organ_builds", &self.trusted_organ_builds)
+            .field("hosted_private_origins", &self.hosted_private_origins)
             .finish()
     }
 }
@@ -697,6 +703,8 @@ impl ServeConfig {
             ingress: IngressAuth::Configured,
             merge_queue: self.merge_queue.clone(),
             trusted_organ_builds: self.trusted_organ_builds.clone(),
+            // Managed boot alone sets it (FIX 7657).
+            hosted_private_origins: std::collections::BTreeSet::new(),
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
             tracing::warn!(

@@ -241,6 +241,21 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// held, never that a guest started, and no fact refuses the vault's start.
 /// This version stays 3.
 ///
+/// Hosted private origins (FIX 7657): `--hosted-private-origin`, repeatable,
+/// managed only, names one private origin a hosted node's web fetch may
+/// reach, `http|https://<dns-name>[:port]` (the port the scheme's own by
+/// default; a name of two or more labels, never an address or a wildcard;
+/// no path, query, fragment or credentials). At and after the engine
+/// revision it merged in, a managed node's fetch refuses RFC1918, CGNAT
+/// 100.64.0.0/10 and ULA fc00::/7 addresses typed `hosted_private_network`
+/// except at a listed origin, and never admits infrastructure. It carries a
+/// build floor, at that revision, with no `Ping` revision field: an engine
+/// before it refuses the flag before it touches anything, and one at or
+/// after it refuses an entry that does not parse, so a supervisor passes it
+/// only with installed engines at or after the floor. No flag means no
+/// private origin. A vault VM has no config-drive file for it. This version
+/// stays 3.
+///
 /// Browser readiness on `Ping` (FIX 7670): every
 /// [`CtlResponse::Ping`](crate::CtlResponse::Ping) requires `browser`
 /// ([`BrowserReadiness`](crate::BrowserReadiness)), how the vault's browser

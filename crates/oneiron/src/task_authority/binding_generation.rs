@@ -16,72 +16,42 @@ use crate::error::{Error, RecordError, Result};
 /// One binding's identity, a digest of its key, epoch, actor and class.
 pub type BindingId = [u8; 32];
 
-/// Most bindings one generation names. A party holding more live bindings
-/// when its consult is minted keeps the lowest identities, which only ever
-/// narrows the bindings that act as it.
-pub const MAX_GENERATION_BINDINGS: usize = 8;
-
-/// The live bindings a consult party held when the consult was minted. The
-/// party acts as itself while it still holds one of them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The live bindings a consult party held when the consult was minted, every
+/// one of them, in ascending order. The party acts as itself while it still
+/// holds one of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindingGeneration {
-    len: u8,
-    bindings: [BindingId; MAX_GENERATION_BINDINGS],
+    bindings: Vec<BindingId>,
 }
 
 impl BindingGeneration {
     const EMPTY: Self = Self {
-        len: 0,
-        bindings: [[0; 32]; MAX_GENERATION_BINDINGS],
+        bindings: Vec::new(),
     };
 
-    /// The generation naming `bindings`, or `None` when there are none.
+    /// The generation naming every one of `bindings`, or `None` when there
+    /// are none.
     pub(crate) fn from_bindings(bindings: impl IntoIterator<Item = BindingId>) -> Option<Self> {
         let sorted: BTreeSet<BindingId> = bindings.into_iter().collect();
-        let mut generation = Self::EMPTY;
-        for binding in sorted.into_iter().take(MAX_GENERATION_BINDINGS) {
-            generation.push(binding);
-        }
-        (generation.len > 0).then_some(generation)
+        (!sorted.is_empty()).then(|| Self {
+            bindings: sorted.into_iter().collect(),
+        })
     }
 
-    /// [`Self::from_bindings`] for bindings of several classes: at the cap,
-    /// the lowest binding of each class is kept first, so no class the party
-    /// holds is left out, and the rest fill in lowest first.
+    /// [`Self::from_bindings`] for bindings of several classes: every one is
+    /// named, so no class the party holds is left out.
     pub(crate) fn from_classed_bindings(bindings: &[(&str, BindingId)]) -> Option<Self> {
-        let mut held = bindings.to_vec();
-        held.sort_by_key(|(_, binding)| *binding);
-        let mut kept: Vec<BindingId> = Vec::new();
-        let mut classes: BTreeSet<&str> = BTreeSet::new();
-        for (class, binding) in &held {
-            if classes.insert(*class) {
-                kept.push(*binding);
-            }
-        }
-        for (_, binding) in &held {
-            if kept.len() >= MAX_GENERATION_BINDINGS {
-                break;
-            }
-            if !kept.contains(binding) {
-                kept.push(*binding);
-            }
-        }
-        Self::from_bindings(kept)
-    }
-
-    fn push(&mut self, binding: BindingId) {
-        self.bindings[usize::from(self.len)] = binding;
-        self.len += 1;
+        Self::from_bindings(bindings.iter().map(|(_, binding)| *binding))
     }
 
     /// The bindings named, in ascending order.
     #[must_use]
     pub fn bindings(&self) -> &[BindingId] {
-        &self.bindings[..usize::from(self.len)]
+        &self.bindings
     }
 
     pub(crate) fn names(&self, binding: &BindingId) -> bool {
-        self.bindings().contains(binding)
+        self.bindings.binary_search(binding).is_ok()
     }
 
     /// Two facts for the same party converge on the bindings both name. Two
@@ -91,13 +61,13 @@ impl BindingGeneration {
     pub(crate) fn meet(held: Option<Self>, seen: Option<Self>) -> Option<Self> {
         match (held, seen) {
             (None, None) => None,
-            (Some(held), Some(seen)) => {
-                let mut met = Self::EMPTY;
-                for binding in held.bindings().iter().filter(|binding| seen.names(binding)) {
-                    met.push(*binding);
-                }
-                Some(met)
-            }
+            (Some(held), Some(seen)) => Some(Self {
+                bindings: held
+                    .bindings
+                    .into_iter()
+                    .filter(|binding| seen.names(binding))
+                    .collect(),
+            }),
             // One fact recorded no binding and the other some: hold to the
             // stricter, which none of them satisfies.
             _ => Some(Self::EMPTY),
@@ -113,8 +83,8 @@ impl BindingGeneration {
         )
     }
 
-    /// Strict: one to [`MAX_GENERATION_BINDINGS`] 32-byte binaries in
-    /// strictly ascending order, so one generation has one encoding.
+    /// Strict: one or more 32-byte binaries in strictly ascending order, so
+    /// one generation has one encoding. Every one is read, however many.
     pub(super) fn decode(value: &Value) -> Result<Self> {
         let invalid = || {
             Error::Record(RecordError::InvalidTaskBody(
@@ -122,25 +92,21 @@ impl BindingGeneration {
             ))
         };
         let items = value.as_array().ok_or_else(invalid)?;
-        if items.is_empty() || items.len() > MAX_GENERATION_BINDINGS {
+        if items.is_empty() {
             return Err(invalid());
         }
-        let mut generation = Self::EMPTY;
+        let mut bindings: Vec<BindingId> = Vec::with_capacity(items.len());
         for item in items {
             // Binary only: `Value::as_slice` would also read a string's bytes.
             let Value::Binary(bytes) = item else {
                 return Err(invalid());
             };
             let binding = BindingId::try_from(bytes.as_slice()).map_err(|_| invalid())?;
-            if generation
-                .bindings()
-                .last()
-                .is_some_and(|last| *last >= binding)
-            {
+            if bindings.last().is_some_and(|last| *last >= binding) {
                 return Err(invalid());
             }
-            generation.push(binding);
+            bindings.push(binding);
         }
-        Ok(generation)
+        Ok(Self { bindings })
     }
 }

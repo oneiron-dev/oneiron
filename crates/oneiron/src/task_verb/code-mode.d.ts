@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1179 code-mode rows (1139 host rows, 40 run rows), 3975 declarations.
+// Census: 1179 code-mode rows (1139 host rows, 40 run rows), 3981 declarations.
 // Replies: 1059 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -111,7 +111,7 @@ declare namespace Sdk {
   type AgentHealthSignal = "loop" | "failed_check_repeat" | "cost_spike" | "long_wait" | "silent" | "duplicate_work" | "unsupported_done" | "misalignment";
   type AgentHealthTone = "struggling" | "off_course" | "concern";
   type AgentHealthConfidence = "high" | "low";
-  type AgentHealthCounter = "results_changed" | "refused_calls" | "queue_wait" | "few_runs" | "environment_cause";
+  type AgentHealthCounter = "results_changed" | "refused_calls" | "queue_wait" | "few_runs" | "environment_cause" | "other_session_active";
   type AgentHealthMove = "note" | "steer" | "budget" | "reassign" | "ask_coach" | "hold";
   type AgentHealthOutcome = "open" | "confirmed" | "dismissed" | "unresolved";
   type HealthBriefPin = { task: EntityId; rev: number; digest: string; observed_at: number };
@@ -125,7 +125,9 @@ declare namespace Sdk {
   type AgentHealthCoachAsk = { asked_by: EntityId; asked_at: number; diagnostic?: EntityId | null; attempt: string; observed_brief?: HealthBriefPin | null; answer?: AgentHealthCoachAnswer | null; application?: AgentHealthCoachApplication | null };
   type HealthReviewReceipt = { receipt: string; outcome: AgentHealthOutcome; by: EntityId; by_owner: boolean; at: number; reviewer: string; dial: number; measured: number; diagnostics: EntityId[]; evidence: EntityId[]; observed_brief?: HealthBriefPin | null; label?: boolean | null; projected: boolean };
   type HealthCauseSource = { source: EntityId; receipt: string; skill?: EntityId | null; label: string; share: number; judge_revision?: string | null; displaced_by?: string | null };
-  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[] };
+  type HealthOtherSession = { attempt: EntityId; generation: number; at: number };
+  type HealthSilenceActivity = { own_call_at?: number | null; own_step_at?: number | null; actor_only_at?: number | null; other_session?: HealthOtherSession | null };
+  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null };
   type RunTreeStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned";
   type RunTreeTimestamps = { created_at: number; updated_at: number };
   type RunTreeFailure = { reason: string };
@@ -338,7 +340,7 @@ declare namespace Sdk {
   type WorkflowBinding = { handle: string; args?: Record<string, string> };
   type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[]; workflow?: WorkflowBinding | null };
   type Criterion = { text: string; evidence_ref?: EntityId | null };
-  type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
+  type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean };
   type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[] };
   type EscalationTrigger = "blocked" | "criteria_unmet" | "scope_widen" | "spend_over" | "deadline" | "brief_revised" | "retry_requested";
   type Reversibility = "reversible_read" | "outbound_effect";
@@ -3090,7 +3092,10 @@ declare namespace Sdk {
   type RowGapField = "href" | "level" | "datetime";
   type RowGapReason = "no_dom_node" | "stale_node" | "outside_dom_read" | "read_failed" | "unresolvable";
   type RowFieldGap = { field: RowGapField; reason: RowGapReason };
-  type Row = { ref: string; locator: string; role: string; name: string; value?: string | null; states?: string[]; depth: number; href?: string | null; level?: number | null; datetimes?: string[]; unavailable?: RowFieldGap[] };
+  type SecretKind = "card" | "cvv" | "otp" | "password";
+  type SecretNote = "concealed" | "no_custody" | "refused";
+  type RowSecret = { kind: SecretKind; handle?: string | null; note?: SecretNote | null };
+  type Row = { ref: string; locator: string; role: string; name: string; value?: string | null; states?: string[]; depth: number; href?: string | null; level?: number | null; datetimes?: string[]; unavailable?: RowFieldGap[]; secret?: RowSecret | null };
   type Rebound = { old: string; new: string; old_scope?: string | null; new_scope: string; locator: string; ambiguous?: boolean; candidates?: string[] };
   type ReceiptEvidence = { state: "kept"; artifact_ref: string; version: number; content_hash: string } | { state: "not_kept"; code: string };
   type BrowserEngine = "lightpanda" | "chromium";
@@ -3107,9 +3112,10 @@ declare namespace Sdk {
   type SwitchOutcome = { state: "switched" } | { state: "unchanged" } | { state: "failed"; stage: SwitchStage; code: string; detail: string };
   type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reason: string; url: string; carried?: SwitchCarried[]; not_carried?: SwitchNotCarried[]; outcome: SwitchOutcome };
   type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; duration_ms: number };
+  type SecretParam = { name: string; kind: SecretKind };
   type RecentCounts = { pass: number; miss: number; repair: number; of: number };
   type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
-  type LibraryCard = { workflow: string; site: string; subgoal: string; type_ref: string; params: string[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number };
+  type LibraryCard = { workflow: string; site: string; subgoal: string; type_ref: string; params: string[]; secret_params?: SecretParam[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
   type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null };
   type ObservationPage = Observation2 & { next?: string | null };
@@ -3119,7 +3125,7 @@ declare namespace Sdk {
   type FindOutput = { rows: Row[]; next?: string | null; partial?: PartialTree | null; walk_next?: string | null };
   type ClickInput = { ref: string; base?: ObservationBase | null };
   type PointInput = { image: string; x: number; y: number; base?: ObservationBase | null };
-  type TypeInput = { ref: string; text: string; clear?: boolean; base?: ObservationBase | null };
+  type TypeInput = { ref: string; text?: string | null; secret?: string | null; clear?: boolean; base?: ObservationBase | null };
   type SelectInput = { ref: string; option: string; base?: ObservationBase | null };
   type KeyInput = { key: string; modifiers?: string[]; ref?: string | null; base?: ObservationBase | null };
   type HotkeyInput = { keys: string[]; base?: ObservationBase | null };
@@ -3135,8 +3141,8 @@ declare namespace Sdk {
   type ImageOutput = { image: string; media_type: string; width: number; height: number; bytes: number; source: string };
   type CropInput = { image: string; x: number; y: number; width: number; height: number };
   type ZoomInput = { image: string; x: number; y: number; width: number; height: number; scale?: number | null };
-  type DecideStep = { question: string; targets?: string[]; role?: string | null; name?: string | null; locate?: boolean; text?: string | null; clear?: boolean; option?: string | null };
-  type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text: string; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
+  type DecideStep = { question: string; targets?: string[]; role?: string | null; name?: string | null; locate?: boolean; text?: string | null; secret?: string | null; clear?: boolean; option?: string | null };
+  type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text?: string | null; secret?: string | null; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
   type CheckReceipt = { expect: ExpectInput; observed: ExpectOutput };
@@ -3886,9 +3892,9 @@ declare namespace Sdk {
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type BrowserLibraryFindOutput = BrowserAnswer<LibraryFindOutput>;
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null };
-  type WorkflowCheck = "solved" | "replay" | "held_out" | "fresh_guest" | "supersedes";
+  type WorkflowCheck = "solved" | "replay" | "secret_replay" | "held_out" | "fresh_guest" | "supersedes";
   type SupersedeRefusal = "malformed" | "not_on_site" | "same_record" | "not_filer";
-  type AdmissionRefusal = { cause: "held_out"; used: string[]; missing: string[]; unknown: string[]; same: string[] } | { cause: "fresh_guest"; stage: SwitchStage; code: string; detail: string } | { cause: "supersedes"; workflow: string; why: SupersedeRefusal };
+  type AdmissionRefusal = { cause: "held_out"; used: string[]; missing: string[]; unknown: string[]; same: string[] } | { cause: "fresh_guest"; stage: SwitchStage; code: string; detail: string } | { cause: "supersedes"; workflow: string; why: SupersedeRefusal } | { cause: "secret_replay"; slots: string[] };
   type ReplayGuest = { engine: BrowserEngine; carried: SwitchCarried[]; not_carried: SwitchNotCarried[] };
   type SupersedeOutcome = "retired" | "linked" | "dropped";
   type ProposeOutput = { admitted: boolean; workflow?: string | null; refused_by?: WorkflowCheck | null; refusal?: AdmissionRefusal | null; unmet?: number[]; replay?: BatchOutput | null; replay_guest?: ReplayGuest | null; superseded?: SupersedeOutcome | null };
@@ -4192,7 +4198,7 @@ declare namespace self {
     spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.AgentSpawnOutput | StoredResult>;
   };
   const browser: {
-    /** Runs one batched program of browser steps for a subgoal, stopping at the first failing step with a stop_cause and a failed_receipt (missed checks, the page); elapsed_ms times it, duration_ms each effect; the last observation edits the base. */
+    /** Runs one batched browser program for a subgoal, type and expect taking a secret by handle, stopping at the first failing step with a stop_cause and a failed_receipt (missed checks, the page); elapsed_ms times it, duration_ms each effect. */
     batch(input: Sdk.BatchInput): Promise<Sdk.BrowserBatchOutput | StoredResult>;
     /** Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next. */
     click(input: Sdk.ClickInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
@@ -4200,7 +4206,7 @@ declare namespace self {
     click_at(input: Sdk.PointInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
     /** Crops a held image to a rectangle. */
     crop(input: Sdk.CropInput): Promise<Sdk.BrowserImageOutput | StoredResult>;
-    /** Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings. */
+    /** Checks that a page row, by live ref or locator, is present or absent, and holds a given value or, compared unread, the secret a run-bound handle names; a ref whose node is gone is checked on its locator's row and listed in rebindings. */
     expect(input: Sdk.ExpectInput): Promise<Sdk.BrowserExpectOutput | StoredResult>;
     /** Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page. */
     find(input: Sdk.FindInput): Promise<Sdk.BrowserFindOutput | StoredResult>;
@@ -4209,16 +4215,16 @@ declare namespace self {
     library: {
       /** The replay library's programs for a site, or the open page's; type_ref (node_id@tree_version) keeps that exact task type. Each card: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
       find(input: Sdk.LibraryFindInput): Promise<Sdk.BrowserLibraryFindOutput | StoredResult>;
-      /** Offers a solved run's program to the replay library, refs as locators; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance. */
+      /** Offers a solved run's program to the replay library, refs as locators, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires what it repairs. */
       propose(input: Sdk.ProposeInput): Promise<Sdk.BrowserLibraryProposeOutput | StoredResult>;
       /** Takes a program out of the replay library for every later run, and returns the card it had. */
       retire(input: Sdk.LibraryRetireInput): Promise<Sdk.BrowserLibraryRetireOutput | StoredResult>;
       /** The programs retires took out of the replay library for a site, or for the open page's site, the newest first, each with when and why. */
       retired(input: Sdk.LibraryRetiredInput): Promise<Sdk.BrowserLibraryRetiredOutput | StoredResult>;
-      /** Runs a replay library program live, strict (rules only; a step needing a model asks up at zero tokens) or assisted, by default as its proof allows; model_free reads receipts, a miss returns a failed_receipt; 3 strict misses retire it drift. */
+      /** Runs a replay library program live, strict (rules only; a step needing a model asks up at zero tokens) or assisted, as its proof allows; secret slots take run-bound handles; a miss returns a failed_receipt; 3 strict misses retire it drift. */
       run(input: Sdk.LibraryRunInput): Promise<Sdk.BrowserLibraryRunOutput | StoredResult>;
     };
-    /** Observes the run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched. */
+    /** Observes the run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its run-bound handle. */
     observe(input: Sdk.ObserveInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
     /** Opens a URL in the run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor. */
     open(input: Sdk.OpenInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
@@ -4228,7 +4234,7 @@ declare namespace self {
     select(input: Sdk.SelectInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
     /** Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself. */
     switch_engine(input: Sdk.SwitchEngineInput): Promise<Sdk.BrowserSwitchEngineOutput | StoredResult>;
-    /** Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next. */
+    /** Types text, or the value a run-bound secret handle names, into one page target by live ref or locator, observing the result as an edit of the caller's base; a gone ref acts on its locator's row as rebound; long observations page. */
     type(input: Sdk.TypeInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.BrowserImageOutput | StoredResult>;
