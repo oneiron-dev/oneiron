@@ -8,7 +8,8 @@
 //! message; the sources go as data. What lands is a representation proposal
 //! the owner reviews at `/v1/owner/representation` before any send. A draft
 //! the owner's rule moved under while it was written is drafted again at
-//! once against the current rule (FIX 6079).
+//! once against the current rule (FIX 6079). The host's pause (a managed
+//! reap freeze, FIX 6909) starts no next draft; what it leaves stays pending.
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,8 +22,10 @@ use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
     LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
 };
+use tokio::sync::watch;
 
 use super::CHAT_ROLE;
+use super::dreamer::{PassAdmission, admit, pause, paused};
 use crate::models::ModelRuntime;
 
 /// The purpose a draft's call is metered and routed under.
@@ -43,21 +46,48 @@ pub(super) async fn draft_loop(
     vault: Arc<Vault>,
     runtime: Arc<ModelRuntime>,
     budget_units: u64,
-    admission: super::dreamer::PassAdmission,
+    admission: PassAdmission,
 ) {
     let mut changes = vault.subscribe_proactivity_changes();
     let mut failed = HashSet::new();
     loop {
-        if let Err(error) =
-            draft_round(&vault, &runtime, budget_units, &admission, &mut failed).await
+        // The pause epoch this round runs under, read before its gates, so a
+        // freeze that races a gate reads as a pause.
+        let epoch = pause(&admission);
+        if let Err(error) = draft_round(
+            &vault,
+            &runtime,
+            budget_units,
+            &admission,
+            epoch.as_ref(),
+            &mut failed,
+        )
+        .await
         {
             // By kind only: an engine error can quote the vault.
             tracing::warn!(kind = ?error.kind(), "stewardship drafts could not be listed");
         }
         tokio::time::sleep(SETTLE).await;
-        if changes.changed().await.is_err() {
-            return;
+        // A round the pause held or refused also looks again once it lifts.
+        tokio::select! {
+            changed = changes.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+            }
+            () = pause_lifted(epoch) => {}
         }
+    }
+}
+
+/// Resolves once the pause `epoch` held lifts: the epoch closed at a thaw,
+/// or cleared. Pends while it holds none.
+async fn pause_lifted(epoch: Option<watch::Receiver<bool>>) {
+    match epoch {
+        Some(mut epoch) if paused(Some(&epoch)) => {
+            let _ = epoch.wait_for(|held| !*held).await;
+        }
+        _ => std::future::pending::<()>().await,
     }
 }
 
@@ -65,18 +95,20 @@ pub(super) async fn draft_loop(
 /// each page a traversal unit, and its continuation followed to the end.
 /// The host's gate is asked again before each page and each draft, and the
 /// thread yields between drafts. A gate that refuses ends the round; the
-/// rest stay pending, undrafted, for the next change.
+/// rest stay pending, undrafted, for the next change. So does the host's
+/// pause in `epoch` (FIX 6909), before each draft and each redraft.
 async fn draft_round(
     vault: &Vault,
     runtime: &ModelRuntime,
     budget_units: u64,
-    admission: &super::dreamer::PassAdmission,
+    admission: &PassAdmission,
+    epoch: Option<&watch::Receiver<bool>>,
     failed: &mut HashSet<EntityId>,
 ) -> oneiron::Result<()> {
     let mut after = None;
     loop {
         let page = {
-            let Some(_pass) = super::dreamer::admit(admission) else {
+            let Some(_pass) = admit(admission) else {
                 return Ok(());
             };
             vault.stewardship_draft_page(after)?
@@ -86,7 +118,7 @@ async fn draft_round(
                 continue;
             }
             tokio::task::yield_now().await;
-            let Some(_pass) = super::dreamer::admit(admission) else {
+            let Some(_pass) = admit(admission) else {
                 return Ok(());
             };
             // A draft the owner's rule moved under is drafted again at once
@@ -95,6 +127,11 @@ async fn draft_round(
             // that did not move is not drafted again.
             let mut redrafts: u64 = 0;
             loop {
+                // The host's pause starts no next draft or redraft: this one
+                // stays pending, not failed.
+                if paused(epoch) {
+                    return Ok(());
+                }
                 match draft_with_fallback(vault, runtime, budget_units, &draft).await {
                     Ok(StewardshipDraftOutcome::Scheduled(_)) => break,
                     Ok(StewardshipDraftOutcome::Stale) => {

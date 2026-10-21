@@ -7,14 +7,20 @@
 //! reads is exactly the writes it let in; a refused write is never counted.
 //! Each admission is released as it drops, wherever that is, and the lock is
 //! never held across an await or a storage call.
+//!
+//! The freeze is also the Dreamer's pause (FIX 6909), as one watch per
+//! epoch: `true` once frozen. A thaw starts a fresh epoch and leaves the
+//! last one `true`, closed, so a pass that read it stays paused and its
+//! next pass reads the new one.
 
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use oneiron_vault_contract::{IdleReapInFlight, REAP_PAUSE_REFUSAL};
 use tokio::sync::watch;
 
 use super::{ManagedState, WRITES_FROZEN_TAG};
+use crate::ai_host::DreamerControl;
 use crate::managed::ManagedError;
 use crate::server::{HousekeepingAdmission, PassControl};
 
@@ -92,10 +98,19 @@ impl InFlightCounts {
 }
 
 /// The freeze and the writes in flight, under one lock.
-#[derive(Default)]
 struct Gate {
-    frozen: bool,
+    /// The current epoch of the freeze: `true` while frozen.
+    frozen: watch::Sender<bool>,
     in_flight: InFlightCounts,
+}
+
+impl Default for Gate {
+    fn default() -> Self {
+        Self {
+            frozen: watch::channel(false).0,
+            in_flight: InFlightCounts::default(),
+        }
+    }
 }
 
 /// A managed vault's write admission.
@@ -141,19 +156,31 @@ impl Admission {
     }
 
     pub(super) fn is_frozen(&self) -> bool {
-        self.gate().frozen
+        *self.gate().frozen.borrow()
     }
 
-    /// Freezes: no write is admitted after. Returns the writes in flight at
-    /// that moment, read in the same hold.
+    /// Freezes: no write is admitted after, and the epoch's passes read
+    /// their pause. Returns the writes in flight at that moment, read in the
+    /// same hold.
     pub(super) fn freeze(&self) -> InFlightCounts {
-        let mut gate = self.gate();
-        gate.frozen = true;
+        let gate = self.gate();
+        gate.frozen.send_replace(true);
         gate.in_flight
     }
 
+    /// Lifts the freeze with a fresh epoch. The last one keeps its `true`
+    /// and closes. Unfrozen, nothing changes.
     pub(super) fn thaw(&self) {
-        self.gate().frozen = false;
+        let mut gate = self.gate();
+        let frozen = *gate.frozen.borrow();
+        if frozen {
+            gate.frozen = watch::channel(false).0;
+        }
+    }
+
+    /// The freeze's current epoch, as a Dreamer pass reads its pause.
+    pub(super) fn pass_pause(&self) -> watch::Receiver<bool> {
+        self.gate().frozen.subscribe()
     }
 
     /// The writes in flight now.
@@ -170,7 +197,7 @@ impl Admission {
     /// nothing is counted.
     fn admit(self: &Arc<Self>, kind: WriteKind) -> Option<Admitted> {
         let mut gate = self.gate();
-        if gate.frozen {
+        if *gate.frozen.borrow() {
             return None;
         }
         *gate.in_flight.of(kind) += 1;
@@ -192,7 +219,30 @@ impl Admission {
     }
 }
 
+/// The Dreamer's control (FIX 6909), made before the managed state exists:
+/// a pass is admitted as a Dreamer write once `state` holds that state, and
+/// refused until then, and reads `admission`'s current epoch as its pause.
+pub(super) fn dreamer_control(
+    admission: &Arc<Admission>,
+    state: &Arc<OnceLock<Arc<ManagedState>>>,
+) -> DreamerControl {
+    let state = Arc::clone(state);
+    let epochs = Arc::clone(admission);
+    DreamerControl {
+        admission: Arc::new(move || state.get()?.admit_background(WriteKind::Dreamer)),
+        pause: Arc::new(move || epochs.pass_pause()),
+    }
+}
+
 impl ManagedState {
+    /// This state over `admission`, the reap freeze the Dreamer's control
+    /// was made on before the state existed (FIX 6909).
+    #[must_use]
+    pub(super) fn with_admission(mut self, admission: Arc<Admission>) -> Self {
+        self.admission = admission;
+        self
+    }
+
     /// Admits a `kind` write, counted until it drops. While the vault is
     /// frozen for reap it is refused, as [`Self::guard_write`] refuses, and
     /// not counted.

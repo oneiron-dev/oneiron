@@ -6727,7 +6727,7 @@ export type ConsolidationEnqueueRequest = { scope: string; input: unknown; run_i
 /** `oneiron::task_verb::sdk_memory::ConsolidationStatusRequest` */
 export type ConsolidationStatusRequest = { job_ref: string }
 /** `oneiron::memory::dreamer::DreamerParkCauseView` */
-export type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "retry" | "cancelled" | "signal" | "other"
+export type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "retry" | "paused" | "cancelled" | "signal" | "other"
 /** `oneiron::memory::dreamer::DreamerParkedAttemptView` */
 export type DreamerParkedAttemptView = { job_ref: string; cause: DreamerParkCauseView; parked_at: number }
 /** `oneiron::memory::dreamer::DreamerAttemptView` */

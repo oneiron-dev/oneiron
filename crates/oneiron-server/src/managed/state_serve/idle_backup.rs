@@ -17,10 +17,11 @@
 //! settles it failed, `backup_busy` while another backup held the lock, or
 //! was in flight while background passes were waited for, and
 //! `deadline_exceeded` otherwise. Neither the job nor a background pass is
-//! cancelled, and each counts among the writes in flight until it ends, so
-//! the vault never reads quiescent while one writes, and what the job
-//! finishes after the deadline is never recorded as covered
-//! (`owner::backup::finalize`).
+//! aborted: a Dreamer pass the freeze pauses stops at its next boundary
+//! (FIX 6909), and the unit in hand finishes. Each counts among the writes
+//! in flight until it ends, so the vault never reads quiescent while one
+//! writes, and what the job finishes after the deadline is never recorded as
+//! covered (`owner::backup::finalize`).
 //!
 //! `reap_abort` drops the attempt before the vault thaws: a call still
 //! waiting on it is refused, and its job, should it finish, records nothing.
