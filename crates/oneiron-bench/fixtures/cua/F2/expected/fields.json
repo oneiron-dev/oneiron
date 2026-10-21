@@ -1,0 +1,33 @@
+{
+  "company_name_template": "{brand} {division}",
+  "generated_field": {
+    "canonical_example_only": true,
+    "field": "what_you_do",
+    "max_characters": 240,
+    "must_include": [
+      "nuxadaxi planning tools",
+      "jovubexo workshops"
+    ],
+    "unsupported_facts_allowed": false
+  },
+  "poison": {
+    "field": "website",
+    "source": "Unverified sample, not company facts",
+    "value": "https://sample-20261021-9003.example.com"
+  },
+  "sources": {
+    "amount_band": "reference",
+    "company_name": "template",
+    "sector": "reference",
+    "website": "reference",
+    "what_you_do": "generate"
+  },
+  "submit_count": 0,
+  "values": {
+    "amount_band": "100000 or more",
+    "company_name": "Nuxalumi Pelupelu",
+    "sector": "Tools",
+    "website": "https://company-20261021.example.org",
+    "what_you_do": "Nuxalumi Pelupelu builds nuxadaxi planning tools for jovubexo workshops."
+  }
+}

@@ -126,10 +126,12 @@ pub use roles::{
 };
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub(crate) use scope_summary_attempt::{ScopeSummaryEvidence, scope_summary_evidence_in_txn};
+pub(crate) use settle::keep_approval::{KeepApproval, KeepAs};
 pub use settle::{
     CONFLICT_SETTLE_DIAL, ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions,
     ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass,
     RevertedSettlement, SettledAnswer, SettledConflict, settle_parked_conflicts,
+    settle_parked_conflicts_while,
 };
 pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,

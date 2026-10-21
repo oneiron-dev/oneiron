@@ -982,7 +982,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 config: delivery,
                 bearer: None,
             }
-        }));
+        }))
+        .with_feedback_triage(config.feedback.triage.clone());
     // The owner's `[models] extraction_egress` opt-in, as plain serve
     // installs it (FIX 6621): off, nonlocal extraction stays refused.
     if config
@@ -1258,9 +1259,15 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             crate::conversation_training::Placement::Managed,
         )
     }));
-    // Due standing questions are answered through the ladder (OF-506).
+    // Due standing questions are answered through the ladder (OF-506), each
+    // pass starting no next unit once the reap freeze holds (FIX 7376).
     if !ai.bind_question_timer(&sync_server) {
-        ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));
+        let epochs = Arc::clone(&state.admission);
+        ladder_workers.push(crate::decision_graph::spawn_with_pause(
+            &sync_server,
+            admitted(),
+            move || Some(epochs.pass_pause()),
+        ));
         // Due digests, which a Dreamer's timer would otherwise serve (OF-499).
         ladder_workers.push(crate::ai_host::home_digests::spawn(
             &sync_server,

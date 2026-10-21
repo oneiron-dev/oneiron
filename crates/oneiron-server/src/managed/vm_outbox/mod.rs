@@ -25,6 +25,7 @@
 mod endpoint;
 mod guest;
 mod host;
+mod link;
 mod local;
 mod scan;
 mod store;
@@ -51,6 +52,9 @@ const RESCAN_EVERY: Duration = Duration::from_secs(2);
 /// the pacing of a retry, which doubles from [`RESCAN_EVERY`] up to this so
 /// a full disk is not streamed to every two seconds. Nothing is dropped.
 const PACE_CEILING: Duration = Duration::from_secs(128);
+/// What a kind's wait on its carrier records is said under: no member's
+/// name, as no part of one starts with a dot.
+const RECORDS_SAID: &str = ".records";
 
 /// One end's roots, kind by kind.
 trait Roots: Send {
@@ -83,6 +87,18 @@ struct Carrier {
     /// label the guest named was not kept; `None` until then, once one is
     /// kept again, and always on the guest.
     backup_wait: Option<VmOutboxOutcome>,
+    /// Why each kind waits on this end's carrier records, once one of them
+    /// did not write as its sets were scanned or readied. Kept across
+    /// sessions until a scan of the kind writes them again.
+    record_wait: HashMap<VmOutboxKind, RecordWait>,
+}
+
+/// Why a kind waits on this end's carrier records, and when its next scan
+/// tries them again, with that scan's step.
+struct RecordWait {
+    outcome: VmOutboxOutcome,
+    at: Instant,
+    step: Duration,
 }
 
 impl Carrier {
@@ -102,6 +118,7 @@ impl Carrier {
             said: HashMap::new(),
             paced: HashMap::new(),
             backup_wait: None,
+            record_wait: HashMap::new(),
         }
     }
 
@@ -129,14 +146,57 @@ impl Carrier {
     }
 
     /// Paces `set` after a deferral: it goes again after one step, each step
-    /// twice the last, up to [`PACE_CEILING`].
-    fn pace(&mut self, kind: VmOutboxKind, set: &str) {
+    /// twice the last, up to [`PACE_CEILING`]. Returns when, and the step.
+    fn pace(&mut self, kind: VmOutboxKind, set: &str) -> (Instant, Duration) {
         let key = (kind, set.to_owned());
         let step = self
             .paced
             .get(&key)
             .map_or(RESCAN_EVERY, |(_, step)| (*step * 2).min(PACE_CEILING));
-        self.paced.insert(key, (Instant::now() + step, step));
+        let paced = (Instant::now() + step, step);
+        self.paced.insert(key, paced);
+        paced
+    }
+
+    /// Why `kind` waits on this end's carrier records, if it does: none of
+    /// its sets is sent, and the other end's are taken whole and answered
+    /// with this.
+    fn record_waits(&self, kind: VmOutboxKind) -> Option<&VmOutboxOutcome> {
+        self.record_wait.get(&kind).map(|wait| &wait.outcome)
+    }
+
+    /// Makes `kind` wait on this end's carrier records, one of which `error`
+    /// did not write, until a later scan of the kind writes them. That scan
+    /// is due after one step, each twice the last, up to [`PACE_CEILING`];
+    /// for a `set` whose records did not write as it was readied, when the
+    /// set goes again, so the same turn readies it once more.
+    fn records_failed(&mut self, kind: VmOutboxKind, set: Option<&str>, error: &std::io::Error) {
+        let (at, step) = match set {
+            Some(set) => self.pace(kind, set),
+            None => {
+                let step = self
+                    .record_wait
+                    .get(&kind)
+                    .map_or(RESCAN_EVERY, |wait| (wait.step * 2).min(PACE_CEILING));
+                (Instant::now() + step, step)
+            }
+        };
+        let outcome = self.records_outcome(error);
+        self.say(
+            kind,
+            RECORDS_SAID,
+            &format!("its carrier records do not write: {error}"),
+        );
+        self.record_wait
+            .insert(kind, RecordWait { outcome, at, step });
+    }
+
+    /// Ends `kind`'s wait on its carrier records, once a scan of it wrote
+    /// them.
+    fn records_written(&mut self, kind: VmOutboxKind) {
+        if self.record_wait.remove(&kind).is_some() {
+            self.settled(kind, RECORDS_SAID);
+        }
     }
 }
 

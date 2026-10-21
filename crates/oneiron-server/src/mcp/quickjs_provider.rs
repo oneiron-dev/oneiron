@@ -2,7 +2,7 @@
 
 use super::{McpCodeModeProvider, ReaderMeter, RunCompactionSeat};
 use oneiron::agent_dispatch::SpendScopeId;
-use oneiron::code_run::{CodeRunDeterminism, CompactionHostBinding};
+use oneiron::code_run::{CodeRunDeterminism, CompactionHostBinding, GatedActorWrite};
 use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
 use oneiron::code_sandbox::wasmtime_runtime::{ComponentBudget, WasmtimeComponentRuntime};
 use oneiron::engine_executor::{
@@ -243,6 +243,40 @@ impl McpQuickJsProvider {
         self.planner = Some(planner);
         self
     }
+
+    /// One run's config: the template's, bound to `run_id` and `task`. When
+    /// this host freezes each run's clock at its first start, `first_start`
+    /// reads that start from the run's own record, and only a run with none
+    /// yet takes the current time. The run's RNG is bound to the run and the
+    /// interpreter pin either way.
+    fn run_config(
+        &self,
+        vault: &Vault,
+        run_id: EntityId,
+        task: &str,
+        first_start: impl FnOnce() -> oneiron::Result<Option<u64>>,
+    ) -> oneiron::Result<EngineExecutorConfig> {
+        let mut config = self.config.clone();
+        config.run_id = run_id;
+        config.task = task.to_owned();
+        if self.clock_from_first_start {
+            config.determinism.frozen_unix_ms = match first_start()? {
+                Some(frozen_unix_ms) => frozen_unix_ms,
+                None => vault.now_recorded_at().saturating_mul(1000),
+            };
+        }
+        // The run's stable determinism marker also binds the interpreter pin.
+        // Resume under another artifact fails the existing config-hash check.
+        let mut rng = blake3::Hasher::new_keyed(&self.config.determinism.rng_seed);
+        rng.update(b"oneiron:mcp-quickjs-run:v1");
+        rng.update(run_id.as_bytes());
+        rng.update(&self.runtime.sha256());
+        config.determinism = CodeRunDeterminism::new(
+            config.determinism.frozen_unix_ms,
+            *rng.finalize().as_bytes(),
+        );
+        Ok(config)
+    }
 }
 
 impl McpCodeModeProvider for McpQuickJsProvider {
@@ -317,26 +351,26 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         run_id: EntityId,
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig> {
-        let mut config = self.config.clone();
-        config.run_id = run_id;
-        config.task = task.to_owned();
-        if self.clock_from_first_start {
-            config.determinism.frozen_unix_ms = match vault.get_code_run_replay_record(&run_id)? {
-                Some(record) => record.determinism.frozen_unix_ms,
-                None => vault.now_recorded_at().saturating_mul(1000),
-            };
-        }
-        // The run's stable determinism marker also binds the interpreter pin.
-        // Resume under another artifact fails the existing config-hash check.
-        let mut rng = blake3::Hasher::new_keyed(&self.config.determinism.rng_seed);
-        rng.update(b"oneiron:mcp-quickjs-run:v1");
-        rng.update(run_id.as_bytes());
-        rng.update(&self.runtime.sha256());
-        config.determinism = CodeRunDeterminism::new(
-            config.determinism.frozen_unix_ms,
-            *rng.finalize().as_bytes(),
-        );
-        Ok(config)
+        self.run_config(vault, run_id, task, || {
+            Ok(vault
+                .get_code_run_replay_record(&run_id)?
+                .map(|record| record.determinism.frozen_unix_ms))
+        })
+    }
+    /// A session-bound run's first start is its room's record's: a resumed
+    /// entry keeps the clock, and so the config, its first entry froze.
+    fn executor_config_on(
+        &self,
+        vault: &Vault,
+        bound: &GatedActorWrite<'_>,
+        run_id: EntityId,
+        task: &str,
+    ) -> oneiron::Result<EngineExecutorConfig> {
+        self.run_config(vault, run_id, task, || {
+            Ok(bound
+                .recorded_determinism(run_id)?
+                .map(|determinism| determinism.frozen_unix_ms))
+        })
     }
     fn template_model(
         &self,

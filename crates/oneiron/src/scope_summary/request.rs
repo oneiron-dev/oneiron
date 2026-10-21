@@ -2,7 +2,7 @@
 
 use super::codec::SummarySourceMessage;
 use super::codec::{invalid, parse_scope, scope_value};
-use super::derivation::{self, ScopeSummaryMetadata, SummaryDerivation};
+use super::derivation::{self, ScopeSummaryMetadata, SummaryDerivation, SummaryLineSources};
 use super::doors::{
     LandedHeader, ScopeSources, SummaryContent, header_landed_in_txn, land_in_txn, mint_in_txn,
     note_sources_in_txn, reply_lane, scope_sources_in_txn, settle_header,
@@ -23,7 +23,7 @@ use crate::memory::Memory;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use rmpv::Value;
 
-const REQUEST_VERSION: u64 = 2;
+pub(super) const REQUEST_VERSION: u64 = 2;
 /// The declaration key an explicit source set rides under (FIX 3198).
 pub(super) const SOURCES_KEY: &str = "sources";
 const SUMMARY_ID_DOMAIN: &[u8] = b"oneiron:dreamer-scope-summary:v1";
@@ -55,6 +55,13 @@ pub enum ScopeSummaryTarget {
         scope: Option<ScopeSelector>,
         sources: Vec<EntityId>,
     },
+    /// A sitting's retained turns (FIX 7509), as its close declares them:
+    /// every TURN its membership names that still stands. The summary is
+    /// the sitting's own actor's, stands in no conversation, lands on no
+    /// turn, and is never written from its own earlier body.
+    Session {
+        session: EntityId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,8 +81,10 @@ pub struct ScopeSummaryQueued {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScopeSummaryPlan {
     pub(crate) input: Vec<u8>,
-    /// `None` for a NOTE set's summary, which has no conversation.
+    /// `None` for a NOTE set's or a sitting's summary, in no conversation.
     pub(crate) scope: Option<ScopeSelector>,
+    /// The sitting a session summary is written from (FIX 7509).
+    pub(crate) session: Option<EntityId>,
     pub(crate) members: Vec<EntityId>,
     pub(crate) sources: Vec<EntityId>,
     pub(crate) land_on: Option<EntityId>,
@@ -117,6 +126,16 @@ impl ScopeSummaryPlan {
         Ok(*hash.finalize().as_bytes())
     }
 
+    /// The plan's evidence read in `txn`; a sitting's TURNs under the per-call
+    /// labels its lines cite (FIX 7509).
+    pub(crate) fn evidence_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<ScopeSummaryEvidence> {
+        scope_summary_evidence_in_txn(vault, txn, &self.sources, self.session.is_some())
+    }
+
     /// The requester's surface a landing's reply is checked and receipted on
     /// (OF-063), bound from the declaration's admitted byline.
     fn requester_surface<'v>(&self, vault: &'v Vault) -> Memory<'v> {
@@ -139,6 +158,8 @@ pub(crate) struct ComposedSummary<'a> {
     pub(crate) covers: Vec<EntityId>,
     pub(crate) messages: Vec<SummarySourceMessage>,
     pub(crate) memo: [u8; 32],
+    /// A session summary's lines and the TURNs each came from (FIX 7509).
+    pub(crate) line_sources: Option<Vec<SummaryLineSources>>,
 }
 
 pub(super) fn enqueue_in_txn(
@@ -164,7 +185,7 @@ fn enqueue_with_lineage_in_txn(
     run_id: Option<&str>,
     now: u64,
 ) -> Result<ScopeSummaryQueued> {
-    decode_request(&input)?;
+    decode_request(vault, txn, &input)?;
     let encoded = derivation::encode(&input)?;
     let dedupe_key = format!(
         "{DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE}:{}:{}",
@@ -200,12 +221,16 @@ pub(super) fn plan_in_txn(
     txn: &mut heed::RwTxn<'_>,
     input: &Value,
 ) -> Result<ScopeSummaryPlan> {
-    let request = decode_request(input)?;
+    let request = decode_request(vault, txn, input)?;
     actor_in_txn(&vault.store, txn, request.requester)?;
     let (purpose, previous, keep, editor_text) = derivation::options(vault, txn, input)?;
     let editor_frontier = previous
         .map(|id| crate::entity_doc::summary_frontier_in_txn(vault, txn, &id))
         .transpose()?;
+    let session = match &request.target {
+        ScopeSummaryTarget::Session { session } => Some(*session),
+        _ => None,
+    };
     let (scope, land_on, as_record, admitted) = match request.target {
         ScopeSummaryTarget::Scope {
             scope,
@@ -232,12 +257,13 @@ pub(super) fn plan_in_txn(
             }
             (Some(scope), Some(trunk), false, None)
         }
+        ScopeSummaryTarget::Session { .. } => (None, None, false, None),
     };
     if as_record && land_on.is_none() {
         return Err(invalid("as_record requires land_on"));
     }
-    let ScopeSources { members, sources } = match &scope {
-        Some(scope) => {
+    let ScopeSources { members, sources } = match (&scope, session) {
+        (Some(scope), _) => {
             if let Some(turn) = land_on {
                 validate_landing_in_txn(vault, txn, scope, &turn)?;
             }
@@ -248,21 +274,26 @@ pub(super) fn plan_in_txn(
             };
             ScopeSources { members, sources }
         }
+        // A sitting's retained turns, read in this writer (FIX 7509).
+        (None, Some(session)) => super::session::session_sources_in_txn(vault, txn, &session)?,
         // A NOTE set has no conversation to resolve: its NOTEs are read in
         // this writer, as its requester reads them (FIX 5757).
-        None => note_sources_in_txn(
+        (None, None) => note_sources_in_txn(
             vault,
             txn,
             request.requester,
             admitted.as_deref().unwrap_or_default(),
         )?,
     };
-    if sources.is_empty() {
+    // A sitting that retained no turns has no summary: its attempt completes
+    // with none (FIX 7509), never with invented prose.
+    if sources.is_empty() && session.is_none() {
         return Err(invalid("summary scope covers no records"));
     }
     Ok(ScopeSummaryPlan {
         input: derivation::encode(input)?,
         scope,
+        session,
         members,
         sources,
         land_on,
@@ -342,7 +373,7 @@ impl Vault {
         self.store.authorization_now()?;
         self.with_write_txn_grouped(|txn| {
             let plan = plan_in_txn(self, txn, input)?;
-            let evidence = scope_summary_evidence_in_txn(self, txn, &plan.sources)?;
+            let evidence = plan.evidence_in_txn(self, txn)?;
             if plan.editor_text.is_some()
                 && let Some(previous) = plan.previous
                 && let Some(covers) =
@@ -388,7 +419,7 @@ impl Vault {
         let lane = reply_lane(&requester, plan.asks_reply())?;
         let outcome = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
             if plan_in_txn(self, txn, &derivation::decode(&plan.input)?)? != *plan
-                || scope_summary_evidence_in_txn(self, txn, &plan.sources)? != *evidence
+                || plan.evidence_in_txn(self, txn)? != *evidence
             {
                 return Ok((false, None));
             }
@@ -460,7 +491,7 @@ impl Vault {
             }
             let input = derivation::decode(&plan.input)?;
             if plan_in_txn(self, txn, &input)? != *plan
-                || scope_summary_evidence_in_txn(self, txn, &plan.sources)? != *evidence
+                || plan.evidence_in_txn(self, txn)? != *evidence
             {
                 return Err(Error::ConcurrentWrite(
                     "summary sources or editor state changed during composition",
@@ -498,6 +529,10 @@ impl Vault {
                     recorded_at: now,
                     generated_text_hash: *blake3::hash(composed.text.as_bytes()).as_bytes(),
                     generated_keep_hash: *blake3::hash(composed.keep.as_bytes()).as_bytes(),
+                    source_set: plan
+                        .session
+                        .map(|session| super::session::source_set_id(&session, &plan.sources)),
+                    line_sources: composed.line_sources.clone(),
                 },
             };
             crate::entity_doc::birth_summary_in_txn(self, txn, id, author, now, &metadata)?;
@@ -548,6 +583,14 @@ fn class_name(class: EdgeActorClass) -> &'static str {
 
 pub(super) fn encode_request(request: &ScopeSummaryRequest) -> Value {
     let hex = |id: &EntityId| Value::from(id.to_hex());
+    // A sitting's summary is its own actor's (FIX 7509): its declaration
+    // names the sitting alone, and its requester is read with the sitting.
+    if let ScopeSummaryTarget::Session { session } = &request.target {
+        return Value::Map(vec![
+            (Value::from("v"), Value::from(REQUEST_VERSION)),
+            (Value::from(super::session::SESSION_KEY), hex(session)),
+        ]);
+    }
     let mut entries = vec![
         (Value::from("v"), Value::from(REQUEST_VERSION)),
         (
@@ -591,38 +634,73 @@ pub(super) fn encode_request(request: &ScopeSummaryRequest) -> Value {
                 ),
             ]);
         }
+        // Encoded above, with no requester.
+        ScopeSummaryTarget::Session { .. } => {}
     }
     Value::Map(entries)
 }
 
-pub(super) fn decode_request(input: &Value) -> Result<ScopeSummaryRequest> {
+/// A declaration's map entries, at the version this producer writes.
+fn declared_fields(input: &Value) -> Result<&[(Value, Value)]> {
     let Value::Map(entries) = input else {
         return Err(invalid("summary request must be a map"));
     };
-    let field = |name: &str| {
-        entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .map(|(_, value)| value)
-    };
-    let id = |value: Option<&Value>| -> Result<EntityId> {
-        let text = value
-            .and_then(Value::as_str)
-            .ok_or_else(|| invalid("summary request id missing"))?;
-        EntityId::from_hex(text).map_err(|_| invalid("summary request id invalid"))
-    };
-    if field("v").and_then(Value::as_u64) != Some(REQUEST_VERSION) {
+    if declared(entries, "v").and_then(Value::as_u64) != Some(REQUEST_VERSION) {
         return Err(invalid("unsupported summary request version"));
     }
-    let class = match field("requester_class").and_then(Value::as_str) {
-        Some("human") => EdgeActorClass::Human,
-        Some("agent") => EdgeActorClass::Agent,
-        Some("system") => EdgeActorClass::System,
-        _ => return Err(invalid("summary request actor class invalid")),
+    Ok(entries.as_slice())
+}
+
+fn declared<'v>(entries: &'v [(Value, Value)], name: &str) -> Option<&'v Value> {
+    entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some(name))
+        .map(|(_, value)| value)
+}
+
+fn declared_id(value: Option<&Value>) -> Result<EntityId> {
+    let text = value
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid("summary request id missing"))?;
+    EntityId::from_hex(text).map_err(|_| invalid("summary request id invalid"))
+}
+
+/// The declaration with its requester. A sitting's declaration names none:
+/// its summary is the sitting's own actor's, read in `txn` (FIX 7509).
+pub(super) fn decode_request(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    input: &Value,
+) -> Result<ScopeSummaryRequest> {
+    let entries = declared_fields(input)?;
+    let requester = match declared(entries, super::session::SESSION_KEY) {
+        Some(session) => {
+            super::session::requester_in_txn(vault, txn, &declared_id(Some(session))?)?
+        }
+        None => {
+            let class = match declared(entries, "requester_class").and_then(Value::as_str) {
+                Some("human") => EdgeActorClass::Human,
+                Some("agent") => EdgeActorClass::Agent,
+                Some("system") => EdgeActorClass::System,
+                _ => return Err(invalid("summary request actor class invalid")),
+            };
+            WriteActor::new(declared_id(declared(entries, "requester"))?, class)
+        }
     };
-    let requester = WriteActor::new(id(field("requester"))?, class);
-    let target = match (field("scope"), field("trunk"), field(SOURCES_KEY)) {
-        (Some(scope), None, Some(Value::Array(sources))) => ScopeSummaryTarget::Sources {
+    Ok(ScopeSummaryRequest {
+        target: decode_target(input)?,
+        requester,
+    })
+}
+
+/// A declaration's target alone, its requester unread. Each target is named
+/// by its own keys, and a sitting's declaration names no requester.
+pub(super) fn decode_target(input: &Value) -> Result<ScopeSummaryTarget> {
+    let entries = declared_fields(input)?;
+    let field = |name: &str| declared(entries, name);
+    let session = field(super::session::SESSION_KEY);
+    let target = match (field("scope"), field("trunk"), field(SOURCES_KEY), session) {
+        (Some(scope), None, Some(Value::Array(sources)), None) => ScopeSummaryTarget::Sources {
             scope: if scope.is_nil() {
                 None
             } else {
@@ -630,23 +708,30 @@ pub(super) fn decode_request(input: &Value) -> Result<ScopeSummaryRequest> {
             },
             sources: sources
                 .iter()
-                .map(|source| id(Some(source)))
+                .map(|source| declared_id(Some(source)))
                 .collect::<Result<Vec<_>>>()?,
         },
-        (Some(scope), None, None) => ScopeSummaryTarget::Scope {
+        (Some(scope), None, None, None) => ScopeSummaryTarget::Scope {
             scope: parse_scope(scope)?,
             land_on: match field("land_on") {
                 None | Some(Value::Nil) => None,
-                value => Some(id(value)?),
+                value => Some(declared_id(value)?),
             },
             as_record: field("as_record")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| invalid("summary request as_record missing"))?,
         },
-        (None, Some(trunk), None) => ScopeSummaryTarget::Thread {
-            trunk: id(Some(trunk))?,
+        (None, Some(trunk), None, None) => ScopeSummaryTarget::Thread {
+            trunk: declared_id(Some(trunk))?,
         },
+        (None, None, None, Some(session))
+            if field("requester").is_none() && field("requester_class").is_none() =>
+        {
+            ScopeSummaryTarget::Session {
+                session: declared_id(Some(session))?,
+            }
+        }
         _ => return Err(invalid("summary request names no target")),
     };
-    Ok(ScopeSummaryRequest { target, requester })
+    Ok(target)
 }

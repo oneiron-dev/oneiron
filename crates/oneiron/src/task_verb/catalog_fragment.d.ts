@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1175 code-mode rows (1135 host rows, 40 run rows), 3929 declarations.
-// Replies: 1055 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3937 declarations.
+// Replies: 1057 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2203,11 +2203,23 @@ declare namespace Sdk {
   type CodeTreeBlob = { git_oid: string; content_hash: number[]; size_bytes: number; mode: number };
   type CodeForkDocumentView = { document_id?: string | null; path: string; base?: CodeDocumentFrontier | null; landed?: CodeDocumentFrontier | null; target?: CodeTreeBlob | null; metadata_edit?: CodeFileMetadataEdit | null; proposal_ref?: EntityId | null };
   type CodeForkView = { repo: EntityId; fork_session: EntityId; parent_session: EntityId; base_revision: EntityId; forked_at: number; documents: CodeForkDocumentView[]; proposal_refs: EntityId[]; revision_refs: EntityId[]; task_refs: EntityId[]; ingress?: CodeIngressRef | null };
-  type CodePushIngressGetRequest = { repo: EntityId; provenance: EntityId; ref_name: string };
+  type ExternalImportSource = { host: string; repository: string; source_ref: string; pull_request?: number | null; base_commit: string; head_commit: string };
+  type ExternalImportDoor = "raw" | { checkout: { checkout: string; epoch: number } };
+  type ExternalImportRequest = { repo: string; code_repo: EntityId; base_revision: EntityId; imported_ref?: string | null; source: ExternalImportSource; source_binding?: string | null; door: ExternalImportDoor };
+  type ExternalImportReceipt = { import: EntityId; repo: string; code_repo: EntityId; source: ExternalImportSource; imported_ref: string; base_revision: EntityId; importer?: EntityId | null; seed_publication?: EntityId | null; receive_provenance?: EntityId | null; publication?: EntityId | null };
+  type ExternalImportLookup = { repo: string; code_repo: EntityId; import: EntityId; door: ExternalImportDoor };
+  type ExternalImportPhase = "pending" | "fetch_refused" | "source_moved" | "held_base" | "door_refused" | "transport_unknown" | "received";
   type ReceivedFileOperation = { operation_id: string; actor_id: string; session_id: string; ref_name: string; path: string; before_hash: number[]; after_hash: number[]; old_mode?: number | null; new_mode?: number | null; document_edit: boolean };
   type CodePushCandidateState = "pending" | "held_base" | "held_predecessor" | "held_review_policy" | "held_shape" | "proposed" | "rejected" | "queued" | "quarantined" | "rolled_back" | "landed" | "sealed";
   type CodePushCandidateView = { candidate: EntityId; state: CodePushCandidateState; reason?: string | null; base_revision?: EntityId | null; fork_session?: EntityId | null; proposal_refs: EntityId[]; batch_refs: string[]; check_work_refs: string[]; revision_refs: EntityId[] };
   type CodePushIngressView = { repo: EntityId; provenance: EntityId; ref_name: string; old_oid?: string | null; new_oid?: string | null; received_at: number; published: boolean; publication?: EntityId | null; operations: ReceivedFileOperation[]; candidate?: CodePushCandidateView | null };
+  type MergeQueueCheckWorkKind = "init" | "check" | "diagnose";
+  type MergeQueueCheckState = "queued" | "running" | "needs_configuration" | "held" | "passed" | "failed" | "settled";
+  type QueueCheckHoldReason = "interrupted" | "executor_unavailable" | "missing_offline_input" | "unstable_inputs" | "authority" | "tree_unavailable" | "refused";
+  type Quarantine = { proposal_ids: string[]; failing_mask: number; verdict: string };
+  type MergeQueueCheckWorkView = { repo: EntityId; work_ref: string; kind: MergeQueueCheckWorkKind; status: MergeQueueCheckState; configuration_keys: string[]; reason?: string | null; hold?: QueueCheckHoldReason | null; generation: number; baseline_commit?: string | null; plan_digest?: string | null; receipt_refs: string[]; verdict_refs: string[]; pointers?: MergeQueuePointersView | null; quarantine?: Quarantine | null };
+  type ExternalImportStatus = { receipt: ExternalImportReceipt; phase: ExternalImportPhase; reason?: string | null; ingress?: CodePushIngressView | null; checks: MergeQueueCheckWorkView[] };
+  type CodePushIngressGetRequest = { repo: EntityId; provenance: EntityId; ref_name: string };
   type OriginRegisterRequest = { repo: string; default_branch: string };
   type OriginRegistered = { repo: string; repo_id: EntityId; default_branch: string };
   type OriginRepoRequest = { repo: string };
@@ -2298,7 +2310,6 @@ declare namespace Sdk {
   type MergeQueueEnqueueRequest = { repo: EntityId; proposals: EntityId[]; base_green: string };
   type BatchState = "Queued" | "Staged" | "Ready" | "Landing" | "HeadAdvanced" | "GreenAdvanced" | "Quarantined" | "RollingBack" | "RolledBack" | "Cancelled";
   type MergeQueuePathView = { mask: number; commit: string; tree: string; verdict_ref?: string | null };
-  type Quarantine = { proposal_ids: string[]; failing_mask: number; verdict: string };
   type AffectedTests = { packages: string[]; targets: Record<string, string[]> };
   type MergeQueueBatchView = { batch_ref: string; baseline_ref: string; expected_head: string; base_green: string; proposals: string[]; state: BatchState; paths: MergeQueuePathView[]; landed_head?: string | null; slow_verdict_ref?: string | null; quarantine?: Quarantine | null; selected_tests: AffectedTests };
   type MergeQueueBatchRequest = { repo: EntityId; batch_ref: string };
@@ -2316,10 +2327,6 @@ declare namespace Sdk {
   type MergeQueueRequeueView = { source_batch_ref: string; batch?: MergeQueueBatchView | null };
   type MergeQueueRepoRequest = { repo: EntityId };
   type MergeQueueInitializeRequest = { repo: EntityId; baseline_commit: string; contract_baseline_ref?: string | null };
-  type MergeQueueCheckWorkKind = "init" | "check" | "diagnose";
-  type MergeQueueCheckState = "queued" | "running" | "needs_configuration" | "held" | "passed" | "failed" | "settled";
-  type QueueCheckHoldReason = "interrupted" | "executor_unavailable" | "missing_offline_input" | "unstable_inputs" | "authority" | "tree_unavailable" | "refused";
-  type MergeQueueCheckWorkView = { repo: EntityId; work_ref: string; kind: MergeQueueCheckWorkKind; status: MergeQueueCheckState; configuration_keys: string[]; reason?: string | null; hold?: QueueCheckHoldReason | null; generation: number; baseline_commit?: string | null; plan_digest?: string | null; receipt_refs: string[]; verdict_refs: string[]; pointers?: MergeQueuePointersView | null; quarantine?: Quarantine | null };
   type QueueCheckPhase = "fast" | "slow";
   type MergeQueueCheckRequest = { repo: EntityId; batch_ref: string; mask: number; phase: QueueCheckPhase; force_refresh?: boolean };
   type MergeQueueDiagnoseRequest = { repo: EntityId; batch_ref: string };
@@ -3690,13 +3697,14 @@ declare namespace Sdk {
   type SummaryReadRequest = { summary_ref: string; spans?: SummarySpan[] };
   type SummaryPurpose = { id: string; description: string };
   type SummarySourceVersion = { id: string; entity_type?: number | null; learned_at?: number | null; revision?: number[] | null; record_hash?: number[] | null; frontier?: number[] | null; projected_text?: number[] | null };
-  type SummaryDerivation = { request: number[]; trigger: number[]; content_hash: number[]; params_hash: number[]; instruction: string; model: string; policy_frontier: number[]; sources: SummarySourceVersion[]; previous?: string | null; recorded_at: number; generated_text_hash: number[]; generated_keep_hash: number[] };
+  type SummaryLineSources = { output_start: number; output_end: number; turn_refs: string[] };
+  type SummaryDerivation = { request: number[]; trigger: number[]; content_hash: number[]; params_hash: number[]; instruction: string; model: string; policy_frontier: number[]; sources: SummarySourceVersion[]; previous?: string | null; recorded_at: number; generated_text_hash: number[]; generated_keep_hash: number[]; source_set?: number[] | null; line_sources?: SummaryLineSources[] | null };
   type ScopeSummaryMetadata = { purpose: SummaryPurpose; keep: string; derivation: SummaryDerivation };
   type TextAnchor = { entity: string; frontier: number[]; start: number[]; end: number[]; quote: string; hash: number[] };
   type DocActor = string;
   type Birth = { entity: string; actor: DocActor; at: number };
   type SummaryReadView = { summary_ref: string; document: string; frontier: number[]; text: string; metadata: ScopeSummaryMetadata; covers: string[]; read_refs: string[]; anchors: TextAnchor[]; birth: Birth };
-  type SummaryStatusRequest = { attempt: string };
+  type SummaryStatusRequest = { attempt?: string | null; session_ref?: string | null };
   type ScopeSummaryResult = { summary: string; claim?: string | null; record?: string | null };
   type ScopeSummaryStatus = { attempt: string; requester: string; current_attempt: string; state: string; result?: ScopeSummaryResult | null; failure?: string | null; retry_at?: number | null; updated_at: number };
   type SummaryKeepRequest = { summary_ref: string; frontier: number[]; keep: string };
@@ -4949,6 +4957,12 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only. */
     import(input: Sdk.CodeRepoImportRequest): Promise<Sdk.CodeRepoImportView | StoredResult>;
+    imports: {
+      /** Fetch one exact outside source and send it through the existing authenticated Git door; retain source and receive links without approval or enqueue. */
+      create(input: Sdk.ExternalImportRequest): Promise<Sdk.ExternalImportReceipt | StoredResult>;
+      /** Read one external import and its actual receive, aggregate candidate and checker work. Local only; never fetches, pushes or runs checks. */
+      get(input: Sdk.ExternalImportLookup): Promise<Sdk.ExternalImportStatus | null | StoredResult>;
+    };
     ingress: {
       /** Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance. */
       get(input: Sdk.CodePushIngressGetRequest): Promise<Sdk.CodePushIngressView | null | StoredResult>;

@@ -97,6 +97,7 @@ use crate::error::{Error, Result};
 
 mod cleanup_types;
 mod codec_receipts;
+mod erase;
 mod marks;
 mod owner_doors;
 mod person_provenance;
@@ -136,6 +137,7 @@ pub use self::tripwire::{
 };
 
 pub(crate) use self::codec_receipts::{cleanup_digests_in_txn, cleanup_receipts};
+pub(crate) use self::erase::{erase_attempt_references_in_txn, erase_in_txn};
 pub(crate) use self::proposals_archive::cleanup_proposals_in_txn;
 pub(crate) use self::tripwire::zero_live_members_in_txn;
 pub(crate) use visibility::is_archived_in_txn;
@@ -143,11 +145,11 @@ pub(crate) use visibility::is_archived_in_txn;
 use self::cleanup_types::{
     DIGEST_ROW_LABEL, DIGEST_SCHEMA_VERSION, KEY_ARCHIVED, KEY_AT, KEY_ATTEMPT, KEY_CANDIDATES,
     KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY, KEY_KIND, KEY_POSTURE, KEY_PROPOSAL,
-    KEY_SCHEMA_VERSION, KEY_SKIPPED, PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION,
+    KEY_SCHEMA_VERSION, KEY_SKIPPED, PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION, live_slots,
 };
 use self::codec_receipts::{
-    decode_proposal, decode_row, encode_row, field, fresh_row_id, id_list, id_value_list,
-    put_digest_in_txn, put_proposal_in_txn,
+    candidate_slot, candidate_value, decode_proposal, decode_row, encode_row, field, fresh_row_id,
+    id_list, id_value_list, put_digest_in_txn, put_proposal_in_txn,
 };
 use self::tripwire::{
     CLEANUP_CHECKS, apply_archives_in_txn, cleanup_posture_in_txn, run_cleanup_candidates_in_txn,
