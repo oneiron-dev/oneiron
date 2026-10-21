@@ -23281,7 +23281,7 @@
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
       "const": 15,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 6,
       "fn": 12,
       "re-export": 3,
@@ -23372,6 +23372,16 @@
      "purpose": "`loop` over an agent run's own calls",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/targeted.rs",
+     "purpose": "The agent-health review over one agent attempt (OF-568 L1, L2): on its terminal receipt, and at each Dreamer…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -69112,7 +69122,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 115,
+     "files": 116,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70129,7 +70139,7 @@
    },
    "over_bar": 182,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4451,
+   "source_files": 4452,
    "test_files": 902
   },
   "oneiron-android": {
