@@ -76,7 +76,9 @@ impl ImportProcessProfile {
     /// A root that is not absolute, or a URL that is not the loopback relay.
     pub(in crate::git_wire) fn relay(root: &Path, door_url: &str) -> Result<Self> {
         let Some(rest) = door_url.strip_prefix("http://127.0.0.1:") else {
-            return Err(invalid("an import push goes to its loopback door relay only"));
+            return Err(invalid(
+                "an import push goes to its loopback door relay only",
+            ));
         };
         if rest.is_empty()
             || rest.contains(['@', '?', '#'])
@@ -113,7 +115,9 @@ impl ImportProcessProfile {
         repo_root: &Path,
     ) -> Result<()> {
         if !repo_root.starts_with(&self.root) {
-            return Err(invalid("an import leg runs inside its own scratch store only"));
+            return Err(invalid(
+                "an import leg runs inside its own scratch store only",
+            ));
         }
         let mut policy: Vec<(&str, &str)> = vec![
             ("http.followRedirects", "false"),

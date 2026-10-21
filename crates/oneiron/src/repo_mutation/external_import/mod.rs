@@ -29,7 +29,6 @@ pub use types::{
 };
 
 pub(crate) use source::EXTERNAL_IMPORT_SOURCE_PREDICATE;
-pub(crate) use status::ExternalImportProjection;
 
 use std::path::{Path, PathBuf};
 
@@ -150,6 +149,20 @@ fn refused(code: &str) -> Error {
     Error::Refused(format!("{code}: this outside import is refused"))
 }
 
+/// The verb an agent's Grant must list to import under its granter's
+/// source binding (the delegated path).
+pub(crate) const EXTERNAL_IMPORT_CREATE_VERB: &str = "vault.code.imports.create";
+
+/// Whether an importer acts under a standing Grant from a binding's actor.
+enum DelegatedBinding {
+    /// A Grant from the bound actor lists the verb and stands now.
+    Stands,
+    /// Such a Grant stood but its pact membership lapsed.
+    Lapsed,
+    /// No such Grant.
+    Absent,
+}
+
 /// One send an import makes: its step and exact ref update.
 struct ImportSend {
     step: ImportStep,
@@ -239,8 +252,8 @@ impl Vault {
         let wire = GitWire::new(self)?;
         let store = self.external_import_store(&wire, request.code_repo, &dir)?;
         let importer = host.caller().principal();
-        let name = imported_ref(request.imported_ref.as_deref(), &normalized.source)
-            .map_err(malformed)?;
+        let name =
+            imported_ref(request.imported_ref.as_deref(), &normalized.source).map_err(malformed)?;
         let record = SourceRecord::new(
             importer,
             request.code_repo,
@@ -310,7 +323,14 @@ impl Vault {
             dir,
         ) {
             Ok(served) => served,
-            Err(_) => return self.observe(call, ImportStep::Base, ImportOutcome::Held, "base_commit_not_in_store"),
+            Err(_) => {
+                return self.observe(
+                    call,
+                    ImportStep::Base,
+                    ImportOutcome::Held,
+                    "base_commit_not_in_store",
+                );
+            }
         };
         if let Err(reason) =
             self.external_import_base(&call.wire, &served, request.base_revision, base)?
@@ -403,8 +423,11 @@ impl Vault {
         normalized: &NormalizedSource,
     ) -> Result<Option<FetchedExternalGit>> {
         if let Some(binding) = request.source_binding.as_deref()
-            && let Err((code, message)) =
-                self.external_import_binding_admits(binding, &normalized.source.host, call.importer)?
+            && let Err((code, message)) = self.external_import_binding_admits(
+                binding,
+                &normalized.source.host,
+                call.importer,
+            )?
         {
             self.observe(call, ImportStep::Fetch, ImportOutcome::Refused, code)?;
             return Err(Error::Refused(format!("{code}: {message}")));
@@ -420,7 +443,12 @@ impl Vault {
                 Ok(Some(fetched))
             }
             Ok(GitImportFetchOutcome::Moved) => {
-                self.observe(call, ImportStep::Fetch, ImportOutcome::Moved, "source_moved")?;
+                self.observe(
+                    call,
+                    ImportStep::Fetch,
+                    ImportOutcome::Moved,
+                    "source_moved",
+                )?;
                 Ok(None)
             }
             Ok(GitImportFetchOutcome::Refused(reason)) => {
@@ -434,7 +462,12 @@ impl Vault {
                 }
             }
             Err(error) => {
-                self.observe(call, ImportStep::Fetch, ImportOutcome::Refused, "fetch_failed")?;
+                self.observe(
+                    call,
+                    ImportStep::Fetch,
+                    ImportOutcome::Refused,
+                    "fetch_failed",
+                )?;
                 Err(error)
             }
         }
@@ -471,7 +504,9 @@ impl Vault {
             &send.update.new,
         );
         let (outcome, reason, applied) = match outcome {
-            Ok(GitImportPushOutcome::Applied) => (ImportOutcome::Applied, "applied".to_owned(), true),
+            Ok(GitImportPushOutcome::Applied) => {
+                (ImportOutcome::Applied, "applied".to_owned(), true)
+            }
             Ok(GitImportPushOutcome::Rejected(reason)) => (ImportOutcome::Rejected, reason, false),
             Ok(GitImportPushOutcome::Unknown(reason)) => (ImportOutcome::Unknown, reason, false),
             Err(_) => (ImportOutcome::Unknown, "send_failed".to_owned(), false),
@@ -503,16 +538,18 @@ impl Vault {
     /// Whether the custody secret `binding` may carry this import's fetch
     /// (CALL T, the actor-bound source credential): a binding for
     /// [`EXTERNAL_IMPORT_FETCH_EFFECTOR`] whose scopes name the source's
-    /// https `origin` and ONE actor, the importer's principal
-    /// (`actor:<id hex>`), that the door would release now. A binding that
-    /// names no actor is its binding owner's own: it carries a live
-    /// owner's import and no one else's (the bind default, read here
-    /// because the custody bind door does not fill the scope). `Err` names
-    /// the code and how to fix it; nothing falls back to an anonymous or
-    /// ambient fetch.
+    /// https `origin` and ONE actor's principal id (`actor:<id hex>`), that
+    /// the door would release now. A binding that names no actor is its
+    /// binding owner's own (the bind default, read here because the custody
+    /// bind door does not fill the scope): it carries a live owner's import.
+    /// The importer is admitted when it is the bound actor, or an agent
+    /// acting under a Grant FROM the bound actor that lists
+    /// [`EXTERNAL_IMPORT_CREATE_VERB`] and stands now (the delegated path,
+    /// CALLS "G7 PR1 delegated binding"). `Err` names the code and the fix;
+    /// nothing falls back to an anonymous or ambient fetch.
     ///
     /// # Errors
-    /// A store failure.
+    /// A store, fold or clock failure.
     fn external_import_binding_admits(
         &self,
         binding: &str,
@@ -526,59 +563,74 @@ impl Vault {
         );
         {
             let txn = self.store.env.read_txn()?;
-            let custody = match crate::secret_custody::resolve_secret_ref_in_txn(
-                &self.store,
-                &txn,
-                binding,
-            )? {
-                Some(id) => {
-                    crate::secret_custody::read_secret_custody_admission_in_txn(&self.store, &txn, &id)?
-                }
-                None => None,
-            };
+            let custody =
+                match crate::secret_custody::resolve_secret_ref_in_txn(&self.store, &txn, binding)?
+                {
+                    Some(id) => crate::secret_custody::read_secret_custody_admission_in_txn(
+                        &self.store,
+                        &txn,
+                        &id,
+                    )?,
+                    None => None,
+                };
             let Some(custody) = custody else {
                 return Ok(Err(("binding_not_found", fix)));
             };
-            let Some(bound) = custody.binding_for(EXTERNAL_IMPORT_FETCH_EFFECTOR) else {
+            let Some(scopes) = custody
+                .binding_for(EXTERNAL_IMPORT_FETCH_EFFECTOR)
+                .map(|bound| bound.scopes.clone())
+            else {
                 return Ok(Err(("binding_not_for_import_fetch", fix)));
             };
-            if !bound.scopes.contains(&format!("origin:{origin}")) {
+            if !scopes.contains(&format!("origin:{origin}")) {
                 return Ok(Err(("binding_not_for_this_host", fix)));
             }
-            let actors: Vec<&str> = bound
-                .scopes
+            let actors: Vec<&str> = scopes
                 .iter()
                 .filter_map(|scope| scope.strip_prefix("actor:"))
                 .collect();
-            let owners = crate::policy_model::owners_in_txn(self, &txn)?;
-            match actors.as_slice() {
-                [] if owners.contains(&importer) => {}
-                [] => {
-                    return Ok(Err((
-                        "binding_bound_to_another_actor",
-                        format!(
-                            "this source credential names no actor, so it is the vault \
-                             owner's own; a member or an agent imports with its OWN \
-                             binding: {fix}"
-                        ),
-                    )));
-                }
-                [one] if EntityId::from_hex(one).ok() == Some(importer) => {}
-                [one] => {
-                    let kind = match EntityId::from_hex(one) {
-                        Ok(actor) => self.bound_actor_kind_in_txn(&txn, &owners, actor)?,
-                        Err(_) => "malformed actor id",
-                    };
-                    return Ok(Err((
-                        "binding_bound_to_another_actor",
-                        format!("this source credential is bound to another actor (a {kind}): {fix}"),
-                    )));
-                }
+            let bound = match actors.as_slice() {
+                [] => None,
+                [one] => match EntityId::from_hex(one) {
+                    Ok(actor) => Some(actor),
+                    Err(_) => return Ok(Err(("binding_actor_malformed", fix))),
+                },
                 _ => {
                     return Ok(Err((
                         "binding_names_more_than_one_actor",
                         format!("a source credential names one actor: {fix}"),
                     )));
+                }
+            };
+            let owners = crate::policy_model::owners_in_txn(self, &txn)?;
+            let own = bound.map_or_else(|| owners.contains(&importer), |actor| actor == importer);
+            if !own {
+                match self.delegated_import_binding_in_txn(&txn, &owners, bound, importer)? {
+                    DelegatedBinding::Stands => {}
+                    DelegatedBinding::Lapsed => {
+                        let lapse = crate::authority::PACT_STANDING_LAPSED;
+                        return Ok(Err((
+                            "pact_standing_lapsed",
+                            lapse
+                                .strip_prefix("pact_standing_lapsed: ")
+                                .unwrap_or(lapse)
+                                .to_owned(),
+                        )));
+                    }
+                    DelegatedBinding::Absent => {
+                        let kind = match bound {
+                            Some(actor) => self.bound_actor_kind_in_txn(&txn, &owners, actor)?,
+                            None => "vault owner",
+                        };
+                        return Ok(Err((
+                            "binding_bound_to_another_actor",
+                            format!(
+                                "this source credential is bound to another actor (a {kind}); \
+                                 {fix}, or act under a standing Grant from that actor that \
+                                 lists {EXTERNAL_IMPORT_CREATE_VERB}"
+                            ),
+                        )));
+                    }
                 }
             }
         }
@@ -589,6 +641,49 @@ impl Vault {
             return Ok(Err(("binding_refused_at_door", fix)));
         }
         Ok(Ok(()))
+    }
+
+    /// The delegated path: an agent `importer` acting under a Grant FROM
+    /// the binding's actor (`bound`; `None`, a live owner) that lists
+    /// [`EXTERNAL_IMPORT_CREATE_VERB`], stands by the Grant rule now, and
+    /// on a shared vault keeps its pact membership. A Grant that fails on
+    /// its pact membership alone is the lapse.
+    fn delegated_import_binding_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owners: &[EntityId],
+        bound: Option<EntityId>,
+        importer: EntityId,
+    ) -> Result<DelegatedBinding> {
+        let now = self.instant_in_txn(txn)?.secs();
+        let mut lapsed = false;
+        for standing in self.agent_grants_in_txn(txn)? {
+            let from_bound = bound.map_or_else(
+                || owners.contains(&standing.delegated_by),
+                |actor| standing.delegated_by == actor,
+            );
+            if !from_bound
+                || !standing.stands_for(importer, EXTERNAL_IMPORT_CREATE_VERB, now, owners)
+            {
+                continue;
+            }
+            if standing.stands_in_txn(
+                self,
+                txn,
+                importer,
+                EXTERNAL_IMPORT_CREATE_VERB,
+                now,
+                owners,
+            ) {
+                return Ok(DelegatedBinding::Stands);
+            }
+            lapsed = true;
+        }
+        Ok(if lapsed {
+            DelegatedBinding::Lapsed
+        } else {
+            DelegatedBinding::Absent
+        })
     }
 
     /// What kind of principal a binding's actor is: an owner, a person, an

@@ -237,7 +237,9 @@ fn canonical_repository(url: &str) -> std::result::Result<(String, String), Malf
         || path.is_empty()
         || url.contains(['@', '?', '#', '\\', ' '])
         || url.bytes().any(|byte| byte.is_ascii_control())
-        || path.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
     {
         return Err(malformed());
     }

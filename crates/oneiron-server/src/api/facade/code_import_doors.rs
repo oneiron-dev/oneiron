@@ -27,8 +27,10 @@ fn not_an_importer(verb: &str) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
         format!("{verb} is the vault owner's, or a principal's whose standing admits the push"),
-        &["Present the owner's credential, or your own credential with a git_push Grant on \
-           this repository."],
+        &[
+            "Present the owner's credential, or your own credential with a git_push Grant on \
+           this repository.",
+        ],
     )
 }
 

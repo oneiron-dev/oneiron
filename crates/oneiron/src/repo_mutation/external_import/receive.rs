@@ -10,10 +10,10 @@
 //! accepted ref from there.
 
 use crate::EntityId;
+use crate::Vault;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo, lock_repository};
 use crate::merge_queue::MergeQueue;
-use crate::Vault;
 
 /// One exact ref update an import sends: `old` absent for the seed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,8 +86,7 @@ impl Vault {
             {
                 continue;
             }
-            let Some((publication, true)) = self.received_ref_publication(provenance, &row)?
-            else {
+            let Some((publication, true)) = self.received_ref_publication(provenance, &row)? else {
                 continue;
             };
             let Some(record) = self.origin_publication(publication)? else {

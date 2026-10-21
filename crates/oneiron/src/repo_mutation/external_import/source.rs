@@ -230,7 +230,9 @@ fn decode<T: for<'de> Deserialize<'de>>(
         || body.lifecycle != ClaimLifecycleStatus::Active
         || body.subject != ClaimSubject::Entity(subject)
     {
-        return Err(Error::CorruptedIndex("an external import record's claim moved"));
+        return Err(Error::CorruptedIndex(
+            "an external import record's claim moved",
+        ));
     }
     rmpv::ext::from_value(body.value.clone()).map_err(|_| invalid("import record decode"))
 }

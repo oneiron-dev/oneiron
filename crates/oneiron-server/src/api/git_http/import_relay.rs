@@ -178,7 +178,9 @@ impl ExternalGitSourceHost for GitImportRelayHost {
         let refused = relay.stop();
         Ok(match (pushed?, refused) {
             (GitImportPushOutcome::Applied, _) => GitImportPushOutcome::Applied,
-            (_, Some(status)) => GitImportPushOutcome::Rejected(format!("door_refused_http_{status}")),
+            (_, Some(status)) => {
+                GitImportPushOutcome::Rejected(format!("door_refused_http_{status}"))
+            }
             (other, None) => other,
         })
     }
@@ -302,7 +304,8 @@ async fn relay_info_refs(
         Ok(auth) => auth,
         Err(response) => return relay.observed(*response),
     };
-    let mut request = advertisement_request(&relay.repo, GitService::ReceivePack, remote_user(&auth));
+    let mut request =
+        advertisement_request(&relay.repo, GitService::ReceivePack, remote_user(&auth));
     if let Some(ticket) = &relay.ticket {
         request
             .query_string
@@ -384,7 +387,10 @@ impl ImportRelay {
         let base = format!("/{secret}/{RELAY_REPO_SEGMENT}");
         let app = Router::new()
             .route(&format!("{base}/info/refs"), get(relay_info_refs))
-            .route(&format!("{base}/git-receive-pack"), post(relay_receive_pack))
+            .route(
+                &format!("{base}/git-receive-pack"),
+                post(relay_receive_pack),
+            )
             .with_state(Arc::clone(&state));
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
         listener.set_nonblocking(true)?;

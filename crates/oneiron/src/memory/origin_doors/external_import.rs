@@ -14,9 +14,9 @@
 
 use std::sync::Arc;
 
-use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use super::workbench::ServedCodeRepo;
 use super::workbench_types::CodePushIngressView;
+use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::merge_queue_doors::{MergeQueueCheckWorkView, check_work_view};

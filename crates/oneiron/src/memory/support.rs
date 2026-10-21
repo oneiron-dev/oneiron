@@ -487,9 +487,8 @@ pub struct Memory<'v> {
     pub(super) task_work_turn: Option<std::sync::Arc<crate::work_line::TaskWorkTurn>>,
     /// The authenticated Git transport ONE outside-import call lends this
     /// handle (`with_external_git_source_host`, FIX 6871); none otherwise.
-    pub(super) external_git_source_host: Option<
-        std::sync::Arc<dyn crate::repo_mutation::external_import::ExternalGitSourceHost>,
-    >,
+    pub(super) external_git_source_host:
+        Option<std::sync::Arc<dyn crate::repo_mutation::external_import::ExternalGitSourceHost>>,
 }
 
 /// A door's admission of a verb hook's rewritten args, run on the verb's name

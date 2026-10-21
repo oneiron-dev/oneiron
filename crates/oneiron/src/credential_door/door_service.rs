@@ -3,13 +3,13 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use super::binary_scan::ReceiveScanHit;
 use super::door_credential::DoorCredential;
 use super::door_policy::{DoorEffector, DoorPolicy};
-use super::binary_scan::ReceiveScanHit;
 use super::door_types::{
     CredentialDoorError, DOOR_MAX_OID_BYTES, DOOR_MAX_PATH_BYTES, DOOR_RECEIVE_PACK_EFFECTOR,
-    DOOR_VERB_RECEIVE_PACK, DoorDenyReason, DoorResult, DoorScanVerdict, PushedBlob,
-    UNUSABLE_PATH, custody, repo_record,
+    DOOR_VERB_RECEIVE_PACK, DoorDenyReason, DoorResult, DoorScanVerdict, PushedBlob, UNUSABLE_PATH,
+    custody, repo_record,
 };
 use crate::codebase::RepoRef;
 use crate::secret_lease::VaultInstant;

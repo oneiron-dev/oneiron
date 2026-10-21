@@ -165,7 +165,9 @@ impl GitWire<'_> {
         )?;
         let kinds = self.object_info(&repo, &[base.clone(), head.clone()])?;
         if kinds.get(head).map(String::as_str) != Some("commit") {
-            return Ok(GitImportFetchOutcome::Refused("head_not_a_commit".to_owned()));
+            return Ok(GitImportFetchOutcome::Refused(
+                "head_not_a_commit".to_owned(),
+            ));
         }
         if kinds.get(base).map(String::as_str) != Some("commit") {
             return Ok(GitImportFetchOutcome::Refused(
@@ -306,18 +308,16 @@ fn push_outcome(
         Some((flag, _)) if matches!(flag.as_str(), " " | "+" | "*" | "=") && output.success => {
             GitImportPushOutcome::Applied
         }
-        Some((flag, summary)) if flag == "!" => GitImportPushOutcome::Rejected(
-            if summary.contains("stale info") {
+        Some((flag, summary)) if flag == "!" => {
+            GitImportPushOutcome::Rejected(if summary.contains("stale info") {
                 "lease_mismatch".to_owned()
             } else if summary.contains("remote rejected") {
                 "door_rejected".to_owned()
             } else {
                 "push_rejected".to_owned()
-            },
-        ),
-        _ if output.success => {
-            GitImportPushOutcome::Unknown("push_named_no_outcome".to_owned())
+            })
         }
+        _ if output.success => GitImportPushOutcome::Unknown("push_named_no_outcome".to_owned()),
         _ => GitImportPushOutcome::Unknown(format!("import_door_push_failed:{class}")),
     }
 }
