@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use crate::error::{Error, Result};
 use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R};
 
+use super::credential_faults::{forgone, fork_step};
 use super::files::{EntryState, LocalCustody, container, entry_name, make_new_dir, marker_name};
 use super::identity::{CustodyBinding, CustodyId, CustodySubject, custody_corrupt};
 use super::platform;
@@ -204,7 +205,9 @@ impl LocalCustody<'_> {
     /// temporaries are not entries. A reader that needs a consistent census
     /// holds [`super::KeyCustody::read_guard`] across it: the fork reads its
     /// source's retirement facts here, and the KS-4 custody head reads every
-    /// live entry and retirement fact the same way.
+    /// live entry and retirement fact the same way. A credential's directory
+    /// that does not list is left out, warned (KS-6): its keys stay where
+    /// they are for that pass.
     pub(crate) fn census(&self) -> Result<Vec<(CustodyId, EntryState)>> {
         let subjects = match fs::read_dir(self.compartment()?) {
             Ok(subjects) => subjects,
@@ -221,32 +224,19 @@ impl LocalCustody<'_> {
             else {
                 continue;
             };
-            for file in fs::read_dir(entry.path())? {
-                let name = file?.file_name();
-                let Some(name) = name.to_str() else {
+            let generations = match subject_generations(&entry.path()) {
+                Ok(generations) => generations,
+                Err(error) => {
+                    forgone(&subject, error, "its directory did not list")?;
                     continue;
-                };
-                let (hex, state) = match name.strip_prefix(".retired-g") {
-                    Some(hex) => (hex, EntryState::Retired),
-                    None => match name.strip_prefix('g') {
-                        Some(hex) => (hex, EntryState::Live),
-                        None => continue,
-                    },
-                };
-                let Ok(generation) = u64::from_str_radix(hex, 16) else {
-                    continue;
-                };
-                let canonical = match state {
-                    EntryState::Retired => marker_name(generation),
-                    _ => entry_name(generation),
-                };
-                if canonical == name {
-                    let slot = census
-                        .entry(subject.at(generation))
-                        .or_insert(EntryState::Live);
-                    if state == EntryState::Retired {
-                        *slot = state;
-                    }
+                }
+            };
+            for (generation, state) in generations {
+                let slot = census
+                    .entry(subject.at(generation))
+                    .or_insert(EntryState::Live);
+                if state == EntryState::Retired {
+                    *slot = state;
                 }
             }
         }
@@ -288,16 +278,23 @@ impl LocalCustody<'_> {
         };
         let copied = (|| -> Result<()> {
             target.open_compartment()?;
+            // KS-6: a credential's key a fork cannot copy stays behind,
+            // warned, and the fork goes on as it did (fork_step).
             for id in &retired {
-                if self.retired(id)? {
-                    target.retire_local(id)?;
-                }
+                let step = self.retired(id).and_then(|retired| {
+                    if retired {
+                        target.retire_local(id)
+                    } else {
+                        Ok(())
+                    }
+                });
+                fork_step(id, step)?;
             }
             for (subject, (through, committed)) in &plan.subjects {
                 for generation in 0..=*through {
                     let id = subject.at(generation);
                     if committed.is_some_and(|newest| generation <= newest) {
-                        target.retire_local(&id)?;
+                        fork_step(&id, target.retire_local(&id))?;
                     } else if plan.copies(&id) {
                         let read_live = || match self.state(&id)? {
                             EntryState::Live => self.read(&id).map(Some),
@@ -306,6 +303,10 @@ impl LocalCustody<'_> {
                         // A pad its row may land without (KS-5): a failed
                         // read never stops the fork; its row's restore decides.
                         let live = match read_live() {
+                            Err(error) if crate::store::credential_kind(subject.kind()) => {
+                                fork_step(&id, Err(error))?;
+                                None
+                            }
                             Err(error) if plan.optional.contains(subject) => {
                                 tracing::warn!(
                                     kind = ?error.kind(),
@@ -316,7 +317,7 @@ impl LocalCustody<'_> {
                             live => live?,
                         };
                         if let Some(secret) = live {
-                            target.publish(&id, &secret)?;
+                            fork_step(&id, target.publish(&id, &secret))?;
                         }
                     }
                 }
@@ -332,4 +333,35 @@ impl LocalCustody<'_> {
             }
         }
     }
+}
+
+/// Every generation one subject's directory `dir` holds an entry or a
+/// retirement marker for, by its canonical name, with its state; a name the
+/// engine would not write is not one it reads.
+fn subject_generations(dir: &std::path::Path) -> Result<Vec<(u64, EntryState)>> {
+    let mut generations = Vec::new();
+    for file in fs::read_dir(dir)? {
+        let name = file?.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let (hex, state) = match name.strip_prefix(".retired-g") {
+            Some(hex) => (hex, EntryState::Retired),
+            None => match name.strip_prefix('g') {
+                Some(hex) => (hex, EntryState::Live),
+                None => continue,
+            },
+        };
+        let Ok(generation) = u64::from_str_radix(hex, 16) else {
+            continue;
+        };
+        let canonical = match state {
+            EntryState::Retired => marker_name(generation),
+            _ => entry_name(generation),
+        };
+        if canonical == name {
+            generations.push((generation, state));
+        }
+    }
+    Ok(generations)
 }

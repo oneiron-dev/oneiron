@@ -126,6 +126,7 @@ mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
 mod commitment_due;
+mod credential_custody;
 mod deadline_jobs;
 mod diagnostics;
 mod gate_decision;
@@ -200,6 +201,8 @@ pub(crate) use body_store::{
 pub use channel_identity_receipts::*;
 #[cfg(test)]
 pub(crate) use commitment_due::*;
+// KS-6: credential values and carriers in typed custody.
+pub(crate) use credential_custody::{CredentialLeaf, credential_kind, plan_credential_values};
 pub(crate) use deadline_jobs::DeadlineJobs;
 pub use deadline_jobs::{DEADLINE_JOBS_CHECK_KIND, DeadlineJob};
 pub use diagnostics::Diagnostics;

@@ -12,6 +12,7 @@
 //! (`gate_decision::orcb`) are its first client.
 
 mod anchor;
+mod credential_faults;
 mod files;
 mod folder;
 mod fork;

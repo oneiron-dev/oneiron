@@ -51,19 +51,32 @@ impl TargetRecipients {
     }
 
     /// The digest of the policy both heads follow: the worlds each leaves
-    /// the pads of out, in order.
+    /// the pads of out, then the credentials whose keys each may carry
+    /// (KS-6), and whether a root is there to carry them to, in order.
     fn policy(&self) -> [u8; 32] {
         policy_digest(
-            &self.own.pad_worlds_kept_local,
-            &self.hosted.pad_worlds_kept_local,
+            &[
+                &self.own.pad_worlds_kept_local,
+                &self.hosted.pad_worlds_kept_local,
+                &self.own.credentials_eligible,
+                &self.hosted.credentials_eligible,
+            ],
+            [self.own.root.is_some(), self.hosted.root.is_some()],
         )
     }
 }
 
-fn policy_digest(own: &BTreeSet<[u8; 16]>, hosted: &BTreeSet<[u8; 16]>) -> [u8; 32] {
+fn policy_digest(sets: &[&BTreeSet<[u8; 16]>], rooted: [bool; 2]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(POLICY_CONTEXT);
-    for worlds in [own, hosted] {
+    // A root decides whether a credential's keys may ride at all (KS-6); a
+    // vault with no eligible credential keeps its pad-only digest.
+    let credentials = sets.iter().skip(2).any(|set| !set.is_empty());
+    if credentials {
+        hasher.update(&[u8::from(rooted[0]), u8::from(rooted[1])]);
+    }
+    let hashed = if credentials { sets.len() } else { 2 };
+    for worlds in sets.iter().take(hashed).copied() {
         hasher.update(&(worlds.len() as u64).to_be_bytes());
         for world in worlds {
             hasher.update(world);

@@ -54,6 +54,17 @@ pub(crate) async fn vault_code_export(
     .await
 }
 
+pub(crate) async fn vault_code_import(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeRepoImportRequest,
+) -> Listed<CodeRepoImportView> {
+    as_owner(server, auth, "vault.code.import", move |memory, owner| {
+        memory.code_repo_import_as(owner, input)
+    })
+    .await
+}
+
 pub(crate) async fn vault_code_origin_authority_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
