@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1129 facade rows, 3908 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1081.
+// UniFFI census: 1131 facade rows, 3915 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1083.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -31760,8 +31760,8 @@ pub struct CodeProposalSubmitRequest {
     pub message: String,
     #[serde(rename = "op_provenance")]
     pub op_provenance: CodeOpProvenance,
-    #[serde(rename = "catalog")]
-    pub catalog: LensCatalog,
+    #[serde(rename = "catalog", default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<LensCatalog>,
 }
 
 /// `oneiron::memory::code_doors::types::CodeProposalSubmitted`.
@@ -35835,6 +35835,85 @@ pub struct CodeCheckReceiptView {
     pub receipt_ref: String,
     #[serde(rename = "receipts")]
     pub receipts: Vec<CodeCheckAttemptView>,
+}
+
+/// `oneiron::memory::merge_queue_doors::review_policy::QueueReviewPolicyState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QueueReviewPolicyState {
+    #[serde(rename = "absent")]
+    Absent,
+    #[serde(rename = "set")]
+    Set,
+    #[serde(rename = "unreadable")]
+    Unreadable,
+}
+
+/// `oneiron::memory::merge_queue_doors::review_policy::QueueReviewMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QueueReviewMode {
+    #[serde(rename = "land_on_green")]
+    LandOnGreen,
+    #[serde(rename = "review")]
+    Review,
+    #[serde(rename = "held")]
+    Held,
+}
+
+/// `oneiron::merge_queue::review_policy::QueueReviewThresholds`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QueueReviewThresholds {
+    #[serde(rename = "critics", default, skip_serializing_if = "Option::is_none")]
+    pub critics: Option<u32>,
+    #[serde(rename = "votes", default, skip_serializing_if = "Option::is_none")]
+    pub votes: Option<u32>,
+}
+
+/// `oneiron::merge_queue::review_policy::QueueReviewPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QueueReviewPolicy {
+    #[serde(rename = "catalog")]
+    pub catalog: LensCatalog,
+    #[serde(rename = "thresholds")]
+    pub thresholds: QueueReviewThresholds,
+    #[serde(rename = "set_by")]
+    pub set_by: String,
+    #[serde(rename = "set_at")]
+    pub set_at: u64,
+}
+
+/// `oneiron::memory::merge_queue_doors::review_policy::QueueReviewPolicyView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QueueReviewPolicyView {
+    #[serde(rename = "state")]
+    pub state: QueueReviewPolicyState,
+    #[serde(rename = "mode")]
+    pub mode: QueueReviewMode,
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<QueueReviewPolicy>,
+    #[serde(rename = "hold", default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<String>,
+}
+
+/// `oneiron::memory::merge_queue_doors::review_policy::QueueReviewPolicyInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QueueReviewPolicyInput {
+    #[serde(rename = "catalog")]
+    pub catalog: LensCatalog,
+    #[serde(
+        rename = "thresholds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub thresholds: Option<QueueReviewThresholds>,
+}
+
+/// `oneiron::memory::merge_queue_doors::review_policy::QueueReviewPolicySetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QueueReviewPolicySetRequest {
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<QueueReviewPolicyInput>,
 }
 
 /// `oneiron::memory::merge_queue_doors::export_types::MergeQueueGreenExportRequest`.

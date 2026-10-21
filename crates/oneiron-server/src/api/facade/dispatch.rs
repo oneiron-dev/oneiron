@@ -21033,6 +21033,98 @@ async fn vault_code_checks_get(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_code_merge_queue_review_policy_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.review_policy.get")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.review_policy.get", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.code.merge_queue.review_policy.get",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_merge_queue_review_policy_get(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_review_policy_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.review_policy.set")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.review_policy.set", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.code.merge_queue.review_policy.set",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_merge_queue_review_policy_set(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_merge_queue_export_green(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -36369,6 +36461,12 @@ pub(crate) async fn call_verb(
             vault_code_merge_queue_check_status(server, call, input).await
         }
         "vault.code.checks.get" => vault_code_checks_get(server, call, input).await,
+        "vault.code.merge_queue.review_policy.get" => {
+            vault_code_merge_queue_review_policy_get(server, call, input).await
+        }
+        "vault.code.merge_queue.review_policy.set" => {
+            vault_code_merge_queue_review_policy_set(server, call, input).await
+        }
         "vault.code.merge_queue.export_green" => {
             vault_code_merge_queue_export_green(server, call, input).await
         }

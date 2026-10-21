@@ -2774,7 +2774,7 @@ class Oneiron:
         @property
         def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs": ...
         def proposal_submit(self, spec: Facade.CodeProposalSubmitRequest) -> Facade.CodeProposalSubmitted:
-            """Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."""
+            """Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed."""
         def conflict_record(self, spec: Facade.CodeConflictRecordRequest) -> Facade.CodeConflictView:
             """Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves."""
         def conflict_view(self, spec: Facade.CodeConflictViewRequest) -> Facade.CodeConflictHistory:
@@ -2784,7 +2784,7 @@ class Oneiron:
         def proposal_review(self, spec: Facade.CodeProposalReviewRequest) -> Facade.CodeProposalSettlementView:
             """Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt."""
         def proposal_settle(self, spec: Facade.CodeProposalSettleRequest) -> Facade.CodeProposalSettlementView:
-            """Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it."""
+            """Approve or reject one code proposal as an independent owner, keeping a receipt. Its own catalog still needs unanimous critics; Approve satisfies the vault's review policy. Only the tested merge queue lands it."""
         def proposal_settlement(self, spec: Facade.CodeProposalSettlementRequest) -> Facade.CodeProposalSettlementView:
             """Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only."""
         def oplog(self, spec: Facade.CodeRepoRequest) -> Facade.CodeMutationLog:
@@ -2950,7 +2950,7 @@ class Oneiron:
         def requeue_survivors(self, spec: Facade.MergeQueueBatchRequest) -> Facade.MergeQueueRequeueView:
             """Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written."""
         def land_reviewed(self, spec: Facade.MergeQueueBatchRequest) -> Facade.MergeQueueBatchView:
-            """Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing."""
+            """Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs the review it is held to and exact bytes and base; the owner proof approves nothing."""
         def settle_slow(self, spec: Facade.MergeQueueRepoRequest) -> Facade.MergeQueuePointersView:
             """Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."""
         def recover(self, spec: Facade.MergeQueueRepoRequest) -> Facade.MergeQueuePointersView:
@@ -2963,8 +2963,15 @@ class Oneiron:
             """Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only."""
         def check_status(self, spec: Facade.MergeQueueCheckStatusRequest) -> Facade.MergeQueueCheckWorkView:
             """Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."""
+        @property
+        def review_policy(self) -> "Oneiron._VaultCodeMergeQueueReviewPolicyVerbs": ...
         def export_green(self, spec: Facade.MergeQueueGreenExportRequest) -> Facade.CodeExportResult:
             """Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result."""
+    class _VaultCodeMergeQueueReviewPolicyVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.QueueReviewPolicyView:
+            """Read the vault's opt-in review policy for merge queue work and the mode inherited work is in: none set lands on green through the same checks; an unreadable row holds. A live Owner, or one covering Grant."""
+        def set(self, spec: Facade.QueueReviewPolicySetRequest) -> Facade.QueueReviewPolicyView:
+            """Set the vault's opt-in review policy for merge queue work, a lens catalog with overridable limits, or clear it with null. While set, work naming no catalog waits for critics or Approve. Owner, or one covering Grant."""
     class _VaultCodeChecksVerbs:
         def get(self, spec: Facade.CodeCheckReceiptRequest) -> Facade.CodeCheckReceiptView | None:
             """Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass."""
@@ -3024,7 +3031,7 @@ class Oneiron:
         @property
         def work(self) -> "Oneiron._VaultRepoWorkVerbs": ...
         def proposal_submit(self, spec: Facade.LiveRunRequest[Facade.RepoProposalSubmitInput]) -> Facade.RepoProposalSubmitOutput:
-            """Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept."""
+            """Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept."""
         @property
         def checkout(self) -> "Oneiron._VaultRepoCheckoutVerbs": ...
         def export(self, spec: Facade.LiveRunRequest[Facade.RepoExportInput]) -> Facade.RepoExportOutput:
