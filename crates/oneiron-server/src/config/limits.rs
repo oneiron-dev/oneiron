@@ -571,7 +571,10 @@ impl LimitsConfig {
                 backup_handoff_pending_bytes,
             ),
             (EngineLimit::AuthorityRecordItems, authority_record_items),
-            (EngineLimit::ConnectorLiveQuestions, connector_live_questions),
+            (
+                EngineLimit::ConnectorLiveQuestions,
+                connector_live_questions,
+            ),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);

@@ -15,6 +15,7 @@ mod connector_call_output;
 mod connector_call_pending;
 mod connector_call_resume;
 mod connector_elicitation_asks;
+mod connector_elicitation_receipt;
 mod execution;
 mod recovery;
 mod result_scrub;
@@ -41,6 +42,9 @@ pub(crate) use self::connector_call_code::{
 };
 pub use self::connector_elicitation_asks::{
     ConnectorElicitationAnswer, ConnectorElicitationOwnerAsk,
+};
+pub use self::connector_elicitation_receipt::{
+    ConnectorElicitationReceipt, ElicitationDisposition, ElicitationEgress,
 };
 pub use self::execution::{
     ConnectorElicitationBinding, ElicitationAnswerVerdict, ScopedMcpDispatchResult,

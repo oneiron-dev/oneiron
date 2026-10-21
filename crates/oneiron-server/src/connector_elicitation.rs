@@ -87,7 +87,7 @@ pub(crate) struct QuestionBinding {
 }
 
 impl QuestionBinding {
-    fn authority(&self) -> ConnectorElicitationBinding {
+    pub(crate) fn authority(&self) -> ConnectorElicitationBinding {
         ConnectorElicitationBinding {
             principal_ref: self.principal.to_hex(),
             grant_id: self.grant_id,

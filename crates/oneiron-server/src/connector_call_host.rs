@@ -247,7 +247,7 @@ impl ServedConnectorCallHost {
         Some(Declared {
             capability,
             intake,
-            vault: self.vault.as_ref(),
+            vault: &self.vault,
             registry: &self.elicitations,
             binding: QuestionBinding {
                 principal,
@@ -526,8 +526,9 @@ struct Declared<'a> {
     capability: Value,
     intake: Intake,
     binding: QuestionBinding,
-    /// The vault whose `[limits]` row measures the live question sets.
-    vault: &'a Vault,
+    /// The vault whose `[limits]` row measures the live question sets, and
+    /// whose gate ledger keeps each answer's receipt (FIX 3840).
+    vault: &'a Arc<Vault>,
     registry: &'a Arc<ConnectorElicitationRegistry>,
 }
 
