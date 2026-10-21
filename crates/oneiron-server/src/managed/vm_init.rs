@@ -23,6 +23,12 @@
 //! channel. An inspection installs the key, reads the commit marker and
 //! answers, and starts nothing.
 //!
+//! A boot that serves then reads the host's custody anchor header before
+//! the engine starts, and carries the anchor's credential into the engine
+//! after the engine's credential frame, on a pipe of the engine's own, and
+//! its streams to the anchor URL the host bound, through a socket of the
+//! engine's own (FIX 6517, [`anchor`]).
+//!
 //! It stays root only to supervise, and to run the outbox companion
 //! `oneiron-vm-outbox` beside the engine ([`outbox`], FIX 5235): started
 //! before the engine, it lays out the outbox and carries it to the host, and
@@ -33,6 +39,7 @@
 //! and exits with the engine's status; the image's init then powers the VM
 //! off.
 
+mod anchor;
 mod fscrypt;
 mod layout;
 mod outbox;
@@ -56,6 +63,7 @@ use std::io::{Read, Write};
 use std::os::fd::RawFd;
 use std::os::unix::process::CommandExt;
 use std::process::{ExitCode, ExitStatus, Stdio};
+use std::sync::mpsc;
 
 /// The engine the bootstrap starts, beside it in the image.
 const ENGINE: &str = "/usr/bin/oneiron-server";
@@ -329,9 +337,11 @@ fn remove_key(provisioned: &Provisioned) {
 }
 
 /// Starts the outbox companion, then the engine as `uid`, and waits for the
-/// engine; then stops the companion, and ends and reaps what is left. A cold
-/// restore's engine (`restore_channel`) gets its two restore pipes, and the
-/// restore's last result record goes out before this returns.
+/// engine; then stops the companion, and ends and reaps what is left. The
+/// host's custody anchor header is read before either, and the anchor's
+/// credential taken beside the engine. A cold restore's engine
+/// (`restore_channel`) gets its two restore pipes, and the restore's last
+/// result record goes out before this returns.
 fn run_engine(
     args: &InitArgs,
     uid: u32,
@@ -341,21 +351,36 @@ fn run_engine(
     // it is reaped before the key goes. Any nonzero argument sets it.
     rustix::process::set_child_subreaper(Some(rustix::process::getpid()))
         .context("becoming the engine's subreaper")?;
+    let anchor = anchor::exchange(&args.vault, uid)?;
     let companion = outbox::start(&args.vault, uid, ENGINE_PATH);
-    let outbox_flags = if companion.is_some() {
+    let mut flags = if companion.is_some() {
         outbox::engine_flags()
     } else {
         Vec::new()
     };
+    flags.extend(anchor.flags());
+    let anchor_fds = anchor.fds();
+    // A pipe the engine reads that broke before its end comes back here.
+    let (lost_sender, lost) = mpsc::channel();
     let mut restoring = None;
+    let mut anchored = None;
     let status = match restore_channel {
-        None => start_engine(args, uid, &outbox_flags, &[])
-            .and_then(|mut engine| engine.wait().context("waiting for the engine")),
-        Some(channel) => restore::start(channel, |fds, flags| {
-            start_engine(args, uid, &[&outbox_flags[..], flags].concat(), fds)
+        None => start_engine(args, uid, &flags, &anchor_fds).and_then(|mut engine| {
+            anchored = Some(anchor.start(lost_sender)?);
+            restore::supervise(&mut engine, &lost)
+        }),
+        Some(channel) => restore::start(channel, lost_sender.clone(), |fds, restore_flags| {
+            let fds = [fds, &anchor_fds[..]].concat();
+            start_engine(args, uid, &[&flags[..], restore_flags].concat(), &fds)
         })
-        .and_then(|started| restoring.insert(started).wait()),
+        .and_then(|started| {
+            let restoring = restoring.insert(started);
+            anchored = Some(anchor.start(lost_sender)?);
+            restoring.wait(&lost)
+        }),
     };
+    // The anchor's socket goes with the engine.
+    drop(anchored);
     // The companion goes first, while the key is in: it may be writing into
     // the encrypted storage. Then everything else, the broker among it.
     if let Some(companion) = companion {

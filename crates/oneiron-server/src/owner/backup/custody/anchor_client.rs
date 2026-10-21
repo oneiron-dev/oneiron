@@ -25,6 +25,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::CustodyAnchorCredentials;
+use super::anchor_transport::AnchorPath;
 use crate::owner::vault_key::hex;
 
 const ROUTE: &str = "/v1/owner/custody-anchor";
@@ -73,6 +74,9 @@ fn unhex(text: &str) -> oneiron::Result<Vec<u8>> {
 pub(crate) struct HttpAnchor {
     url: String,
     credentials: Option<Arc<CustodyAnchorCredentials>>,
+    /// How the calls travel: a vault VM's credential routes them through
+    /// its guest socket for exactly the URL it was bound to (FIX 6517).
+    path: AnchorPath,
 }
 
 /// `request` with the owner credential, and with the holder proof its
@@ -94,13 +98,16 @@ impl HttpAnchor {
     /// The door under `base` (`https://host[:port]`), called with
     /// `credentials`, the owner credential this process was handed on its
     /// pipe. With none, each call fails before anything is sent: the door is
-    /// never called without its credential.
+    /// never called without its credential. A vault VM's credential routes
+    /// the calls through its guest socket when `base` is exactly the URL its
+    /// host bound, and fails each one for any other (FIX 6517).
     pub(crate) fn with_credentials(
         base: &str,
         credentials: Option<Arc<CustodyAnchorCredentials>>,
     ) -> Self {
         Self {
             url: format!("{}{ROUTE}", base.trim_end_matches('/')),
+            path: AnchorPath::of(base, credentials.as_deref()),
             credentials,
         }
     }
@@ -115,12 +122,23 @@ impl HttpAnchor {
         let credentials = self.credentials.as_deref().ok_or_else(|| {
             failed("has no owner credential: none was handed to this process on its pipe")
         })?;
+        let socket = match &self.path {
+            AnchorPath::Native => None,
+            AnchorPath::Routed(socket) => Some(socket.as_path()),
+            AnchorPath::Elsewhere => {
+                return Err(failed("is not the one the credential's route reaches"));
+            }
+        };
         std::thread::scope(|scope| {
             scope
                 .spawn(|| {
-                    let client = Client::builder()
+                    let mut builder = Client::builder()
                         .timeout(CALL_TIMEOUT)
-                        .redirect(reqwest::redirect::Policy::none())
+                        .redirect(reqwest::redirect::Policy::none());
+                    if let Some(socket) = socket {
+                        builder = builder.unix_socket(socket);
+                    }
+                    let client = builder
                         .build()
                         .map_err(|_| failed("has no HTTP client on this host"))?;
                     let response = credentialed(request(&client, &self.url), credentials)?

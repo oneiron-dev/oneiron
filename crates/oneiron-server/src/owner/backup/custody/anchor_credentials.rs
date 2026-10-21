@@ -13,12 +13,15 @@ use std::fmt;
 use std::io::Read as _;
 use std::os::fd::{FromRawFd as _, RawFd};
 use std::os::unix::fs::FileTypeExt as _;
+use std::path::Path;
 use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::error::Category;
 use serde_json::value::RawValue;
 use zeroize::{Zeroize as _, Zeroizing};
+
+use super::anchor_transport::AnchorRoute;
 
 /// How many bytes one read off the pipe takes.
 const READ_CHUNK: usize = 1024;
@@ -30,6 +33,9 @@ const READ_CHUNK: usize = 1024;
 pub(crate) struct CustodyAnchorCredentials {
     bearer: Zeroizing<String>,
     binding_seed: Option<Zeroizing<[u8; 32]>>,
+    /// A vault VM's guest socket to the one URL its host bound (FIX 6517);
+    /// `None` for a credential handed to a node's process.
+    route: Option<AnchorRoute>,
 }
 
 impl fmt::Debug for CustodyAnchorCredentials {
@@ -130,7 +136,21 @@ impl CustodyAnchorCredentials {
         Ok(Self {
             bearer: Zeroizing::new(bearer.to_owned()),
             binding_seed: wire.binding_seed.map(Zeroizing::new),
+            route: None,
         })
+    }
+
+    /// The credential a vault VM's engine was handed, routed through
+    /// `socket`, its bootstrap's socket that reaches `url` and nothing else
+    /// (FIX 6517): the door's client takes it for exactly that URL.
+    pub(crate) fn routed(mut self, url: &str, socket: &Path) -> Self {
+        self.route = Some(AnchorRoute::new(url, socket));
+        self
+    }
+
+    /// The route the door's client takes, when a vault VM was handed this.
+    pub(super) fn route(&self) -> Option<&AnchorRoute> {
+        self.route.as_ref()
     }
 
     /// The bearer the door is called with.
