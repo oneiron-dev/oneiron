@@ -91,6 +91,8 @@ namespace, and mkosi runs there with its `chown()` calls made no-ops.
 3. **Receipt.** `build.py receipt --variant base` writes `receipt.json` and
    prints the `[variants.base.outputs."linux/amd64"]` block. Paste the block
    into `release.toml` with `state = "built-candidate"`.
+4. **Release manifest.** `build.py manifest --work W --variant base` writes
+   `image-release.json` beside the artifacts (see "Verify a release" below).
 
 **Ownership.** The single-uid build leaves every file root-owned on disk, so
 the tar states each owner explicitly:
@@ -132,8 +134,9 @@ byte fails the fetch; nothing re-resolves.
   - `oci_archive_sha256` and `ext4_sha256` are file hashes.
   - The Firecracker host pins are BLAKE3 values, computed when a host adopts
     the rootfs.
-- **Signatures**: none exist yet. A later pack signs the release manifest. No
-  key is in the repo, a log or a receipt.
+- **Signatures**: none exist yet. Each build has a release manifest
+  (`image-release.json`), but no signing key exists, so no envelope exists
+  either. No key is in the repo, a log or a receipt.
 - **Boot proof**: a candidate is not qualified until a fresh boot reaches its
   protocol. Each variant needs its own boot: a browser serves CDP, a checker
   runs a check, a desktop serves MCP and a display. A receipt is provenance,
@@ -156,6 +159,46 @@ browser's 2 GiB and the desktop's 3 GiB runtime memory defaults are config
 values, not image sizes. The checker's provisional 2-8 GiB payload can exceed
 the 4 GiB Firecracker cap. Its first build decides between pruning, a split,
 or a reviewed bound change.
+
+## Verify a release
+
+The wire, the signature rule and the result vocabulary are in
+`crates/oneiron-container/images/manifest.md`. This section covers the
+operator's part.
+
+1. **Emit.** After `receipt`, run
+   `build.py manifest --work W --variant <variant>` on the build host. Pass
+   `--kernel <file>` to list an operator-supplied kernel. The emitter measures
+   every artifact itself, then refuses with `error[pin-mismatch]` if any
+   measurement differs from the receipt. In a builder work dir it takes BLAKE3
+   from the tools tree's `b3sum`. Run outside one, it writes `blake3: null`
+   with the manifest fact `blake3_unmeasured`, and a Firecracker host pin
+   cannot bind to that manifest.
+2. **Sign.** There is no step yet: no signing key exists. The seam is
+   `--signer-cmd CMD`, which receives the manifest bytes on stdin and writes
+   one envelope (`image-release.sig.json`) on stdout. The signature covers
+   the manifest file's exact bytes, so never re-indent or re-save a manifest
+   after signing. Re-emitting a manifest without a signer deletes the old
+   envelope.
+3. **Ship.** `image-release.json`, and later its envelope, travel beside the
+   variant's artifacts. Its paths are relative to its own directory.
+4. **Verify.** Each launch door runs `observe_release` before it starts a
+   guest and records the result as `image_release` in the session manifest.
+   A Hypnos import is meant to run it as well (LC builds that call). Today
+   no host-owned binding from an image to its manifest exists, so every
+   launch records `image_release_manifest_absent` and
+   `image_signature_unavailable`. A signed manifest with no verifier
+   configured records `image_signature_unverifiable`.
+5. **Policy.** `IMAGE_SIGNATURE_POLICY` is `ObserveOnly`, so these facts
+   never refuse a launch or an install. Every existing pin, fence and
+   image-match check still decides as before. Requiring a verified signature
+   narrows what runs, so it waits for an owner ruling, an enrolled trust root
+   and a rollout.
+
+To check a manifest by hand, compare `artifacts.rootfs_ext4.sha256` with
+`sha256sum rootfs.ext4`, and `blake3` with `b3sum rootfs.ext4` (the value the
+host's Firecracker rootfs pin must equal). Compare the OCI digests with
+`index.json` and the blobs inside `<variant>.oci.tar`.
 
 ## Candidate hand-off to the acceptance smoke
 

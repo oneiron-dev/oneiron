@@ -376,12 +376,13 @@ impl Memory<'_> {
                     Ok(false)
                 })
         };
+        // Only a Gate verdict that PENDS an Auto request is resubmitted as
+        // Proposed: that write would park for review, so it lands parked. A
+        // Gate deny (an unresolved record reference among them, FIX 1220) is
+        // never resubmitted; no approval lane makes it land.
         let refused = match write(approval) {
             Ok(refused) => refused,
-            Err(err)
-                if approval == ClaimApprovalStatus::Auto
-                    && err.kind() == ErrorKind::GateWriteRejected =>
-            {
+            Err(err) if approval == ClaimApprovalStatus::Auto && gate_rejection_pends(&err) => {
                 approval = ClaimApprovalStatus::Proposed;
                 write(approval)
                     .map_err(|err| publication_refusal.take().unwrap_or_else(|| err.into()))?
@@ -616,6 +617,18 @@ fn fold_answer_text(text: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
+}
+
+/// Whether `err` is a Gate write rejection whose outcome is Pending, the one
+/// rejection an Auto request may be resubmitted as Proposed after. A Deny,
+/// and any error that is not a Gate rejection, is not.
+fn gate_rejection_pends(err: &Error) -> bool {
+    matches!(
+        err,
+        Error::Gate(crate::error::GateError::GateWriteRejected { outcome, .. })
+            if crate::error::GateDenialOutcome::parse(outcome)
+                == Some(crate::error::GateDenialOutcome::Pending)
+    )
 }
 
 /// Extracts the write-envelope actor stamped into a claim's evidence
