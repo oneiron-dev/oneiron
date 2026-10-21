@@ -11,7 +11,7 @@
 //! holds; so a row nulled alone at its depth from the document root is the row
 //! the whole-document pass leaves.
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Seek, Write};
+use std::io::{Read, Seek, Write};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -24,10 +24,10 @@ use crate::batch::export::{
     ExportAdapterDescriptor, ExportCut, ExportDerivationEnvelope, ExportDiaryHold, ExportDiaryRead,
     ExportEdge, ExportEmbeddingSetup, ExportEntity, ExportEpochFloor, ExportManifest, ExportPack,
     ExportPackSource, ExportReaderFold, ExportResultBody, ExportRun, ExportRunOutput,
-    ExportSkillBundle, ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotRun,
-    ExportSourceVault, FileSpool, OmissionLedger, RecordSpool, SideRowBytes, VAULT_ARCHIVE_FORMAT,
-    VAULT_OKF_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocumentManifest,
-    WholeVaultExportReceipt, archive_slot_rows,
+    ExportSkillBundle, ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotEntityBody,
+    ExportSnapshotRun, ExportSourceVault, FileSpool, OmissionLedger, RecordSpool, SideRowBytes,
+    VAULT_ARCHIVE_FORMAT, VAULT_OKF_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION,
+    WholeVaultDocumentManifest, WholeVaultExportReceipt, archive_slot_rows,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -121,17 +121,31 @@ impl<'v> DocumentWriter<'v> {
 
     /// One live entity: its row, and the derivation index, source package
     /// or pack source it carries.
-    pub(crate) fn entity(&mut self, raw: ExportSnapshotEntity) -> Result<()> {
+    pub(crate) fn entity(&mut self, raw: ExportSnapshotEntity<'_>) -> Result<()> {
         let entity_type = raw.header.entity_type;
         // OF-222: a stored file an ASSET body is goes beside the document
-        // once, by digest, as it is stored; its row carries the descriptor.
-        let body = if raw.tainted {
-            ExportBody::Nulled
-        } else if self.attaches_files && attaches_as_file(entity_type, &raw.body) {
-            self.files.attach(&raw.body)?;
-            ExportBody::File(ExportBodyFile::of(&raw.body))
-        } else {
-            ExportBody::from_bytes(&raw.body, entity_type)
+        // once, by digest, as it is stored; its row carries the descriptor
+        // of the bytes its copy hashed and counted. A file-plane ASSET's
+        // file streams in from the snapshot, never held whole (FIX 3677).
+        let body = match raw.body {
+            _ if raw.tainted => ExportBody::Nulled,
+            ExportSnapshotEntityBody::File(mut file) if self.attaches_files => {
+                let files = &mut self.files;
+                let blake3 = files.attach_reader(file.bytes, file.blake3, &mut file.reader)?;
+                ExportBody::File(ExportBodyFile::checked(blake3, file.bytes))
+            }
+            ExportSnapshotEntityBody::File(mut file) => {
+                let mut body = Vec::new();
+                file.reader.read_to_end(&mut body)?;
+                ExportBody::from_bytes(&body, entity_type)
+            }
+            ExportSnapshotEntityBody::Bytes(body)
+                if self.attaches_files && attaches_as_file(entity_type, &body) =>
+            {
+                let blake3 = self.files.attach(&body)?;
+                ExportBody::File(ExportBodyFile::checked(blake3, body.len() as u64))
+            }
+            ExportSnapshotEntityBody::Bytes(body) => ExportBody::from_bytes(&body, entity_type),
         };
         let id = raw.id.to_hex();
         if entity_type == ENTITY_TYPE_CLAIM

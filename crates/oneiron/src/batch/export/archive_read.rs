@@ -35,8 +35,28 @@ pub(crate) trait ArchiveFiles {
     /// The length the manifest lists for the file named `blake3`, if it does.
     fn file_len(&self, blake3: &str) -> Option<u64>;
 
+    /// Runs `read` once over the file named `blake3` as it streams (FIX
+    /// 3677). Whatever `read` leaves is read too, and the file is checked
+    /// against its name and listed length to its end whether or not `read`
+    /// reaches it: an unread suffix never passes. A failed read or check is
+    /// the error before `read`'s own. `read` must not read this archive's
+    /// files again while it runs.
+    fn with_file_reader(
+        &self,
+        blake3: &str,
+        read: &mut dyn FnMut(&mut dyn Read) -> Result<()>,
+    ) -> Result<()>;
+
     /// The file named `blake3`, checked against its name and listed length.
-    fn read_file(&self, blake3: &str) -> Result<Vec<u8>>;
+    fn read_file(&self, blake3: &str) -> Result<Vec<u8>> {
+        let mut body = Vec::new();
+        self.with_file_reader(blake3, &mut |file| {
+            file.read_to_end(&mut body)
+                .map_err(|_| invalid("unreadable whole-vault archive member"))?;
+            Ok(())
+        })?;
+        Ok(body)
+    }
 }
 
 /// The attached files of one archive, read from it on demand.
@@ -50,7 +70,11 @@ impl<R: Read + Seek> ArchiveFiles for ArchiveFileSource<R> {
         self.listed.get(blake3).copied()
     }
 
-    fn read_file(&self, blake3: &str) -> Result<Vec<u8>> {
+    fn with_file_reader(
+        &self,
+        blake3: &str,
+        read: &mut dyn FnMut(&mut dyn Read) -> Result<()>,
+    ) -> Result<()> {
         let bytes = self
             .file_len(blake3)
             .ok_or_else(|| invalid("archive file listed but absent"))?;
@@ -58,15 +82,47 @@ impl<R: Read + Seek> ArchiveFiles for ArchiveFileSource<R> {
         let member = archive
             .by_name(&archive_file_path(blake3))
             .map_err(|_| invalid("archive file listed but absent"))?;
-        let mut body = Vec::new();
-        member
-            .take(bytes.saturating_add(1))
-            .read_to_end(&mut body)
-            .map_err(|_| invalid("unreadable whole-vault archive member"))?;
-        if body.len() as u64 != bytes || super::blake3_hex(&body) != blake3 {
+        let mut file = CheckedMember {
+            member: member.take(bytes.saturating_add(1)),
+            hasher: blake3::Hasher::new(),
+            count: 0,
+            failed: false,
+        };
+        let called = read(&mut file);
+        if std::io::copy(&mut file, &mut std::io::sink()).is_err() || file.failed {
+            return Err(invalid("unreadable whole-vault archive member"));
+        }
+        let digest = crate::entity_id::bytes_to_hex_lower(file.hasher.finalize().as_bytes());
+        if file.count != bytes || digest != blake3 {
             return Err(invalid("archive file does not match its digest"));
         }
-        Ok(body)
+        called
+    }
+}
+
+/// One attached file as it is read from the archive, never past one byte
+/// beyond its listed length: counted and hashed as it passes, and marked
+/// failed by any read error but an interrupted read's.
+struct CheckedMember<M> {
+    member: M,
+    hasher: blake3::Hasher,
+    count: u64,
+    failed: bool,
+}
+
+impl<M: Read> Read for CheckedMember<M> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        match self.member.read(out) {
+            Ok(read) => {
+                self.hasher.update(&out[..read]);
+                self.count += read as u64;
+                Ok(read)
+            }
+            Err(error) => {
+                self.failed |= error.kind() != std::io::ErrorKind::Interrupted;
+                Err(error)
+            }
+        }
     }
 }
 

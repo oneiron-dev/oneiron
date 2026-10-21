@@ -45,6 +45,14 @@ pub trait EntityStoreRead: Transactions {
         &self,
         txn: &'a Self::Read<'_>,
     ) -> Result<PortRows<'a, (EntityId, Vec<u8>)>>;
+    /// [`port_entity_raw_records`](Self::port_entity_raw_records) without the
+    /// copy (FIX 3677): each row as the snapshot holds it, borrowed where the
+    /// backend lends it in place and owned only where it builds the row. The
+    /// keys are checked; the bodies stay unvalidated, corrupt ones visible.
+    fn port_entity_raw_records_borrowed<'a>(
+        &self,
+        txn: &'a Self::Read<'_>,
+    ) -> Result<PortRows<'a, (EntityId, std::borrow::Cow<'a, [u8]>)>>;
     fn port_entity_records<'a>(
         &self,
         txn: &'a Self::Read<'_>,
