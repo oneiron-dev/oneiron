@@ -706,7 +706,7 @@ impl Memory<'_> {
             },
         };
         // The ask answers from this TASK's class.
-        self.read_producer_in(txn, task)?;
+        self.ask_read_producer_in(txn, task)?;
         let body = super::create_validation::task_body_in_txn(self.vault(), txn, task)?;
         let authority = self
             .vault()
@@ -799,7 +799,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        let Some(group) = self.ask_group_in(&txn, handle.group_ref)? else {
+        let Some(group) = self.ask_group_named_in(&txn, handle.group_ref)? else {
             return self.held_ask_status_in(&txn, handle);
         };
         require_ask_audience(&group, self.actor())?;
@@ -834,7 +834,7 @@ impl Memory<'_> {
         txn: &mut heed::RwTxn<'_>,
         handle: TaskAskHandle,
     ) -> MemoryResult<TaskAskStatus> {
-        let Some(group) = self.ask_group_in(txn, handle.group_ref)? else {
+        let Some(group) = self.ask_group_named_in(txn, handle.group_ref)? else {
             return self.held_ask_status_in(txn, handle);
         };
         require_ask_audience(&group, self.actor())?;
@@ -944,7 +944,7 @@ impl Memory<'_> {
             if let Some(wait) = self.world_privacy_wait_in(txn, handle, step_key)? {
                 return Ok(wait);
             }
-            let Some(group) = self.ask_group_in(txn, handle.group_ref)? else {
+            let Some(group) = self.ask_group_named_in(txn, handle.group_ref)? else {
                 // A held ask waits on its approval like any pending ask: the
                 // park or the bound wait wakes once it goes out and settles.
                 let status = self.held_ask_status_in(txn, handle).map_err(|error| {
@@ -1076,7 +1076,7 @@ impl Memory<'_> {
             .read_txn()
             .map_err(crate::Error::from)?;
         let group = self
-            .ask_group_in(&txn, handle.group_ref)?
+            .ask_group_named_in(&txn, handle.group_ref)?
             .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
         if group.owner != self.actor().to_hex() {
             return Err(MemoryError::bad_request(
@@ -1263,7 +1263,7 @@ impl Memory<'_> {
             .read_txn()
             .map_err(crate::Error::from)?;
         let group = self
-            .ask_group_in(&txn, handle.group_ref)?
+            .ask_group_named_in(&txn, handle.group_ref)?
             .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
         if group.owner != self.actor().to_hex()
             && !group
@@ -1296,7 +1296,7 @@ impl Memory<'_> {
             .read_txn()
             .map_err(crate::Error::from)?;
         let group = self
-            .ask_group_in(&txn, handle.group_ref)?
+            .ask_group_named_in(&txn, handle.group_ref)?
             .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
         if group.owner != self.actor().to_hex()
             && !group
