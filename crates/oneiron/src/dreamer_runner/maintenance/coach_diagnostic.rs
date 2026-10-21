@@ -8,7 +8,10 @@
 //! manifest or a config, a suggested delta filed for the owner and never applied. Prompt,
 //! environment and person routes stay route-only. The proposal, its oversight count and the
 //! issue's settled marker land in one commit; a failed decision waits for the next run, and
-//! its third failure goes to a person.
+//! its third failure goes to a person. Whether a repair took effect is read here too
+//! ([`issue_effective_revision`]), from exact refs of the producer's revision in force.
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -17,18 +20,25 @@ use super::coach_heal::{HealRoute, ISSUE_RETRIES, IssueOutcome, IssuesPass};
 use super::coach_repair::{SkillRepairDraft, land_skill_repair_in_txn, run_target};
 use super::proposals;
 use crate::attempt_queue::AttemptId;
-use crate::batch::EntityMetadataHeader;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::edge::EdgeKind;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::limit_ask::EngineLimit;
-use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL};
 use crate::self_heal::HealContextSeed;
 use crate::self_heal::blocked_reports;
+use crate::self_heal::issue_evidence::WindowJudgment;
 use crate::self_heal::issue_work::{self, DiagnosticIssue};
+use crate::skill::SkillLifecycle;
 use crate::store::{RetrievalRunId, RetrievalRunRecord};
 use crate::{EntityId, Error, Result, Vault};
 
 /// Predicate of a proposed heal for a model finding's issue (OF-418 L3).
 pub const COACH_DIAGNOSTIC_PROPOSAL_PREDICATE: &str = "coach.diagnostic.proposal";
+/// Predicate of a proposed resolution of a model finding's issue, for the owner to confirm
+/// (OF-418 L3).
+pub const COACH_ISSUE_RESOLUTION_PREDICATE: &str = "coach.issue.resolution";
 /// The owner of the config a retrieval run records it ran under: its replay inputs' `config`.
 pub const RETRIEVAL_REPLAY_CONFIG: &str = "retrieval.replay_config";
 /// What an issue asks when no recorded link proves its producer.
@@ -107,12 +117,23 @@ impl ProducerTarget {
         }
     }
 
-    /// Which producer it is, whatever its revision: the bytes a recurrence is keyed by.
-    /// `None` for [`Self::Unknown`], which names no producer.
-    pub(crate) fn identity(&self) -> Option<Vec<u8>> {
-        match self {
+    /// Which producer it is, whatever its revision: the bytes a recurrence is keyed by. A
+    /// skill is its stable `skill_id` and resident, read from its record, so a supersession
+    /// keeps its key; a manifest is its id; a config is its owner. `None` for
+    /// [`Self::Unknown`] and for a skill whose record no longer reads: neither names one.
+    pub(crate) fn identity(&self, vault: &Vault) -> Result<Option<Vec<u8>>> {
+        Ok(match self {
             Self::Skill { skill, .. } => {
-                Some([b"skill\0".as_slice(), skill.as_bytes().as_slice()].concat())
+                let Some(record) = vault.get_skill_record(skill)? else {
+                    return Ok(None);
+                };
+                let mut bytes = b"skill\0".to_vec();
+                bytes.extend_from_slice(&(record.skill_id.len() as u64).to_be_bytes());
+                bytes.extend_from_slice(record.skill_id.as_bytes());
+                if let Some(resident) = crate::skill::resident_of(&record)? {
+                    bytes.extend_from_slice(resident.as_bytes());
+                }
+                Some(bytes)
             }
             Self::PolicyManifest { manifest, .. } => Some(
                 [
@@ -123,7 +144,7 @@ impl ProducerTarget {
             ),
             Self::Config { owner, .. } => Some([b"config\0".as_slice(), owner.as_bytes()].concat()),
             Self::Unknown => None,
-        }
+        })
     }
 }
 
@@ -399,5 +420,284 @@ fn producer_fix_value(
             "base_revision": draft.base_revision,
             "declined": draft.rationale,
         }),
+    }
+}
+
+/// What proves a producer's revision in force (OF-418 L3), kept whole in an issue's evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum EffectProof {
+    /// The skill's admitted head, reached from the base revision through its succession.
+    Skill {
+        /// The head revision, active and loading as canon.
+        head: EntityId,
+        /// Its version.
+        version: String,
+        /// The revisions after the base, oldest first, ending at the head.
+        succession: Vec<EntityId>,
+        /// When the head superseded its predecessor; `None` for a base revised in place.
+        superseded_at: Option<u64>,
+    },
+    /// The manifest's row while the resolved policy reads it, trusted.
+    PolicyManifest {
+        /// The manifest.
+        manifest: EntityId,
+        /// blake3 of its stored row.
+        revision: [u8; 32],
+        /// Every trusted manifest the resolution reads, by id and row digest.
+        trusted_contributors: Vec<(EntityId, [u8; 32])>,
+    },
+    /// The config the newest unbroken streak of an issue's windows recorded, each run's
+    /// record the owner's receipt of the config it ran under.
+    Config {
+        /// Whose config it is.
+        owner: String,
+        /// blake3 of the recorded config.
+        digest: [u8; 32],
+        /// The first run of that streak.
+        first_run: [u8; 16],
+        /// When it started.
+        first_started_at: u64,
+    },
+}
+
+impl EffectProof {
+    /// The proof as a resolution's value reads it, engine-authored.
+    pub(crate) fn value(&self) -> serde_json::Value {
+        match self {
+            Self::Skill {
+                head,
+                version,
+                succession,
+                superseded_at,
+            } => json!({
+                "kind": "skill",
+                "head": head.to_hex(),
+                "version": version,
+                "succession": succession.iter().map(|id| id.to_hex()).collect::<Vec<_>>(),
+                "superseded_at": superseded_at,
+            }),
+            Self::PolicyManifest {
+                manifest,
+                revision,
+                trusted_contributors,
+            } => json!({
+                "kind": "policy_manifest",
+                "manifest": manifest.to_hex(),
+                "revision": bytes_to_hex_lower(revision),
+                "trusted_contributors": trusted_contributors
+                    .iter()
+                    .map(|(id, digest)| json!({
+                        "manifest": id.to_hex(),
+                        "revision": bytes_to_hex_lower(digest),
+                    }))
+                    .collect::<Vec<_>>(),
+            }),
+            Self::Config {
+                owner,
+                digest,
+                first_run,
+                first_started_at,
+            } => json!({
+                "kind": "config",
+                "owner": owner,
+                "revision": bytes_to_hex_lower(digest),
+                "first_run": bytes_to_hex_lower(first_run),
+                "first_started_at": first_started_at,
+            }),
+        }
+    }
+}
+
+/// The revision of a producer in force now, as [`issue_effective_revision`] proves it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EffectiveRevision {
+    /// In force at `revision`, spelled as [`ProducerTarget::base_revision`] spells it.
+    InForce {
+        /// The revision.
+        revision: String,
+        /// The first second a record stamps it in force from; `None` when no record stamps
+        /// when it took effect.
+        from: Option<u64>,
+        /// The exact refs that prove it.
+        proof: EffectProof,
+    },
+    /// Nothing proves which revision is in force: an issue on it stays unresolved.
+    Unknown,
+}
+
+/// The revision of `producer` in force now (OF-418 L3), joined from exact refs on `txn`, never
+/// from a drafted candidate: a skill's admitted head through its recorded succession from the
+/// base revision, stamped by the supersession; a policy manifest's row while the resolved
+/// policy is not fail-closed and reads it, trusted and contributing; a config's digest as the
+/// newest unbroken streak of `windows` recorded it, each run's record the owner's receipt, in
+/// force from that streak's first run. `Unknown` when no ref proves one.
+pub(crate) fn issue_effective_revision(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    producer: &ProducerTarget,
+    windows: &[&WindowJudgment],
+) -> Result<EffectiveRevision> {
+    match producer {
+        ProducerTarget::Skill { skill, .. } => skill_in_force(vault, txn, *skill),
+        ProducerTarget::PolicyManifest { manifest, .. } => manifest_in_force(vault, txn, *manifest),
+        ProducerTarget::Config { owner, .. } => Ok(config_in_force(owner, windows)),
+        ProducerTarget::Unknown => Ok(EffectiveRevision::Unknown),
+    }
+}
+
+/// The skill revision in force for `base`: the base itself while it loads as canon; else the
+/// head its `Supersedes` succession reaches, when that head loads as canon as the same skill
+/// of the same resident, stamped from the second after the head superseded its predecessor.
+fn skill_in_force(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    base: EntityId,
+) -> Result<EffectiveRevision> {
+    let Some(record) = vault.get_skill_record_in_txn(txn, &base)? else {
+        return Ok(EffectiveRevision::Unknown);
+    };
+    if record.lifecycle_status.loads_as_canon() {
+        return Ok(EffectiveRevision::InForce {
+            proof: EffectProof::Skill {
+                head: base,
+                version: record.version.clone(),
+                succession: Vec::new(),
+                superseded_at: None,
+            },
+            revision: record.version,
+            from: None,
+        });
+    }
+    if record.lifecycle_status != SkillLifecycle::Superseded {
+        return Ok(EffectiveRevision::Unknown);
+    }
+    let mut head = base;
+    let mut seen = BTreeSet::from([base]);
+    let mut succession = Vec::new();
+    let mut superseded_at = None;
+    loop {
+        let newer = vault.filtered_edge_peers(
+            txn,
+            EdgeDirection::In,
+            &head,
+            EdgeKind::Supersedes,
+            Some(ENTITY_TYPE_SKILL),
+        )?;
+        // Admitted succession is linear; the least id settles a fork in it.
+        let Some(next) = newer.into_iter().filter(|id| !seen.contains(id)).min() else {
+            break;
+        };
+        superseded_at = vault
+            .store
+            .port_edge_get(txn, &next, EdgeKind::Supersedes, &head)?
+            .map(|edge| edge.created_at);
+        seen.insert(next);
+        succession.push(next);
+        head = next;
+    }
+    let Some(stamp) = superseded_at else {
+        return Ok(EffectiveRevision::Unknown);
+    };
+    let Some(current) = vault.get_skill_record_in_txn(txn, &head)? else {
+        return Ok(EffectiveRevision::Unknown);
+    };
+    if !current.lifecycle_status.loads_as_canon()
+        || current.skill_id != record.skill_id
+        || crate::skill::resident_of(&current)? != crate::skill::resident_of(&record)?
+    {
+        return Ok(EffectiveRevision::Unknown);
+    }
+    Ok(EffectiveRevision::InForce {
+        revision: current.version.clone(),
+        from: Some(stamp.saturating_add(1)),
+        proof: EffectProof::Skill {
+            head,
+            version: current.version,
+            succession,
+            superseded_at: Some(stamp),
+        },
+    })
+}
+
+/// The manifest's row in force: present, read by a resolved policy that is not fail-closed,
+/// and among its contributors, trusted. Its row records no time it took effect.
+fn manifest_in_force(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    manifest: EntityId,
+) -> Result<EffectiveRevision> {
+    let Some(raw) = vault.get_raw_in(txn, &manifest)? else {
+        return Ok(EffectiveRevision::Unknown);
+    };
+    if crate::gate::resolve_policy_manifest(&vault.store, txn)?
+        .diagnostics
+        .is_fail_closed()
+    {
+        return Ok(EffectiveRevision::Unknown);
+    }
+    let contributors = crate::gate::policy_manifest_contributors(&vault.store, txn)?;
+    // Every contributor is read: past its threshold row the read asks and reads on.
+    let _ = vault.measure_limit(EngineLimit::MaintenanceScanRows, contributors.len() as u64);
+    let mut trusted_contributors = Vec::new();
+    for id in &contributors {
+        let Some(row) = vault.get_raw_in(txn, id)? else {
+            continue;
+        };
+        let Some(body) = row.get(ENTITY_METADATA_HEADER_LEN..) else {
+            continue;
+        };
+        if crate::gate::manifest_authenticity::manifest_is_trusted(&vault.store, txn, id, body)? {
+            trusted_contributors.push((*id, *blake3::hash(&row).as_bytes()));
+        }
+    }
+    let revision = *blake3::hash(&raw).as_bytes();
+    if !trusted_contributors.contains(&(manifest, revision)) {
+        return Ok(EffectiveRevision::Unknown);
+    }
+    Ok(EffectiveRevision::InForce {
+        revision: bytes_to_hex_lower(&revision),
+        from: None,
+        proof: EffectProof::PolicyManifest {
+            manifest,
+            revision,
+            trusted_contributors,
+        },
+    })
+}
+
+/// The config of `owner` in force by its receipts: the digest the newest of `windows` recorded,
+/// from the first run of the unbroken streak of windows that recorded it. Windows whose runs
+/// disagree or record none bind no config and read as nothing here.
+fn config_in_force(owner: &str, windows: &[&WindowJudgment]) -> EffectiveRevision {
+    let mut recorded: Vec<(u64, [u8; 16], [u8; 32])> = windows
+        .iter()
+        .filter_map(|window| match &window.producer {
+            ProducerTarget::Config { owner: by, digest } if by == owner => window
+                .runs
+                .first()
+                .map(|run| (run.started_at, run.run, *digest)),
+            _ => None,
+        })
+        .collect();
+    recorded.sort_unstable();
+    let Some(&(_, _, newest)) = recorded.last() else {
+        return EffectiveRevision::Unknown;
+    };
+    let start = recorded
+        .iter()
+        .rposition(|(.., digest)| *digest != newest)
+        .map_or(0, |before| before + 1);
+    let Some(&(first_started_at, first_run, _)) = recorded.get(start) else {
+        return EffectiveRevision::Unknown;
+    };
+    EffectiveRevision::InForce {
+        revision: bytes_to_hex_lower(&newest),
+        from: Some(first_started_at),
+        proof: EffectProof::Config {
+            owner: owner.to_owned(),
+            digest: newest,
+            first_run,
+            first_started_at,
+        },
     }
 }
