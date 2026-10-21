@@ -94,7 +94,8 @@ impl WireSeat {
 
     /// Sends `request` on the host's wire as one admitted media call:
     /// `send` runs only once its permit has started, and `usage` reads the
-    /// native counts an answer settles on.
+    /// native counts an answer settles on, and the inference receipts its
+    /// settlement carries.
     pub fn call<T, E>(
         &self,
         request: &MediaRequest,
@@ -113,7 +114,11 @@ impl WireSeat {
             .map_err(WireCallError::Refused)?;
         let settled = match &answer {
             Ok(answer) => {
-                permit.settle_media(usage(answer).token_units(request.operation, &self.caps))
+                let usage = usage(answer);
+                permit.settle_media(
+                    usage.token_units(request.operation, &self.caps),
+                    usage.inference_calls(),
+                )
             }
             Err(_) => permit.settle(CallOutcome::Failed),
         };
