@@ -201,6 +201,22 @@ pub fn ensure_listed(agent: &AgentDefinition, model: &ModelId) -> Result<()> {
     )))
 }
 
+/// Holds a seatless job to `listed`, the list its spawning run froze (FIX
+/// 5070, FIX 6030): an empty list keeps today's path (any eligible or
+/// configured model), and a non-empty one admits only a listed `model`. The
+/// engine enforces only the list; a model outside it refuses, naming the list.
+///
+/// # Errors
+///
+/// [`no_listed_model`]'s refusal, naming `listed`, when it holds models and
+/// `model` is not one of them.
+pub fn ensure_inherited_model_list(listed: &[AgentModel], model: &ModelId) -> Result<()> {
+    if list_admits(listed, model) {
+        return Ok(());
+    }
+    Err(no_listed_model(listed))
+}
+
 /// The entry `model` holds on `listed`, an agent's list.
 pub(crate) fn listed_entry<'a>(
     listed: &'a [AgentModel],

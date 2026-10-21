@@ -178,6 +178,8 @@ pub(crate) use super::checkout_doors::*;
 pub(crate) use super::origin_doors::*;
 // The exact publish doors (FIX 6866): the owner, or one Grant's holder.
 pub(crate) use super::origin_publish_doors::*;
+// The outside import doors (FIX 6871): the owner, or the push's standing.
+pub(crate) use super::code_import_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::code_view_doors::*;
 pub(crate) use super::codebase_doors::*;
@@ -1866,6 +1868,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.publish.execute"
         | "vault.code.origin.publish.cancel" => {
             super::origin_publish_doors::publish_admits(server, auth, verb)
+        }
+        // The outside import rows (FIX 6871): a bound principal; the engine
+        // door admits the owner or the push's own standing.
+        "vault.code.imports.create" | "vault.code.imports.get" => {
+            super::code_import_doors::imports_admit(server, auth, verb)
         }
         // A member's own TASK-bound workflow run (FIX 5316): a live person on
         // their own slip, bound to it, as the door acts under.

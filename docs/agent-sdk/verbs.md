@@ -612,6 +612,8 @@ both bindings and their export-census tests in one change.
 - `vault.code.import`
 - `vault.code.repos.get`
 - `vault.code.forks.get`
+- `vault.code.imports.create`
+- `vault.code.imports.get`
 - `vault.code.ingress.get`
 - `vault.code.origin.register`
 - `vault.code.origin.mirror.get`

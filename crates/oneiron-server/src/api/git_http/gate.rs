@@ -89,6 +89,16 @@ fn admit(auth: CoreAuth, service: GitService) -> Result<CoreAuth, Box<Response>>
     Ok(auth)
 }
 
+/// The same gate past authentication, for one outside import's loopback
+/// relay (FIX 6871): the credential the import's own request verified, never
+/// one read from the relay's unauthenticated loopback headers.
+pub(super) fn admit_import_relay(
+    auth: CoreAuth,
+    service: GitService,
+) -> Result<CoreAuth, Box<Response>> {
+    admit(auth, service)
+}
+
 fn challenge() -> Response {
     let mut response = text_response(StatusCode::UNAUTHORIZED, "authentication required");
     if let Ok(value) = GIT_HTTP_CHALLENGE.parse() {

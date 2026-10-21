@@ -244,6 +244,7 @@ impl<'v> Memory<'v> {
                 credential_door: self.credential_door.clone(),
                 rewrite_admit: self.rewrite_admit.clone(),
                 task_work_turn: self.task_work_turn.clone(),
+                external_git_source_host: None,
             },
         })
     }

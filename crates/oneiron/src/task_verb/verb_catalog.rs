@@ -610,6 +610,8 @@ pub enum AgentVerb {
     VaultCodeImport,
     VaultCodeReposGet,
     VaultCodeForksGet,
+    VaultCodeImportsCreate,
+    VaultCodeImportsGet,
     VaultCodeIngressGet,
     VaultCodeOriginRegister,
     VaultCodeOriginMirrorGet,
@@ -1758,6 +1760,8 @@ impl AgentVerb {
         Self::VaultCodeImport,
         Self::VaultCodeReposGet,
         Self::VaultCodeForksGet,
+        Self::VaultCodeImportsCreate,
+        Self::VaultCodeImportsGet,
         Self::VaultCodeIngressGet,
         Self::VaultCodeOriginRegister,
         Self::VaultCodeOriginMirrorGet,
@@ -2927,6 +2931,8 @@ impl AgentVerb {
             Self::VaultCodeImport => "vault.code.import",
             Self::VaultCodeReposGet => "vault.code.repos.get",
             Self::VaultCodeForksGet => "vault.code.forks.get",
+            Self::VaultCodeImportsCreate => "vault.code.imports.create",
+            Self::VaultCodeImportsGet => "vault.code.imports.get",
             Self::VaultCodeIngressGet => "vault.code.ingress.get",
             Self::VaultCodeOriginRegister => "vault.code.origin.register",
             Self::VaultCodeOriginMirrorGet => "vault.code.origin.mirror.get",
@@ -4087,6 +4093,8 @@ impl AgentVerb {
                 | Self::VaultCodeImport
                 | Self::VaultCodeReposGet
                 | Self::VaultCodeForksGet
+                | Self::VaultCodeImportsCreate
+                | Self::VaultCodeImportsGet
                 | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
@@ -5263,6 +5271,8 @@ impl AgentVerb {
                 | Self::VaultCodeImport
                 | Self::VaultCodeReposGet
                 | Self::VaultCodeForksGet
+                | Self::VaultCodeImportsCreate
+                | Self::VaultCodeImportsGet
                 | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
@@ -6550,6 +6560,8 @@ impl AgentVerb {
                 | Self::VaultCodeImport
                 | Self::VaultCodeReposGet
                 | Self::VaultCodeForksGet
+                | Self::VaultCodeImportsCreate
+                | Self::VaultCodeImportsGet
                 | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
@@ -7405,6 +7417,7 @@ impl AgentVerb {
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
                 | Self::VaultCodeImport
+                | Self::VaultCodeImportsCreate
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorSet
                 | Self::VaultCodeOriginMirrorStrategy
@@ -8369,6 +8382,8 @@ impl AgentVerb {
             Self::VaultCodeImport => &["spec"],
             Self::VaultCodeReposGet => &["spec"],
             Self::VaultCodeForksGet => &["spec"],
+            Self::VaultCodeImportsCreate => &["spec"],
+            Self::VaultCodeImportsGet => &["spec"],
             Self::VaultCodeIngressGet => &["spec"],
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
@@ -9518,6 +9533,8 @@ impl AgentVerb {
             Self::VaultCodeImport => &["spec"],
             Self::VaultCodeReposGet => &["spec"],
             Self::VaultCodeForksGet => &["spec"],
+            Self::VaultCodeImportsCreate => &["spec"],
+            Self::VaultCodeImportsGet => &["spec"],
             Self::VaultCodeIngressGet => &["spec"],
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
@@ -11847,6 +11864,12 @@ impl AgentVerb {
             }
             Self::VaultCodeForksGet => {
                 "Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork."
+            }
+            Self::VaultCodeImportsCreate => {
+                "Fetch one exact outside source and send it through the existing authenticated Git door; retain source and receive links without approval or enqueue."
+            }
+            Self::VaultCodeImportsGet => {
+                "Read one external import and its actual receive, aggregate candidate and checker work. Local only; never fetches, pushes or runs checks."
             }
             Self::VaultCodeIngressGet => {
                 "Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance."
