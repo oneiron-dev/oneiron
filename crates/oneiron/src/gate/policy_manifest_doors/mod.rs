@@ -243,6 +243,63 @@ pub fn put_policy_manifest_as_owner(
     Ok(receipt)
 }
 
+/// The grant target an Admin's or Delegate's Owner-minted `policy.change`
+/// grant names for the power over a whole gate policy manifest put (FIX
+/// 8177): one target for every manifest, at vault scope.
+pub const GATE_POLICY_PUT_GRANT_TARGET: &str = "gate-policy:manifest-put";
+
+/// [`put_policy_manifest_as_owner`] for a policy-power holder (FIX 8177): a
+/// live Owner, or an Admin or Delegate whose Owner-minted grant names
+/// [`GATE_POLICY_PUT_GRANT_TARGET`], found again in this write transaction
+/// (`holds_vault_policy_power_in_txn`) under the holder's own person proof.
+/// The write, the trusted-adoption rule and the receipt are the owner's.
+pub fn put_policy_manifest_as_holder(
+    vault: &Vault,
+    holder: &AuthenticatedOwner,
+    input: PolicyManifestPut,
+) -> Result<PolicyManifestReceipt> {
+    let receipt = vault.with_write_txn_grouped(|txn| {
+        let actor = holder.revalidate_person_in_txn(vault, txn)?;
+        let now = crate::unix_seconds_now();
+        if !crate::policy_model::holds_vault_policy_power_in_txn(
+            vault,
+            txn,
+            actor,
+            GATE_POLICY_PUT_GRANT_TARGET,
+            now,
+        )? {
+            return Err(invalid("a live policy-power holder is required"));
+        }
+        let id = match input.manifest_ref.as_deref() {
+            Some(reference) => id(reference)?,
+            None => vault.store.clock.entity_id()?,
+        };
+        let existing = body_in_txn(vault, txn, id)?;
+        match (existing.as_deref(), input.expected_body_hash.as_deref()) {
+            (Some(body), Some(expected)) if blake3::hash(body).to_hex().as_str() == expected => {
+                if !manifest_is_trusted(&vault.store, txn, &id, body)? {
+                    return Err(invalid("adopt a proposal as a fresh owner contribution, not by trusting its stored tables"));
+                }
+            }
+            (None, None) => {}
+            _ => return Err(invalid("expected_body_hash must match the existing manifest")),
+        }
+        let data = encode_manifest(&input.manifest, existing.as_deref())?;
+        vault.write_holder_policy_manifest_in_txn(holder, txn, id, data, now)?;
+        let body = body_in_txn(vault, txn, id)?.ok_or(Error::EntityNotFound)?;
+        let receipt_ref = record(vault, txn, crate::WriteActor::new(actor, EdgeActorClass::Human),
+            id, &body, ("allow", vec!["gate.allow.owner_policy_manifest".to_owned()]))?;
+        Ok(PolicyManifestReceipt {
+            manifest: view_in_txn(vault, txn, id, &body)?,
+            approval: PolicyCeiling::Auto,
+            receipt_ref,
+            read_frontier_hash: hex(&resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?),
+        })
+    })?;
+    vault.apply_pending_rebinds_after_commit();
+    Ok(receipt)
+}
+
 /// An untrusted contribution always stays an inert proposal, even if tighter.
 /// The memory surface supplies the caller's actor and its write admission.
 pub fn propose_policy_manifest(

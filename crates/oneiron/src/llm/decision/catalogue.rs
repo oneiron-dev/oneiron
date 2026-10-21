@@ -410,6 +410,16 @@ pub const NIGHTLY_LINK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Would delivering one prepared result only at the next regular digest harm the stated
+/// intent of the owner it is for (OF-194)? A yes breaks the digest's cadence for that result
+/// alone; a no, an abstain or no answer leaves it to the regular digest. Keyed by the result's
+/// digest group.
+pub const URGENT_DIGEST_HARM: QuestionFamily = QuestionFamily {
+    name: "dreamer.digest.waiting_harm",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -454,4 +464,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SIEVE_ENTITY,
     SIEVE_CONFIDENCE,
     NIGHTLY_LINK,
+    URGENT_DIGEST_HARM,
 ];

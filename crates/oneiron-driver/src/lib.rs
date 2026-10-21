@@ -56,6 +56,7 @@ pub use supervisor::{
     ShutdownHandle, SkillOptimizerLoan, WakePassFuture, WakeSupervisor, WakeSupervisorConfig,
     WakeSupervisorReport, WaveReadyDispatcher,
 };
+pub use supervisor::{WorkerProbe, WorkerProbeFuture, WorkerSpec};
 pub use tick::{
     ArmedLane, AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource,
     HintPusher, HintSignal, HybridTick, IdleSample, NowMillis, PushTick, Tick, TickPushError,
