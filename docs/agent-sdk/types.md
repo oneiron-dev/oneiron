@@ -3945,7 +3945,7 @@ class Oneiron:
             """Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."""
     class _SelfBrowserLibraryVerbs:
         def find(self, spec: Facade.LiveRunRequest[Facade.LibraryFindInput]) -> Facade.BrowserLibraryFindOutput:
-            """The replay library's programs for a site, or the attached run's open page's, each card with lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of`), strict_misses, held_out, supersedes and seed."""
+            """The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."""
         def propose(self, spec: Facade.LiveRunRequest[Facade.ProposeInput]) -> Facade.BrowserLibraryProposeOutput:
             """Offers a solved run's program to the attached run's replay library; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance."""
         def retire(self, spec: Facade.LiveRunRequest[Facade.LibraryRetireInput]) -> Facade.BrowserLibraryRetireOutput:

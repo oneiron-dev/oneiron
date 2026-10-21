@@ -13920,7 +13920,7 @@
     },
     {
       "name": "self.browser.library.find",
-      "description": "The replay library's programs for a site, or the open page's, each card with its lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of`), its strict_misses in a row, held_out, supersedes and seed.",
+      "description": "The replay library's programs for a site, or the open page's; type_ref (node_id@tree_version) keeps that exact task type. Each card: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed.",
       "input": "crate::task_verb::sdk::BrowserLibraryFindInput",
       "output": "crate::task_verb::sdk::BrowserLibraryFindOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_find(input)?)",
@@ -13930,7 +13930,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>",
-        "description": "The replay library's programs for a site, or the attached run's open page's, each card with lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of`), strict_misses, held_out, supersedes and seed.",
+        "description": "The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed.",
         "host_door_caller": true,
         "openapi": true
       }

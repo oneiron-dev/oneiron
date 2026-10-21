@@ -5478,7 +5478,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def find(self, spec):
-            """The replay library's programs for a site, or the attached run's open page's, each card with lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of`), strict_misses, held_out, supersedes and seed."""
+            """The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."""
             return json.loads(_translate(lambda: self._client.self_browser_library_find(json.dumps(spec))))
         def propose(self, spec):
             """Offers a solved run's program to the attached run's replay library; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance."""

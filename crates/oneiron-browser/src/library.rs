@@ -174,6 +174,12 @@ pub struct LibraryFindInput {
     /// Words the program's subgoal holds, ignoring case.
     #[serde(default)]
     pub subgoal: Option<String>,
+    /// The task type the program was filed under, as `node_id@tree_version`
+    /// (a card's `type_ref`): that node at that tree version only, never a
+    /// descendant or another version's node (CUA E4). A filter in another
+    /// form is refused.
+    #[serde(default)]
+    pub type_ref: Option<String>,
 }
 
 /// One library program as a planner reads it: its lifetime runs and
@@ -184,6 +190,9 @@ pub struct LibraryCard {
     pub workflow: String,
     pub site: String,
     pub subgoal: String,
+    /// The task type its subgoal placed at when it was filed, as
+    /// `node_id@tree_version`: the form `find`'s `type_ref` takes.
+    pub type_ref: String,
     pub params: Vec<String>,
     pub runs: u32,
     pub failures: u32,
@@ -300,9 +309,15 @@ pub struct LibraryRetiredOutput {
 
 /// Where library programs are kept: the engine's vault, behind the session.
 pub trait WorkflowLibrary: Send {
-    /// The programs filed for `site`, those whose subgoal holds `subgoal`.
-    fn find(&mut self, site: &str, subgoal: Option<&str>)
-    -> Result<Vec<LibraryCard>, BrowserError>;
+    /// The programs filed for `site`, those whose subgoal holds `subgoal`
+    /// and, with `type_ref` (`node_id@tree_version`), whose task type is
+    /// that node at that version; one in another form is refused.
+    fn find(
+        &mut self,
+        site: &str,
+        subgoal: Option<&str>,
+        type_ref: Option<&str>,
+    ) -> Result<Vec<LibraryCard>, BrowserError>;
     /// The program filed under `workflow`, with its admission's proof.
     fn program(&mut self, workflow: &str) -> Result<Option<FiledWorkflow>, BrowserError>;
     /// Files a program both checks passed, as the successor of the program

@@ -21,6 +21,10 @@
 //! [`STRICT_MISSES_BEFORE_DRIFT`]th retiring it [`DRIFT_REASON`] in the same
 //! write (CUA E2).
 //!
+//! `find` reads a program by its task type too (CUA E4): the node and tree
+//! version its subgoal placed at when it was filed, in the canonical
+//! `node_id@tree_version` form ([`type_filter`]), matched exactly.
+//!
 //! Erasing an actor keeps every row and its times and states
 //! [`ERASED_CALL_IDENTITY`] for whose run filed a program and whose word
 //! retired it (FIX 812's rule, as call receipts keep it).
@@ -40,7 +44,7 @@ use crate::error::Result;
 use crate::learning::TypeRef;
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, SideTable};
-use crate::task_type::{PlacementDecisions, PlacementRequest, place_type_ref};
+use crate::task_type::{PlacementDecisions, PlacementRequest, TaskTypeRef, place_type_ref};
 
 /// The library's programs. Key: the site's BLAKE3 hash, then the program's id.
 const WORKFLOWS: SideTable<([u8; 32], EntityId), WorkflowRecord, Named> =
@@ -213,6 +217,7 @@ impl WorkflowRecord {
             workflow: self.id.to_hex(),
             site: self.site.clone(),
             subgoal: self.program.subgoal.clone(),
+            type_ref: TaskTypeRef::from(&self.type_ref).wire_form(),
             params: self.program.params.clone(),
             runs: self.runs,
             failures: self.failures,
@@ -269,9 +274,34 @@ fn site_key(site: &str) -> [u8; 32] {
     *blake3::hash(site.as_bytes()).as_bytes()
 }
 
+/// A `find` filter that is not a task type's `node_id@tree_version`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("type_ref {0:?} names no task type: it is written node_id@tree_version")]
+pub struct TypeFilterMalformed(pub String);
+
+/// The task type a `find` filter names (CUA E4), read once from the
+/// canonical form [`TaskTypeRef::wire_form`] writes and each card's
+/// `type_ref` carries.
+///
+/// # Errors
+///
+/// [`TypeFilterMalformed`], naming `wire`, when it is not that form.
+pub fn type_filter(wire: &str) -> std::result::Result<TaskTypeRef, TypeFilterMalformed> {
+    TaskTypeRef::parse_wire(wire).map_err(|_| TypeFilterMalformed(wire.to_owned()))
+}
+
+/// Whether a program filed at `filed` is of the task type `wanted`: the
+/// same node at the same tree version, with no descendant read in and no
+/// other version's node put in its place. A version past what a filed
+/// stamp holds matches nothing.
+fn of_type(filed: &TypeRef, wanted: &TaskTypeRef) -> bool {
+    filed.node_id == wanted.node_id && u64::from(filed.tree_version) == wanted.tree_version
+}
+
 /// The programs filed for `site` whose subgoal holds every word of
-/// `subgoal`, ignoring case: the most runs that met their postcondition
-/// first, then the newest.
+/// `subgoal`, ignoring case, and, with `type_ref`, whose task type it is
+/// ([`type_filter`]): the most runs that met their postcondition first,
+/// then the newest. Finding places nothing and asks no model.
 ///
 /// # Errors
 ///
@@ -280,6 +310,7 @@ pub fn site_workflows(
     vault: &Vault,
     site: &str,
     subgoal: Option<&str>,
+    type_ref: Option<&TaskTypeRef>,
 ) -> Result<Vec<WorkflowRecord>> {
     let words: Vec<String> = subgoal
         .unwrap_or("")
@@ -294,6 +325,7 @@ pub fn site_workflows(
         .filter(|record| {
             let filed = record.program.subgoal.to_lowercase();
             words.iter().all(|word| filed.contains(word.as_str()))
+                && type_ref.is_none_or(|wanted| of_type(&record.type_ref, wanted))
         })
         .collect();
     records.sort_by_key(|record| {
@@ -386,7 +418,7 @@ pub fn file_workflow(
     // A filed program holds handles where this one may hold the secrets the
     // side-row wall lifted (OF-067); it is still the same program.
     let mut filed = None;
-    for record in site_workflows(vault, site, None)? {
+    for record in site_workflows(vault, site, None, None)? {
         if serde_json::to_value(&record.program).ok() == same
             || admitted_from(&named_tree(&record.program)?, &named_tree(program)?)?
         {

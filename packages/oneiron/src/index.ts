@@ -3048,7 +3048,7 @@ export class Oneiron {
       /** Runs one batched program of browser steps for a subgoal in the attached run's browser, stopping at the first failing step with its stop_cause and a failed_receipt of missed checks and the page; elapsed_ms times it, duration_ms each effect. */
       batch: (input: Facade.LiveRunRequest<Facade.BatchInput>): Facade.BrowserBatchOutput => this.#call(() => this.#client.selfBrowserBatch(input) as Facade.BrowserBatchOutput),
       library: {
-        /** The replay library's programs for a site, or the attached run's open page's, each card with lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of`), strict_misses, held_out, supersedes and seed. */
+        /** The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
         find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>): Facade.BrowserLibraryFindOutput => this.#call(() => this.#client.selfBrowserLibraryFind(input) as Facade.BrowserLibraryFindOutput),
         /** Offers a solved run's program to the attached run's replay library; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance. */
         propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>): Facade.BrowserLibraryProposeOutput => this.#call(() => this.#client.selfBrowserLibraryPropose(input) as Facade.BrowserLibraryProposeOutput),
