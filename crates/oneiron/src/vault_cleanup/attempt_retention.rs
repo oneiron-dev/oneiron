@@ -50,6 +50,26 @@ pub(crate) fn attempt_is_archived(
         .is_some_and(|marker| marker == *blake3::hash(raw).as_bytes()))
 }
 
+/// Moves an archived attempt's marker to the bytes its row was rewritten to
+/// in this transaction, when the marker archived the row as it stood
+/// (`before`): an erase that rewrites a row in place leaves it archived (FIX
+/// 7076). An absent, unreadable or stale marker stays as it is; none is made.
+pub(crate) fn refresh_archived_attempt_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: AttemptId,
+    before: &[u8],
+    after: &[u8],
+) -> Result<()> {
+    if ARCHIVE
+        .get_lenient(store, txn, id.as_bytes())?
+        .is_some_and(|marker| marker == *blake3::hash(before).as_bytes())
+    {
+        ARCHIVE.put(store, txn, id.as_bytes(), blake3::hash(after).as_bytes())?;
+    }
+    Ok(())
+}
+
 /// Drops the archive markers of an attempt row that left the ledger, so no
 /// marker outlives the row it archived.
 pub(crate) fn forget_archived_attempt_in_txn(
