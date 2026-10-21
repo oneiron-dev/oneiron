@@ -92,15 +92,19 @@ impl CodeTreeInventory {
         git: &GitWire<'_>,
         repo: &GitWireRepo,
     ) -> Result<BTreeMap<String, OriginTreeFile>> {
-        let documents = self.documents.values().map(|frontier| {
-            let mode = self
-                .modes
-                .get(&frontier.document_id)
-                .copied()
-                .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE);
-            (frontier, mode)
-        });
-        render_files(vault, git, repo, documents, &self.blobs)
+        let documents: Vec<(&CodeDocumentFrontier, u32)> = self
+            .documents
+            .values()
+            .map(|frontier| {
+                let mode = self
+                    .modes
+                    .get(&frontier.document_id)
+                    .copied()
+                    .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE);
+                (frontier, mode)
+            })
+            .collect();
+        render_files(vault, git, repo, &documents, &self.blobs)
     }
 
     /// Every entry of `tree` by path: its object id and mode, read from
@@ -290,11 +294,12 @@ impl CodeTreeInventory {
         revision: &CodeRevision,
     ) -> Result<BTreeMap<String, OriginTreeFile>> {
         Self::validate_partition(revision)?;
-        let documents = revision
+        let documents: Vec<(&CodeDocumentFrontier, u32)> = revision
             .file_frontiers
             .values()
-            .map(|frontier| (frontier, document_mode(revision, &frontier.document_id)));
-        render_files(vault, git, repo, documents, &revision.blob_frontiers)
+            .map(|frontier| (frontier, document_mode(revision, &frontier.document_id)))
+            .collect();
+        render_files(vault, git, repo, &documents, &revision.blob_frontiers)
     }
 }
 
@@ -305,11 +310,11 @@ fn render_files(
     vault: &Vault,
     git: &GitWire<'_>,
     repo: &GitWireRepo,
-    documents: impl Iterator<Item = (&CodeDocumentFrontier, u32)>,
+    documents: &[(&CodeDocumentFrontier, u32)],
     blobs: &BTreeMap<String, CodeTreeBlob>,
 ) -> Result<BTreeMap<String, OriginTreeFile>> {
     let mut files = BTreeMap::new();
-    for (frontier, mode) in documents {
+    for &(frontier, mode) in documents {
         let file = OriginTreeFile {
             mode,
             content: vault.code_document_at(frontier)?.into_bytes(),
