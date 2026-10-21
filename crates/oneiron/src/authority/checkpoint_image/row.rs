@@ -52,8 +52,8 @@ pub struct AuthorityCheckpointRow {
 /// genesis and each device enrollment the consent structure rests on (an
 /// owner's own device key enrollment among them, FIX 4920), the root records
 /// that name owner anchors, the actor revocations a signer's
-/// revocations count, and the world edits and grant travel choices that may
-/// be a stranger's.
+/// revocations count, and the world edits, grant travel choices and frontier
+/// joins that may be a stranger's.
 fn carries_body(op: &AuthorityOp) -> bool {
     crate::authority::fold_resume::is_projected(op)
         || matches!(
@@ -70,6 +70,7 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::ConversationTrainingSet(_)
                 | AuthorityOp::ConversationTrainingVaultSet(_)
                 | AuthorityOp::AgentGrantAct(_)
+                | AuthorityOp::FrontierJoin(_)
         )
 }
 

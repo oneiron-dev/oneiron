@@ -3517,7 +3517,7 @@
     },
     {
       "name": "vault.skills.fork",
-      "description": "The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable.",
+      "description": "The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable.",
       "input": "SkillLibraryForkRequest",
       "output": "crate::task_verb::sdk::SkillLibraryView",
       "call": "crate::task_verb::sdk::skill_library_fork_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.fork\")?, &input)?",
@@ -5350,7 +5350,7 @@
     },
     {
       "name": "vault.trusted_contacts.name",
-      "description": "The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again.",
+      "description": "A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again.",
       "input": "crate::task_verb::sdk::TrustedContactNameRequest",
       "output": "crate::counterparty_contact::TrustedContact",
       "call": "crate::task_verb::sdk::name_trusted_contact(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.name\")?, input)?",
@@ -5410,7 +5410,7 @@
     },
     {
       "name": "vault.trusted_contacts.dial.set",
-      "description": "The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands.",
+      "description": "A person changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands.",
       "input": "crate::task_verb::sdk::TrustedContactDialRequest",
       "output": "crate::counterparty_contact::TrustedContact",
       "call": "crate::task_verb::sdk::set_trusted_contact_dial(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.dial.set\")?, input)?",
@@ -5440,7 +5440,7 @@
     },
     {
       "name": "vault.trusted_contacts.concern.asks",
-      "description": "The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled.",
+      "description": "A person reads their own open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled.",
       "input": "crate::task_verb::sdk::TrustedContactAsksRequest",
       "output": "Vec<crate::counterparty_contact::TrustedContactAsk>",
       "call": "crate::task_verb::sdk::read_trusted_contact_asks(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.concern.asks\")?, input)?",
@@ -5455,7 +5455,7 @@
     },
     {
       "name": "vault.trusted_contacts.concern.authorize",
-      "description": "The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing.",
+      "description": "A person answers one of their own open asks, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing.",
       "input": "crate::task_verb::sdk::TrustedContactAuthorizeRequest",
       "output": "crate::task_verb::sdk::TrustedContactAuthorization",
       "call": "crate::task_verb::sdk::authorize_trusted_contact_ask(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.concern.authorize\")?, input, &crate::policy_model::PolicyModelConfig::default())?",
@@ -5895,7 +5895,7 @@
     },
     {
       "name": "vault.off_record.rooms.export",
-      "description": "A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in.",
+      "description": "A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in.",
       "input": "crate::task_verb::sdk::OffRecordRoomRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomExport",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.export\", &input)?",
@@ -7523,7 +7523,7 @@
     },
     {
       "name": "vault.gate.policy.put",
-      "description": "The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions.",
+      "description": "The owner, or an Admin or Delegate holding the policy power, installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions.",
       "input": "crate::policy_manifest_doors::PolicyManifestPut",
       "output": "crate::policy_manifest_doors::PolicyManifestReceipt",
       "call": "crate::policy_manifest_doors::put_policy_manifest_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.policy.put\")?, input).map_err(crate::memory::MemoryError::from)?",
@@ -13973,7 +13973,7 @@
     },
     {
       "name": "self.browser.batch",
-      "description": "Runs one batched browser program for a subgoal, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a stop_cause and failed_receipt; elapsed_ms times it.",
+      "description": "Runs one batched browser program for a subgoal; type and expect take a secret by handle, fill types supplied, reference, template or checked written text (text_source, text_ref); a failing or no_progress stop names its stop_cause.",
       "input": "crate::task_verb::sdk::BrowserBatchInput",
       "output": "crate::task_verb::sdk::BrowserBatchOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.batch(input)?)",
@@ -13983,7 +13983,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserBatchInput>",
-        "description": "Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a failed_receipt.",
+        "description": "Runs one batched browser program for a subgoal in the attached run's browser; fill types supplied, reference, template or checked written text (receipt text_source, text_ref); a failing or no_progress stop returns a failed_receipt.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -14007,7 +14007,7 @@
     },
     {
       "name": "self.browser.library.propose",
-      "description": "Offers a solved run's program to the replay library, refs as locators, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires what it repairs.",
+      "description": "Offers a solved run's program, fill steps too, to the replay library, refs as locators, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires.",
       "input": "crate::task_verb::sdk::BrowserLibraryProposeInput",
       "output": "crate::task_verb::sdk::BrowserLibraryProposeOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_propose(input)?)",
@@ -14017,7 +14017,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryProposeInput>",
-        "description": "Offers a solved run's program to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires what it repairs.",
+        "description": "Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -14058,7 +14058,7 @@
     },
     {
       "name": "self.browser.library.run",
-      "description": "Runs a replay library program live, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; a miss or no_progress returns a failed_receipt; 3 strict misses retire it drift.",
+      "description": "Runs a replay library program live, strict (rules only; model steps and fill generation ask up at zero tokens) or assisted; secret slots take handles; receipts name fill text_source; misses return a failed_receipt; 3 strict misses: drift.",
       "input": "crate::task_verb::sdk::BrowserLibraryRunInput",
       "output": "crate::task_verb::sdk::BrowserLibraryRunOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_run(input)?)",
@@ -14068,7 +14068,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRunInput>",
-        "description": "Runs a replay library program in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; no_progress hands up; 3 strict misses retire it drift.",
+        "description": "Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift.",
         "host_door_caller": true,
         "openapi": true
       }
