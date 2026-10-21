@@ -130,7 +130,8 @@ impl<'v> DocumentWriter<'v> {
         let body = match raw.body {
             _ if raw.tainted => ExportBody::Nulled,
             ExportSnapshotEntityBody::File(mut file) if self.attaches_files => {
-                let blake3 = self.files.attach_reader(file.bytes, file.blake3, &mut file.reader)?;
+                let files = &mut self.files;
+                let blake3 = files.attach_reader(file.bytes, file.blake3, &mut file.reader)?;
                 ExportBody::File(ExportBodyFile::checked(blake3, file.bytes))
             }
             ExportSnapshotEntityBody::File(mut file) => {

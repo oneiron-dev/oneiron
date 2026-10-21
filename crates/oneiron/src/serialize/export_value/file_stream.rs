@@ -311,9 +311,12 @@ fn format_value(body: &mut Stream<'_>) -> Result<bool> {
     let Some(len) = declared(body, lead)? else {
         return Ok(false);
     };
-    let Some(len) = usize::try_from(len).ok().filter(|len| *len <= FORMAT_VALUE) else {
+    let Ok(len) = usize::try_from(len) else {
         return Ok(false);
     };
+    if len > FORMAT_VALUE {
+        return Ok(false);
+    }
     let Some(value) = body.bytes(len)? else {
         return Ok(false);
     };

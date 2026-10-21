@@ -1005,7 +1005,10 @@ fn file_row_stored(
             ENTITY_TYPE_ASSET => crate::store::asset_file_in_txn(store, txn, id, body)?,
             _ => None,
         };
-        let len = manifest.as_ref().map_or(body.len() as u64, |manifest| manifest.facts.len);
+        let len = match &manifest {
+            Some(manifest) => manifest.facts.len,
+            None => body.len() as u64,
+        };
         let mut same = false;
         if matches_header(row, raw) && len == file.bytes() {
             file.with_reader(files, &mut |archived| {
