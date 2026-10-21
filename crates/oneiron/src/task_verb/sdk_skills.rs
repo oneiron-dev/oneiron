@@ -228,6 +228,15 @@ pub fn skill_library_get_as_owner(
     input: &HubSkillRequest,
 ) -> MemoryResult<SkillLibraryView> {
     owner.revalidate(vault)?;
+    skill_library_view(vault, input)
+}
+
+/// [`skill_library_get_as_owner`]'s view, for a door that admitted its
+/// reader itself (`sdk_skill_fork`'s caller-bound fork, FIX 8167).
+pub(crate) fn skill_library_view(
+    vault: &Vault,
+    input: &HubSkillRequest,
+) -> MemoryResult<SkillLibraryView> {
     let record = skill(vault, &input.entity)?;
     let source_refs = crate::skill_convert::source_message_refs(&record)?;
     let (files, capabilities, source_messages) = {
@@ -427,26 +436,7 @@ pub struct SkillLibraryForkRequest {
     pub skill_id: String,
 }
 
-pub fn skill_library_fork_as_owner(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    input: &SkillLibraryForkRequest,
-) -> MemoryResult<SkillLibraryView> {
-    let entity = input.entity.unwrap_or_else(EntityId::now);
-    let at = vault.now_recorded_at();
-    vault.with_write_txn_grouped(|txn| {
-        owner.revalidate_in_txn(vault, txn)?;
-        vault.fork_skill_record_in_txn(
-            txn,
-            &input.parent,
-            &entity,
-            &input.skill_id,
-            TimeRange { start: at, end: at },
-            at,
-        )
-    })?;
-    skill_library_get_as_owner(vault, owner, &HubSkillRequest { entity })
-}
+pub use super::sdk_skill_fork::{skill_library_fork_as_owner, skill_library_fork_by_caller};
 
 /// A hub restore repeats its existing exact-consent and held-out admission, not a bare flip.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -908,7 +898,7 @@ impl SkillOptimizeResultView {
     }
 }
 
-fn verdict_view(verdict: crate::skill_optimize::HeldOutVerdict) -> SkillOptimizeVerdictView {
+pub(crate) fn verdict_view(verdict: crate::skill_optimize::HeldOutVerdict) -> SkillOptimizeVerdictView {
     SkillOptimizeVerdictView {
         id: verdict.id,
         proposal: verdict.proposal,

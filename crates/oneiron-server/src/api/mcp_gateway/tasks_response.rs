@@ -329,7 +329,7 @@ pub(crate) fn mcp_scoped_read<'a>(
         .credential_read_key(proof)
         .map_err(|error| mcp_engine_error("credential read key failed", error))?
         .ok_or_else(refused)?;
-    Ok(vault.scoped_read(key.at(actor.locality())))
+    Ok(vault.scoped_read(key.for_destination(&actor.destination())))
 }
 
 pub(crate) fn mcp_actor_result(actor: &McpResolvedActor) -> Value {

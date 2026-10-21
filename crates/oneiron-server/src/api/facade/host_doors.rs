@@ -1393,7 +1393,6 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.list"
         | "vault.skills.archive"
         | "vault.skills.restore"
-        | "vault.skills.fork"
         | "vault.skills.rules.set"
         | "vault.skills.code_auto_install.set"
         | "vault.skills.permissions.approve"
@@ -1409,8 +1408,6 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.optimize.goal.bind"
         | "vault.skills.optimize.preferences.get"
         | "vault.skills.optimize.preferences.set"
-        | "vault.skills.optimize.tradeoff_asks"
-        | "vault.skills.optimize.tradeoff_asks.pick"
         | "vault.skills.governance.get"
         | "vault.skills.governance.set"
         | "vault.skills.pack_receipt"
@@ -1641,7 +1638,6 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.consent.graduation.settings.unpin"
         | "vault.consent.graduation.demote"
         | "vault.gate.policy.get"
-        | "vault.gate.policy.put"
         | "vault.gate.checker.get"
         | "vault.gate.checker.set"
         | "vault.embedding_spaces.list"
@@ -1780,8 +1776,6 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.artifacts.keep_outline"
         | "vault.artifacts.decline_outline"
         | "vault.artifacts.publish_approval"
-        | "vault.artifacts.publish"
-        | "vault.artifacts.repoint"
         | "vault.artifacts.pointer"
         | "vault.artifacts.unpublish"
         | "vault.artifacts.link_token"
@@ -1815,12 +1809,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.merge_queue.check_status"
         | "vault.code.checks.get"
         | "vault.code.merge_queue.export_green"
-        | "vault.trusted_contacts.name"
-        | "vault.trusted_contacts.dial.set"
         | "vault.trusted_contacts.tier.set"
-        | "vault.trusted_contacts.concern.asks"
-        | "vault.trusted_contacts.concern.authorize"
-        | "vault.trusted_contacts.concern.propose"
         | "vault.org_admin.configure"
         | "vault.shared.policy.get"
         | "vault.shared.policy.change"
@@ -1952,7 +1941,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             owner_grade(auth, MEDIA_OWNERS)
         }
         "ai.video.poll" | "ai.video.cancel" => owner_grade(auth, VIDEO_JOB_OWNERS),
-        _ => Ok(()),
+        _ => super::owner_binding::caller_bound_admits(server, auth, verb).unwrap_or(Ok(())),
     }
 }
 

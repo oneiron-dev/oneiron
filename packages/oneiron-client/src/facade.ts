@@ -2502,7 +2502,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.skills.list": { description: "Lists a page of the owner skill library, including inactive skills and their retained evidence.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.skills.archive": { description: "The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.restore": { description: "The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.skills.fork": { description: "The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.skills.fork": { description: "The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.rules.set": { description: "The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.code_auto_install.set": { description: "The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.permissions.approve": { description: "The owner answers one imported skill permission ask at its exact hub source.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -2626,14 +2626,14 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.federation.connect.disconnect": { description: "The owner unilaterally ends both directions of a pact without claiming to erase the peer retained copy.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.federation.connect.export": { description: "The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.federation.connect.rejoin": { description: "The owner admits a peer host signed update through guest admission into the retained foreign-world vault.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.trusted_contacts.name": { description: "The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.trusted_contacts.name": { description: "A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.trusted_contacts.list": { description: "A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.trusted_contacts.consent": { description: "The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.trusted_contacts.revoke": { description: "Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.trusted_contacts.dial.set": { description: "The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.trusted_contacts.dial.set": { description: "A person changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.trusted_contacts.tier.set": { description: "The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.trusted_contacts.concern.asks": { description: "The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.trusted_contacts.concern.authorize": { description: "The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.trusted_contacts.concern.asks": { description: "A person reads their own open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.trusted_contacts.concern.authorize": { description: "A person answers one of their own open asks, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.trusted_contacts.concern.propose": { description: "The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.trusted_contacts.concern.deliver": { description: "The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.guests.share": { description: "The owner shares a locally authored named-world document through its live guest grant as a filtered signed envelope bound to the pact epoch.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -2662,7 +2662,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.off_record.rooms.witness": { description: "Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.off_record.rooms.save": { description: "A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.off_record.rooms.save_from_here": { description: "A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.off_record.rooms.export": { description: "A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.off_record.rooms.export": { description: "A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.off_record.rooms.suggest_save": { description: "An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms.", scope: "Write", proposes: true, hostDoor: true, section: false },
   "vault.off_record.rooms.confirm_save": { description: "A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.off_record.rooms.decline_save": { description: "A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -2776,7 +2776,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.consent.graduation.demote": { description: "The owner demotes an exact scope to propose, revoking its live grant and recording the existing durable demotion receipt.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "self.consent.graduation.demote": { description: "The bound actor transparently gives up only its own ramp scope authority, with the existing durable demotion receipt.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.gate.policy.get": { description: "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.gate.policy.put": { description: "The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.gate.policy.put": { description: "The owner, or an Admin or Delegate holding the policy power, installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.gate.policy.propose": { description: "Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.gate.checker.get": { description: "The owner reads the calibrated checker verdict role from the vault model manifest.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.gate.checker.set": { description: "The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -4017,7 +4017,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         archive: (input: Facade.HubSkillRequest, options?: O): FacadeReturns<"vault.skills.archive">[K] => invoke("vault.skills.archive", input, options, newInvocation()),
         /** The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring. */
         restore: (input: Facade.SkillLibraryRestoreRequest, options?: O): FacadeReturns<"vault.skills.restore">[K] => invoke("vault.skills.restore", input, options, newInvocation()),
-        /** The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
+        /** The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
         fork: (input: Facade.SkillLibraryForkRequest, options?: O): FacadeReturns<"vault.skills.fork">[K] => invoke("vault.skills.fork", input, options, newInvocation()),
         rules: {
           /** The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose. */
@@ -4424,7 +4424,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         },
       },
       trusted_contacts: {
-        /** The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
+        /** A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
         name: (input: Facade.TrustedContactNameRequest, options?: O): FacadeReturns<"vault.trusted_contacts.name">[K] => invoke("vault.trusted_contacts.name", input, options, newInvocation()),
         /** A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential. */
         list: (input: Facade.TrustedContactsRequest, options?: O): FacadeReturns<"vault.trusted_contacts.list">[K] => invoke("vault.trusted_contacts.list", input, options, newInvocation()),
@@ -4433,7 +4433,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         /** Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close. */
         revoke: (input: Facade.TrustedContactRevokeRequest, options?: O): FacadeReturns<"vault.trusted_contacts.revoke">[K] => invoke("vault.trusted_contacts.revoke", input, options, newInvocation()),
         dial: {
-          /** The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
+          /** A person changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
           set: (input: Facade.TrustedContactDialRequest, options?: O): FacadeReturns<"vault.trusted_contacts.dial.set">[K] => invoke("vault.trusted_contacts.dial.set", input, options, newInvocation()),
         },
         tier: {
@@ -4441,9 +4441,9 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           set: (input: Facade.TrustedContactTierRequest, options?: O): FacadeReturns<"vault.trusted_contacts.tier.set">[K] => invoke("vault.trusted_contacts.tier.set", input, options, newInvocation()),
         },
         concern: {
-          /** The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
+          /** A person reads their own open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
           asks: (input: Facade.TrustedContactAsksRequest, options?: O): FacadeReturns<"vault.trusted_contacts.concern.asks">[K] => invoke("vault.trusted_contacts.concern.asks", input, options, newInvocation()),
-          /** The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
+          /** A person answers one of their own open asks, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
           authorize: (input: Facade.TrustedContactAuthorizeRequest, options?: O): FacadeReturns<"vault.trusted_contacts.concern.authorize">[K] => invoke("vault.trusted_contacts.concern.authorize", input, options, newInvocation()),
           /** The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices. */
           propose: (input: Facade.TrustedContactConcernRequest, options?: O): FacadeReturns<"vault.trusted_contacts.concern.propose">[K] => invoke("vault.trusted_contacts.concern.propose", input, options, newInvocation()),
@@ -4512,7 +4512,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           save: (input: Facade.OffRecordRoomRequest, options?: O): FacadeReturns<"vault.off_record.rooms.save">[K] => invoke("vault.off_record.rooms.save", input, options, newInvocation()),
           /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
           save_from_here: (input: Facade.OffRecordRoomRequest, options?: O): FacadeReturns<"vault.off_record.rooms.save_from_here">[K] => invoke("vault.off_record.rooms.save_from_here", input, options, newInvocation()),
-          /** A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in. */
+          /** A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in. */
           export: (input: Facade.OffRecordRoomRequest, options?: O): FacadeReturns<"vault.off_record.rooms.export">[K] => invoke("vault.off_record.rooms.export", input, options, newInvocation()),
           /** An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms. */
           suggest_save: (input: Facade.OffRecordRoomRequest, options?: O): FacadeReturns<"vault.off_record.rooms.suggest_save">[K] => invoke("vault.off_record.rooms.suggest_save", input, options, newInvocation()),
@@ -4763,7 +4763,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         policy: {
           /** The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions. */
           get: (input: Facade.PolicyManifestRead, options?: O): FacadeReturns<"vault.gate.policy.get">[K] => invoke("vault.gate.policy.get", input, options, newInvocation()),
-          /** The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
+          /** The owner, or an Admin or Delegate holding the policy power, installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
           put: (input: Facade.PolicyManifestPut, options?: O): FacadeReturns<"vault.gate.policy.put">[K] => invoke("vault.gate.policy.put", input, options, newInvocation()),
           /** Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert. */
           propose: (input: Facade.PolicyManifestPropose, options?: O): FacadeReturns<"vault.gate.policy.propose">[K] => invoke("vault.gate.policy.propose", input, options, newInvocation()),
