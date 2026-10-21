@@ -106,7 +106,11 @@ pub(super) fn verify(
                     .map_err(|error| invalid(format!("{archived}: {error}")))?;
                 placement.installed.push(name);
             }
-            _ => return Err(invalid(format!("{archived} is placed without its extraction"))),
+            _ => {
+                return Err(invalid(format!(
+                    "{archived} is placed without its extraction"
+                )));
+            }
         }
     }
     if let Some(row) = missing {

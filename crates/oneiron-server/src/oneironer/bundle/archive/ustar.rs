@@ -92,7 +92,10 @@ impl<'a> Reader<'a> {
             && !parent.as_os_str().is_empty()
             && !self.dirs.contains(parent)
         {
-            return Err(malformed(at, format!("{:?} comes before its directory", shown())));
+            return Err(malformed(
+                at,
+                format!("{:?} comes before its directory", shown()),
+            ));
         }
         self.paths.insert(entry.path.clone());
         if entry.directory {
@@ -237,7 +240,9 @@ fn entry_path(name: &str, at: u64) -> Result<PathBuf, ArchiveError> {
                     path: name.to_owned(),
                 });
             }
-            Component::CurDir => return Err(malformed(at, format!("{name:?} has a `.` component"))),
+            Component::CurDir => {
+                return Err(malformed(at, format!("{name:?} has a `.` component")));
+            }
         }
     }
     if path.as_os_str().is_empty() {
@@ -248,7 +253,10 @@ fn entry_path(name: &str, at: u64) -> Result<PathBuf, ArchiveError> {
 
 /// A NUL-ended header field as text.
 fn text(field: &[u8]) -> Option<&str> {
-    let end = field.iter().position(|&byte| byte == 0).unwrap_or(field.len());
+    let end = field
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(field.len());
     std::str::from_utf8(&field[..end]).ok()
 }
 

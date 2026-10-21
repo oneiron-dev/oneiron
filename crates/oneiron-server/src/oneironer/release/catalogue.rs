@@ -120,7 +120,10 @@ pub(super) fn platform_rows<'m>(
         };
         let shipped = row.artifact();
         if shipped.file != *pin.file || shipped.sha256 != pin.sha256 || shipped.bytes != pin.bytes {
-            return Err(disowned(format!("platform row {name} is not the pinned {}", pin.file)));
+            return Err(disowned(format!(
+                "platform row {name} is not the pinned {}",
+                pin.file
+            )));
         }
         rows.push((name, file, row));
     }

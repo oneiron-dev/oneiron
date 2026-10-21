@@ -54,10 +54,16 @@ struct ParityFile {
     bar: Bar,
     cases: Vec<Case>,
     #[serde(default)]
-    #[expect(dead_code, reason = "informational: parsed, then dropped, never compared")]
+    #[expect(
+        dead_code,
+        reason = "informational: parsed, then dropped, never compared"
+    )]
     reference: Option<serde_json::Value>,
     #[serde(default)]
-    #[expect(dead_code, reason = "informational: parsed, then dropped, never compared")]
+    #[expect(
+        dead_code,
+        reason = "informational: parsed, then dropped, never compared"
+    )]
     checked: Option<serde_json::Value>,
 }
 

@@ -171,7 +171,9 @@ pub(crate) fn verify_extraction(
             metadata.is_file() && metadata.len() == entry.size
         };
         if !same || !has_mode(&metadata, entry.mode) {
-            return Err(differs(format!("{shown} is not the archive's type, size or mode")));
+            return Err(differs(format!(
+                "{shown} is not the archive's type, size or mode"
+            )));
         }
         if entry.directory {
             continue;
