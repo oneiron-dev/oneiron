@@ -1,4 +1,4 @@
-//! An optional type check of code-mode programs before they run.
+//! An optional type check of code-mode programs, run beside them.
 //!
 //! A code-mode program is plain JavaScript that the guest runs as the body of
 //! an async function. A check type-checks it against the declarations the
@@ -7,10 +7,12 @@
 //! TypeScript's diagnostics in program coordinates.
 //!
 //! Three backends give one output contract:
-//! - [`TscRsWasm`]: tsc-rs, a Rust port of TypeScript 7, as a pinned Wasm
-//!   module run in process on Wasmtime. The default.
 //! - [`TsrsWasm`]: tsrs, oxc's Rust port of TypeScript 7, as a pinned Wasm
-//!   module on the same runner, on trial beside tsc-rs (FIX 8255).
+//!   module run in process on Wasmtime. The default: it was the fastest of
+//!   the three on the direction screen, with every diagnostic equal to
+//!   Microsoft's (`examples/backend_screen.rs`, FIX 8255).
+//! - [`TscRsWasm`]: tsc-rs, a Rust port of TypeScript 7, as a pinned Wasm
+//!   module on the same runner.
 //! - [`MicrosoftTsc`]: Microsoft's TypeScript 7 as an external process, the
 //!   correctness oracle and the fallback.
 //!
@@ -66,11 +68,11 @@ impl std::str::FromStr for CheckMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BackendKind {
     /// tsc-rs in process.
-    #[default]
     TscRs,
     /// Microsoft's TypeScript 7 as an external process.
     Microsoft,
-    /// tsrs in process.
+    /// tsrs in process, the default.
+    #[default]
     Tsrs,
 }
 
