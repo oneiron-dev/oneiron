@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1127 facade rows, 3891 declarations.
+Census: 1127 facade rows, 3906 declarations.
 Inputs: 1062 of 1127 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1014 of 1127 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -425,6 +425,11 @@ AgentHealthConfidence = Literal["high", "low"]
 AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs"]
 AgentHealthMove = Literal["note", "steer", "budget", "reassign", "ask_coach", "hold"]
 AgentHealthOutcome = Literal["open", "confirmed", "dismissed", "unresolved"]
+class HealthBriefPin(TypedDict):
+    task: EntityId
+    rev: int
+    digest: str
+    observed_at: int
 class AgentHealthPadReadRead(TypedDict):
     state: Literal["read"]
     read: NotRequired[EntityId | None]
@@ -471,8 +476,23 @@ class AgentHealthCoachAsk(TypedDict):
     asked_at: int
     diagnostic: NotRequired[EntityId | None]
     attempt: str
+    observed_brief: NotRequired[HealthBriefPin | None]
     answer: NotRequired[AgentHealthCoachAnswer | None]
     application: NotRequired[AgentHealthCoachApplication | None]
+class HealthReviewReceipt(TypedDict):
+    receipt: str
+    outcome: AgentHealthOutcome
+    by: EntityId
+    by_owner: bool
+    at: int
+    reviewer: str
+    dial: int
+    measured: int
+    diagnostics: list[EntityId]
+    evidence: list[EntityId]
+    observed_brief: NotRequired[HealthBriefPin | None]
+    label: NotRequired[bool | None]
+    projected: bool
 class AgentHealthCard(TypedDict):
     subject: EntityId
     signal: AgentHealthSignal
@@ -500,6 +520,9 @@ class AgentHealthCard(TypedDict):
     opened_at: int
     updated_at: int
     coach: NotRequired[AgentHealthCoachAsk | None]
+    observed_brief: NotRequired[HealthBriefPin | None]
+    reviewer: str
+    review_outcomes: list[HealthReviewReceipt]
 RunTreeStatus = Literal["queued", "running", "paused", "completed", "failed", "cancelled", "abandoned"]
 class RunTreeTimestamps(TypedDict):
     created_at: int
@@ -1529,6 +1552,36 @@ class TaskAskStatusSettled(TypedDict):
 class TaskAskStatusWorldPrivacy(TypedDict):
     WorldPrivacy: WorldPrivacyWaitResult
 TaskAskStatus = TaskAskStatusPending | TaskAskStatusChanged | TaskAskStatusSettled | TaskAskStatusWorldPrivacy
+class TaskWorkflowHandoffRetiredBody(TypedDict):
+    id: EntityId
+    reason: NotRequired[str | None]
+class TaskWorkflowHandoffRetired(TypedDict):
+    retired: TaskWorkflowHandoffRetiredBody
+class TaskWorkflowHandoffMissingBody(TypedDict):
+    id: EntityId
+class TaskWorkflowHandoffMissing(TypedDict):
+    missing: TaskWorkflowHandoffMissingBody
+class TaskWorkflowHandoffUnreadableBody(TypedDict):
+    id: EntityId
+class TaskWorkflowHandoffUnreadable(TypedDict):
+    unreadable: TaskWorkflowHandoffUnreadableBody
+TaskWorkflowHandoff = Literal["program", "goal_unmet"] | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+class TaskWorkflowOutcomeDoneBody(TypedDict):
+    receipt_ref: EntityId
+class TaskWorkflowOutcomeDone(TypedDict):
+    done: TaskWorkflowOutcomeDoneBody
+class TaskWorkflowOutcomeHandoffBody(TypedDict):
+    cause: TaskWorkflowHandoff
+    receipt_ref: EntityId
+class TaskWorkflowOutcomeHandoff(TypedDict):
+    handoff: TaskWorkflowOutcomeHandoffBody
+TaskWorkflowOutcome = Literal["pending"] | TaskWorkflowOutcomeDone | TaskWorkflowOutcomeHandoff
+class TaskWorkflowStatus(TypedDict):
+    attempt_ref: str
+    requested: EntityId
+    resolved: NotRequired[EntityId | None]
+    brief: BriefStamp
+    outcome: TaskWorkflowOutcome
 class TaskStatusView(TypedDict):
     handle: TaskHandle
     task_ref: NotRequired[EntityId | None]
@@ -1539,6 +1592,7 @@ class TaskStatusView(TypedDict):
     pending: bool
     asks: list[tuple[TaskAskHandle, TaskAskStatus]]
     last_receipt: NotRequired[str | None]
+    workflow: NotRequired[TaskWorkflowStatus | None]
     observed: str
 class TaskOutcomeProposed(TypedDict):
     kind: Literal["proposed"]
@@ -1627,17 +1681,28 @@ class PinnedRef(TypedDict):
     target: EntityId
     frontier: NotRequired[list[int] | None]
     digest: str
+class WorkflowBinding(TypedDict):
+    handle: str
+    args: NotRequired[dict[str, str]]
 class BriefContext(TypedDict):
     pack: NotRequired[PinnedPack | None]
     read_first: NotRequired[list[PinnedRef]]
+    workflow: NotRequired[WorkflowBinding | None]
 class Criterion(TypedDict):
     text: str
     evidence_ref: NotRequired[EntityId | None]
+class ExpectInput(TypedDict):
+    ref: NotRequired[str | None]
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    value: NotRequired[str | None]
+    absent: NotRequired[bool]
 class DoneMeans(TypedDict):
     question: str
     yes_if_all: NotRequired[list[Criterion]]
     no_if_any: NotRequired[list[Criterion]]
     outcome_binding: NotRequired[OutcomeBinding | None]
+    browser_checks: NotRequired[list[ExpectInput]]
 EscalationTrigger = Literal["blocked", "criteria_unmet", "scope_widen", "spend_over", "deadline", "brief_revised", "retry_requested"]
 Reversibility = Literal["reversible_read", "outbound_effect"]
 class EscalationRule(TypedDict):
@@ -3774,6 +3839,21 @@ class WeaveSectionInput(TypedDict):
     edge_kinds: NotRequired[list[str]]
 class WeaveReportRequest(TypedDict):
     sections: list[WeaveSectionInput]
+class WeaveSieveDiscoveryView(TypedDict):
+    start: int
+    end: int
+    kind: str
+    confidence: int
+class WeaveSieveFindingView(TypedDict):
+    expectation: str
+    window_ref: str
+    turn_ref: str
+    source_ref: str
+    start: int
+    end: int
+    discovered: list[WeaveSieveDiscoveryView]
+    agrees: bool
+    audited_at: int
 class WeaveItemViewClaim(TypedDict):
     item: Literal["claim"]
     claim: ClaimView
@@ -3813,6 +3893,10 @@ class WeaveItemViewSieveAudit(TypedDict):
     confidence: int
     agrees: bool
     audited_at: int
+class WeaveItemViewSieveWindowAudit(TypedDict):
+    item: Literal["sieve_window_audit"]
+    attempt_ref: str
+    finding: WeaveSieveFindingView
 class WeaveItemViewLoopDecision(TypedDict):
     item: Literal["loop_decision"]
     decision_ref: str
@@ -3825,7 +3909,7 @@ class WeaveItemViewLoopDecision(TypedDict):
     claim_ref: NotRequired[str | None]
     actor_ref: NotRequired[str | None]
     evidence_refs: list[str]
-WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit | WeaveItemViewLoopDecision
+WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit | WeaveItemViewSieveWindowAudit | WeaveItemViewLoopDecision
 class WeaveSieveScoreView(TypedDict):
     sampled: int
     agreeing: int
@@ -18046,9 +18130,13 @@ class WakeRecipePolicy(TypedDict):
     rung_retry_secs: int
     audit_percent: int
     audit_spans: int
+    audit_window_share: int
+    audit_window_bytes: int
     novelty_instruction: str
     typing_instruction: str
     narrative_instruction: str
+    arc_min_new_statements: int
+    audit_window_instruction: str
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
 class SieveLeaseRequest(TypedDict):
@@ -19342,6 +19430,7 @@ class EffectReceipt(TypedDict):
     engine: NotRequired[BrowserEngine | None]
     fact: NotRequired[ActionFact | None]
     engine_switch: NotRequired[EngineSwitchRecord | None]
+    duration_ms: int
 RecentCounts = TypedDict("RecentCounts", {"pass": int, "miss": int, "repair": int, "of": int})
 class WorkflowSeed(TypedDict):
     pack: str
@@ -19353,6 +19442,7 @@ class LibraryCard(TypedDict):
     workflow: str
     site: str
     subgoal: str
+    type_ref: str
     params: list[str]
     runs: int
     failures: int
@@ -19362,6 +19452,7 @@ class LibraryCard(TypedDict):
     seed: NotRequired[WorkflowSeed | None]
     filed_at: int
     last_run_at: NotRequired[int | None]
+    strict_misses: int
 class PartialTree(TypedDict):
     reason: str
     visited: int
@@ -19436,12 +19527,6 @@ class WaitForOutput(TypedDict):
     walk_next: NotRequired[str | None]
     rebindings: NotRequired[list[Rebound]]
 BrowserWaitForOutput = BrowserAnswer[WaitForOutput]
-class ExpectInput(TypedDict):
-    ref: NotRequired[str | None]
-    role: NotRequired[str | None]
-    name: NotRequired[str | None]
-    value: NotRequired[str | None]
-    absent: NotRequired[bool]
 class ExpectOutput(TypedDict):
     met: bool
     row: NotRequired[Row | None]
@@ -19551,6 +19636,54 @@ class BatchInput(TypedDict):
     until_ms: NotRequired[int | None]
     no_model: NotRequired[bool]
 SubgoalStatus = Literal["done", "NEEDS_AGENT", "NEEDS_YOU"]
+StrictDenial = Literal["rule_abstained", "no_rule", "image"]
+class AskUpReasonAsked(TypedDict):
+    why: Literal["asked"]
+    ladder: NotRequired[str | None]
+class AskUpReasonLooks(TypedDict):
+    why: Literal["looks"]
+class AskUpReasonNoAnswer(TypedDict):
+    why: Literal["no_answer"]
+class AskUpReasonWrongAnswer(TypedDict):
+    why: Literal["wrong_answer"]
+class AskUpReasonStrict(TypedDict):
+    why: Literal["strict"]
+    denied: StrictDenial
+AskUpReason = AskUpReasonAsked | AskUpReasonLooks | AskUpReasonNoAnswer | AskUpReasonWrongAnswer | AskUpReasonStrict
+ClockScope = Literal["wait", "navigation", "decision"]
+class BatchStopCausePostconditionUnmet(TypedDict):
+    cause: Literal["postcondition_unmet"]
+class BatchStopCauseLocatorMissing(TypedDict):
+    cause: Literal["locator_missing"]
+class BatchStopCauseIncompleteObservation(TypedDict):
+    cause: Literal["incomplete_observation"]
+class BatchStopCauseDeciderAskedUp(TypedDict):
+    cause: Literal["decider_asked_up"]
+    reason: AskUpReason
+class BatchStopCauseClock(TypedDict):
+    cause: Literal["clock"]
+    scope: ClockScope
+class BatchStopCausePressNeeded(TypedDict):
+    cause: Literal["press_needed"]
+class BatchStopCauseTakenOver(TypedDict):
+    cause: Literal["taken_over"]
+class BatchStopCauseFieldText(TypedDict):
+    cause: Literal["field_text"]
+class BatchStopCauseNoProgress(TypedDict):
+    cause: Literal["no_progress"]
+class BatchStopCauseBrowser(TypedDict):
+    cause: Literal["browser"]
+    code: str
+BatchStopCause = BatchStopCausePostconditionUnmet | BatchStopCauseLocatorMissing | BatchStopCauseIncompleteObservation | BatchStopCauseDeciderAskedUp | BatchStopCauseClock | BatchStopCausePressNeeded | BatchStopCauseTakenOver | BatchStopCauseFieldText | BatchStopCauseNoProgress | BatchStopCauseBrowser
+class CheckReceipt(TypedDict):
+    expect: ExpectInput
+    observed: ExpectOutput
+class FailedStepReceipt(TypedDict):
+    step: NotRequired[int | None]
+    stop_cause: BatchStopCause
+    missed: NotRequired[list[CheckReceipt]]
+    observation: NotRequired[Observation2 | None]
+    error: NotRequired[str | None]
 class StepRebound(TypedDict):
     step: int
     rebound: Rebound
@@ -19559,6 +19692,9 @@ class BatchOutput(TypedDict):
     completed: int
     failed_step: NotRequired[int | None]
     error: NotRequired[str | None]
+    stop_cause: NotRequired[BatchStopCause | None]
+    failed_receipt: NotRequired[FailedStepReceipt | None]
+    elapsed_ms: int
     observation: NotRequired[Observation2 | None]
     receipts: NotRequired[list[EffectReceipt]]
     decisions: NotRequired[list[Any]]
@@ -19569,6 +19705,7 @@ BrowserBatchOutput = BrowserAnswer[BatchOutput]
 class LibraryFindInput(TypedDict):
     site: NotRequired[str | None]
     subgoal: NotRequired[str | None]
+    type_ref: NotRequired[str | None]
 class LibraryFindOutput(TypedDict):
     site: str
     workflows: list[LibraryCard]
@@ -19631,13 +19768,18 @@ class LibraryRetiredOutput(TypedDict):
     site: str
     retired: list[RetiredCard]
 BrowserLibraryRetiredOutput = BrowserAnswer[LibraryRetiredOutput]
+LibraryRunMode = Literal["strict", "assisted"]
 class LibraryRunInput(TypedDict):
     workflow: str
     args: NotRequired[dict[str, str]]
     base: NotRequired[ObservationBase | None]
+    mode: NotRequired[LibraryRunMode | None]
 class LibraryRunOutput(TypedDict):
     workflow: str
     status: SubgoalStatus
+    mode: LibraryRunMode
+    model_free: bool
+    model_free_unproven: NotRequired[int | None]
     unmet: NotRequired[list[int]]
     batch: BatchOutput
 BrowserLibraryRunOutput = BrowserAnswer[LibraryRunOutput]

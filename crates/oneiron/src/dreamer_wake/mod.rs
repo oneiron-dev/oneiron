@@ -8,6 +8,7 @@
 //! until a stop condition. The engine owns no timer or cron: hosts call
 //! [`request_wake`] to ENQUEUE and [`DreamerWakeDriver::run_wake_pass`] to
 //! RUN the pass — two separate host calls. Idle = nothing runs.
+mod arc_backstop;
 mod deadline;
 mod driver;
 mod grain;
@@ -25,8 +26,10 @@ mod refusal_dial;
 mod scheduling;
 mod settlement;
 pub(crate) mod sieve;
+pub(crate) mod statement_material;
 mod types;
 
+pub(crate) use self::arc_backstop::arc_policy_in_txn;
 pub use self::deadline::*;
 pub use self::driver::*;
 pub(crate) use self::driver::{llm_waits_on_owner_act, waits_on_owner_act};
@@ -60,8 +63,9 @@ pub use self::scheduling::*;
 pub(crate) use self::sieve::grant_written_in_txn as sieve_grant_written_in_txn;
 pub(crate) use self::sieve::owe_read_in_txn as owe_sieve_read_in_txn;
 pub use self::sieve::{
-    RuleClass, SieveAudit, SieveConsumeReceipt, SievePass, SievePolicy, SieveQueue, SieveRung,
-    SieveSkipped, SieveSpan, SpanBand, SpanKind, SpanOrigin,
+    RuleClass, SieveAudit, SieveAuditDiscovery, SieveAuditExpectation, SieveAuditFinding,
+    SieveAuditRecord, SieveAuditWindow, SieveConsumeReceipt, SievePass, SievePolicy, SieveQueue,
+    SieveRung, SieveSkipped, SieveSpan, SieveWindowAudit, SpanBand, SpanKind, SpanOrigin,
 };
 pub mod sieve_doors;
 pub use self::sieve::evidence as sieve_evidence;

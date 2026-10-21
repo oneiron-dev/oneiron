@@ -839,7 +839,7 @@
     },
     {
       "name": "describe",
-      "description": "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it), or the whole TASKS section when nothing is named.",
+      "description": "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it; `workflow`: its bound try), or the whole TASKS section when nothing is named.",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
       "outputs_by_input": {
@@ -889,7 +889,7 @@
     },
     {
       "name": "tasks.create",
-      "description": "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway.",
+      "description": "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway, and may bind an agent TASK to a library program (`context.workflow`).",
       "prose_links": [
         "/label",
         "/spec/title",
@@ -1245,7 +1245,7 @@
     },
     {
       "name": "tasks.update",
-      "description": "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK.",
+      "description": "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries.",
       "refs": [
         "/task_ref"
       ],
@@ -13903,7 +13903,7 @@
     },
     {
       "name": "self.browser.batch",
-      "description": "Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one.",
+      "description": "Runs one batched program of browser steps for a subgoal, stopping at the first failing step with a stop_cause and a failed_receipt (missed checks, the page); elapsed_ms times it, duration_ms each effect; the last observation edits the base.",
       "input": "crate::task_verb::sdk::BrowserBatchInput",
       "output": "crate::task_verb::sdk::BrowserBatchOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.batch(input)?)",
@@ -13913,14 +13913,14 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserBatchInput>",
-        "description": "Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one.",
+        "description": "Runs one batched program of browser steps for a subgoal in the attached run's browser, stopping at the first failing step with its stop_cause and a failed_receipt of missed checks and the page; elapsed_ms times it, duration_ms each effect.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.library.find",
-      "description": "The replay library's programs for a site, or for the open page's site, each card with its lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of` outcomes), held_out, supersedes and seed.",
+      "description": "The replay library's programs for a site, or the open page's; type_ref (node_id@tree_version) keeps that exact task type. Each card: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed.",
       "input": "crate::task_verb::sdk::BrowserLibraryFindInput",
       "output": "crate::task_verb::sdk::BrowserLibraryFindOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_find(input)?)",
@@ -13930,7 +13930,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>",
-        "description": "The replay library's programs for a site, or for the attached run's open page's site, each card with lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of` outcomes), held_out, supersedes and seed.",
+        "description": "The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -13988,7 +13988,7 @@
     },
     {
       "name": "self.browser.library.run",
-      "description": "Runs a replay library program live with its arguments, resolving its locators as each step runs; its last observation edits the caller's base, and a missed postcondition goes back to the planner.",
+      "description": "Runs a replay library program live, strict (rules only; a step needing a model asks up at zero tokens) or assisted, by default as its proof allows; model_free reads receipts, a miss returns a failed_receipt; 3 strict misses retire it drift.",
       "input": "crate::task_verb::sdk::BrowserLibraryRunInput",
       "output": "crate::task_verb::sdk::BrowserLibraryRunOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_run(input)?)",
@@ -13998,7 +13998,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRunInput>",
-        "description": "Runs a replay library program live with its arguments in the attached run's browser session, resolving locators step by step; its last observation edits the caller's base, and a missed postcondition goes back to the planner.",
+        "description": "Runs a replay library program live in the attached run's browser, strict (rules only; a step needing a model asks up at zero tokens) or assisted, by default as its proof allows; model_free reads receipts; 3 strict misses retire it drift.",
         "host_door_caller": true,
         "openapi": true
       }

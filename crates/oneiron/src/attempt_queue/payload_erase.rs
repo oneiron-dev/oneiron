@@ -18,6 +18,8 @@
 //! the task's rows, out of the original request record a row of the task
 //! names, and out of every row that pins one of the task's staged jobs, whose
 //! artifacts go with them. Every other payload member and row field stays.
+//! The same pass drops the library-program pins of the task's tries (CUA
+//! E4), which hold its arguments and goal.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -227,6 +229,9 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     // No row this pass writes pins them now; their jobs' artifacts go by the
     // artifact's own rules (FIX 7502).
     crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs)?;
+    // A bound TASK's tries pin its arguments and goal (CUA E4): they go with
+    // the TASK, archived tries' too.
+    crate::task_verb::erase_task_workflows_in_txn(store, txn, actors)?;
     // The erase authors nothing, so the plain encoder writes the row: the
     // side-row wall that could refuse a write does not stand in its way.
     let mut rewritten = Vec::with_capacity(rewrites.len());
