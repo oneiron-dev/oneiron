@@ -39,12 +39,20 @@ impl Memory<'_> {
         let (mount, commit) =
             self.repo_pinned_snapshot(binding, &admitted, &input.git_ref, &input.snapshot)?;
         let bounds = &admitted.membership.bounds;
+        // A run reads repo bytes masked (FIX 7608): each marked file names
+        // the copy its read returns.
+        let mut views =
+            mount.projected_file_views(|path| bounds.admits_path(RepoAccessIntent::Read, path))?;
         let files = mount
             .snapshot()
             .files
             .iter()
             .filter(|entry| bounds.admits_path(RepoAccessIntent::Read, &entry.path))
-            .map(snapshot_file)
+            .map(|entry| {
+                let mut file = snapshot_file(entry);
+                file.projection = views.remove(&entry.path);
+                file
+            })
             .collect();
         Ok(RepoRunAnswer {
             rows: vec![input.repo, mount.code_artifact_id()],
@@ -72,7 +80,9 @@ impl Memory<'_> {
         let (mount, _) =
             self.repo_pinned_snapshot(binding, &admitted, &input.git_ref, &input.snapshot)?;
         let absent = || MemoryError::not_found("the file is absent or withheld in this snapshot");
-        let bytes = mount.read_file(&input.path)?.ok_or_else(absent)?;
+        // A run reads repo bytes masked (FIX 7608): a marked file's
+        // projection, its opaque residue found before a byte is read.
+        let read = mount.read_file_projected(&input.path)?.ok_or_else(absent)?;
         let entry = mount
             .snapshot()
             .files
@@ -82,6 +92,9 @@ impl Memory<'_> {
         let asset = snapshot_asset_entity_id(&entry.content_hash)?;
         self.repo_lane_reads(binding, &[asset])
             .map_err(|_| absent())?;
+        let mut file = snapshot_file(entry);
+        file.projection = read.view();
+        let bytes = read.into_bytes();
         let text_sha256 = bytes_to_hex_lower(&Sha256::digest(&bytes));
         let content = String::from_utf8(bytes)
             .map_err(|_| MemoryError::bad_request("the pinned file is not UTF-8 text"))?;
@@ -91,7 +104,7 @@ impl Memory<'_> {
                 repo: input.repo,
                 git_ref: input.git_ref,
                 snapshot: input.snapshot,
-                file: snapshot_file(entry),
+                file,
                 content,
                 text_sha256,
             },

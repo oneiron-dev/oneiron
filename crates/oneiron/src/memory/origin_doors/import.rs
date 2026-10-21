@@ -106,6 +106,7 @@ fn manifest_view(imported: &ImportedCodeRepo) -> CodeImportManifestView {
                     content_hash_blake3: bytes_to_hex_lower(&blob.content_hash),
                     size_bytes: blob.size_bytes,
                     mode: blob.mode,
+                    projection: None,
                 },
             })
             .collect(),
