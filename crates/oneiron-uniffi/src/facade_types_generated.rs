@@ -53418,6 +53418,8 @@ pub enum DreamerParkCauseView {
     ExecutorError,
     #[serde(rename = "checkpoint")]
     Checkpoint,
+    #[serde(rename = "retry")]
+    Retry,
     #[serde(rename = "cancelled")]
     Cancelled,
     #[serde(rename = "signal")]

@@ -1,6 +1,7 @@
 //! Read-only neighbourhood fan-out, followed by one parent-owned merge.
 use std::future::{Future, poll_fn};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Poll;
 
 use rmpv::Value;
@@ -109,16 +110,26 @@ impl ConsolidationExecutor<'_> {
             super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
             requests.push((request.canonical_hash()?, request));
         }
+        // Each child's reply check reads the citations its candidates would
+        // carry into verification against the branch's own pinned text: a
+        // range verification refuses the whole partition over refuses the
+        // reply here, never memoized (FIX 7274).
+        let citations = Arc::new(extraction::CitationCheck::new(
+            resources, partition, attempt_id, ctx.now_ms,
+        ));
+        let checks: Vec<_> = slices
+            .iter()
+            .map(|slice| {
+                let citations = Arc::clone(&citations);
+                let scope = slice.scope.clone();
+                move |response: &crate::LlmResponse| citations.check(response, &scope)
+            })
+            .collect();
         let jobs = requests
             .iter()
-            .map(|(_, request)| {
-                call_as_step_checked(
-                    &step_ctx,
-                    call.backend,
-                    self.guard,
-                    request.clone(),
-                    &extraction::check_extraction_reply,
-                )
+            .zip(&checks)
+            .map(|((_, request), check)| {
+                call_as_step_checked(&step_ctx, call.backend, self.guard, request.clone(), check)
             })
             .collect();
         let outcomes = ordered_slots(jobs, width).await;

@@ -44,6 +44,7 @@ use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extractio
 
 mod compaction_check;
 mod free_time;
+mod run_log;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
@@ -1299,6 +1300,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 }
             }
         });
+        run_log::executed(attempt, ctx, &outcome);
         outcome
     }
 

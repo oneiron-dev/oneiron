@@ -17083,7 +17083,7 @@ class ConsolidationEnqueueRequest(TypedDict):
     now: NotRequired[int | None]
 class ConsolidationStatusRequest(TypedDict):
     job_ref: str
-DreamerParkCauseView = Literal["provider_unavailable", "executor_error", "checkpoint", "cancelled", "signal", "other"]
+DreamerParkCauseView = Literal["provider_unavailable", "executor_error", "checkpoint", "retry", "cancelled", "signal", "other"]
 class DreamerParkedAttemptView(TypedDict):
     job_ref: str
     cause: DreamerParkCauseView
