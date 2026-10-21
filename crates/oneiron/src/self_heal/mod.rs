@@ -54,6 +54,7 @@ pub(crate) use admission::{
 };
 pub(crate) mod blocked_reports;
 mod centroid_evidence;
+pub(crate) mod consent_depth;
 mod consent_detector;
 pub mod tripwires;
 pub use centroid_evidence::{CentroidCorpus, CentroidReplay, DETECTOR_CENTROID_MIN_SIMILARITY};

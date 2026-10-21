@@ -130,10 +130,22 @@ impl ProviderTagger {
         self.dispatcher.claim_async(work)
     }
 
-    /// Queues `input` under `claim`, never waiting; the answer comes back
-    /// through the returned completion.
-    pub(crate) fn submit(&self, claim: DispatchClaim, input: EncoderInput) -> Completion {
-        claim.submit(input)
+    /// The window `input` builds: a tokenizer encode, so a caller runs it on
+    /// a blocking unit and hands it to [`Self::submit`] (FIX 7331).
+    pub(crate) fn count_window(&self, input: &EncoderInput) -> oneiron::Result<usize> {
+        self.dispatcher.count(input)
+    }
+
+    /// Queues `input` under `claim` with its `window` from
+    /// [`Self::count_window`], never waiting; the answer comes back through
+    /// the returned completion.
+    pub(crate) fn submit(
+        &self,
+        claim: DispatchClaim,
+        input: EncoderInput,
+        window: oneiron::Result<usize>,
+    ) -> Completion {
+        claim.submit_counted(input, window)
     }
 
     /// The dispatcher's pending cap of `work`'s class, from its policy: the

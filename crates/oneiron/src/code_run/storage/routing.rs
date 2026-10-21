@@ -1,5 +1,7 @@
 //! Where one run's reads and writes land: the canonical vault or a bound off-record session.
 
+use std::borrow::Cow;
+
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::memory::{MessageResultAttachment, WitnessReceipt};
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
@@ -17,6 +19,8 @@ use super::records::{
     finish_output, load_whole_body, next_additive_heal_count, read_body_row_range,
     replay_generation_matches,
 };
+use super::response_erase::fence_replay_in_txn;
+use super::response_owners::stamp_response_owner_in_txn;
 use super::speech_identity::{
     ResultSpeech, canonical_witness_executor_turn, executor_speech_message_id_for_run,
     executor_speech_turn_id,
@@ -189,6 +193,42 @@ impl SessionBinding<'_> {
                 record,
                 |current| replay_generation_matches(current, expected),
             ),
+        })?;
+        Ok(next_generation)
+    }
+
+    /// [`Self::put_replay_record_if_generation_with_heal`] with no heal, as
+    /// `actor`'s run `run`. On an on-record stretch the record lands in base,
+    /// so the same transaction fences it and stamps its owner there, as the
+    /// vault's put does (FIX 5718, 7429): an erase of `actor` finds the run
+    /// by its owner row, and a write after that erase stays erased. An
+    /// overlay row stamps none.
+    pub(super) fn put_owned_replay_record_if_generation(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        run: EntityId,
+        actor: EntityId,
+    ) -> Result<CodeRunReplayGeneration> {
+        use crate::side_table::RoutedDbs;
+        REPLAY_RECORDS.encode_value(record)?;
+        let next_generation = record.generation()?;
+        self.answered(|| {
+            self.session
+                .routed_side_txn(&self.route, |wtxn, read, write| {
+                    let current = REPLAY_RECORDS.get(&read, wtxn, &record.run_id)?;
+                    replay_generation_matches(current.as_ref(), expected)?;
+                    match write {
+                        RoutedDbs::Base(vault) => {
+                            let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
+                            REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)?;
+                            stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)
+                        }
+                        RoutedDbs::Session(_) => {
+                            REPLAY_RECORDS.put(&write, wtxn, &record.run_id, record)
+                        }
+                    }
+                })
         })?;
         Ok(next_generation)
     }
@@ -630,8 +670,8 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
-    /// Stores a complete body as the occurrence run `owner` holds: on the vault with the run's
-    /// descriptor of it (FIX 7283), in a session as a row that holds it on its own.
+    /// Stores a complete body as the occurrence run `owner` holds: on the vault and an on-record
+    /// stretch with the run's descriptor (FIX 7283, 7363), off record as a row that holds it alone.
     pub(crate) fn put_code_run_raw_output(
         &self,
         owner: EntityId,

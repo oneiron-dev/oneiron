@@ -121,8 +121,10 @@ pub(crate) const OWNER_WORK_NO_EXECUTOR: OwnerWorkUnassigned =
 pub enum OwnerWorkStatus {
     /// Recorded, awaiting a holder: no result yet.
     RecordedAwaitingHolder,
-    /// The executor did the work and committed it. It never claims that
-    /// every replica holds it yet.
+    /// The executor did the work and committed it; for the owner's kit push
+    /// (FIX 6053), which no machine executes, the push itself did, in the
+    /// commit that recorded it. It never claims that every replica holds it
+    /// yet.
     Enacted,
     /// The executor refused it, for the reason given.
     Refused { reason: OwnerWorkRefusal },
@@ -280,6 +282,9 @@ impl OwnerWorkReceipt {
             .owner_work_result(&request)
             .map(|answer| &answer.outcome);
         let status = match outcome {
+            // The owner's kit push (FIX 6053) is enacted by the push that
+            // recorded it: it never waits for a holder, none picks it up.
+            None if recorded.kit_root().is_some() => OwnerWorkStatus::Enacted,
             None if fold.root_request_cancelled(&request) => OwnerWorkStatus::Cancelled,
             None if fold.root_request_superseded(&request) => OwnerWorkStatus::Superseded,
             None => OwnerWorkStatus::RecordedAwaitingHolder,
@@ -315,7 +320,8 @@ impl OwnerWorkReceipt {
             request: Some(entry_hex(&request)),
             kind: recorded.kind(),
             target: recorded.act.target,
-            executor: Some(recorded.executor),
+            // No machine executes a kit request: none is named.
+            executor: recorded.executor_machine(),
             status,
             unassigned: None,
             manifest_check: outcome.and_then(OwnerWorkOutcome::register_check).cloned(),

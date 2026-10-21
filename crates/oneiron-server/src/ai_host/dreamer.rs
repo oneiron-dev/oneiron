@@ -46,7 +46,7 @@ mod compaction_check;
 mod free_time;
 mod run_log;
 use super::skill_author::CoachSkillAuthor;
-use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
+use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
 use crate::decision_host::DecisionHost;
 use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, RunBackend, Seat};
@@ -107,18 +107,39 @@ impl Drop for ThreadEnded {
 pub(super) type QuestionTimer =
     Arc<std::sync::OnceLock<std::sync::Weak<crate::server::SyncServer>>>;
 
-/// The host's gate on each Dreamer pass, its home-timer pump and its
-/// stewardship drafts, bound once serve has it: managed serve's reap freeze.
-/// Unbound, everything is admitted.
-pub(super) type PassAdmission = Arc<std::sync::OnceLock<crate::server::HousekeepingAdmission>>;
+/// Managed serve's reap freeze over the Dreamer (FIX 6909), installed
+/// before the Dreamer starts: the admission each pass, its home-timer pump
+/// and its stewardship rounds take, and the pause each reads between its
+/// units.
+#[derive(Clone)]
+pub(crate) struct DreamerControl {
+    pub(crate) admission: crate::server::HousekeepingAdmission,
+    /// The freeze's current epoch: `true` once frozen, and kept `true` by
+    /// that epoch after a thaw, which starts the next and closes it.
+    pub(crate) pause: Arc<dyn Fn() -> tokio::sync::watch::Receiver<bool> + Send + Sync>,
+}
+
+/// The host's control over each Dreamer pass, its home-timer pump and its
+/// stewardship drafts. `None` admits everything and never pauses.
+pub(super) type PassAdmission = Option<DreamerControl>;
 
 /// What the gate returns for one pass, held until that pass ends; `None`
 /// when the gate refuses.
 pub(super) fn admit(admission: &PassAdmission) -> Option<Box<dyn Send>> {
-    match admission.get() {
-        Some(admit) => admit(),
+    match admission {
+        Some(control) => (control.admission)(),
         None => Some(Box::new(())),
     }
+}
+
+/// The host's pause epoch now; `None` with no control.
+pub(super) fn pause(admission: &PassAdmission) -> Option<tokio::sync::watch::Receiver<bool>> {
+    admission.as_ref().map(|control| (control.pause)())
+}
+
+/// Whether `epoch` holds the host's pause: no next unit starts.
+pub(super) fn paused(epoch: Option<&tokio::sync::watch::Receiver<bool>>) -> bool {
+    epoch.is_some_and(|epoch| *epoch.borrow())
 }
 
 pub(super) struct DreamerStart {
@@ -274,7 +295,7 @@ async fn supervise(
         Arc::clone(&vault),
         Arc::clone(&runtime),
         settings.pass_budget_units,
-        Arc::clone(&admission),
+        admission.clone(),
     ));
     let built = (|| -> anyhow::Result<_> {
         let node_id = claim_home_node(&vault, device)?;
@@ -466,8 +487,10 @@ struct ObservedFactory {
     settle_after: Option<oneiron::EntityId>,
 }
 
-/// A pass's admission, held while the pass runs.
-struct AdmittedPass(Box<dyn Send>);
+/// A pass's admission, held while the pass runs: the supervisor takes it as
+/// the pass's hold, so it covers the timer work after the wake too (FIX
+/// 6909).
+struct AdmittedPass(Option<Box<dyn Send>>);
 
 impl PassAttachment for AdmittedPass {
     fn serve<'p>(self: Box<Self>, pass: WakePassFuture<'p>) -> AttachedPassFuture<'p> {
@@ -475,6 +498,10 @@ impl PassAttachment for AdmittedPass {
             let Self(_held) = *self;
             (pass.await, Ok(()))
         })
+    }
+
+    fn take_pass_hold(&mut self) -> Option<Box<dyn Send>> {
+        self.0.take()
     }
 }
 
@@ -798,17 +825,25 @@ impl PassExecutorFactory for ObservedFactory {
         _guard: &oneiron::BudgetGuard,
     ) -> oneiron::Result<Option<Box<dyn PassAttachment>>> {
         match admit(&self.admission) {
-            Some(held) => Ok(Some(Box::new(AdmittedPass(held)))),
+            Some(held) => Ok(Some(Box::new(AdmittedPass(Some(held))))),
             None => Err(oneiron::Error::InvalidConfig(
                 "dreamer pass not admitted: the vault is frozen or not yet served".into(),
             )),
         }
     }
 
+    /// The host's pause, managed serve's reap freeze (FIX 6909): its
+    /// current epoch, read afresh for each pass; none unbound.
+    fn pass_pause(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        pause(&self.admission)
+    }
+
     /// The standing-question pump and the parked-conflict settlement, once
     /// serve has bound the server, under the host's gate. Their model rungs
     /// block on the server's runtime, so they run on a thread of their own,
-    /// off this pass's runtime; the pass waits for them.
+    /// off this pass's runtime; the pass waits for them. The host's pause
+    /// starts neither once it holds (FIX 6909); one already started
+    /// finishes under the gate.
     fn run_home_timer(
         &mut self,
         _vault: &Vault,
@@ -821,13 +856,23 @@ impl PassExecutorFactory for ObservedFactory {
         let Some(_pass) = admit(&self.admission) else {
             return Ok(());
         };
+        // Read after the gate: a freeze since then shows here.
+        let epoch = pause(&self.admission);
+        if paused(epoch.as_ref()) {
+            return Ok(());
+        }
         let dreamer = self.actor;
         let after = self.settle_after;
         let joined = std::thread::scope(|scope| {
             scope
                 .spawn(|| {
                     let pumped = crate::decision_graph::pump_due(&server, now_secs);
-                    (pumped, settle_parked(&server, dreamer, after, now_secs))
+                    let settled = if paused(epoch.as_ref()) {
+                        after
+                    } else {
+                        settle_parked(&server, dreamer, after, now_secs)
+                    };
+                    (pumped, settled)
                 })
                 .join()
         });
@@ -1238,13 +1283,21 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             status.dreamer.state = WorkState::Working;
             status.dreamer.started += 1;
         });
+        // The kind of an attempt that ends without its work because the host
+        // lends no resident instruction: it still ends (a park would strand
+        // the nightly item, a Retry would loop every pass), but the status
+        // says why instead of counting it completed (Engine 10-21, ruling a).
+        let mut unserved = None;
         let outcome = if attempt.status.payload.attempt_type
             == oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
         {
             match self.resident {
                 Some(lend) => lend.dream(attempt, ctx).await,
                 // Without the host's instruction no resident dreams tonight.
-                None => Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+                None => {
+                    unserved = Some(oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND);
+                    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                }
             }
         } else if attempt.status.payload.attempt_type
             == oneiron::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
@@ -1254,7 +1307,11 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             // voice, and its item ends without its work.
             match self.resident {
                 Some(lend) => lend.dream(attempt, ctx).await,
-                None => Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+                None => {
+                    unserved =
+                        Some(oneiron::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND);
+                    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                }
             }
         } else if attempt.status.payload.attempt_type
             == oneiron::dreamer_runner::DREAMER_TASK_REALIZE_ATTEMPT_KIND
@@ -1290,10 +1347,26 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         } else {
             self.inner.execute(attempt, ctx).await
         };
+        if let Some(attempt_kind) = unserved {
+            tracing::info!(
+                code = "dreamer_no_host_instruction",
+                attempt_kind,
+                "a resident's attempt ended unserved: the host lends no resident instruction"
+            );
+        }
         self.status.update(|status| {
             status.dreamer.state = WorkState::Waiting;
             match &outcome {
-                Ok(DreamerAttemptExecution::Completed { .. }) => status.dreamer.completed += 1,
+                Ok(DreamerAttemptExecution::Completed { .. }) => match unserved {
+                    Some(kind) => {
+                        status.dreamer.unserved += 1;
+                        status.dreamer.last_unserved = Some(UnservedNote {
+                            reason: UnservedReason::NoHostInstruction,
+                            attempt_kind: kind.to_owned(),
+                        });
+                    }
+                    None => status.dreamer.completed += 1,
+                },
                 Ok(other) => {
                     status.dreamer.last_error = Some(format!("{other:?}"));
                 }

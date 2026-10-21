@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod decisions;
 pub(super) mod extraction;
+mod failure;
 mod merge_resolution;
 
 pub use decisions::ConsolidationDecisions;
@@ -441,7 +442,8 @@ impl ConsolidationExecutor<'_> {
     /// How a conflict step's failure ends the partition: a refusal of spent
     /// work checkpoints; any other failure parks the attempt with a durable
     /// Proposed marker (the marker and every source pin share the write
-    /// transaction) and fails it.
+    /// transaction) and fails it; a refused call's paid usage rides on the
+    /// error to the attempt's park, which records it (FIX 414).
     #[expect(
         clippy::too_many_arguments,
         reason = "the failure joins the conflict, its branch, the wake and the charge tally"
@@ -927,34 +929,15 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             Ok(PartitionRun::Trapped) => {
                 Ok(charges.park_for("durable step trapped for resume", DreamerParkCause::Signal))
             }
-            Err(crate::llm::DurableStepError::DeadlineHardCut) => {
-                Ok(DreamerAttemptExecution::Park {
-                    reason: crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON.to_owned(),
-                    cause: DreamerParkCause::Checkpoint,
-                })
-            }
-            Err(crate::llm::DurableStepError::FinalizeRefused) => {
-                Ok(DreamerAttemptExecution::Park {
-                    reason: "wake pass finalize window".to_owned(),
-                    cause: DreamerParkCause::Checkpoint,
-                })
-            }
             Err(crate::llm::DurableStepError::Engine(error)) => {
                 super::residency::spent_or_deferred(error, ctx.now_ms, charges.units)
             }
-            // A refused conflict read (`conflict_failed` kept its open
-            // marker) asks again after its retry delay, as a refused
-            // extraction does (FIX 7272): it was never memoized.
-            Err(other @ crate::llm::DurableStepError::SpentSchemaValidation { .. }) => {
-                Ok(DreamerAttemptExecution::Park {
-                    reason: other.to_string(),
-                    cause: DreamerParkCause::Retry,
-                })
-            }
-            Err(other) => Ok(DreamerAttemptExecution::Park {
-                cause: DreamerParkCause::of_step(&other),
-                reason: other.to_string(),
-            }),
+            // Every other failure parks with what the attempt spent, a
+            // refused conflict read's paid usage included (FIX 414).
+            Err(other) => Ok(failure::park_partition_failure_with_spend(
+                other,
+                &mut charges,
+            )),
         }
     }
 }

@@ -7,6 +7,8 @@ mod hooks;
 mod observe;
 mod park_cause;
 
+pub(crate) use self::park_cause::{llm_waits_on_owner_act, waits_on_owner_act};
+
 use std::future::poll_fn;
 use std::panic::AssertUnwindSafe;
 use std::pin::pin;
@@ -50,6 +52,10 @@ pub const DREAMER_HARD_CUT_PARK_OWNER: &str = "dreamer.step:hard-cut";
 /// request (ONE-1683 H-S5/R2): the admitted attempt is parked and its budget
 /// reservation refunded before the pass stops — cancellation never leaks.
 pub const DREAMER_CANCELLED_PARK_REASON: &str = "wake-pass cancelled";
+
+/// Park reason stamped on attempts the host's pause preempted before dispatch
+/// (FIX 6909): parked and refunded as a cancelled one, but resumable.
+pub const DREAMER_PAUSED_PARK_REASON: &str = "wake-pass paused";
 
 /// Park reason PREFIX stamped on attempts whose executor returned a
 /// non-deadline error (ONE-1683 H-S5/R2): the error path parks the admitted
@@ -712,6 +718,13 @@ impl<'a> DreamerWakeDriver<'a> {
             let executed = if let Err(pressure_error) = pressure {
                 stage = Some("budget_pressure");
                 Err(pressure_error)
+            } else if cancel_requested && cancel.is_paused() {
+                // The host's pause (FIX 6909): a later pass resumes it.
+                stage = Some("paused");
+                Ok(DreamerAttemptExecution::Park {
+                    reason: DREAMER_PAUSED_PARK_REASON.to_owned(),
+                    cause: DreamerParkCause::Paused,
+                })
             } else if cancel_requested {
                 stage = Some("cancelled");
                 Ok(DreamerAttemptExecution::Park {
