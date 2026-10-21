@@ -12251,7 +12251,7 @@
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
       "crate-vis": 6,
-      "re-export": 11,
+      "re-export": 12,
       "struct": 1
      }
     },
@@ -12664,10 +12664,23 @@
      "path": "src/claim/scoped_read/weave_serve.rs",
      "purpose": "The served weave lens (OF-499): the per-reader report and its saved digests as wire views, for the…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 13,
       "struct": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveSieveDiscoveryView",
+      "WeaveSieveFindingView"
+     ],
+     "path": "src/claim/scoped_read/weave_serve/sieve_audit.rs",
+     "purpose": "An unflagged window's sieve audit as a weave report serves it (OF-498f): refs as hex, offsets as bytes…",
+     "surface": {
+      "struct": 2
      }
     },
     {
@@ -21582,6 +21595,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "BranchTurn",
+      "ConsolidationBranchPlan",
+      "ConversationPart"
+     ],
+     "path": "src/dreamer_consolidation/branch.rs",
+     "purpose": "One consolidation branch (FIX 7524): a nightly thing's turns across every conversation it appears in…",
+     "surface": {
+      "crate-vis": 16,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/branch_scope.rs",
      "purpose": "Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis",
@@ -21687,7 +21716,7 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch; the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -21834,7 +21863,7 @@
      "surface": {
       "crate-vis": 26,
       "mod": 4,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -21865,6 +21894,16 @@
      "purpose": "Nightly fan-in over child proposals",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/nightly_merge/chunks.rs",
+     "purpose": "Which unlisted siblings a nightly merge fans in beside its listed children (FIX 7495, FIX 7524): a retry of…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -21958,9 +21997,24 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11,
-      "fn": 7,
+      "crate-vis": 10,
+      "fn": 6,
+      "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PartitionThing"
+     ],
+     "path": "src/dreamer_consolidation/partition/payload.rs",
+     "purpose": "The consolidation payload codec (FIX 7524): a branch's world and facet, the thing a nightly child is cut…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -22092,14 +22146,24 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 36,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resources/parts.rs",
+     "purpose": "A branch's declared sources (FIX 7524): every part's conversation and its queued TURNs, pinned at one revision",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -22366,6 +22430,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/sieve_attempt/audit.rs",
+     "purpose": "The sieve audit of an unflagged window (OF-498f, FIX 486): the expensive path reads a source range the cheap…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -22613,7 +22687,27 @@
      "path": "src/dreamer_consolidation/wake_plan/chunks.rs",
      "purpose": "Rule 5 for a selection retry's source budget (L02-38): `max_sources` is a work size, never a total",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/wake_plan/retry.rs",
+     "purpose": "A selection retry's widening, part by part (FIX 7524)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/wake_plan/sources.rs",
+     "purpose": "A multi-part branch's parts at the wake's one pin (FIX 7524, Engine ruling B)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -24809,6 +24903,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_wake/nightly/exposure.rs",
+     "purpose": "What each planned TURN's text may be read beside in another conversation (FIX 7524, Engine ruling C): its…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_wake/nightly/things.rs",
      "purpose": "One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly)",
      "surface": {
@@ -25046,6 +25150,25 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SieveAuditDiscovery",
+      "SieveAuditExpectation",
+      "SieveAuditFinding",
+      "SieveAuditWindow",
+      "SieveWindowAudit"
+     ],
+     "path": "src/dreamer_wake/sieve/audit_windows.rs",
+     "purpose": "The sieve audit's second population (OF-498f, FIX 486): source windows the cheap rules left unflagged, so…",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 1,
+      "fn": 1,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -25086,11 +25209,11 @@
      "path": "src/dreamer_wake/sieve/mod.rs",
      "purpose": "The continuous sieve (ARCH-0026, the Continuous recipe): the cheap check that tags what is new on the local…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 4,
       "fn": 2,
       "mod": 1,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 4
      }
     },
@@ -25123,13 +25246,15 @@
      "kind": "src",
      "notable": [
       "SieveAudit",
+      "SieveAuditRecord",
       "SieveConsumeReceipt"
      ],
      "path": "src/dreamer_wake/sieve/recipes.rs",
      "purpose": "Durable model-rung inputs, queue spending and unbiased retained-span samples",
      "surface": {
-      "crate-vis": 20,
-      "fn": 3,
+      "crate-vis": 22,
+      "enum": 1,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -68851,7 +68976,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 86,
+     "files": 87,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69131,7 +69256,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 96,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69173,7 +69298,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 44,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70174,9 +70299,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 182,
+   "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4455,
+   "source_files": 4465,
    "test_files": 902
   },
   "oneiron-android": {
@@ -100203,6 +100328,8 @@
       "WeaveSectionInput",
       "WeaveSectionKind",
       "WeaveSectionView",
+      "WeaveSieveDiscoveryView",
+      "WeaveSieveFindingView",
       "WeaveSieveScoreView",
       "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest",
@@ -100297,7 +100424,7 @@
      "purpose": "—",
      "surface": {
       "enum": 933,
-      "struct": 2940
+      "struct": 2942
      }
     },
     {
