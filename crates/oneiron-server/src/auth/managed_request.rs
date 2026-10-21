@@ -32,6 +32,7 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::{Extensions, HeaderMap, request::Parts};
 use oneiron::authority::{ForwardedCallerProof, OwnerDeviceRenewalProof};
 
+use super::left_notices::LEFT_SLIP_HEADER;
 use super::{BindingProof, CoreAuth, bearer_token, caller_locality, proved_peer};
 use crate::error::{ApiError, ApiErrorDetails};
 use crate::server::SyncServer;
@@ -123,10 +124,12 @@ pub(crate) fn carries_caller_slip(headers: &HeaderMap) -> bool {
 /// Managed ingress's forwarding rule: a caller's capability slip, as its
 /// bearer or as its MCP connector credential, goes on to the child
 /// unchanged, with its holder proof (and its machine claim, which ingress
-/// never touches), for the child to verify. Any other bearer or connector
-/// credential terminated at the supervisor and is removed, as is a holder
-/// proof no slip rides with, so a request without a slip reaches the child
-/// with no caller credential at all.
+/// never touches), for the child to verify. A removed device's revoked slip
+/// in `x-oneiron-left-slip` keeps its holder proof the same way (FIX 5452):
+/// forwarding grants nothing, and the child's left-slip doors verify both.
+/// Any other bearer or connector credential terminated at the supervisor and
+/// is removed, as is a holder proof no slip rides with, so a request without
+/// a slip reaches the child with no caller credential at all.
 pub(crate) fn forward_caller_credentials(headers: &mut HeaderMap) {
     let bearer = carries_caller_slip(headers);
     let connector = headers
@@ -139,7 +142,8 @@ pub(crate) fn forward_caller_credentials(headers: &mut HeaderMap) {
     if !connector {
         headers.remove(MCP_CREDENTIAL_HEADER);
     }
-    if !bearer && !connector {
+    let left_slip = headers.contains_key(LEFT_SLIP_HEADER);
+    if !bearer && !connector && !left_slip {
         headers.remove(BINDING_HEADER);
     }
 }
