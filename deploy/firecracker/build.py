@@ -70,6 +70,12 @@ ANCHOR_PROXY_REVISION = 1
 # the config drive's network.json, so a host attaches one only to an image
 # whose manifest names it.
 VM_NETWORK_REVISION = 1
+# The managed profile's revision
+# (oneiron_vault_contract::vm::VM_MANAGED_PROFILE_REVISION, FIX 6809): this
+# image's oneiron-vm-init reads the config drive's five typed profile files and
+# passes the engine their flags, so a host stages them only for an image whose
+# manifest names it.
+VM_MANAGED_PROFILE_REVISION = 1
 # The resolver file's mountpoint: empty and 0644 in the image, and covered by
 # oneiron-vm-init's bind mount when the guest's network plan names nameservers.
 RESOLV_CONF = "etc/resolv.conf"
@@ -221,6 +227,7 @@ def make_manifest(args):
                    "anchor_wire_revision": ANCHOR_WIRE_REVISION,
                    "anchor_proxy_revision": ANCHOR_PROXY_REVISION,
                    "vm_network_revision": VM_NETWORK_REVISION,
+                   "vm_managed_profile_revision": VM_MANAGED_PROFILE_REVISION,
                    "artifacts": artifacts, "rootfs_files": receipt["files"]},
                   stream, indent=2, sort_keys=True)
         stream.write("\n")
