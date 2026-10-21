@@ -118,6 +118,9 @@ pub struct HostSelfDispatcher<'a> {
     pub(super) reader_spawn: Option<crate::code_run::SpawnHostSeat>,
     /// The reader child's job this run is, when it is one.
     pub(super) reader_child: Option<ReaderChildBinding>,
+    /// The ports a scoped child's host registered for it (FIX 7507), when
+    /// it is one. Host configuration; no guest call reaches it.
+    pub(super) scoped_ports: Option<std::sync::Arc<dyn crate::code_run::ScopedChildPorts>>,
     /// The run its host bound this dispatcher to, whose own seat and first
     /// start the host reads through it on its route (FIX 2594, FIX 7507);
     /// `None` until a host binds one. No guest call reaches it.
@@ -283,6 +286,7 @@ impl<'a> HostSelfDispatcher<'a> {
             parked_hooks: RefCell::new(Vec::new()),
             reader_spawn: None,
             reader_child: None,
+            scoped_ports: None,
             bound_run: None,
             planner: None,
             slip_issuer: None,
@@ -533,9 +537,13 @@ impl<'a> HostSelfDispatcher<'a> {
         // participant left the room hears `NotInRoom`, never their verdict.
         self.storage.answered(|| {
             self.enforce_off_record_effect_policy(call.effect())?;
-            // A reader child reads its source and reports; it makes no other
-            // call.
-            if let Some(refused) = self.reader_child_refusal(call.effect()) {
+            // A reader child reads its source and reports; a scoped child
+            // also calls the ports its parent lent it (FIX 7507). Neither
+            // makes any other call.
+            if let Some(refused) = self
+                .reader_child_refusal(call.effect())
+                .or_else(|| self.scoped_child_refusal(&call))
+            {
                 return Ok(refused);
             }
             // A step that can no longer close commits nothing more.
