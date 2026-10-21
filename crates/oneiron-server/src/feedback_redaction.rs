@@ -30,7 +30,7 @@ use oneiron::feedback::{
     FeedbackBundle, FeedbackRedactionError, FeedbackRedactor, FilteredFeedback, FilteredText,
     TextFilter, TextFilterError, TextFilterIdentity, UnredactedFeedback, apply_recognised_spans,
 };
-use oneiron::memory::extraction::{EncoderInput, EncoderMessage, ExtractionEncoder};
+use oneiron::memory::extraction::{EncoderInput, EncoderMessage, ExtractionEncoder, ExtractionWork};
 
 use crate::oneironer::{EncoderNotSelected, TaggerSlot};
 use crate::server::SyncServer;
@@ -98,7 +98,11 @@ impl TextFilter for OneironerFilter {
             language: None,
             speaker: None,
         };
-        let output = match catch_unwind(AssertUnwindSafe(|| encoder.infer(&input))) {
+        // Neither a chat turn nor the tag door: a bulk call (FIX 6755).
+        let called = catch_unwind(AssertUnwindSafe(|| {
+            encoder.infer(&input, ExtractionWork::Bulk).result
+        }));
+        let output = match called {
             Ok(Ok(output)) => output,
             Ok(Err(error)) => {
                 return Err(TextFilterError::Unavailable(format!(

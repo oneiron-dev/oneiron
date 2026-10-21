@@ -3,16 +3,20 @@
 //!
 //! An engine is a runtime on a device. The slot holds the list of them; the
 //! CPU engine is built in on every platform and needs no second runtime.
-//! `device = "auto"` serves the fastest engine this machine runs whose answers
-//! clear the bundle's parity bar against its reference outputs. A named device
+//! `device = "auto"` serves the preferred engine this machine runs whose
+//! answers clear the bundle's parity bar against its reference outputs
+//! ([`calibration`]: a candidate replaces the incumbent only when its median
+//! is faster AND its tail no slower than the margins allow). A named device
 //! is the user's pick: it serves when this machine runs it, whatever it
-//! measured.
+//! measured. Whichever serves, it is a worker of the slot's dispatcher, and
+//! each call's receipt names the worker that ran it.
 //!
 //! No bar and no speed sits in this file. The bar and the reference cases
 //! ship in the bundle's `parity.json`; the measured speeds are rows in this
-//! machine's engine file, and a row is measured again only when the stack, the
-//! reference or the server build moves. A bundle with no reference holds no
-//! engine to a bar, so the built-in one serves.
+//! machine's engine file, and a row is measured again when the stack, the
+//! reference, the runtime, its artifact, the server build, the OS build or
+//! the calibration idle moves. A bundle with no reference holds no engine to
+//! a bar, so the built-in one serves.
 
 use std::path::Path;
 
@@ -25,8 +29,8 @@ use crate::config::{EmbedderDevice, OneironerConfig};
 mod calibration;
 mod rows;
 
-use calibration::{Reference, measure};
-use rows::{build_id, read_rows, rows_path, sha16, write_rows};
+use calibration::{Reference, Timing, measure, prefers};
+use rows::{RowKey, build_id, os_build, read_rows, rows_path, sha16, write_rows};
 
 pub(crate) use rows::Row;
 
@@ -149,7 +153,7 @@ pub(crate) fn bundle_identity(dir: &Path) -> anyhow::Result<BundleIdentity> {
 pub(crate) enum Pick {
     /// The user named its device.
     Named,
-    /// The fastest engine here that clears the bundle's bar.
+    /// The preferred engine here that clears the bundle's bar ([`prefers`]).
     Measured,
     /// The bundle ships no reference to hold an engine to, so the built-in
     /// engine serves.
@@ -180,13 +184,17 @@ pub(crate) struct Survey {
 }
 
 /// Measures the engines this machine runs for the section's bundle, reading
-/// each row from this machine's file when one is there for the stack, the
-/// reference and this build.
+/// each row from this machine's file when one is there for its key
+/// ([`RowKey`]).
 ///
-/// An engine that cannot load the bundle or answer a case gets a row that
-/// does not clear, so it is not tried again until something moves. When no
-/// engine clears, the survey has no default and `auto` is refused: it would
-/// serve answers the reference disowns. A named device still serves.
+/// The default is the preferred clearing engine: the scan starts from the
+/// first clearing one, the built-in engine when it clears, and a later one
+/// takes its place only when [`prefers`] says so. Only the default stays
+/// loaded; no second model is held beside it. An engine that cannot load
+/// the bundle or answer a case clears nothing this start, and no row is kept
+/// for it: the next start measures it again. When no engine clears, the
+/// survey has no default and `auto` is refused: it would serve answers the
+/// reference disowns. A named device still serves.
 ///
 /// `rows_location` names the rows file; `None` keeps the XDG/HOME default
 /// ([`rows_path`]).
@@ -221,58 +229,52 @@ pub(crate) fn survey(
     };
     let path = rows_path(rows_location);
     let mut rows = path.as_deref().map(read_rows).unwrap_or_default();
-    let build = build_id();
+    let (build, os_build) = (build_id(), os_build());
     let mut engines = Vec::with_capacity(here.len());
-    let mut fastest: Option<(Engine, f64)> = None;
-    let mut loaded: Option<(Engine, LocalTagger)> = None;
+    let mut preferred: Option<(Engine, Timing)> = None;
+    let mut loaded: Option<LocalTagger> = None;
     let mut measured = false;
     for engine in here {
-        let id = engine.id();
-        let kept = rows
-            .iter()
-            .find(|row| row.is_for(stack, &reference.sha16, &id, &build))
-            .cloned();
-        let row = match kept {
-            Some(row) => row,
+        let key = RowKey::new(stack, &reference.sha16, engine, &build, &os_build);
+        let kept = rows.iter().find(|row| row.is_for(&key)).cloned();
+        let (row, tagger) = match kept {
+            Some(row) => (row, None),
             None => {
-                measured = true;
-                let (row, tagger) = measure(config, engine, stack, &reference, &build);
+                let run = measure(config, engine, &key, &reference);
                 tracing::info!(
-                    engine = %id,
-                    clears = row.clears,
-                    mean_ms = row.mean_ms,
-                    cases = row.cases,
+                    engine = %run.row.engine,
+                    clears = run.row.clears,
+                    p50_ms = run.row.p50_ms,
+                    p95_ms = run.row.p95_ms,
+                    cases = run.row.cases,
+                    kept = run.keep,
                     "oneironer engine measured"
                 );
-                // Only the fastest clearing engine stays loaded.
-                if let (Some(tagger), Some(ms)) = (tagger, row.clearing_ms())
-                    && fastest.is_none_or(|(_, best)| ms < best)
-                {
-                    loaded = Some((engine, tagger));
+                if run.keep {
+                    measured = true;
+                    rows.retain(|old| !old.is_for(&key));
+                    rows.push(run.row.clone());
                 }
-                rows.retain(|old| !old.is_for(stack, &reference.sha16, &id, &build));
-                rows.push(row.clone());
-                row
+                (run.row, run.tagger)
             }
         };
-        if let Some(ms) = row.clearing_ms()
-            && fastest.is_none_or(|(_, best)| ms < best)
+        if let Some(timing) = row.clearing()
+            && preferred.is_none_or(|(_, incumbent)| prefers(timing, incumbent))
         {
-            fastest = Some((engine, ms));
+            preferred = Some((engine, timing));
+            // Only the preferred clearing engine stays loaded.
+            loaded = tagger;
         }
         engines.push((engine, Some(row)));
     }
     if measured && let Some(path) = path.as_deref() {
         write_rows(path, &rows);
     }
-    let default = fastest.map(|(engine, _)| engine);
     Ok(Survey {
         engines,
-        default,
+        default: preferred.map(|(engine, _)| engine),
         pick: Pick::Measured,
-        loaded: loaded
-            .filter(|(engine, _)| Some(*engine) == default)
-            .map(|(_, tagger)| tagger),
+        loaded,
     })
 }
 

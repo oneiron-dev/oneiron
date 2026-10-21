@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use oneiron::ModelId;
 use oneiron::embed::EmbedderLocality;
-use oneiron::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder};
+use oneiron::memory::extraction::{EncoderInput, EncoderOutput};
 use serde::Deserialize;
 
 use crate::config::OneironerConfig;
@@ -322,17 +322,21 @@ impl HttpTagger {
     }
 }
 
-impl ExtractionEncoder for HttpTagger {
-    fn model_id(&self) -> &ModelId {
+/// The slot's one opaque endpoint worker: its dispatcher sends it the calls
+/// it assigns, one at a time, and its receipts name the endpoint, never a
+/// runtime inside it.
+impl HttpTagger {
+    pub(crate) fn model_id(&self) -> &ModelId {
         &self.model
     }
 
-    fn locality(&self) -> EmbedderLocality {
+    pub(crate) fn locality(&self) -> EmbedderLocality {
         // `from_config` admits loopback hosts only.
         EmbedderLocality::OnDevice
     }
 
-    fn infer(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
+    /// One extract call and the card read that vouches for its answer.
+    pub(crate) fn infer(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
         let output = self.post_extract(input)?;
         // The answer names no checkpoint, and it settles under the configured
         // one; so the card is read again once the answer is in. A tagger that

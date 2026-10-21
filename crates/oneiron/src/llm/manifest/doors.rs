@@ -9,7 +9,7 @@ use super::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
-use crate::memory::extraction::EncoderOutput;
+use crate::memory::extraction::{EncoderExecution, EncoderOutput};
 use crate::{LlmRequest, LlmResponse, ModelId, ModelLocality, ModelTierRef, Vault};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -105,7 +105,13 @@ pub struct ModelRoleInvocation {
 pub enum ModelRoleOutput {
     Generated { response: LlmResponse },
     Embedded { vector: Vec<f32> },
-    Tagged { output: EncoderOutput },
+    Tagged {
+        output: EncoderOutput,
+        /// What ran this call: the worker's runtime, compute and pick. Never
+        /// a binding read, which cannot know a later call's worker.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        execution: Option<EncoderExecution>,
+    },
 }
 
 fn route_view(
