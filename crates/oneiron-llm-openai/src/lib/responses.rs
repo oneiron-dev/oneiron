@@ -12,7 +12,9 @@ use super::{
     backend::validate_capabilities, classify_openai_status,
 };
 use futures_core::Stream;
-use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, StreamAssembly};
+use oneiron::llm::{
+    REASONING_BUDGET_PARAM, ReasoningEffort, StreamAssembly, returned_model_wire_id,
+};
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStreamEvent,
@@ -221,8 +223,11 @@ fn encrypted_reasoning(signature: &str) -> Option<(&str, &str, &str)> {
 
 /// Whether reasoning `answered` returned goes back to `wire` (the model a
 /// request names): the same model, or `wire`'s dated snapshot
-/// (`gpt-5` and `gpt-5-2025-08-07`). Another model's reasoning stays out.
+/// (`gpt-5` and `gpt-5-2025-08-07`). Another model's reasoning stays out. A
+/// house llama.cpp launch alias stands for `wire`, the route's configured
+/// wire id (FIX 7895, 8292).
 fn same_model(answered: &str, wire: &str) -> bool {
+    let answered = returned_model_wire_id(answered, wire);
     answered == wire
         || answered
             .strip_prefix(wire)
