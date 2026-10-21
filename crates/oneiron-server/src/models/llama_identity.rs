@@ -132,7 +132,7 @@ impl LlamaIdentityResolver {
     ) -> Option<AnsweringIdentity> {
         let alias = parse_llama_alias(returned?)?;
         let manifest = match target {
-            Some(target) => self.manifest(http, &alias, target).await,
+            Some(target) => self.manifest(http, &alias, target),
             None => None,
         };
         Some(AnsweringIdentity {
@@ -141,7 +141,10 @@ impl LlamaIdentityResolver {
         })
     }
 
-    async fn manifest(
+    /// The launch's verified manifest once its one GET has landed. An answer
+    /// never waits on that GET: the first answers of a launch start it beside
+    /// them and carry only the epoch, and later answers read what it found.
+    fn manifest(
         &self,
         http: &ProviderHttp,
         alias: &LlamaAlias,
@@ -159,9 +162,14 @@ impl LlamaIdentityResolver {
                 .entry(key)
                 .or_default(),
         );
-        cell.get_or_init(|| fetch(http, alias, target))
-            .await
-            .clone()
+        if let Some(found) = cell.get() {
+            return found.clone();
+        }
+        let (http, alias, target) = (http.clone(), alias.clone(), target.to_owned());
+        tokio::spawn(async move {
+            cell.get_or_init(|| fetch(&http, &alias, &target)).await;
+        });
+        None
     }
 }
 
