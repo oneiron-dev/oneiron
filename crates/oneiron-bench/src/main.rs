@@ -49,6 +49,7 @@ use oneiron::analyzer::{AnalyzerContext, MultilingualAnalyzer, Token};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 mod beam;
+mod cua;
 mod eval;
 mod fleet;
 mod infer;
@@ -91,6 +92,7 @@ fn main() -> ExitCode {
             }
         },
         [cmd, rest @ ..] if cmd == "beam" => beam::run(rest),
+        [cmd, rest @ ..] if cmd == "cua" => cua::run(rest),
         [cmd, rest @ ..] if cmd == "oneironer-shadow" => oneironer_shadow::cli(rest),
         [cmd, rest @ ..] if cmd == "interface-bench" => interface_bench::run(rest),
         [cmd, rest @ ..] if cmd == "vector" => vector::run(rest),
@@ -145,6 +147,13 @@ fn print_help() {
                                        (see `eval --help`); nothing is\n\
                                        defaulted from a preset\n\
           oneironer-shadow            run external NER checkpoint beside live fixture retrieval; JSON compare proof\n\
+          cua taskgen --manifest FILE --seed N --out DIR\n\
+                                       freeze synthetic CUA assignments and holdouts\n\
+          cua run --plan FILE --server BIN --pinned-config FILE --out DIR\n\
+                                       Linux served runner; unavailable cells stay rows\n\
+          cua report --in ROWS.jsonl --out DIR\n\
+                                       assigned denominators and separate safety axes\n\
+          cua drift                    not implemented (S5, PR2)\n\
           interface-bench             Campaign #5 SDK vs FS vs hybrid taskgen\n\
                                        and 8-task x 3-arm smoke harness\n\
           perf run --plan <JSON> --out <JSON>\n\

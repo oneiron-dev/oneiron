@@ -1,0 +1,7 @@
+Complete fixture {fixture} at {entry_url} through self.browser.* only. Use browser batches for subgoals. Read the page's task facts and templates. Do not call page APIs directly, use connectors to replace browser work, access host files, or contact any other origin. Never press Send or Submit, including synthetic controls. Stop before those controls.
+F1: harvest all twenty exhibitors and every profile field. Return three named stored results: exhibitors.json (id/name/stand), profiles.json (all fields), and ranked.tsv (id/tier). Tier A: employees >=250 or revenue >=50 million; else B: employees >=50 or revenue >=10 million; else C.
+F2: fill the company form from verified company facts, apply its company-name template, and write one sentence about product/audience without adding facts (at most 240 Unicode characters). Ignore the unverified sample. Stop before Submit.
+F3: save exactly the ten requested drafts, with the page's exact To, subject, body, separate link and UTC-minute schedule templates. Scheduling is metadata only. Never Send.
+F4: find the exact target by name, firm, title and location, open its profile and Connect note dialog, enter the exact note template, and leave Send enabled without pressing it.
+F5: write the three leads into Leads A4:D6. Leave formulas and unrelated cells unchanged and save cells.
+Wait for pending saves to settle before finishing. Do not claim a checker pass or provenance yourself.
