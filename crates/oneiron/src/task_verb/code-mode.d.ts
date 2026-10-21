@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1181 code-mode rows (1141 host rows, 40 run rows), 3991 declarations.
-// Replies: 1061 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1182 code-mode rows (1142 host rows, 40 run rows), 3997 declarations.
+// Replies: 1062 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -3005,24 +3005,28 @@ declare namespace Sdk {
   type VoiceBankClipInput = { register: string; media_type: string; audio: string; transcript: string };
   type VoiceBankPackPutRequest = { voice_id: string; pack_id: string; origin: VoiceRefOrigin; clips: VoiceBankClipInput[] };
   type VoiceBankPackReceipt = { voice_id: string; pack_id: string };
+  type VoiceRefSubjectKind = "person" | "designed";
   type VoiceConsentBasis = { ConversationalNotice: { notice: string } } | { VerbalOnRecording: { recording_ref: string; start_ms: number; end_ms: number; words: string } } | { SettingsToggle: { surface_ref: string } };
   type VoiceConsentState = "granted" | "withdrawn";
-  type VoiceRenderConsentRequest = { voice_id: string; event_id: string; occurred_at: number; reach: ModelLocality; basis: VoiceConsentBasis; state: VoiceConsentState };
+  type VoiceRenderConsentRequest = { voice_id: string; event_id: string; occurred_at: number; reach: ModelLocality; subject_kind?: VoiceRefSubjectKind; basis?: VoiceConsentBasis | null; state: VoiceConsentState };
   type VoiceVendorDeleteStatus = "deleted" | "no_clone_wire" | "delete_failed" | "absent";
   type VoiceVendorEviction = { target: string; vendor_voice_id: string; vendor: VoiceVendorDeleteStatus };
-  type VoiceRenderConsentReceipt = { voice_id: string; state: VoiceConsentState; reach: ModelLocality; revision: string; evicted: VoiceVendorEviction[] };
+  type VoiceRenderConsentReceipt = { voice_id: string; state: VoiceConsentState; reach: ModelLocality; revision: string; event_id: string; sequence: number; replayed: boolean; evicted: VoiceVendorEviction[] };
   type VoiceTargetProvisionRequest = { voice_id: string; target: string; include_generated?: boolean; language?: string | null };
   type VoiceTargetReceipt = { voice_id: string; target: string; vendor_voice_id: string; cloned_at: number; revision: string };
   type VoiceTargetEvictRequest = { voice_id: string; target: string };
   type VoiceTargetEvictReceipt = { voice_id: string; target: string; evicted: boolean; vendor: VoiceVendorDeleteStatus };
   type VoiceBankInspectRequest = { voice_id: string; target: string; include_generated?: boolean };
-  type VoiceIdentityView = { version: number; id: string; owner: string; pack_ids: string[] };
+  type VoiceIdentityView = { version: number; id: string; owner: string; subject_kind: VoiceRefSubjectKind; pack_ids: string[] };
   type VoiceClipSummary = { register: string; media_type: string; audio_bytes: number };
   type VoicePackSummary = { version: number; id: string; origin: VoiceRefOrigin; clips: VoiceClipSummary[] };
-  type VoiceRenderConsentView = { event_id: string; subject: string; recorded_by: string; occurred_at: number; reach: ModelLocality; basis: VoiceConsentBasis; state: VoiceConsentState; revision: string };
+  type VoiceRenderConsentView = { event_id: string; subject: string; subject_kind: VoiceRefSubjectKind; recorded_by: string; occurred_at: number; reach: ModelLocality; basis?: VoiceConsentBasis | null; state: VoiceConsentState; revision: string; sequence: number };
   type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: string[]; ref_digest: string; cloned_at: number; revision: string };
   type VoiceTargetInspection = { target: string; locality: ModelLocality; include_generated: boolean; current?: VoiceTargetCloneView | null };
   type VoiceBankInspection = { voice_id: string; identity?: VoiceIdentityView | null; packs: VoicePackSummary[]; render_consent?: VoiceRenderConsentView | null; target: VoiceTargetInspection };
+  type VoiceRenderLineageRequest = { voice_id: string };
+  type VoiceDroppedTargetView = { target: string; held: VoiceTargetCloneView };
+  type VoiceRenderEventView = { voice_id: string; decision: VoiceRenderConsentView; dropped: VoiceDroppedTargetView[] };
   type AiOperation = "text" | "image" | "video" | "speech" | "transcribe" | "embed";
   type AiVideoTicket = { job: string; model: string; operation: AiOperation };
   type AiVideoJobRequest = { job: string };
@@ -3048,10 +3052,12 @@ declare namespace Sdk {
   type QuestionAudience = "asker";
   type QuestionMedia = { images?: boolean; audio?: boolean };
   type ArtifactUnits = { artifact: string; selection: ArtifactAskUnits };
-  type QuestionDefinition = { question: DecisionQuestion; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria; audience?: QuestionAudience; posture?: HostingPrivacyPosture | null; media?: QuestionMedia; deadline_ms?: number | null; artifacts?: ArtifactUnits[] };
-  type QuestionCreateRequest = { definition: QuestionDefinition };
-  type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition; created_at: number };
-  type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinition };
+  type QuestionDefinition<Q> = { question: Q; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria; audience?: QuestionAudience; posture?: HostingPrivacyPosture | null; media?: QuestionMedia; deadline_ms?: number | null; artifacts?: ArtifactUnits[] };
+  type DecisionQuestionInput = { text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
+  type QuestionDefinitionInput = QuestionDefinition<DecisionQuestionInput>;
+  type QuestionCreateRequest = { definition: QuestionDefinitionInput };
+  type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number };
+  type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinitionInput };
   type QuestionPauseRequest = { id: EntityId; paused: boolean };
   type QuestionPaused = { id: EntityId; paused: boolean };
   type QuestionBackfillRequest = { id: EntityId; expected_version: number; at?: number | null };
@@ -6856,18 +6862,20 @@ declare const vault: Sdk.VaultHost & {
     put(input: Sdk.VectorPutRequest): Promise<Sdk.VectorPutReceipt | StoredResult>;
   };
   voices: {
-    /** The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone. */
+    /** A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone. */
     inspect(input: Sdk.VoiceBankInspectRequest): Promise<Sdk.VoiceBankInspection | StoredResult>;
+    /** A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call. */
+    lineage(input: Sdk.VoiceRenderLineageRequest): Promise<Sdk.VoiceRenderEventView[] | StoredResult>;
     packs: {
-      /** The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op. */
+      /** A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op. */
       put(input: Sdk.VoiceBankPackPutRequest): Promise<Sdk.VoiceBankPackReceipt | StoredResult>;
     };
-    /** The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs. */
+    /** A person records the render decision on their own voice, or a designed voice's creator on that voice with no basis: a grant names the farthest locality its refs reach; a withdrawal drops each target clone. It joins the render history. */
     render_consent(input: Sdk.VoiceRenderConsentRequest): Promise<Sdk.VoiceRenderConsentReceipt | StoredResult>;
     targets: {
-      /** The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay. */
+      /** A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay. */
       evict(input: Sdk.VoiceTargetEvictRequest): Promise<Sdk.VoiceTargetEvictReceipt | StoredResult>;
-      /** The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call. */
+      /** The caller's own voice, a person's or a designed voice its creator made, cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality first. */
       provision(input: Sdk.VoiceTargetProvisionRequest): Promise<Sdk.VoiceTargetReceipt | StoredResult>;
     };
   };

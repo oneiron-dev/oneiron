@@ -1844,6 +1844,7 @@ fn mcp_agent_verb_input(
         "vault.voices.targets.provision" => a.spec.clone().ok_or_else(invalid),
         "vault.voices.targets.evict" => a.spec.clone().ok_or_else(invalid),
         "vault.voices.inspect" => a.spec.clone().ok_or_else(invalid),
+        "vault.voices.lineage" => a.spec.clone().ok_or_else(invalid),
         "ai.transcribe" => a.spec.clone().ok_or_else(invalid),
         "ai.embed" => a.spec.clone().ok_or_else(invalid),
         "ai.video" => a.spec.clone().ok_or_else(invalid),
@@ -4772,6 +4773,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.voices.inspect" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.voices.lineage" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "ai.transcribe" => {
@@ -18128,6 +18132,20 @@ async fn execute_agent_verb_row(
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.voices.lineage" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.voices.lineage", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::VoiceRenderLineageRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_voices_lineage(server, auth, input).await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
         "ai.transcribe" => {
