@@ -41,6 +41,7 @@ use oneiron::dreamer_runner::maintenance::coach::{
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
 };
+use oneiron::feedback::{COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET};
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{HumanAskReason, PersonChangedAnswer, PersonThreshold};
 use oneiron::session_lifecycle::SessionSpeakers;
@@ -215,6 +216,8 @@ fn run_one(
         COACH_JUDGE_SWAP_FACET => super::judge_swap::run(server, admitted, now),
         COACH_TRAINING_OFFER_FACET => super::training_offer::draft(server, admitted, now),
         COACH_EVAL_AUTHORING_FACET => super::eval_authoring::run(server, admitted, now),
+        COACH_FEEDBACK_SWEEP_FACET => super::feedback_triage::run_sweep(server, admitted, now),
+        COACH_FEEDBACK_TRIAGE_FACET => super::feedback_triage::run_revision(server, admitted, now),
         COACH_OFFER_CHECK_FACET => super::training_offer::check(server, admitted, now),
         COACH_TRAINING_RUN_FACET => super::training_pack::run(server, admitted, now),
         COACH_SEAL_CHECKS_FACET => seal_checks::run(server, admitted, now),

@@ -24,10 +24,8 @@ use super::frontier::{
 use super::graph::{
     put_lifecycle_edge, require_code_artifact_body, require_code_revision_ancestor,
     require_entity_type, require_known_code_revision, require_revision_session,
-    validate_child_of_insert,
 };
 use super::integrity::{
-    backfill_code_revision_integrity_for_revision_in_txn,
     backfill_code_revision_integrity_for_session_in_txn, build_code_revision_integrity_record,
     verify_code_revision_integrity_in_txn,
 };
@@ -69,73 +67,7 @@ impl Vault {
         validate_code_revision_fork_shape(fork)?;
         FORKS.encode_value(fork)?;
         let mut wtxn = self.store.env.write_txn()?;
-        require_entity_type(
-            &self.store,
-            &wtxn,
-            &fork.fork_session_id,
-            ENTITY_TYPE_SESSION,
-            "fork_session_id must be a SESSION entity",
-        )?;
-        require_entity_type(
-            &self.store,
-            &wtxn,
-            &fork.parent_session_id,
-            ENTITY_TYPE_SESSION,
-            "parent_session_id must be a SESSION entity",
-        )?;
-        backfill_code_revision_integrity_for_revision_in_txn(
-            &self.store,
-            &mut wtxn,
-            &fork.base_revision_id,
-        )?;
-        let base_revision =
-            require_known_code_revision(&self.store, &wtxn, &fork.base_revision_id)?;
-        require_revision_session(
-            &base_revision,
-            fork.parent_session_id,
-            "base_revision_id must belong to parent_session_id",
-        )?;
-        if FORKS.contains(&self.store, &wtxn, &fork.fork_session_id)? {
-            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-                "code revision fork already recorded for session",
-            )));
-        }
-        validate_child_of_insert(
-            &self.store,
-            &wtxn,
-            &fork.fork_session_id,
-            &fork.parent_session_id,
-        )?;
-
-        let mut graph_changed = false;
-        put_lifecycle_edge(
-            &self.store,
-            &mut wtxn,
-            &fork.fork_session_id,
-            EdgeKind::ChildOf,
-            &fork.parent_session_id,
-            fork.forked_at,
-            &mut graph_changed,
-        )?;
-        put_lifecycle_edge(
-            &self.store,
-            &mut wtxn,
-            &fork.fork_session_id,
-            EdgeKind::DerivedFrom,
-            &fork.base_revision_id,
-            fork.forked_at,
-            &mut graph_changed,
-        )?;
-        FORKS.put(&self.store, &mut wtxn, &fork.fork_session_id, fork)?;
-        FORK_PARENT_INDEX.put(
-            &self.store,
-            &mut wtxn,
-            &(fork.parent_session_id, fork.fork_session_id),
-            &(),
-        )?;
-        if graph_changed {
-            ppr::increment_graph_version(&self.store, &mut wtxn)?;
-        }
+        super::forks::branch_code_revision_in_txn(&self.store, &mut wtxn, fork)?;
         wtxn.commit()?;
         Ok(())
     }

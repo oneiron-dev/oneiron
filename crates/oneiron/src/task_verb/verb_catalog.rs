@@ -608,6 +608,9 @@ pub enum AgentVerb {
     VaultCodeRepoDiff,
     VaultCodeExport,
     VaultCodeImport,
+    VaultCodeReposGet,
+    VaultCodeForksGet,
+    VaultCodeIngressGet,
     VaultCodeOriginRegister,
     VaultCodeOriginMirrorGet,
     VaultCodeOriginMirrorSet,
@@ -654,6 +657,7 @@ pub enum AgentVerb {
     VaultCodeMergeQueueCheck,
     VaultCodeMergeQueueDiagnose,
     VaultCodeMergeQueueCheckStatus,
+    VaultCodeChecksGet,
     VaultCodeMergeQueueExportGreen,
     VaultArtifactsExport,
     VaultAgentsCreate,
@@ -1752,6 +1756,9 @@ impl AgentVerb {
         Self::VaultCodeRepoDiff,
         Self::VaultCodeExport,
         Self::VaultCodeImport,
+        Self::VaultCodeReposGet,
+        Self::VaultCodeForksGet,
+        Self::VaultCodeIngressGet,
         Self::VaultCodeOriginRegister,
         Self::VaultCodeOriginMirrorGet,
         Self::VaultCodeOriginMirrorSet,
@@ -1798,6 +1805,7 @@ impl AgentVerb {
         Self::VaultCodeMergeQueueCheck,
         Self::VaultCodeMergeQueueDiagnose,
         Self::VaultCodeMergeQueueCheckStatus,
+        Self::VaultCodeChecksGet,
         Self::VaultCodeMergeQueueExportGreen,
         Self::VaultArtifactsExport,
         Self::VaultAgentsCreate,
@@ -2917,6 +2925,9 @@ impl AgentVerb {
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultCodeExport => "vault.code.export",
             Self::VaultCodeImport => "vault.code.import",
+            Self::VaultCodeReposGet => "vault.code.repos.get",
+            Self::VaultCodeForksGet => "vault.code.forks.get",
+            Self::VaultCodeIngressGet => "vault.code.ingress.get",
             Self::VaultCodeOriginRegister => "vault.code.origin.register",
             Self::VaultCodeOriginMirrorGet => "vault.code.origin.mirror.get",
             Self::VaultCodeOriginMirrorSet => "vault.code.origin.mirror.set",
@@ -2963,6 +2974,7 @@ impl AgentVerb {
             Self::VaultCodeMergeQueueCheck => "vault.code.merge_queue.check",
             Self::VaultCodeMergeQueueDiagnose => "vault.code.merge_queue.diagnose",
             Self::VaultCodeMergeQueueCheckStatus => "vault.code.merge_queue.check_status",
+            Self::VaultCodeChecksGet => "vault.code.checks.get",
             Self::VaultCodeMergeQueueExportGreen => "vault.code.merge_queue.export_green",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultAgentsCreate => "vault.agents.create",
@@ -4073,6 +4085,9 @@ impl AgentVerb {
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeImport
+                | Self::VaultCodeReposGet
+                | Self::VaultCodeForksGet
+                | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
                 | Self::VaultCodeOriginMirrorSet
@@ -4119,6 +4134,7 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueCheck
                 | Self::VaultCodeMergeQueueDiagnose
                 | Self::VaultCodeMergeQueueCheckStatus
+                | Self::VaultCodeChecksGet
                 | Self::VaultCodeMergeQueueExportGreen
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
@@ -5245,6 +5261,9 @@ impl AgentVerb {
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeImport
+                | Self::VaultCodeReposGet
+                | Self::VaultCodeForksGet
+                | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
                 | Self::VaultCodeOriginMirrorSet
@@ -5291,6 +5310,7 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueCheck
                 | Self::VaultCodeMergeQueueDiagnose
                 | Self::VaultCodeMergeQueueCheckStatus
+                | Self::VaultCodeChecksGet
                 | Self::VaultCodeMergeQueueExportGreen
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
@@ -6528,6 +6548,9 @@ impl AgentVerb {
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeImport
+                | Self::VaultCodeReposGet
+                | Self::VaultCodeForksGet
+                | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
                 | Self::VaultCodeOriginMirrorSet
@@ -6574,6 +6597,7 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueCheck
                 | Self::VaultCodeMergeQueueDiagnose
                 | Self::VaultCodeMergeQueueCheckStatus
+                | Self::VaultCodeChecksGet
                 | Self::VaultCodeMergeQueueExportGreen
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
@@ -8343,6 +8367,9 @@ impl AgentVerb {
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeImport => &["spec"],
+            Self::VaultCodeReposGet => &["spec"],
+            Self::VaultCodeForksGet => &["spec"],
+            Self::VaultCodeIngressGet => &["spec"],
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
             Self::VaultCodeOriginMirrorSet => &["spec"],
@@ -8389,6 +8416,7 @@ impl AgentVerb {
             Self::VaultCodeMergeQueueCheck => &["spec"],
             Self::VaultCodeMergeQueueDiagnose => &["spec"],
             Self::VaultCodeMergeQueueCheckStatus => &["spec"],
+            Self::VaultCodeChecksGet => &["spec"],
             Self::VaultCodeMergeQueueExportGreen => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
@@ -9488,6 +9516,9 @@ impl AgentVerb {
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeImport => &["spec"],
+            Self::VaultCodeReposGet => &["spec"],
+            Self::VaultCodeForksGet => &["spec"],
+            Self::VaultCodeIngressGet => &["spec"],
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
             Self::VaultCodeOriginMirrorSet => &["spec"],
@@ -9534,6 +9565,7 @@ impl AgentVerb {
             Self::VaultCodeMergeQueueCheck => &["spec"],
             Self::VaultCodeMergeQueueDiagnose => &["spec"],
             Self::VaultCodeMergeQueueCheckStatus => &["spec"],
+            Self::VaultCodeChecksGet => &["spec"],
             Self::VaultCodeMergeQueueExportGreen => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
@@ -11810,6 +11842,15 @@ impl AgentVerb {
             Self::VaultCodeImport => {
                 "Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only."
             }
+            Self::VaultCodeReposGet => {
+                "Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work."
+            }
+            Self::VaultCodeForksGet => {
+                "Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork."
+            }
+            Self::VaultCodeIngressGet => {
+                "Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance."
+            }
             Self::VaultCodeOriginRegister => {
                 "Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."
             }
@@ -11947,6 +11988,9 @@ impl AgentVerb {
             }
             Self::VaultCodeMergeQueueCheckStatus => {
                 "Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."
+            }
+            Self::VaultCodeChecksGet => {
+                "Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass."
             }
             Self::VaultCodeMergeQueueExportGreen => {
                 "Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result."
