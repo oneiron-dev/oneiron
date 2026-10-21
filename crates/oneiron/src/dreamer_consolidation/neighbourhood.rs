@@ -411,7 +411,11 @@ fn named_entities(
     let mut seen = BTreeSet::new();
     let mut named = Vec::new();
     for (body, _) in turns {
+        // A witnessing agent's stamp (FIX 7129) is no PERSON byline: such a
+        // TURN names no author here, as an unstamped one names none.
         if let Ok(Some(author)) = crate::conversation::record_author(body)
+            && crate::batch::stored_entity_type(&vault.store, txn, &author)?
+                == Some(ENTITY_TYPE_PERSON)
             && seen.insert(author)
         {
             named.push(author);

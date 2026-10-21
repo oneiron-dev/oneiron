@@ -371,7 +371,8 @@ impl Read<'_> {
             if hidden(marker) {
                 continue;
             }
-            self.messages(vault, txn, turn, turn_stamp(&record.body))?;
+            let stamp = person_stamp(vault, txn, turn_stamp(&record.body))?;
+            self.messages(vault, txn, turn, stamp)?;
         }
         Ok(())
     }
@@ -441,7 +442,8 @@ impl Read<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TurnStamp {
     imported: bool,
-    /// The PERSON the witness door stamped, when the writer was one.
+    /// The PERSON the witness door stamped, when the writer was one, or an
+    /// id this store does not know yet ([`person_stamp`]).
     actor: Option<EntityId>,
 }
 
@@ -462,6 +464,27 @@ fn turn_stamp(body: &[u8]) -> Option<TurnStamp> {
         }
     }
     Some(stamp)
+}
+
+/// A TURN's stamps as the speaker check reads them. An `actor` naming a
+/// known non-PERSON, such as the agent a witness TURN stamps for its Agent
+/// writer (FIX 7129), reads as no stamp, as on an unstamped TURN; a PERSON,
+/// or an id this store does not know yet, is kept.
+fn person_stamp(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    stamp: Option<TurnStamp>,
+) -> Result<Option<TurnStamp>> {
+    let Some(mut stamp) = stamp else {
+        return Ok(None);
+    };
+    if let Some(actor) = stamp.actor
+        && crate::batch::stored_entity_type(&vault.store, txn, &actor)?
+            .is_some_and(|kind| kind != ENTITY_TYPE_PERSON)
+    {
+        stamp.actor = None;
+    }
+    Ok(Some(stamp))
 }
 
 /// The fields of one canonical MESSAGE body.

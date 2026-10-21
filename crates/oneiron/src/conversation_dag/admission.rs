@@ -153,8 +153,8 @@ pub(crate) fn guard_record_put(
         None
     };
     // A witnessed TURN can predate DAG adoption, so the DAG body pin does not
-    // yet protect it. Its PERSON byline is nonetheless an immutable admission
-    // fact: a raw local or replicated re-put may re-dirty the row, but cannot
+    // yet protect it. Its byline is nonetheless an immutable admission fact:
+    // a raw local or replicated re-put may re-dirty the row, but cannot
     // assign its earlier words to a new author (or remove that author).
     if kind == ENTITY_TYPE_TURN
         && room_turn_owner(store, txn, id)?.is_some()
@@ -322,8 +322,9 @@ fn is_dag_membership(
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION)))
 }
 
-/// A local TURN body may carry a PERSON author. Missing authors (for example,
-/// imported transcript labels) have no per-person fence to evaluate.
+/// A local TURN body may carry a PERSON author, or a witness TURN its
+/// AGENT_DEF writer (FIX 7129). Missing authors (for example, imported
+/// transcript labels) have no per-person fence to evaluate.
 fn turn_person(body: &[u8]) -> Result<Option<EntityId>> {
     let mut bytes = body;
     let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
@@ -370,13 +371,19 @@ fn guard_erased_author_body(
     body: &[u8],
 ) -> Result<()> {
     if let Some(person) = turn_person(body)? {
-        // A known non-PERSON author is a bad carrier now. An unknown id stays
-        // admissible, as recipients do: a peer may deliver the TURN before
-        // (or without) its author's PERSON row. The erasure fence is keyed by
-        // id and still applies.
-        if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &person)?
-            .is_some_and(|row| row.first() != Some(&crate::registry::ENTITY_TYPE_PERSON))
+        // A known author is a PERSON, or the AGENT_DEF a witness TURN stamps
+        // for its Agent writer (FIX 7129); any other known author is a bad
+        // carrier now. An unknown id stays admissible, as recipients do: a
+        // peer may deliver the TURN before (or without) its author's row. The
+        // erasure fence is keyed by id and still applies.
+        let admitted = match crate::ports::EntityStoreRead::port_entity_raw(store, txn, &person)?
+            .map(|row| row.first().copied())
         {
+            None | Some(Some(crate::registry::ENTITY_TYPE_PERSON)) => true,
+            Some(Some(crate::registry::ENTITY_TYPE_AGENT_DEF)) => witness_turn(body),
+            Some(_) => false,
+        };
+        if !admitted {
             return Err(invalid("room TURN author must be a PERSON"));
         }
         if !crate::conversation::room_person_write_allowed(store, txn, room, person)? {
@@ -384,6 +391,18 @@ fn guard_erased_author_body(
         }
     }
     Ok(())
+}
+
+/// Whether a TURN body is the witness door's: it carries the `speaker`
+/// grouping key and no `actor_class`, which the DAG door always stamps and
+/// owns, so no DAG record reads as one.
+fn witness_turn(body: &[u8]) -> bool {
+    let mut bytes = body;
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
+        return false;
+    };
+    let has = |name| fields.iter().any(|(key, _)| key.as_str() == Some(name));
+    has("speaker") && !has("actor_class")
 }
 
 pub(crate) fn room_turn_owner(
