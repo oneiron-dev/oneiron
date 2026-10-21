@@ -1629,7 +1629,11 @@ class TaskWorkflowHandoffUnreadableBody(TypedDict):
     id: EntityId
 class TaskWorkflowHandoffUnreadable(TypedDict):
     unreadable: TaskWorkflowHandoffUnreadableBody
-TaskWorkflowHandoff = Literal["goal_unmet"] | TaskWorkflowHandoffProgram | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+TaskWorkflowHandoff = Literal["goal_unmet", "interrupted"] | TaskWorkflowHandoffProgram | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+class TaskWorkflowOutcomeStartedBody(TypedDict):
+    at: int
+class TaskWorkflowOutcomeStarted(TypedDict):
+    started: TaskWorkflowOutcomeStartedBody
 class TaskWorkflowOutcomeDoneBody(TypedDict):
     receipt_ref: EntityId
 class TaskWorkflowOutcomeDone(TypedDict):
@@ -1639,7 +1643,7 @@ class TaskWorkflowOutcomeHandoffBody(TypedDict):
     receipt_ref: EntityId
 class TaskWorkflowOutcomeHandoff(TypedDict):
     handoff: TaskWorkflowOutcomeHandoffBody
-TaskWorkflowOutcome = Literal["pending"] | TaskWorkflowOutcomeDone | TaskWorkflowOutcomeHandoff
+TaskWorkflowOutcome = Literal["pending"] | TaskWorkflowOutcomeStarted | TaskWorkflowOutcomeDone | TaskWorkflowOutcomeHandoff
 class TaskWorkflowStatus(TypedDict):
     attempt_ref: str
     requested: EntityId

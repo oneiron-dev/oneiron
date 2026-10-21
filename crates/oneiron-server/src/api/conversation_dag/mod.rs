@@ -296,6 +296,17 @@ pub(crate) async fn get_core_dag(
     {
         return Err(ApiError::bad_request("unsupported records projection", None).into());
     }
+    // FIX 8153 (ARCH-0006a rule 2): a conversation the caller's own list
+    // would not show is absent here too, its topology and counts with it,
+    // answered as a missing conversation is. The owner reads every room.
+    let read = crate::api::scoped_read_for_core_auth(&server.vault, &auth)?;
+    if !server
+        .vault
+        .dag_records_admitted(&read, &conversation)
+        .map_err(|e| core_engine_error("DAG read failed", e))?
+    {
+        return Err(core_engine_error("DAG read failed", oneiron::Error::EntityNotFound).into());
+    }
     let page = server
         .vault
         .main_line(
