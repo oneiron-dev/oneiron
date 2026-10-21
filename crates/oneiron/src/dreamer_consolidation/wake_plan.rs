@@ -366,7 +366,7 @@ impl PreparedWake {
             .collect();
         // Resolve each prepared retry only against the frozen source pool.
         let mut owed = Vec::new();
-        for (attempt, partition, original, watermark, peers, parent, run_id) in retries {
+        for (attempt, partition, original, watermark, peers, parent_attempt, run_id) in retries {
             let Some(parent) = sources.get(&partition.conversation_ref) else {
                 preparations.insert(
                     attempt,
@@ -488,7 +488,12 @@ impl PreparedWake {
                 );
             }
             owed.extend(chunks::WakePreparationChunks::split(
-                attempt, partition, parent, run_id, &overflow, limit,
+                attempt,
+                partition,
+                parent_attempt,
+                run_id,
+                &overflow,
+                limit,
             ));
         }
         // Witnessed TURN text lives on MESSAGE children: pin them in THIS
