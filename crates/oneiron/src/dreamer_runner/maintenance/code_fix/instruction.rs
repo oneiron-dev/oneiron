@@ -34,6 +34,9 @@ pub(super) struct CoachReplay<'a> {
     pub(super) host: &'a dyn CodeFixHost,
     pub(super) decisions: &'a CodeFixDecisions<'a>,
     pub(super) evidence: &'a [EntityId],
+    /// The id of the Coach's own candidate, drafted from the job: a reply
+    /// under it reads the draft (FIX 6997).
+    pub(super) drafted: Option<String>,
     /// Each candidate's id and what it is: the instruction it adds, or the
     /// engine its matched pair runs (`engine`), never a prompt string.
     pub(super) candidates: Vec<(String, PublisherCandidateKind)>,
@@ -208,9 +211,11 @@ impl CoachReplay<'_> {
         if matches!(self.live_exact()?, ExactReplay::Erased) {
             return Ok(None);
         }
+        // The rebuilt call sends the failure's own texts alone.
+        let rows = self.job.source.source_rows.clone();
         Ok(self
             .host
-            .reply(&self.job.source.instructions, &conversation)?
+            .reply(&self.job.source.instructions, &conversation, rows)?
             .filter(|before| self.fails(None, &conversation, before) == Some(true))
             .map(|before| Baseline {
                 conversation,
@@ -271,9 +276,11 @@ impl CodeFixReplay for CoachReplay<'_> {
             return Ok(ReplayRun::Unavailable);
         };
         let conversation = &example.conversation[..=last];
+        // The invented example is the draft's: the reply reads the job's rows.
+        let rows = self.job.source_rows.clone();
         let Some(reply) = self
             .host
-            .reply(&self.job.source.instructions, conversation)?
+            .reply(&self.job.source.instructions, conversation, rows)?
         else {
             return Ok(ReplayRun::Unavailable);
         };
@@ -313,7 +320,14 @@ impl CodeFixReplay for CoachReplay<'_> {
                     .filter(|text| !text.trim().is_empty())
                     .collect::<Vec<_>>()
                     .join("\n\n");
-                self.host.reply(&system, conversation)?
+                // The Coach's own fix is the draft's; a publisher's is the
+                // host's configuration, which adds no rows.
+                let rows = if self.drafted.as_deref() == Some(candidate_id) {
+                    self.job.source_rows.clone()
+                } else {
+                    self.job.source.source_rows.clone()
+                };
+                self.host.reply(&system, conversation, rows)?
             }
         };
         let Some(after) = after else {
