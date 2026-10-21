@@ -898,7 +898,9 @@ impl SkillOptimizeResultView {
     }
 }
 
-pub(crate) fn verdict_view(verdict: crate::skill_optimize::HeldOutVerdict) -> SkillOptimizeVerdictView {
+pub(crate) fn verdict_view(
+    verdict: crate::skill_optimize::HeldOutVerdict,
+) -> SkillOptimizeVerdictView {
     SkillOptimizeVerdictView {
         id: verdict.id,
         proposal: verdict.proposal,

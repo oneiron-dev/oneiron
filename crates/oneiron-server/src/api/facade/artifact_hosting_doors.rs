@@ -71,12 +71,16 @@ async fn as_publisher(
         Ok(admitted) => admitted,
         Err(error) => return refused(error),
     };
-    credential_listing(server, auth, caller, verb, move |_, _, memory| {
-        match &owner {
+    credential_listing(
+        server,
+        auth,
+        caller,
+        verb,
+        move |_, _, memory| match &owner {
             Some(owner) => memory.artifact_publish_as(owner, input),
             None => memory.artifact_publish_by_caller(input),
-        }
-    })
+        },
+    )
     .await
 }
 

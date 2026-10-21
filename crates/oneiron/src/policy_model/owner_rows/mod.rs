@@ -76,14 +76,16 @@ pub(crate) fn holds_vault_policy_power_in_txn(
     target: &str,
     now: u64,
 ) -> Result<bool> {
-    Ok(authority::holders_for_in_txn(
-        vault,
-        txn,
-        now,
-        &crate::gate::PolicyRowScope::Vault,
-        target,
-    )?
-    .contains(&actor))
+    Ok(
+        authority::holders_for_in_txn(
+            vault,
+            txn,
+            now,
+            &crate::gate::PolicyRowScope::Vault,
+            target,
+        )?
+        .contains(&actor),
+    )
 }
 
 fn propose_in_txn(

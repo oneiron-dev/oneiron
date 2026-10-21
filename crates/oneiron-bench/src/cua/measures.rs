@@ -76,7 +76,10 @@ fn decisions_model_free(decisions: &Value) -> Option<bool> {
     for decision in decisions.as_array()? {
         if let Some(denied) = decision.get("strict_denied") {
             if denied["tokens"].as_u64() != Some(0)
-                || !matches!(denied["denied"].as_str(), Some("rule_abstained" | "no_rule" | "image"))
+                || !matches!(
+                    denied["denied"].as_str(),
+                    Some("rule_abstained" | "no_rule" | "image")
+                )
                 || !denied["question"].is_string()
             {
                 return None;
@@ -128,14 +131,17 @@ pub(super) fn observe(receipts: &[Value], engine: &str) -> (Value, Value, Option
                     "url":failed["observation"]["url"],
                     "title":failed["observation"]["title"]}));
             }
-            if node["workflow"].is_string() && node["batch"].is_object()
+            if node["workflow"].is_string()
+                && node["batch"].is_object()
                 && let Some(fact) = node["model_free"].as_bool()
             {
                 let unproven = !node["model_free_unproven"].is_null();
                 execution_evidence.push(json!({"receipt_index":receipt_index,
                     "workflow":node["workflow"],"mode":node["mode"],
                     "model_free":fact,"model_free_unproven":node["model_free_unproven"]}));
-                if !unproven { executions.push(fact); }
+                if !unproven {
+                    executions.push(fact);
+                }
             }
             if node["admitted"].is_boolean()
                 && let Ok(proposal) = serde_json::from_value::<
