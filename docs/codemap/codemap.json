@@ -344,6 +344,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/affect/annotation_as.rs",
+     "purpose": "A turn's or a message's VAD annotation, written as the caller who made it (FIX 8222)",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ClaimVadConsolidation",
       "ClaimVadReappraisal",
@@ -772,7 +782,7 @@
      "purpose": "The graceful stop (ARCH-0079 #budget, OF-541): a run near the end of its lease gets the wrap-up warning…",
      "surface": {
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 4
      }
     },
@@ -12238,7 +12248,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "enum": 1,
       "fn": 10,
       "struct": 1
@@ -17565,7 +17575,7 @@
      "path": "src/connector_key/lifecycle/status.rs",
      "purpose": "Key state machine: suspend/resume, terminal revoke/remove, custody rotation and generation log",
      "surface": {
-      "fn": 6
+      "fn": 8
      }
     },
     {
@@ -19969,7 +19979,7 @@
      "purpose": "Session mode persists; active participant presence belongs only to this process",
      "surface": {
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -29829,8 +29839,8 @@
      "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
      "surface": {
       "crate-vis": 5,
-      "fn": 7,
-      "re-export": 1
+      "fn": 6,
+      "re-export": 2
      }
     },
     {
@@ -29848,6 +29858,20 @@
       "enum": 1,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerRecoveryAuthorization"
+     ],
+     "path": "src/federation/shared_act/membership/owner_recovery.rs",
+     "purpose": "Who authorized a proof-of-control owner recovery (ARCH-0043, OF-163; FIX 1812)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -38994,7 +39018,7 @@
      "purpose": "The read key a verified credential reads under",
      "surface": {
       "crate-vis": 5,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -41138,7 +41162,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "UndecodableUsageList",
@@ -41157,7 +41181,7 @@
      "purpose": "The authority seam of a host's usage repair (FIX 6476)",
      "surface": {
       "enum": 5,
-      "fn": 6,
+      "fn": 7,
       "struct": 6
      }
     },
@@ -71165,7 +71189,7 @@
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…"
     },
     "affect": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71781,7 +71805,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 53,
+     "files": 54,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72693,7 +72717,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4666,
+   "source_files": 4668,
    "test_files": 902
   },
   "oneiron-android": {
@@ -88194,7 +88218,7 @@
      "path": "src/api/core/propose.rs",
      "purpose": "Proposal-only cloud leg",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -89832,7 +89856,7 @@
      "path": "src/api/facade/usage_repair_doors.rs",
      "purpose": "The usage repair doors (FIX 6476): the stored usage events of this server's metering scope that no longer…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -90376,7 +90400,7 @@
      "path": "src/api/mcp_gateway/owner_call.rs",
      "purpose": "A managed vault's console owner on `/mcp` (WILL-PLAN L14 row 01)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
