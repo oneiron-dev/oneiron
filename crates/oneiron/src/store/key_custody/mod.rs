@@ -49,6 +49,16 @@ pub(crate) use self::files::{EntryState, LocalCustody, custody_present};
 pub(crate) use self::folder::FolderTarget;
 pub(crate) use self::fork::{CustodyPlan, ForkedCustodyDir, Requirement};
 pub(crate) use self::head::{CUSTODY_HEAD_WRAP_CONTEXT, CustodyRecipients};
+// FIX 6706 (L04 half): one world's pads sealed for its admitted machines and
+// roots; L03's pad hydration exports, opens and installs them.
+#[allow(
+    unused_imports,
+    reason = "L03 02A's pad hydration (FIX 6706) reaches these through crate::store"
+)]
+pub(crate) use self::head::{
+    OpenedWorldPads, PadRecipients, SealedWorldPads, WorldPadScope, open_world_pad_compartment,
+    seal_world_pad_compartment,
+};
 pub(crate) use self::identity::{
     CustodyBinding, CustodyId, CustodyKind, CustodySecret, CustodySubject,
 };

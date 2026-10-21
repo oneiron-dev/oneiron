@@ -169,7 +169,11 @@ fn producing_source() {
             .and_then(|out| String::from_utf8(out.stdout).ok())
         {
             let path = Path::new(path.trim());
-            let path = if path.is_absolute() { path.to_path_buf() } else { source.join(path) };
+            let path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                source.join(path)
+            };
             println!("cargo:rerun-if-changed={}", path.display());
         }
     }
