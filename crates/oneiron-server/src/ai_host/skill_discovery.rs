@@ -16,7 +16,7 @@ use oneiron::receipt::ReceiptRecord;
 use oneiron::skill_attribution::{
     ATTRIBUTION_CALL_PURPOSE_NAME, AttributionNotes, AttributionVerdict, DeviationCause,
     FollowedState, HunkVerdict, JudgeRequest, ReceiptAttributionFacts, ReceiptAttributionSource,
-    ReceiptTrace, receipt_attribution_trace,
+    ReceiptTrace, receipt_attribution_trace_sourced,
 };
 use oneiron::{EntityId, LlmMessageRole, Vault};
 use serde::Deserialize;
@@ -105,7 +105,9 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
         &self,
         receipt: &ReceiptRecord,
     ) -> oneiron::Result<Option<Vec<ReceiptAttributionFacts>>> {
-        let Some(trace) = receipt_attribution_trace(self.vault, receipt)? else {
+        // The trace beside the rows it read: the receipt's recorded set, its
+        // run's attempt and replay, and each loaded skill (FIX 6997).
+        let Some((trace, rows)) = receipt_attribution_trace_sourced(self.vault, receipt)? else {
             return Ok(None);
         };
         // A pack that loaded no skill has nothing to judge.
@@ -146,12 +148,13 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
                 }))
                 .collect::<Vec<_>>(),
         });
-        let Some(text) = self.models.generate(
+        let Some(text) = self.models.generate_sourced(
             self.models.coach(),
             vec![
                 message(LlmMessageRole::System, CLASSIFY_SYSTEM.to_owned()),
                 message(LlmMessageRole::User, data.to_string()),
             ],
+            rows,
         )?
         else {
             return Ok(None);

@@ -2249,14 +2249,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "AttemptReadSet"
+      "AttemptReadSet",
+      "ReadSetProducer"
      ],
      "path": "src/attempt_queue/read_set.rs",
      "purpose": "FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 1,
-      "struct": 1
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -12392,7 +12394,7 @@
      "path": "src/claim/scoped_read/weave_digest/coach.rs",
      "purpose": "The Coach's rule for an owner's digest settings (FIX 5495): closed-form, no model call, over the owner's own…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "trait": 1
      }
     },
@@ -21539,7 +21541,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConflictSettleOutcome",
@@ -22452,7 +22454,7 @@
      "path": "src/dreamer_runner/free_time/items.rs",
      "purpose": "A free-time cycle's items (FIX 4453): the binding each item's attempt runs under, what it lands, and how it…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 13,
       "fn": 2,
       "struct": 1
      }
@@ -22663,7 +22665,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/loaded.rs",
      "purpose": "The skills a card's run loaded (OF-568, FIX 3724): each SKILL revision the pack manifest of the card's…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "struct": 2
      }
     },
@@ -22873,7 +22875,7 @@
      "path": "src/dreamer_runner/maintenance/code_fix/work.rs",
      "purpose": "A code fix's work rows (OF-380): each failure's row and its key, the `coach.code_fix` run a filed heal…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -50854,7 +50856,7 @@
      "path": "src/skill_attribution/trace.rs",
      "purpose": "What the standing attribution classifier reads about one terminal attempt (ARCH-0056 §5, ARCH-0066 T2): the…",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -52173,7 +52175,7 @@
      "surface": {
       "crate-vis": 1,
       "fn": 2,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 8
      }
     },
@@ -52205,6 +52207,16 @@
      "purpose": "The lineage fixed code resolves for a candidate, from the existing readers' explicit links only: the…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/eval_set/authoring/sourced.rs",
+     "purpose": "The eval-authoring inventory and the rows it was read from, in one set of reads (FIX 6997): the Coach's…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -60850,7 +60862,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -63284,7 +63296,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CrawlCompletion",
@@ -63346,8 +63358,8 @@
      "purpose": "The managed (hosted) node's web-fetch egress guard (SCAN C447)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
-      "fn": 3,
+      "crate-vis": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -63371,6 +63383,14 @@
      "surface": {
       "crate-vis": 16
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_fetch/rungs.rs",
+     "purpose": "The built-in rungs' [`Renderer`] impls",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -67467,7 +67487,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67691,9 +67711,9 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)"
     },
     "web_fetch": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
@@ -67726,9 +67746,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 186,
+   "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4255,
+   "source_files": 4257,
    "test_files": 902
   },
   "oneiron-android": {
@@ -80686,7 +80706,7 @@
      "path": "src/ai_host/step.rs",
      "purpose": "One saved-workflow step on a model seat",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -81490,6 +81510,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/chat_emit.rs",
+     "purpose": "What a live chat answer's context leaves on record (FIX 6921): the emit receipt `ai.reply` keeps, and the…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -81536,7 +81566,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -92592,7 +92622,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 489,
+     "files": 490,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -93042,7 +93072,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 988,
+   "source_files": 989,
    "test_files": 182
   },
   "oneiron-spawn": {

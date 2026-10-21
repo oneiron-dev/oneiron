@@ -533,11 +533,13 @@ fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {
         || kind == oneiron::dreamer_runner::DREAMER_TASK_REALIZE_ATTEMPT_KIND
         || kind == oneiron::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND
         || kind == oneiron::dreamer_runner::DREAMER_TURN_PROGRAM_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
     {
         // Maintenance, the wake policy's recipe receipts, connector wakes
-        // (OF-218), a Dreamer-lane TASK's realization, a weave lens render
-        // and a turn-woken program (DOOR-141 PR2), queued or reclaimed, are
-        // vault-local and do not need Macro home election.
+        // (OF-218), a Dreamer-lane TASK's realization, a weave lens render,
+        // a turn-woken program (DOOR-141 PR2) and a SKILL-OPT job the
+        // Dreamer driver admits on any pass (FIX 6939), queued or reclaimed,
+        // are vault-local and do not need Macro home election.
         Some(DreamerConsolidationScope::Micro)
     } else if kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND {
         Some(DreamerConsolidationScope::Meso)

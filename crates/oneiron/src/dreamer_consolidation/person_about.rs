@@ -292,6 +292,8 @@ pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()
         Ok(())
     })?;
     vault.store.notify_attempt_observers();
+    // FIX 6941: a queued about-pass re-arms the deadline watch after commit.
+    vault.store.notify_proactivity_changes();
     Ok(())
 }
 
