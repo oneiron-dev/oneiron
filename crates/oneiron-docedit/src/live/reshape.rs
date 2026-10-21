@@ -12,8 +12,10 @@
 //! series' formatting, the chart's titles, axes and legend, and the
 //! workbook's other cells; a new series is formatted after a held one.
 
+mod axes;
 mod chart;
 mod dataset;
+mod families;
 mod layout;
 mod points;
 mod series;
@@ -32,6 +34,8 @@ use crate::edit::xml::{self, P, R};
 use crate::native_patch::{Target, chart_data, number};
 use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::retained_opc::Package;
+use axes::{axes, retyped_axis};
+use families::{fresh_plot, kept_plot};
 use layout::number_cells;
 use points::{Points, carried, remap};
 
@@ -302,228 +306,6 @@ fn kept_ser(
     }
     out.extend(close(&tree.nodes[ser]));
     Ok(out)
-}
-
-/// A kept plot with its series replaced where they stood.
-fn kept_plot(bytes: &[u8], tree: &XmlTree, plot: usize, sers: &[u8]) -> Vec<u8> {
-    const AFTER: &[&str] = &[
-        "dLbls",
-        "gapWidth",
-        "overlap",
-        "serLines",
-        "axId",
-        "dropLines",
-        "hiLowLines",
-        "upDownBars",
-        "marker",
-        "smooth",
-        "firstSliceAng",
-        "holeSize",
-        "extLst",
-    ];
-    let mut out = xml::open_tag(bytes, &tree.nodes[plot]);
-    let mut placed = false;
-    for &child in &tree.nodes[plot].children {
-        let node = &tree.nodes[child];
-        if node.is(C, "ser") {
-            if !placed {
-                out.extend_from_slice(sers);
-                placed = true;
-            }
-            continue;
-        }
-        if !placed && node.namespace == C && AFTER.contains(&node.name.as_str()) {
-            out.extend_from_slice(sers);
-            placed = true;
-        }
-        out.extend_from_slice(piece(bytes, tree, child));
-    }
-    if !placed {
-        out.extend_from_slice(sers);
-    }
-    out.extend(close(&tree.nodes[plot]));
-    out
-}
-
-/// A plot written fresh in `kind`: that family's required elements, the
-/// series, and the axis ids it plots on.
-fn fresh_plot(kind: ChartKind, writer: &Writer, sers: &[u8], ids: &[u32]) -> Vec<u8> {
-    let el = |name: &str| writer.el(name);
-    let flag = |name: &str, value: &str| format!(r#"<{} val="{value}"/>"#, el(name));
-    let (head, tail) = match kind {
-        ChartKind::Bar => (
-            format!(
-                "{}{}{}",
-                flag("barDir", "col"),
-                flag("grouping", "clustered"),
-                flag("varyColors", "0")
-            ),
-            flag("gapWidth", "150"),
-        ),
-        ChartKind::Line => (
-            format!(
-                "{}{}",
-                flag("grouping", "standard"),
-                flag("varyColors", "0")
-            ),
-            flag("marker", "1"),
-        ),
-        ChartKind::Area => (
-            format!(
-                "{}{}",
-                flag("grouping", "standard"),
-                flag("varyColors", "0")
-            ),
-            String::new(),
-        ),
-        ChartKind::Radar => (
-            format!(
-                "{}{}",
-                flag("radarStyle", "marker"),
-                flag("varyColors", "0")
-            ),
-            String::new(),
-        ),
-        ChartKind::Scatter => (
-            format!(
-                "{}{}",
-                flag("scatterStyle", "lineMarker"),
-                flag("varyColors", "0")
-            ),
-            String::new(),
-        ),
-        ChartKind::Pie => (flag("varyColors", "1"), flag("firstSliceAng", "0")),
-        ChartKind::Doughnut => (
-            flag("varyColors", "1"),
-            format!("{}{}", flag("firstSliceAng", "0"), flag("holeSize", "50")),
-        ),
-    };
-    let ids: String = ids.iter().map(|id| flag("axId", &id.to_string())).collect();
-    let name = el(kind.element());
-    format!("<{name}>{head}")
-        .into_bytes()
-        .into_iter()
-        .chain(sers.iter().copied())
-        .chain(format!("{tail}{ids}</{name}>").into_bytes())
-        .collect()
-}
-
-/// A held x axis turned into the other kind of axis, a value axis
-/// (`value`) for a scatter plot or a category axis for a category plot, as
-/// a chart type change between them turns it: the elements both kinds hold
-/// keep their bytes, then that kind's own defaults follow.
-fn retyped_axis(
-    bytes: &[u8],
-    tree: &XmlTree,
-    axis: usize,
-    value: bool,
-    writer: &Writer,
-) -> Vec<u8> {
-    const SHARED: &[&str] = &[
-        "axId",
-        "scaling",
-        "delete",
-        "axPos",
-        "majorGridlines",
-        "minorGridlines",
-        "title",
-        "numFmt",
-        "majorTickMark",
-        "minorTickMark",
-        "tickLblPos",
-        "spPr",
-        "txPr",
-        "crossAx",
-        "crosses",
-        "crossesAt",
-    ];
-    let flag = |name: &str, val: &str| format!(r#"<{} val="{val}"/>"#, writer.el(name));
-    let name = writer.el(if value { "valAx" } else { "catAx" });
-    let mut out = format!("<{name}>").into_bytes();
-    for &child in &tree.nodes[axis].children {
-        let node = &tree.nodes[child];
-        if node.namespace == C && SHARED.contains(&node.name.as_str()) {
-            out.extend_from_slice(piece(bytes, tree, child));
-        }
-    }
-    let tail = if value {
-        flag("crossBetween", "midCat")
-    } else {
-        format!(
-            "{}{}{}{}",
-            flag("auto", "1"),
-            flag("lblAlgn", "ctr"),
-            flag("lblOffset", "100"),
-            flag("noMultiLvlLbl", "0")
-        )
-    };
-    out.extend(format!("{tail}</{name}>").into_bytes());
-    out
-}
-
-/// A new pair of axes under ids `fresh` and `fresh + 1`, crossing each
-/// other: an x axis (a value axis for a scatter plot, `value`, else a
-/// category axis) and a value axis. A `secondary` pair, beside a plot that
-/// already has axes, hides its x axis and puts its value axis on the right.
-fn axes(writer: &Writer, fresh: u32, value: bool, secondary: bool) -> String {
-    let (x, y) = (fresh, fresh.saturating_add(1));
-    let el = |name: &str| writer.el(name);
-    let flag = |name: &str, val: &str| format!(r#"<{} val="{val}"/>"#, el(name));
-    let scaling = format!(
-        "<{s}>{}</{s}>",
-        flag("orientation", "minMax"),
-        s = el("scaling")
-    );
-    let format = format!(
-        r#"<{} formatCode="General" sourceLinked="1"/>"#,
-        el("numFmt")
-    );
-    let common =
-        |id: u32, deleted: &str, position: &str, gridlines: &str, cross: u32, crosses: &str| {
-            format!(
-                "{}{scaling}{}{}{gridlines}{format}{}{}{}",
-                flag("axId", &id.to_string()),
-                flag("delete", deleted),
-                flag("axPos", position),
-                flag("tickLblPos", "nextTo"),
-                flag("crossAx", &cross.to_string()),
-                flag("crosses", crosses),
-            )
-        };
-    let (hidden, side, crosses) = if secondary {
-        ("1", "r", "max")
-    } else {
-        ("0", "l", "autoZero")
-    };
-    let x_axis = if value {
-        format!(
-            "<{va}>{}{}</{va}>",
-            common(x, hidden, "b", "", y, "autoZero"),
-            flag("crossBetween", "midCat"),
-            va = el("valAx"),
-        )
-    } else {
-        format!(
-            "<{ca}>{}{}{}{}</{ca}>",
-            common(x, hidden, "b", "", y, "autoZero"),
-            flag("auto", "1"),
-            flag("lblAlgn", "ctr"),
-            flag("lblOffset", "100"),
-            ca = el("catAx"),
-        )
-    };
-    let gridlines = if secondary {
-        String::new()
-    } else {
-        format!("<{}/>", el("majorGridlines"))
-    };
-    let between = if value { "midCat" } else { "between" };
-    format!(
-        "{x_axis}<{va}>{}{}</{va}>",
-        common(y, "0", side, &gridlines, x, crosses),
-        flag("crossBetween", between),
-        va = el("valAx"),
-    )
 }
 
 /// The same-length sequence writes that make a workbook chart read as
