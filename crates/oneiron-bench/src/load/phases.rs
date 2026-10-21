@@ -95,7 +95,11 @@ impl Ctx<'_> {
         let all = samples.into_iter().map(|(_, s)| s).collect::<Vec<_>>();
         let summary = |samples: &[Sample]| {
             let summary = Summary::of(samples, seconds);
-            if grade == "ingest" { summary } else { summary.below_corpus_floor(self.documents) }
+            if grade == "ingest" {
+                summary
+            } else {
+                summary.below_corpus_floor(self.documents)
+            }
         };
         Cell {
             name: name.to_owned(),
@@ -106,12 +110,7 @@ impl Ctx<'_> {
             by_verb: if by_verb.len() > 1 {
                 by_verb
                     .iter()
-                    .map(|(verb, s)| {
-                        (
-                            verb.clone(),
-                            summary(s),
-                        )
-                    })
+                    .map(|(verb, s)| (verb.clone(), summary(s)))
                     .collect()
             } else {
                 BTreeMap::new()
