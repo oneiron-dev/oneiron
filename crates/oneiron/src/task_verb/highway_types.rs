@@ -469,8 +469,10 @@ pub enum TaskWorkflowOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskWorkflowHandoff {
-    /// The strict program stopped short; its own cause is in the receipt.
-    Program,
+    /// The strict program stopped short, for its own `stop_cause` (E2).
+    Program {
+        stop_cause: oneiron_browser::BatchStopCause,
+    },
     /// The program met its postcondition and a TASK check did not hold
     /// (`task_goal_unmet`).
     GoalUnmet,
@@ -491,7 +493,7 @@ impl TaskWorkflowHandoff {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
-            Self::Program => "workflow_stopped",
+            Self::Program { .. } => "workflow_stopped",
             Self::GoalUnmet => "task_goal_unmet",
             Self::Retired { .. } => "workflow_retired",
             Self::Missing { .. } => "workflow_missing",
