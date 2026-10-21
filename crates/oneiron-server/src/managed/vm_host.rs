@@ -23,12 +23,16 @@
 //! with the guest's restore channel, which names the boot's mode before
 //! anything is provisioned: an ordinary open, a cold restore of a plan the
 //! supervisor streams in, or an inspection of the disk's restore commit
-//! marker (FIX 6584, [`restore`]).
+//! marker (FIX 6584, [`restore`]). A running VMM's exit is watched through
+//! a pidfd taken at its spawn, which tasks await beside the driver's other
+//! calls (FIX 7047, [`VmExitWatch`]).
 
+mod exit;
 mod provision;
 mod restore;
 mod runner;
 
+pub use self::exit::VmExitWatch;
 pub use self::restore::{VaultVmInspect, VmRestoreFds, VmRestoreHostIo, inspect_vault_vm};
 pub use self::runner::{VaultVmRun, run_vault_vm};
 use super::listener::bind_unix_socket;
@@ -160,6 +164,8 @@ pub struct VaultVm {
     /// a sleep stops it instead.
     source_attached: bool,
     child: Option<tokio::process::Child>,
+    /// The watch on `child`'s exit, held with it.
+    exit: Option<VmExitWatch>,
     lifecycle: Option<Lifecycle>,
     schedule: VmWakeSchedule,
     outbox: Option<VmOutboxAttachment>,
@@ -197,6 +203,7 @@ impl VaultVm {
             restore,
             source_attached: false,
             child: None,
+            exit: None,
             lifecycle: None,
             schedule,
             outbox,
@@ -218,6 +225,14 @@ impl VaultVm {
 
     pub fn is_running(&self) -> bool {
         self.child.is_some()
+    }
+
+    /// A watch on the running VMM's exit, which any number of tasks await
+    /// while others use this VM ([`VmExitWatch::wait`]). `None` when no VMM
+    /// child is held, or when the host's kernel gave no pidfd for it. Each
+    /// start runs a new VMM, which a watch taken before it does not see.
+    pub fn exit_watch(&self) -> Option<VmExitWatch> {
+        self.exit.clone()
     }
 
     /// Restores the published snapshot if there is one, else boots cold,
@@ -258,7 +273,22 @@ impl VaultVm {
             .kill_on_drop(true)
             .arg("--api-sock")
             .arg(&api);
-        self.child = Some(command.spawn()?);
+        let child = command.spawn()?;
+        // A host whose kernel gives no pidfd runs the VMM all the same,
+        // without an exit watch.
+        self.exit = match VmExitWatch::of(&child) {
+            Ok(exit) => Some(exit),
+            Err(error) => {
+                tracing::warn!(
+                    reason = "vm_exit_watch_unavailable",
+                    vault = %self.vault,
+                    %error,
+                    "the host gave no pidfd for the vault VM's VMM; it runs without an exit watch"
+                );
+                None
+            }
+        };
+        self.child = Some(child);
         let deadline = Instant::now() + API_SOCKET_WAIT;
         while !api.exists() {
             anyhow::ensure!(
@@ -619,7 +649,9 @@ impl VaultVm {
 
     /// Asks the vault to stop and kills the VMM when the grace runs out.
     /// The outbox attachment denies new transfers from here on and lets its
-    /// commit in flight finish; the next start opens it again.
+    /// commit in flight finish; the next start opens it again. An exit the
+    /// grace saw is read through the exit watch before it is reaped, so its
+    /// waiters get the status; a killed VMM's waiters may get an error.
     pub async fn stop(&mut self, grace: Duration) -> anyhow::Result<()> {
         if let Some(outbox) = &self.outbox {
             outbox.drain();
@@ -627,12 +659,20 @@ impl VaultVm {
         if self.lifecycle.is_some() {
             let _ = self.send(&VmHostFrame::Stop).await;
         }
-        if let Some(child) = self.child.as_mut()
-            && tokio::time::timeout(grace, child.wait()).await.is_err()
-        {
-            let _ = child.kill().await;
+        let exit = self.exit.as_ref();
+        if let Some(child) = self.child.as_mut() {
+            let exited = async {
+                if let Some(exit) = exit {
+                    let _ = exit.wait().await;
+                }
+                child.wait().await
+            };
+            if tokio::time::timeout(grace, exited).await.is_err() {
+                let _ = child.kill().await;
+            }
         }
         self.child = None;
+        self.exit = None;
         self.lifecycle = None;
         self.source_attached = false;
         Ok(())
@@ -642,6 +682,7 @@ impl VaultVm {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill().await;
         }
+        self.exit = None;
         self.lifecycle = None;
         self.source_attached = false;
     }

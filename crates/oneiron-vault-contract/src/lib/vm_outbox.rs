@@ -6,8 +6,10 @@
 //! names its vault ([`VmOutboxFrame::Hello`]) and is welcomed by the host's
 //! attachment, which is bound to that one VM before it starts: no guest field
 //! selects a host vault or path. The two sides then take turns. The guest
-//! sends each set it has, then [`VmOutboxFrame::Pull`]; the host sends each
-//! set it has, then [`VmOutboxFrame::Done`]. A set is one or more
+//! opens each of its turns with its engine's registered backup label, once
+//! there is one ([`VmOutboxFrame::BackupRegistered`], FIX 7046), sends each
+//! set it has, then [`VmOutboxFrame::Pull`]; the host sends each set it has,
+//! then [`VmOutboxFrame::Done`]. A set is one or more
 //! [`VmOutboxFrame::Transfer`]s, the last marked `commit_set`; the receiver
 //! publishes the whole set, or none of it, and answers each transfer with a
 //! [`VmOutboxAck`] once the set is durable or why it is not.
@@ -30,9 +32,10 @@
 //! nothing else. It is never a registry, intake, custody, e-sign or backup
 //! receipt; those stay with each kind's business owner, whose codecs ride
 //! here unchanged. Nothing here carries a key, a credential or an unsealed
-//! backup. Port 1030, wire revision 1 and the 64 KiB chunk are LC's co-signed
-//! terms; this extension rides contract version 3 with a build floor, and a
-//! vault reports it on `Ping` (`vm_outbox_revision`).
+//! backup. Port 1030 and the 64 KiB chunk are LC's co-signed terms, as was
+//! wire revision 1; revision 2 adds the backup-label registration. This
+//! extension rides contract version 3 with a build floor, and a vault reports
+//! it on `Ping` (`vm_outbox_revision`).
 
 mod members;
 
@@ -43,7 +46,7 @@ use serde::{Deserialize, Serialize};
 
 /// The carrier's wire revision, which every frame names and a vault VM
 /// reports on `Ping` (`vm_outbox_revision`) once its carrier is complete.
-pub const VM_OUTBOX_WIRE_REVISION: u32 = 1;
+pub const VM_OUTBOX_WIRE_REVISION: u32 = 2;
 /// The most bytes one data chunk carries: a buffering choice, not a bound on
 /// any file.
 pub const VM_OUTBOX_CHUNK_BYTES: usize = 64 * 1024;
@@ -176,7 +179,7 @@ impl VmOutboxDescriptor {
         if self.wire_revision != VM_OUTBOX_WIRE_REVISION {
             return Err(refused(
                 VmOutboxRefusal::UnsupportedRevision,
-                "the carrier speaks wire revision 1",
+                &format!("the carrier speaks wire revision {VM_OUTBOX_WIRE_REVISION}"),
             ));
         }
         let well_formed = self.transfer_id > 0
@@ -353,6 +356,10 @@ pub enum VmOutboxFrame {
         code: VmOutboxRefusal,
         detail: String,
     },
+    /// Guest to host, at the start of each guest turn once the guest's
+    /// engine registered its backup plan: that plan's label, which the host
+    /// keeps for the vault its attachment is bound to (FIX 7046).
+    BackupRegistered { label: String },
     /// One transfer; a put's data chunks follow its line.
     Transfer(VmOutboxDescriptor),
     /// The answer to one transfer, after its set.

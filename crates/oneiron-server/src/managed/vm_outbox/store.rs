@@ -9,6 +9,13 @@
 //! member as a tombstone, so a late replay never brings a retired file back;
 //! none is aged out or evicted. The next transfer id is `next-transfer`.
 //! Every record is read into memory when the end starts.
+//!
+//! The host also keeps `backup-label.json` (FIX 7046): the backup label the
+//! guest last named as its engine's registered one, with the vault the
+//! attachment is bound to, written whole the same way. Only that frame writes
+//! it, a changed label replaces it, and it outlives the VM's exit and the
+//! host's restart: the last registration the host was told of, not proof the
+//! VM runs.
 
 use super::local::FileStamp;
 use oneiron_vault_contract::vm_outbox::{VmOutboxDescriptor, VmOutboxKind};
@@ -18,9 +25,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::os::unix::fs::MetadataExt;
 
 const MEMBERS: &str = "members";
 const NEXT_TRANSFER: &str = "next-transfer";
+const BACKUP_LABEL: &str = "backup-label.json";
 /// The longest record or counter read back: a few short fields and one
 /// transfer line.
 const MAX_RECORD_BYTES: u64 = 64 * 1024;
@@ -75,11 +84,23 @@ struct Stored {
     record: MemberRecord,
 }
 
+/// The backup label the guest last named, kept with the vault the host's
+/// attachment is bound to, which no guest field chooses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BackupLabelBinding {
+    pub(super) vault: String,
+    pub(super) label: String,
+}
+
 pub(super) struct Store {
     dir: File,
     members: File,
     records: BTreeMap<(VmOutboxKind, String), MemberRecord>,
     next_transfer: u64,
+    /// `backup-label.json` as last read or written; `None` when there is
+    /// none, or one that did not read, which the next registration replaces.
+    backup_label: Option<BackupLabelBinding>,
 }
 
 impl Store {
@@ -115,11 +136,13 @@ impl Store {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => 1,
             Err(error) => return Err(error.into()),
         };
+        let backup_label = read_backup_label(&dir).ok().flatten();
         Ok(Self {
             dir,
             members,
             records,
             next_transfer,
+            backup_label,
         })
     }
 
@@ -176,6 +199,41 @@ impl Store {
         self.next_transfer = next;
         Ok(first)
     }
+
+    /// Writes `binding` durably as `backup-label.json`, then keeps it in
+    /// memory; the same binding again writes nothing.
+    pub(super) fn bind_backup_label(&mut self, binding: BackupLabelBinding) -> std::io::Result<()> {
+        if self.backup_label.as_ref() == Some(&binding) {
+            return Ok(());
+        }
+        let bytes = serde_json::to_vec(&binding).map_err(std::io::Error::other)?;
+        write_whole(&self.dir, BACKUP_LABEL, &bytes)?;
+        self.backup_label = Some(binding);
+        Ok(())
+    }
+}
+
+/// `backup-label.json` in the store `dir`, or `None` when there is none. It
+/// reads only as this store's own file: not followed through a link, a
+/// regular file with one name, mode 0600, owned by the directory's owner.
+pub(super) fn read_backup_label(dir: &File) -> anyhow::Result<Option<BackupLabelBinding>> {
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    let file = match rustix::fs::openat(dir, BACKUP_LABEL, flags, Mode::empty()) {
+        Ok(file) => File::from(file),
+        Err(Errno::NOENT) => return Ok(None),
+        Err(error) => return Err(std::io::Error::from(error).into()),
+    };
+    let (metadata, owner) = (file.metadata()?, dir.metadata()?.uid());
+    anyhow::ensure!(
+        metadata.is_file()
+            && metadata.nlink() == 1
+            && metadata.mode() & 0o7777 == 0o600
+            && metadata.uid() == owner,
+        "the backup label record is not the carrier store's own private file"
+    );
+    let mut bytes = Vec::new();
+    file.take(MAX_RECORD_BYTES).read_to_end(&mut bytes)?;
+    Ok(Some(serde_json::from_slice(&bytes)?))
 }
 
 /// A small file in `dir`, read without following a link.

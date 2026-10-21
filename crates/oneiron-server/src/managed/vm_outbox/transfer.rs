@@ -125,7 +125,9 @@ enum Plan {
 
 impl Carrier {
     /// The guest's session: its hello, then turns until the connection ends
-    /// or the end drains.
+    /// or the end drains. Each turn opens with the engine's registered
+    /// backup label, once there is one, so the host learns a registration
+    /// made after the session began.
     pub(super) fn guest_session<S: Read + Write>(
         &mut self,
         link: &mut Link<S>,
@@ -147,6 +149,9 @@ impl Carrier {
         loop {
             if !self.gate.proceed() {
                 return Ok(());
+            }
+            if let Some(label) = self.roots.backup_label() {
+                link.send(&VmOutboxFrame::BackupRegistered { label })?;
             }
             let sent = self.send_sets(link)?;
             link.send(&VmOutboxFrame::Pull)?;
@@ -170,7 +175,9 @@ impl Carrier {
     }
 
     /// The host's session for the VM bound to `vault`, until the guest
-    /// closes the connection. A hello naming another vault is refused.
+    /// closes the connection. A hello naming another vault is refused; a
+    /// backup label the welcomed guest names is kept for `vault` before
+    /// anything after it is taken.
     pub(super) fn host_session<S: Read + Write>(
         &mut self,
         link: &mut Link<S>,
@@ -185,12 +192,12 @@ impl Carrier {
                 if wire_revision != VM_OUTBOX_WIRE_REVISION {
                     Some((
                         VmOutboxRefusal::UnsupportedRevision,
-                        "the host speaks wire revision 1",
+                        format!("the host speaks wire revision {VM_OUTBOX_WIRE_REVISION}"),
                     ))
                 } else if named != vault {
                     Some((
                         VmOutboxRefusal::WrongVault,
-                        "this port is bound to another vault",
+                        "this port is bound to another vault".to_owned(),
                     ))
                 } else {
                     None
@@ -202,7 +209,7 @@ impl Carrier {
             link.send(&VmOutboxFrame::Refused {
                 wire_revision: VM_OUTBOX_WIRE_REVISION,
                 code,
-                detail: detail.to_owned(),
+                detail,
             })?;
             return link.flush();
         }
@@ -213,6 +220,9 @@ impl Carrier {
         loop {
             match link.read()? {
                 None => return Ok(()),
+                Some(VmOutboxFrame::BackupRegistered { label }) => {
+                    self.bind_backup_label(vault, label)?;
+                }
                 Some(VmOutboxFrame::Transfer(first)) => self.receive_set(link, first)?,
                 Some(VmOutboxFrame::Pull) => {
                     if self.gate.proceed() {
