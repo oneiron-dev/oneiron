@@ -21194,13 +21194,14 @@
      "notable": [
       "GapQueueDelta",
       "ReflectionGap",
-      "ReflectionGapKind"
+      "ReflectionGapKind",
+      "ReflectionGapScan"
      ],
      "path": "src/dreamer_consolidation/gap.rs",
      "purpose": "—",
      "surface": {
       "crate-vis": 7,
-      "enum": 1,
+      "enum": 2,
       "fn": 4,
       "struct": 2
      }
@@ -21397,7 +21398,7 @@
      "path": "src/dreamer_consolidation/residency.rs",
      "purpose": "A read refused only because a TURN's tagged MESSAGE is away from this replica (a window demoted back to…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -21434,7 +21435,7 @@
      "path": "src/dreamer_consolidation/resident_health.rs",
      "purpose": "A resident's own health cards as its dreaming's input (OF-490, FIX 1145/1146): the cards whose subject is…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -21668,7 +21669,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -22198,7 +22199,7 @@
      "path": "src/dreamer_runner/admission/settlement.rs",
      "purpose": "Transaction-composable reservation settlement shared by completion and deferral",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -22497,6 +22498,16 @@
      "surface": {
       "crate-vis": 6,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/lease_fence.rs",
+     "purpose": "The lease a wake pass ran an admitted try under, and the park fenced on it (FIX 6057): a held program…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -23388,7 +23399,7 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 4,
       "re-export": 14
      }
@@ -23624,7 +23635,7 @@
      "purpose": "The live Dreamer progress lane on the ephemeral sync keyspace",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 12,
       "struct": 4
@@ -24166,7 +24177,7 @@
      "path": "src/dreamer_wake/settlement.rs",
      "purpose": "What the driver does with an attempt once the executor returns: milestones, landing, complete, park, publish",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -24358,9 +24369,9 @@
      "path": "src/dreamer_wake/types.rs",
      "purpose": "Wake request and outcome vocabulary plus the executor contract",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 3,
-      "fn": 4,
+      "fn": 5,
       "struct": 7,
       "trait": 1
      }
@@ -66229,7 +66240,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 108,
+     "files": 109,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67246,7 +67257,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4218,
+   "source_files": 4219,
    "test_files": 902
   },
   "oneiron-android": {
@@ -80083,7 +80094,7 @@
      "path": "src/ai_host/resident_craft.rs",
      "purpose": "A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -80345,7 +80356,7 @@
      "path": "src/ai_host/turn_program_host.rs",
      "purpose": "What this server lends one entry of a Dreamer turn program (DOOR-141 PR2): the engine-native code host's own…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
