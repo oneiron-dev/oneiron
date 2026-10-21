@@ -10,14 +10,24 @@
 //! there. Any other request, on the same socket and as the same parsed
 //! request, parks: it waits in the floor's own line beside the floor, and
 //! once the floor admits it the app serves it as it serves every request,
-//! with every check it has. Nothing here refuses, drops or answers a request.
+//! with every check it has. Nothing here refuses, drops or answers a request
+//! but a probe's, below.
 //!
 //! One connection holds the reserve at a time, and each request on it is
 //! judged afresh. At most `max_connections` sockets park at once; while
 //! parking is full the reserve takes no new socket, and the socket in hand
 //! waits for the floor as every socket did before. The listener's header
 //! deadline is the only clock: none is added.
+//!
+//! An API socket from off this device whose address's stranger share is full
+//! is a probe (FIX 9130): it takes the reserve only when the reserve is free
+//! and parking has room at once ([`probe_now`]), never a floor permit or a
+//! share, and otherwise it is shed as before. Its first request is judged as
+//! any other. One the owner does not prove gives the reserve back and is
+//! answered with the listener's 503 shed ([`ProbeShed`]), never parked; after
+//! a proven one its connection is judged as any on the reserve.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use axum::http::header::ACCEPT;
@@ -170,6 +180,26 @@ pub(super) fn take_now(
         .map(|hold| Custody::reserve(hold, pressure))
 }
 
+/// The reserve for a probe: an API socket past its address's stranger share,
+/// taken without waiting while the reserve is free and parking has room,
+/// never from the floor (FIX 9130). Its first request is judged on it.
+pub(super) fn probe_now(
+    reserve: &Arc<OwnerReserve>,
+    pressure: Option<&Arc<PoolPressure>>,
+) -> Option<Arc<Custody>> {
+    let hold = reserve.try_take()?;
+    Some(Custody::new(
+        Held::Reserve { hold },
+        SocketHold::Classifying,
+        pressure,
+        true,
+    ))
+}
+
+/// A probe's first request the owner did not prove: the reserve is given
+/// back, and the listener answers its 503 shed.
+pub(super) struct ProbeShed;
+
 /// How one connection holds the pool. Its socket keeps it for as long as
 /// the socket is open, whoever owns the socket by then: across keep-alive
 /// requests and through an upgrade.
@@ -180,6 +210,9 @@ pub(super) struct Custody {
     observed: Option<ObservedSocket>,
     /// Signalled when it parks.
     parked: Notify,
+    /// A probe whose first request is not judged yet: one the owner does not
+    /// prove is shed, never parked (FIX 9130).
+    probe: AtomicBool,
 }
 
 enum Held {
@@ -194,20 +227,43 @@ enum Held {
 impl Custody {
     /// A connection the floor admitted.
     pub(super) fn floor(permit: Permit, pressure: Option<&Arc<PoolPressure>>) -> Arc<Self> {
-        Self::new(Held::Floor { _permit: permit }, SocketHold::Floor, pressure)
+        Self::new(
+            Held::Floor { _permit: permit },
+            SocketHold::Floor,
+            pressure,
+            false,
+        )
     }
 
     /// A connection on the owner's reserve, its request not judged yet.
     pub(super) fn reserve(hold: ReserveHold, pressure: Option<&Arc<PoolPressure>>) -> Arc<Self> {
-        Self::new(Held::Reserve { hold }, SocketHold::Classifying, pressure)
+        Self::new(
+            Held::Reserve { hold },
+            SocketHold::Classifying,
+            pressure,
+            false,
+        )
     }
 
-    fn new(held: Held, hold: SocketHold, pressure: Option<&Arc<PoolPressure>>) -> Arc<Self> {
+    fn new(
+        held: Held,
+        hold: SocketHold,
+        pressure: Option<&Arc<PoolPressure>>,
+        probe: bool,
+    ) -> Arc<Self> {
         Arc::new(Self {
             held: Mutex::new(Some(held)),
             observed: pressure.map(|pressure| pressure.socket(hold)),
             parked: Notify::new(),
+            probe: AtomicBool::new(probe),
         })
+    }
+
+    /// Gives back what it holds of the pool: a probe's reserve, once its
+    /// first request was not the owner's.
+    fn release(&self) {
+        let held = lock(&self.held).take();
+        drop(held);
     }
 
     /// Whether it holds the owner's reserve, so its next request is judged.
@@ -306,13 +362,15 @@ impl OwnerGate {
     /// returns the record its body counts under. The owner's proven read is
     /// served on the reserve. Any other request parks, unanswered, until the
     /// floor admits it; parked it holds no permit, so its body counts only
-    /// from then.
+    /// from then. A probe's first request that is not his gives the reserve
+    /// back and is shed instead (FIX 9130).
     pub(super) async fn admit(
         &self,
         custody: &Custody,
         parts: &mut Parts,
         ended: bool,
-    ) -> Option<(ObservedBody, BodyCredential)> {
+    ) -> Result<Option<(ObservedBody, BodyCredential)>, ProbeShed> {
+        let probe = custody.probe.swap(false, Ordering::Relaxed);
         let counted = custody.count_body(ended);
         let credential = counted.as_ref().map(|(_, credential)| credential.clone());
         let owner = reserve_eligible(parts)
@@ -323,13 +381,21 @@ impl OwnerGate {
             .await;
         if owner {
             custody.observe(SocketHold::Owner);
-            return counted;
+            return Ok(counted);
         }
         drop(counted);
+        if probe {
+            custody.release();
+            tracing::debug!(
+                reason = "stranger_owner_probe",
+                "connection shed at its address's unauthenticated share"
+            );
+            return Err(ProbeShed);
+        }
         custody
             .park_for_floor(&self.floor, self.pressure.as_deref(), self.bound)
             .await;
-        custody.count_body(ended)
+        Ok(custody.count_body(ended))
     }
 }
 
