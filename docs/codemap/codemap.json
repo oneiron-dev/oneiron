@@ -14450,7 +14450,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 3
      }
     },
