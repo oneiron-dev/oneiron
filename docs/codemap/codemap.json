@@ -23930,7 +23930,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 17,
       "struct": 1
      }
@@ -27270,6 +27270,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HealAttemptFact",
+      "HealDependencyEdge",
+      "HealImpactPolicy",
+      "HealImpactScore",
+      "HealPendingProposal",
+      "HealResidue",
+      "HealSourceRef",
+      "HealTaskState",
+      "HealUnknown"
+     ],
+     "path": "src/failure_ladder/impact.rs",
+     "purpose": "The self-healing loop's human residue, ordered by impact (OF-418 L4; ARCH-0066 §6): one parked run blocking…",
+     "surface": {
+      "enum": 3,
+      "fn": 6,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "FailureLadder"
      ],
      "path": "src/failure_ladder/ladder.rs",
@@ -27309,7 +27331,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -28810,6 +28832,16 @@
      "purpose": "One proposed claim decided on its own (DOOR-115): the owner's approval or decline of a claim named by its…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/bundle/pending_heal.rs",
+     "purpose": "The Coach's proposals still waiting in the pending-consent tray, for the healer's residue read (OF-418 L4)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -31330,7 +31362,7 @@
      "path": "src/identity.rs",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -46680,7 +46712,7 @@
      "path": "src/recovery/checkpoint/commitment.rs",
      "purpose": "Hash-signed checkpoints (OF-570 (e))",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1,
       "re-export": 1
      }
@@ -47149,7 +47181,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/snapshot.rs",
@@ -50109,7 +50141,7 @@
      "path": "src/self_heal/issue_work.rs",
      "purpose": "The Coach's Issues work from both of its sources (OF-418 L3; ARCH-0066 §4, §6)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -59514,7 +59546,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 43,
       "fn": 1,
       "mod": 5,
       "re-export": 27
@@ -65909,7 +65941,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/world_keys/doors/frontier.rs",
@@ -67843,7 +67875,7 @@
      "purpose": "OF-360 extraction-quality evaluation"
     },
     "failure_ladder": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67885,7 +67917,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 145,
+     "files": 146,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68769,7 +68801,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4341,
+   "source_files": 4343,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73473,6 +73505,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CheckpointFact",
+      "SignedCheckpointFact"
+     ],
+     "path": "src/backup/checkpoint_fact.rs",
+     "purpose": "A sealed backup's checkpoint fact (FIX 7326): its engine vault id, the full BLAKE3 of its canonical image…",
+     "surface": {
+      "const": 5,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CheckpointSigner",
       "Commitment",
       "CustodyRef"
@@ -73506,7 +73553,7 @@
      "path": "src/backup/mod.rs",
      "purpose": "The clear parts of the engine's sealed checkpoint and backup artifacts (`ONEIRONS` files): the artifact…",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -73809,7 +73856,7 @@
    ],
    "modules": {
     "backup": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -73881,7 +73928,7 @@
    },
    "over_bar": 0,
    "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
-   "source_files": 20,
+   "source_files": 21,
    "test_files": 8
   },
   "oneiron-docedit": {
@@ -82825,7 +82872,7 @@
      "path": "src/api/conversations.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -86809,7 +86856,7 @@
      "path": "src/auth/left_notices.rs",
      "purpose": "`POST /v1/shared/left-notices` (OF-158 client leave): a device whose person left or was removed from this…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -89457,6 +89504,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/idempotency/caller.rs",
+     "purpose": "The partition a keyed non-core route keeps its caller's replays in on a vault no supervisor manages (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/idempotency/reclaim.rs",
      "purpose": "Reclaim of expired idempotency entries (FIX 5951)",
      "surface": {
@@ -91909,6 +91966,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/checkpoint_fact.rs",
+     "purpose": "Each backup's checkpoint fact beside it (FIX 7327): the signed fact the snapshot's receipt carries (FIX…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -92103,7 +92170,7 @@
      "path": "src/owner/healer.rs",
      "purpose": "The owner reads the self-healing loop (ARCH-0066): the three signed oversight receipts the vault emits, and…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 15
      }
     },
     {
@@ -94184,7 +94251,7 @@
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through"
     },
     "idempotency": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -94275,7 +94342,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94396,7 +94463,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1018,
+   "source_files": 1020,
    "test_files": 182
   },
   "oneiron-spawn": {
