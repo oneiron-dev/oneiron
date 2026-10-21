@@ -194,6 +194,19 @@ pub struct OriginMirrorSetRequest {
     pub user: Option<String>,
     /// At least 60 seconds; the configured cadence is the mirror's RPO.
     pub every_secs: u64,
+    /// `ask_me` or `schedule`. Absent: the same URL keeps its strategy, and
+    /// a new mirror or URL asks first (`ask_me`).
+    #[serde(default)]
+    pub sync_strategy: Option<crate::origin::mirror_strategy::OriginMirrorSyncStrategy>,
+}
+
+/// The owner's change of one mirror's sync strategy. It changes nothing
+/// else: never the URL, the custody record, the cadence or what was pushed.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OriginMirrorStrategyRequest {
+    pub repo: String,
+    pub sync_strategy: crate::origin::mirror_strategy::OriginMirrorSyncStrategy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
