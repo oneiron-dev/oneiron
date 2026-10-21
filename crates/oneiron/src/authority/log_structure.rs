@@ -388,6 +388,11 @@ impl AuthorityStructure {
             AuthorityOp::ConversationTrainingVaultSet(set) => install_key(set.machine),
             AuthorityOp::HomeCandidacy(declaration) => install_key(declaration.machine),
             AuthorityOp::AgentGrantAct(record) => install_key(record.machine),
+            // A frontier join: its carrier's install key, as for the act it
+            // leads to; the host issuer's falls to the admitters below.
+            AuthorityOp::FrontierJoin(FrontierJoin {
+                carrier: Some(carrier),
+            }) => install_key(*carrier),
             // The owner's kit push (FIX 6053): a stored root's anchor signs
             // it alone, as an anchored machine revision; no machine carries it.
             AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
@@ -446,6 +451,9 @@ impl AuthorityStructure {
             AuthorityOp::ConversationTrainingVaultSet(set) => machine_key(set.machine),
             AuthorityOp::HomeCandidacy(declaration) => machine_key(declaration.machine),
             AuthorityOp::AgentGrantAct(record) => machine_key(record.machine),
+            AuthorityOp::FrontierJoin(FrontierJoin {
+                carrier: Some(carrier),
+            }) => machine_key(*carrier),
             AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
                 !self.is_own_anchor(signer)
                     && !matches!(signer, AuthorityKey::Ed25519(anchor)

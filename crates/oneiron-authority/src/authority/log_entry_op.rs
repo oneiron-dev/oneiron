@@ -168,6 +168,10 @@ pub enum AuthorityOp {
     /// cosigned by the install key of the carrier of his act. A main-log
     /// entry, so every machine the owner admits folds it.
     OwnerKeyEnroll(OwnerKeyEnroll),
+    /// One canonical group of a wide causal frontier's heads, signed by the
+    /// install key of the act it leads to, or by the host's slip issuer for a
+    /// host-issued op (FIX 7908). A main-log entry with no semantic payload.
+    FrontierJoin(FrontierJoin),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -231,6 +235,7 @@ impl AuthorityLogEntry {
             AuthorityOp::ConversationTrainingSet(set) => set.validate_entry(self)?,
             AuthorityOp::ConversationTrainingVaultSet(set) => set.validate_entry(self)?,
             AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate_entry(self)?,
+            AuthorityOp::FrontierJoin(join) => join.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -457,6 +462,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::HomeCandidacy(declaration) => declaration.validate(),
         AuthorityOp::AgentGrantAct(record) => record.validate(),
         AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate(),
+        AuthorityOp::FrontierJoin(join) => join.validate(),
     }
 }
 

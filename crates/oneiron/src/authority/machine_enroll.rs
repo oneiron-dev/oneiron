@@ -8,8 +8,8 @@ use super::machine_write::denied;
 use super::slip_vault::require_host;
 use super::{
     AuthorityAttestation, AuthorityKey, AuthorityOp, AuthoritySignature, AuthoritySignatureSuite,
-    AuthorityTier, DeviceAuthority, HostSlipIssuer, ROLE_AGENT, authority_entry_hash,
-    authority_transcript, invalid_authority,
+    AuthorityTier, DeviceAuthority, FrontierSigner, HostSlipIssuer, MAX_PARENTS, ROLE_AGENT,
+    authority_entry_hash, authority_transcript, invalid_authority,
 };
 
 /// Bind an existing MACHINE row to a fresh per-vault Ed25519 authority key.
@@ -60,7 +60,7 @@ impl Vault {
         if transport_key_binding == public_key {
             return Err(denied());
         }
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let key = AuthorityKey::Ed25519(public_key);
         // A physical machine's row or install key never becomes a writer.
@@ -74,6 +74,15 @@ impl Vault {
         {
             return Err(denied());
         }
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let fold = self
+            .prepare_authority_frontier_in_txn(
+                txn,
+                &fold,
+                FrontierSigner::Host(issuer),
+                MAX_PARENTS,
+            )?
+            .unwrap_or(fold);
         let seq = fold
             .append_sequences
             .get(&issuer.public_key())

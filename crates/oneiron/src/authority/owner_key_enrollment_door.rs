@@ -213,6 +213,15 @@ impl Vault {
         if fold.roster.contains_key(&key) {
             return Err(not_valid(KEY_ON_ROSTER));
         }
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let fold = self
+            .prepare_authority_frontier_in_txn(
+                &mut txn,
+                &fold,
+                FrontierSigner::Install(carrier, &carrier_key),
+                MAX_PARENTS,
+            )?
+            .unwrap_or(fold);
         // The main-log heads alone: the carrier's standing rows and the
         // predecessor's roster rows are main-log rows among them or their
         // ancestors, so the fold at the heads carries them.

@@ -218,6 +218,15 @@ impl Vault {
         if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
             return Err(authority_refused(NO_CARRIER));
         }
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let fold = self
+            .prepare_authority_frontier_in_txn(
+                &mut txn,
+                &fold,
+                FrontierSigner::Install(machine, &key),
+                MAX_PARENTS,
+            )?
+            .unwrap_or(fold);
         let signer = AuthorityKey::Ed25519(public_key);
         let seq = next_sequence(&fold, &signer)?;
         let parents = fold.append_heads.clone();
