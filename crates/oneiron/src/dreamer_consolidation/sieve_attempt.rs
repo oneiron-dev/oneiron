@@ -167,7 +167,12 @@ impl ConsolidationExecutor<'_> {
                 now_ms: ctx.now_ms,
             };
             let entities = evidence.entities.clone();
+            // A fallback whose park would resume as a Retry is refused inside
+            // the step too, never memoized, so the Retry asks again (FIX 7431).
             let check = move |response: &crate::llm::LlmResponse| {
+                if super::step_charge::retry_fallback(response) {
+                    return Err(SIEVE_FALLBACK.to_owned());
+                }
                 decode_reading(response, &entities).map(|_| ())
             };
             let response = match call_as_step_checked(
@@ -195,7 +200,7 @@ impl ConsolidationExecutor<'_> {
                             ctx.vault,
                             attempt.status.attempt.id,
                             step_hash,
-                            "sieve rung requires a model reading",
+                            SIEVE_FALLBACK,
                             &response,
                         );
                     }
@@ -297,6 +302,9 @@ impl ConsolidationExecutor<'_> {
 fn invalid() -> Error {
     Error::InvalidConfig("invalid sieve rung payload".into())
 }
+
+/// Why a rung parks on a deterministic fallback.
+const SIEVE_FALLBACK: &str = "sieve rung requires a model reading";
 
 fn decode_reading(
     response: &crate::llm::LlmResponse,

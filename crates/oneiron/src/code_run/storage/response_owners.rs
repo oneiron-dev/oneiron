@@ -161,8 +161,9 @@ pub(crate) fn inherit_response_owner_in_txn(
 
 impl ExecutorStorage<'_> {
     /// Whether an erase of run `owner`'s actor took its replies (FIX 5718),
-    /// as the run's storage reads it. A session's run keeps its rows on its
-    /// own route, which stamps no owner: never erased here.
+    /// as the run's storage reads it. A session's run reads its owner row
+    /// through its room's composed view: an on-record stretch stamps one in
+    /// base (FIX 7429), and an off-record row stamps none (FIX 7464).
     ///
     /// # Errors
     ///
@@ -176,7 +177,12 @@ impl ExecutorStorage<'_> {
                         .is_some_and(ResponseOwner::erased),
                 )
             }
-            Self::Session(_) => Ok(false),
+            Self::Session(binding) => binding.answered(|| {
+                binding.session.routed_side_read(|rtxn, dbs| {
+                    Ok(response_owner_in_txn(&dbs, rtxn, &owner)?
+                        .is_some_and(ResponseOwner::erased))
+                })
+            }),
         }
     }
 
