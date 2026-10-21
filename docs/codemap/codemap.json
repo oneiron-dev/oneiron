@@ -81915,9 +81915,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/context_board/chat_emit.rs",
-     "purpose": "What a live chat answer's context leaves on record (FIX 6921): the emit receipt `ai.reply` keeps, and the…",
+     "purpose": "What a chat answer's context leaves on record (FIX 6921), a live turn's or a queued Continue or Retry's (FIX…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
