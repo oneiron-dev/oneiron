@@ -337,6 +337,7 @@ pub(crate) mod recall_door;
 // public path, and the task-owned items its files reach are re-exported
 // here for it.
 pub use crate::verbs as sdk;
+pub(crate) use ask_world_hold::admit_ask_references;
 pub(crate) use brief::{decode_hex, hex32};
 pub(crate) use create_origin::task_create_origin_in_txn;
 pub(crate) use highway::forbidden;
