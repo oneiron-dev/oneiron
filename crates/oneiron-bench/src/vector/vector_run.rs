@@ -162,7 +162,11 @@ fn evaluate_gates(report: &VectorBenchReport) -> ExitCode {
     if report.settings.assert_recall {
         for (label, measure) in report.search_measures() {
             if !measure.recall.is_finite() {
-                let cause = if measure.recall_k == 0 { "empty_live_set" } else { "no_queries" };
+                let cause = if measure.recall_k == 0 {
+                    "empty_live_set"
+                } else {
+                    "no_queries"
+                };
                 eprintln!("[recall gate] {label}: undefined recall; cause={cause}");
                 failed = true;
                 continue;

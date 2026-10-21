@@ -6,6 +6,7 @@ use std::path::Path;
 use super::argv::FrozenGitArgv;
 use super::bridge::bridged_verb_index;
 use super::failure::invalid;
+use super::retained_object::RetainedGitIo;
 use super::{GitOid, GitWireOperation};
 use crate::error::Result;
 
@@ -64,6 +65,9 @@ pub(super) struct GitCommandSpec<'a> {
     /// The common directory whose held coordinator this effect's child
     /// inherits.
     hold: Option<&'a Path>,
+    /// The frozen argv's retained IO (FIX 7608 slice 2b-i); only `wire`
+    /// carries one.
+    retained: Option<&'a RetainedGitIo>,
 }
 
 impl<'a> GitCommandSpec<'a> {
@@ -86,6 +90,7 @@ impl<'a> GitCommandSpec<'a> {
             worktree_target,
             expected_commit,
             hold: None,
+            retained: Some(argv.retained()),
         }
     }
 
@@ -151,6 +156,7 @@ impl<'a> GitCommandSpec<'a> {
             worktree_target,
             expected_commit: None,
             hold: None,
+            retained: None,
         })
     }
 
@@ -176,6 +182,7 @@ impl<'a> GitCommandSpec<'a> {
             worktree_target: None,
             expected_commit: None,
             hold: None,
+            retained: None,
         })
     }
 
@@ -194,6 +201,7 @@ impl<'a> GitCommandSpec<'a> {
             worktree_target: None,
             expected_commit: None,
             hold: None,
+            retained: None,
         }
     }
 
@@ -207,6 +215,10 @@ impl<'a> GitCommandSpec<'a> {
 
     pub(super) const fn stdin(&self) -> Option<&'a [u8]> {
         self.stdin
+    }
+
+    pub(super) const fn retained(&self) -> Option<&'a RetainedGitIo> {
+        self.retained
     }
 
     pub(super) const fn prefix(&self) -> &'a [OsString] {

@@ -43,6 +43,8 @@ mod objects;
 mod operation;
 mod plan;
 mod process;
+mod projected_checkout;
+mod projected_object;
 mod publish_push;
 mod publish_review;
 mod publish_review_trees;
@@ -50,6 +52,7 @@ mod reachable_blobs;
 mod record;
 mod repo;
 mod repository_profile;
+mod retained_object;
 mod wire_publish;
 mod wire_reads;
 mod wire_stage;
@@ -69,10 +72,13 @@ pub use self::failure::{GitWireFailure, GitWireFailureClass, GitWireResult};
 pub use self::ids::{GitOid, GitRefExpectation, GitRefName, GitRefPublication, ObservedGitRef};
 pub use self::import_fetch::{FetchedExternalGit, GitImportFetchOutcome, GitImportPushOutcome};
 pub use self::mirror_plan_push::{GitPlanPushReport, GitPlanRef, GitPlanRefOutcome};
-pub use self::mirror_plan_review::{GitPeeledRef, GitRefEnd, GitRefTag};
+pub use self::mirror_plan_review::{
+    GitPeeledRef, GitRefEnd, GitRefTag, GitRetainedPeeledRef, GitRetainedRefTag,
+};
 pub use self::objects::{GitCommitHeader, GitCommitRequest, GitTreeEntry};
 pub use self::operation::{GitWireEffectClass, GitWireOperation};
 pub use self::plan::{GitWireObjectWrite, GitWirePlan, GitWirePlannedOid};
+pub use self::projected_object::GitProjectedPayload;
 pub use self::publish_push::{GitPublishPushOutcome, GitRemoteTip};
 pub use self::publish_review::GitReviewItem;
 pub use self::reachable_blobs::GitPeeledTip;
@@ -80,11 +86,13 @@ pub use self::record::{
     GitWireCommitOutcome, GitWirePrepared, GitWireReceipt, GitWireRecordState, GitWireRejection,
 };
 pub use self::repo::{GitWireRepo, GitWireRepoIdentity};
+pub use self::retained_object::{GitObjectKind, GitRetainedObject};
 pub use self::wire_reads::GitWire;
 
 pub(crate) use self::bridge::{redact_bridged_failure, run_bridged_git_argv};
 pub(crate) use self::mirror_push::MIRROR_PUSH_REFSPECS;
 use self::process::GitWireProcessOutput;
+pub(crate) use self::projected_object::{GitObjectEdge, git_object_edges};
 #[cfg(test)]
 pub(crate) use self::repo::repository_hold_for_test;
 pub(crate) use self::repo::{

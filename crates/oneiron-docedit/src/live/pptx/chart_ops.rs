@@ -1,31 +1,59 @@
-//! Chart edits applied by series identity; a whole chart written over the
-//! chart a node holds lowered to the edits that make it, before it is
-//! logged; and the series identities a writer names before an edit is
-//! logged, so every replay makes the same series.
+//! Chart edits applied by series and category identity; a whole chart
+//! written over the chart a node holds lowered to the edits that make it,
+//! before it is logged; and the series and category identities a writer
+//! names before an edit is logged, so every replay makes the same series
+//! and points.
+
+mod categories;
 
 use super::chart::{ChartEdit, ChartSeries};
 use super::table_ops::order;
 use super::{LiveDeck, NodeId, NodePayload};
 use crate::live::LiveError;
 use crate::live::conversion::Conversion;
-use std::collections::BTreeSet;
+use categories::lower_set;
+use std::collections::{BTreeSet, VecDeque};
 
 const NO_CHART: &str = "the node holds no chart";
 const TAKEN: &str = "the series identity is taken";
 
 impl ChartEdit {
     /// How many identities applying this edit mints: one for an insertion
-    /// that names none.
+    /// that names none, and one for each category point a set it writes
+    /// holds unnamed.
     pub(super) fn unnamed(&self) -> u64 {
-        u64::from(matches!(self, Self::InsertSeries { id: None, .. }))
+        match self {
+            Self::InsertSeries { id, categories, .. } => u64::from(id.is_none())
+                .saturating_add(categories.as_ref().map_or(0, |set| set.unnamed())),
+            Self::SetCategories { categories } => categories.unnamed(),
+            Self::SetSeriesCategories { categories, .. } => {
+                categories.as_ref().map_or(0, |set| set.unnamed())
+            }
+            Self::InsertCategory { id, .. } => u64::from(id.is_none()),
+            _ => 0,
+        }
     }
 
-    /// Name an insertion that names no identity, from `mint`.
+    /// Name, from `mint`, an insertion that names no identity and each
+    /// category point a set it writes holds unnamed, in the order applying
+    /// it would.
     pub(super) fn name(&mut self, mint: &mut impl FnMut() -> NodeId) {
-        if let Self::InsertSeries { id, .. } = self
-            && id.is_none()
-        {
-            *id = Some(mint());
+        match self {
+            Self::InsertSeries { id, categories, .. } => {
+                if id.is_none() {
+                    *id = Some(mint());
+                }
+                if let Some(set) = categories {
+                    set.name(mint);
+                }
+            }
+            Self::SetCategories { categories } => categories.name(mint),
+            Self::SetSeriesCategories {
+                categories: Some(set),
+                ..
+            } => set.name(mint),
+            Self::InsertCategory { id, .. } if id.is_none() => *id = Some(mint()),
+            _ => {}
         }
     }
 
@@ -46,6 +74,9 @@ impl ChartEdit {
         else {
             return Err(LiveError::Invalid(NO_CHART));
         };
+        if categories::apply(self, *family, categories, series, mint)? {
+            return Ok(());
+        }
         match self {
             Self::InsertSeries {
                 id,
@@ -54,11 +85,16 @@ impl ChartEdit {
                 values,
                 family: kind,
                 x,
+                categories: own,
             } => {
                 let id = match id {
                     Some(id) => *id,
                     None => mint(),
                 };
+                let mut own = own.clone();
+                if let Some(set) = &mut own {
+                    set.name(mint);
+                }
                 if position(series, id).is_some() {
                     return Err(LiveError::Invalid(TAKEN));
                 }
@@ -71,6 +107,7 @@ impl ChartEdit {
                         values: values.clone(),
                         family: *kind,
                         x: x.clone(),
+                        categories: own,
                     },
                 );
             }
@@ -108,8 +145,15 @@ impl ChartEdit {
                 }
             }
             Self::SetFamily { family: kind } => *family = *kind,
-            Self::SetCategories { categories: wanted } => categories.clone_from(wanted),
             Self::SetSource { source: wanted } => *source = *wanted,
+            // Applied above.
+            Self::SetCategories { .. }
+            | Self::SetSeriesCategories { .. }
+            | Self::InsertCategory { .. }
+            | Self::DeleteCategory { .. }
+            | Self::MoveCategory { .. }
+            | Self::SetCategoryLevels { .. }
+            | Self::ReserveCategories { .. } => {}
         }
         Ok(())
     }
@@ -135,7 +179,9 @@ fn slot(series: &[ChartSeries], after: Option<NodeId>) -> usize {
 }
 
 /// Apply `edits` to the chart `node` holds, then settle it as a whole chart
-/// written over it settles, returning what that did PowerPoint's way.
+/// written over it settles, returning what that did PowerPoint's way. The
+/// points the settlement adds take the identities the edits reserve, in
+/// order, else the deck's next.
 pub(super) fn edit_chart(
     deck: &mut LiveDeck,
     node: NodeId,
@@ -152,7 +198,16 @@ pub(super) fn edit_chart(
     for edit in edits {
         edit.apply(&mut chart, &mut mint)?;
     }
-    let (settled, done) = chart.settle(Some(&held), bound, &deck.opaque_parts)?;
+    let (mut settled, done) = chart.settle(Some(&held), bound, &deck.opaque_parts)?;
+    let mut reserved: VecDeque<NodeId> = edits
+        .iter()
+        .filter_map(|edit| match edit {
+            ChartEdit::ReserveCategories { ids } => Some(ids.iter().copied()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    settled.name_categories(&mut || reserved.pop_front().unwrap_or_else(|| deck.mint()));
     settled.check()?;
     deck.nodes
         .get_mut(&node)
@@ -161,13 +216,28 @@ pub(super) fn edit_chart(
     Ok(done)
 }
 
-/// The edits that make the chart `held` into `wanted`: its family,
-/// categories and data source where they differ; the series `wanted` drops
-/// deleted and the rest placed in its order (a new one inserted with its
-/// data, a held one moved only where it is out of place); then each held
-/// series' name, values, family and x values written where they differ. A
-/// series `wanted` names with an identity `held` does not hold, with none,
-/// or with one an earlier series of it names, is new, under a fresh
+/// Apply `edit` to `scratch` and log it in `edits`: a lowering builds its
+/// edits over the chart as the edits so far leave it.
+fn emit(
+    edit: ChartEdit,
+    scratch: &mut NodePayload,
+    edits: &mut Vec<ChartEdit>,
+    mint: &mut impl FnMut() -> NodeId,
+) {
+    // Every lowered edit names what it inserts: applying it mints nothing.
+    let _ = edit.apply(scratch, mint);
+    edits.push(edit);
+}
+
+/// The edits that make the chart `held` into `wanted`: its family and data
+/// source where they differ; its categories by point identity ([`lower_set`]);
+/// the series `wanted` drops deleted and the rest placed in its order (a new
+/// one inserted with its data, a held one moved only where it is out of
+/// place); then each held series' own categories by point identity, and its
+/// name, values, family and x values written where they differ from the
+/// chart as the edits before leave it (a moved point has taken its values
+/// along). A series or point `wanted` names with an identity `held` does not
+/// hold, with none, or with one an earlier one names, is new, under a fresh
 /// identity from `mint`: never one an export's positions or equal data
 /// suggest.
 pub(super) fn lower_chart(
@@ -192,17 +262,26 @@ pub(super) fn lower_chart(
     else {
         return Vec::new();
     };
+    let mut scratch = held.clone();
     let mut edits = Vec::new();
     if family != held_family {
-        edits.push(ChartEdit::SetFamily { family: *family });
-    }
-    if categories != held_categories {
-        edits.push(ChartEdit::SetCategories {
-            categories: categories.clone(),
-        });
+        emit(
+            ChartEdit::SetFamily { family: *family },
+            &mut scratch,
+            &mut edits,
+            mint,
+        );
     }
     if source != held_source {
-        edits.push(ChartEdit::SetSource { source: *source });
+        emit(
+            ChartEdit::SetSource { source: *source },
+            &mut scratch,
+            &mut edits,
+            mint,
+        );
+    }
+    for edit in lower_set(None, held_categories, categories, mint) {
+        emit(edit, &mut scratch, &mut edits, mint);
     }
     let held_ids: Vec<NodeId> = held_series.iter().filter_map(|line| line.id).collect();
     let known: BTreeSet<NodeId> = held_ids.iter().copied().collect();
@@ -221,10 +300,11 @@ pub(super) fn lower_chart(
         })
         .collect();
     let wanted_ids: Vec<NodeId> = lines.iter().filter_map(|line| line.id).collect();
+    let mut placed = Vec::new();
     order(
         &held_ids,
         &wanted_ids,
-        &mut edits,
+        &mut placed,
         |id| ChartEdit::DeleteSeries { series: id },
         |id, after| ChartEdit::MoveSeries { series: id, after },
         |id, after| {
@@ -236,14 +316,43 @@ pub(super) fn lower_chart(
                 values: line.map_or_else(Vec::new, |line| line.values.clone()),
                 family: line.and_then(|line| line.family),
                 x: line.and_then(|line| line.x.clone()),
+                categories: line.and_then(|line| line.categories.clone()),
             }
         },
     );
+    for edit in placed {
+        emit(edit, &mut scratch, &mut edits, mint);
+    }
     for line in &lines {
         let Some(id) = line.id else {
             continue;
         };
-        let Some(was) = held_series.iter().find(|was| was.id == Some(id)) else {
+        if !known.contains(&id) {
+            continue;
+        }
+        let now = |scratch: &NodePayload| -> Option<ChartSeries> {
+            match scratch {
+                NodePayload::Chart { series, .. } => {
+                    series.iter().find(|was| was.id == Some(id)).cloned()
+                }
+                _ => None,
+            }
+        };
+        let Some(was) = now(&scratch) else {
+            continue;
+        };
+        let own = match (&was.categories, &line.categories) {
+            (Some(held), Some(wanted)) => lower_set(Some(id), held, wanted, mint),
+            (held, wanted) if held != wanted => vec![ChartEdit::SetSeriesCategories {
+                series: id,
+                categories: wanted.clone(),
+            }],
+            _ => Vec::new(),
+        };
+        for edit in own {
+            emit(edit, &mut scratch, &mut edits, mint);
+        }
+        let Some(was) = now(&scratch) else {
             continue;
         };
         if was.name != line.name {
@@ -274,11 +383,96 @@ pub(super) fn lower_chart(
     edits
 }
 
+/// `edits` to the chart `held` as its writer logs them: each whole set a
+/// category setter writes over a set the chart holds then lowered to the
+/// point edits that make it ([`lower_set`]), so it joins concurrent work on
+/// those points.
+pub(super) fn lower_edits(
+    held: &NodePayload,
+    edits: &[ChartEdit],
+    mint: &mut impl FnMut() -> NodeId,
+) -> Vec<ChartEdit> {
+    let mut scratch = held.clone();
+    let mut out = Vec::new();
+    for edit in edits {
+        let lowered = match (edit, &scratch) {
+            (
+                ChartEdit::SetCategories { categories: wanted },
+                NodePayload::Chart { categories, .. },
+            ) => lower_set(None, categories, wanted, mint),
+            (
+                ChartEdit::SetSeriesCategories {
+                    series: id,
+                    categories: Some(wanted),
+                },
+                NodePayload::Chart { series, .. },
+            ) => match series
+                .iter()
+                .find(|line| line.id == Some(*id))
+                .and_then(|line| line.categories.as_ref())
+            {
+                Some(own) => lower_set(Some(*id), own, wanted, mint),
+                None => vec![edit.clone()],
+            },
+            _ => vec![edit.clone()],
+        };
+        for edit in lowered {
+            emit(edit, &mut scratch, &mut out, mint);
+        }
+    }
+    out
+}
+
+impl LiveDeck {
+    /// Reserve, at the end of `edits` to the chart `node` holds, the
+    /// identities from `mint` the chart's settlement after them gives the
+    /// points it adds (a set grown to its longest series, x values turned to
+    /// categories), so the logged edits name them and every replay makes the
+    /// same points. Nothing when it adds none, or when the edits refuse.
+    pub(super) fn reserve_categories(
+        &self,
+        node: NodeId,
+        edits: &mut Vec<ChartEdit>,
+        mint: &mut impl FnMut() -> NodeId,
+    ) {
+        let Some(found) = self.nodes.get(&node) else {
+            return;
+        };
+        let Some(held @ NodePayload::Chart { .. }) = &found.payload else {
+            return;
+        };
+        let mut chart = held.clone();
+        let mut spare = 0_u64;
+        let mut unused = || {
+            spare += 1;
+            NodeId(spare)
+        };
+        if edits
+            .iter()
+            .any(|edit| edit.apply(&mut chart, &mut unused).is_err())
+        {
+            return;
+        }
+        let Ok((settled, _)) =
+            chart.settle(Some(held), found.binding.is_some(), &self.opaque_parts)
+        else {
+            return;
+        };
+        let count = settled.unnamed_categories();
+        if count > 0 {
+            edits.push(ChartEdit::ReserveCategories {
+                ids: (0..count).map(|_| mint()).collect(),
+            });
+        }
+    }
+}
+
 impl NodePayload {
     /// Name, from `mint` and in order, each series of a chart that names no
-    /// identity or one an earlier series of it names: a writer's new
-    /// series. Any other payload names nothing.
-    pub(super) fn name_series(&mut self, mint: &mut impl FnMut() -> NodeId) {
+    /// identity or one an earlier series of it names (a writer's new
+    /// series), then each category point its sets hold unnamed
+    /// ([`Self::name_categories`]). Any other payload names nothing.
+    pub(crate) fn name_series(&mut self, mint: &mut impl FnMut() -> NodeId) {
         if let Self::Chart { series, .. } = self {
             let mut seen = BTreeSet::new();
             for line in series {
@@ -292,6 +486,7 @@ impl NodePayload {
                 }
             }
         }
+        self.name_categories(mint);
     }
 
     /// How many identities [`Self::name_series`] mints.
@@ -304,6 +499,8 @@ impl NodePayload {
             .iter()
             .filter(|line| !line.id.is_some_and(|id| seen.insert(id)))
             .count();
-        u64::try_from(unnamed).unwrap_or(u64::MAX)
+        u64::try_from(unnamed)
+            .unwrap_or(u64::MAX)
+            .saturating_add(self.unnamed_categories())
     }
 }

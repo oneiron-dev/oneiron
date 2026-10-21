@@ -162,7 +162,10 @@ pub(super) fn parse_tree_entries(stdout: &[u8]) -> Result<Vec<GitTreeEntry>> {
     Ok(entries)
 }
 
-fn parse_tree_entry(record: &[u8]) -> Result<GitTreeEntry> {
+/// One `ls-tree -z` record, `<mode> <type> <oid>\t<name>`: shared by the
+/// captured listing and the retained one, which reads its spool one NUL
+/// record at a time (FIX 7608 slice 2b-i). Never a raw tree object.
+pub(super) fn parse_tree_entry(record: &[u8]) -> Result<GitTreeEntry> {
     let split = record
         .iter()
         .position(|byte| *byte == b'\t')

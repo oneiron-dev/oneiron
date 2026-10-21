@@ -117,12 +117,46 @@ fn managed_owner_context(
     auth: Option<CoreAuth>,
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
+    let (session, room_turn) = mcp_request_placement(headers)?;
+    owner_context_at(mode, request_id, owner, auth, session, room_turn, server)
+}
+
+/// The call of a caller a facade door already built (FIX 5400): a managed
+/// vault's attested owner, who carries no connector credential, is his own
+/// call in `session`, as on `/mcp` ([`managed_owner_context`]). `None` for
+/// any other caller, which keeps its credential's registration.
+pub(crate) fn attested_owner_call(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+) -> Option<Result<McpCallContext, McpGatewayError>> {
+    let owner = auth.managed_owner()?;
+    Some(owner_context_at(
+        McpSurfaceMode::Primary,
+        "memory-proxy",
+        owner,
+        Some(auth.clone()),
+        session,
+        None,
+        server,
+    ))
+}
+
+/// [`managed_owner_context`] once the call's placement is known.
+fn owner_context_at(
+    mode: McpSurfaceMode,
+    request_id: &str,
+    owner: oneiron::EntityId,
+    auth: Option<CoreAuth>,
+    session: Option<oneiron::EntityId>,
+    room_turn: Option<oneiron::EntityId>,
+    server: &Arc<SyncServer>,
+) -> Result<McpCallContext, McpGatewayError> {
     let auth = auth
         .filter(|auth| auth.managed_owner() == Some(owner))
         .ok_or_else(owner_not_live)?;
     crate::api::scoped_auth::require_live_managed_owner(server, &auth)
         .map_err(|_| owner_not_live())?;
-    let (session, room_turn) = mcp_request_placement(headers)?;
     let session_ref = session.map(|session| session.to_hex());
     let scope = McpConnectorScope::vault_wide();
     let actor = McpResolvedActor {

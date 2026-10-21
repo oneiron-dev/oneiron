@@ -21,6 +21,8 @@
 //! The same pass drops the library-program pins of the task's tries (CUA
 //! E4), which hold its arguments and goal.
 
+mod response;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
@@ -45,6 +47,12 @@ use crate::write_envelope::WriteActor;
 
 use super::encoding::{decode_record, encode_record};
 use super::types::{AttemptId, AttemptRecord};
+
+// FIX 7115: the payload text in checkpoint images, a row-held response.
+pub(crate) use self::response::{
+    attempt_payload_family, attempt_payload_owners, attempt_payload_stub,
+    retire_attempt_payload_in_txn,
+};
 
 /// The input member that holds the AGENT_DEF snapshot.
 const KEY_DEFINITION: &str = AGENT_DISPATCH_INPUT_KEYS[4];

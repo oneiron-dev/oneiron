@@ -75,6 +75,16 @@ p256 = { version = "0.13", features = ["ecdsa"] }
 # linear in the input: a host-authored pattern cannot make the relay path
 # backtrack. Already resolved transitively, so this adds no new tree.
 regex = "1"
+# FIX 8276 (CODE-MODE-TS = A): code-mode TypeScript is parsed, transformed and
+# printed with Oxc in process before QuickJS runs it. Every crate is pinned to
+# exactly 0.152.0, the last release whose MSRV is this workspace's 1.96.
+oxc_allocator = "=0.152.0"
+oxc_ast = "=0.152.0"
+oxc_codegen = { version = "=0.152.0", default-features = false, features = ["sourcemap"] }
+oxc_parser = "=0.152.0"
+oxc_semantic = "=0.152.0"
+oxc_span = "=0.152.0"
+oxc_transformer = "=0.152.0"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
