@@ -9,9 +9,12 @@
 //!
 //! Its call receipts are those that name it at the lease generation it is
 //! reviewed under (OF-568 L4, `call_evidence`): a terminal review's is the
-//! one it settled under, a live review's the one it holds. The call-receipt
-//! `loop` and the call half of `failed_check_repeat` judge that stream,
-//! whole. A call that names no attempt stays with the nightly review.
+//! one it settled under, a live review's the one it held when its wake
+//! queued it (FIX 8109). The call-receipt `loop` and the call half of
+//! `failed_check_repeat` judge that stream, whole. A live review whose
+//! attempt has since moved to another lease, or settled, runs those two
+//! alone: its live state is left unassessed, never read from the next
+//! lease. A call that names no attempt stays with the nightly review.
 //! `silent` reads the attempt's own calls and model steps at that generation
 //! and its actor's calls that name no attempt (OF-568 L5, `silence`), as the
 //! nightly review does. The nightly review alone runs `duplicate_work`,
@@ -34,7 +37,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState}
 use crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND;
 use crate::dreamer_runner::{
     DREAMER_RUNNER_ATTEMPT_KIND, DreamerAttemptPayload, DreamerRunnerStore,
-    decode_dreamer_attempt_payload,
+    EnqueueDreamerAttemptOutcome, decode_dreamer_attempt_payload,
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::open_trap_waits;
@@ -44,8 +47,9 @@ use crate::{Error, Result, Vault};
 /// Dedupe namespace of a terminal review: one per attempt and the lease
 /// generation it settled under.
 const TERMINAL_KEY: &str = "coach.agent_health.terminal";
-/// Dedupe namespace of a live review: one per attempt and the wake that
-/// queued it.
+/// Dedupe namespace of a live review: two slots per attempt and lease
+/// generation (FIX 7869), the review a wake joins and, while that one runs,
+/// the one queued behind it (`:next`).
 const LIVE_KEY: &str = "coach.agent_health.live";
 
 /// What one `coach.agent_health` job reviews. A Nil input is the nightly
@@ -69,6 +73,8 @@ pub(crate) enum HealthReviewInput {
         attempt: AttemptId,
         /// The recipe-wake receipt whose wake queued it.
         wake: AttemptId,
+        /// The lease generation it held when that wake queued it.
+        generation: u32,
     },
 }
 
@@ -86,7 +92,7 @@ fn decode(input: &Value) -> Result<HealthReviewInput> {
 /// Runs one `coach.agent_health` job on its input. Returns the cards it
 /// touched.
 pub(crate) fn review(vault: &Vault, input: &Value, now: u64) -> Result<u64> {
-    let (attempt, generation) = match decode(input)? {
+    let (attempt, generation, live) = match decode(input)? {
         HealthReviewInput::Nightly => {
             // Outcome receipts whose learning row did not land go first,
             // whether or not any scope is reviewed. A failure here is logged
@@ -110,18 +116,23 @@ pub(crate) fn review(vault: &Vault, input: &Value, now: u64) -> Result<u64> {
                 receipt = ?receipt,
                 "agent-health review at a terminal receipt"
             );
-            (attempt, Some(generation))
+            (attempt, generation, false)
         }
-        HealthReviewInput::Live { attempt, wake } => {
+        HealthReviewInput::Live {
+            attempt,
+            wake,
+            generation,
+        } => {
             tracing::debug!(
                 attempt = %bytes_to_hex_lower(attempt.as_bytes()),
                 wake = %bytes_to_hex_lower(wake.as_bytes()),
+                generation,
                 "agent-health review at a Dreamer wake"
             );
-            (attempt, None)
+            (attempt, generation, true)
         }
     };
-    review_attempt(vault, attempt, generation, now)
+    review_attempt(vault, attempt, generation, live, now)
 }
 
 /// Whether `record` is an agent dispatch, the only work the check judges.
@@ -136,11 +147,14 @@ fn agent_work(record: &AttemptRecord) -> bool {
 /// dispatch's own actor and nobody else: an attempt whose dispatch names no
 /// actor is reviewed unattributed, and that is no finding and no card. Its
 /// calls are those that name it at `generation`, the lease generation a
-/// terminal review settled under; a live review reads the one it holds now.
+/// terminal review settled under or a `live` review's wake saw (FIX 8109).
+/// A live review runs every detector only while the row still holds that
+/// lease; past it, only the call checks over that generation's calls run.
 fn review_attempt(
     vault: &Vault,
     attempt: AttemptId,
-    generation: Option<u32>,
+    generation: u32,
+    live: bool,
     now: u64,
 ) -> Result<u64> {
     let queue = AttemptQueue::new(vault);
@@ -159,9 +173,11 @@ fn review_attempt(
         attempts.insert(*parent.as_bytes(), row);
     }
     let actor = dispatch.actor;
-    let leased = record.state == AttemptState::Leased;
+    // The live state is assessed only at the lease the review is pinned to,
+    // never at the next one.
+    let whole = !live || (record.state.is_running() && record.attempt_count == generation);
+    let leased = whole && record.state == AttemptState::Leased;
     let claimed = record.claimed_at.unwrap_or(record.updated_at);
-    let generation = generation.unwrap_or(record.attempt_count);
     attempts.insert(key, record);
     let dispatched = Dispatches::from([(key, dispatch)]);
     let book = DialBook::read(vault, &dispatched)?;
@@ -174,9 +190,11 @@ fn review_attempt(
     }
     let since = now.saturating_sub(window);
     let mut traps = Traps::new();
-    for wait in open_trap_waits(vault)? {
-        if wait.attempt == attempt {
-            traps.entry(key).or_default().push(wait);
+    if whole {
+        for wait in open_trap_waits(vault)? {
+            if wait.attempt == attempt {
+                traps.entry(key).or_default().push(wait);
+            }
         }
     }
     // The calls whose receipts name this attempt at its generation, whole,
@@ -190,53 +208,71 @@ fn review_attempt(
     let calls =
         call_evidence::attempt_calls(vault, actor, witness, since, leased.then_some(claimed))?;
     let streams = calls.streams();
-    let mut findings = run_loop::run_loop_findings(vault, &dispatched, &attempts, &book, since)?;
+    let mut findings = if whole {
+        run_loop::run_loop_findings(vault, &dispatched, &attempts, &book, since)?
+    } else {
+        Vec::new()
+    };
     findings.extend(call_loop::loop_findings(
         &streams,
         &dispatched,
         &attempts,
         &book,
     ));
-    findings.extend(check_repeat::check_repeat_findings(
-        vault,
-        &streams,
-        &dispatched,
-        &attempts,
-        &book,
-        since,
-    )?);
-    findings.extend(silent_findings(
-        vault,
-        &SilenceCalls::Attempt(attempt, calls.activity),
-        &dispatched,
-        &attempts,
-        &traps,
-        &book,
-        now,
-    ));
-    findings.extend(long_wait_findings(
-        &dispatched,
-        &attempts,
-        &traps,
-        &book,
-        since,
-        now,
-    ));
-    findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
-    findings.extend(widen_denial_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        &book,
-        since,
-    )?);
-    findings.extend(unsupported_done_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        since,
-        now,
-    )?);
+    if whole {
+        findings.extend(check_repeat::check_repeat_findings(
+            vault,
+            &streams,
+            &dispatched,
+            &attempts,
+            &book,
+            since,
+        )?);
+        findings.extend(silent_findings(
+            vault,
+            &SilenceCalls::Attempt(attempt, calls.activity),
+            &dispatched,
+            &attempts,
+            &traps,
+            &book,
+            now,
+        ));
+        findings.extend(long_wait_findings(
+            &dispatched,
+            &attempts,
+            &traps,
+            &book,
+            since,
+            now,
+        ));
+        findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
+        findings.extend(widen_denial_findings(
+            vault,
+            &dispatched,
+            &attempts,
+            &book,
+            since,
+        )?);
+        findings.extend(unsupported_done_findings(
+            vault,
+            &dispatched,
+            &attempts,
+            since,
+            now,
+        )?);
+    } else {
+        tracing::debug!(
+            attempt = %bytes_to_hex_lower(attempt.as_bytes()),
+            generation,
+            "agent-health live review past its lease: the live state was not assessed"
+        );
+        findings.extend(check_repeat::call_check_findings(
+            &streams,
+            &dispatched,
+            &attempts,
+            &book,
+        ));
+    }
     land(
         vault,
         findings,
@@ -249,7 +285,8 @@ fn review_attempt(
     )
 }
 
-/// Queues one review on the maintenance lane, in the caller's write.
+/// Queues one review on the maintenance lane, in the caller's write. Returns
+/// the queue's answer: the job it queued, or the pending one `key` holds.
 fn enqueue(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -258,7 +295,7 @@ fn enqueue(
     key: String,
     run_id: Option<String>,
     now: u64,
-) -> Result<()> {
+) -> Result<EnqueueDreamerAttemptOutcome> {
     let input = serde_json::to_string(input).map_err(|_| invalid())?;
     DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
         txn,
@@ -271,8 +308,7 @@ fn enqueue(
         Some(key),
         run_id,
         now,
-    )?;
-    Ok(())
+    )
 }
 
 /// Runs one review's enqueue in a savepoint of the caller's write, so a
@@ -341,7 +377,7 @@ impl Vault {
                 generation: record.attempt_count,
                 receipt,
             };
-            enqueue(self, savepoint, &input, None, key, None, record.updated_at)
+            enqueue(self, savepoint, &input, None, key, None, record.updated_at).map(|_| ())
         });
         Ok(())
     }
@@ -349,40 +385,45 @@ impl Vault {
     /// Queues a review of each live agent attempt (leased or landing) over
     /// what it has streamed so far (OF-568 L2), in the commit of the
     /// continuous recipe wake `wake`, each in its own savepoint: it never
-    /// fails that commit ([`soft`]). One wake queues at most one review per
-    /// attempt, each its own job under that wake: many live attempts are
-    /// many parts, never one long pass.
+    /// fails that commit ([`soft`]). Each review is pinned to the lease
+    /// generation the attempt holds now (FIX 8109), and wakes coalesce
+    /// (FIX 7869): a wake that finds a review of that generation not yet
+    /// running joins it, which reads the newest state when it runs; one that
+    /// finds it running joins the review queued behind it, queuing it first
+    /// when there is none. So at most two wait per attempt and generation, a
+    /// joined wake queues nothing, and many live attempts are many parts,
+    /// never one long pass.
     pub(crate) fn enqueue_live_health_review_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         wake: &AttemptRecord,
         now: u64,
     ) -> Result<()> {
-        let live: Vec<AttemptId> = match AttemptQueue::new(self).list_in_txn(txn) {
+        let live: Vec<(AttemptId, u32)> = match AttemptQueue::new(self).list_in_txn(txn) {
             Ok(rows) => rows
                 .into_iter()
                 .filter(|record| {
                     matches!(record.state, AttemptState::Leased | AttemptState::Landing)
                 })
                 .filter(agent_work)
-                .map(|record| record.id)
+                .map(|record| (record.id, record.attempt_count))
                 .collect(),
             Err(error) => {
                 skipped(wake.id, &error);
                 return Ok(());
             }
         };
-        let wake_hex = bytes_to_hex_lower(wake.id.as_bytes());
-        for attempt in live {
-            let key = format!(
-                "{LIVE_KEY}:{}:{wake_hex}",
+        for (attempt, generation) in live {
+            let slot = format!(
+                "{LIVE_KEY}:{}:{generation}",
                 bytes_to_hex_lower(attempt.as_bytes())
             );
             let input = HealthReviewInput::Live {
                 attempt,
                 wake: wake.id,
+                generation,
             };
-            soft(self, txn, attempt, |savepoint| {
+            let queue = |savepoint: &mut heed::RwTxn<'_>, key: String| {
                 enqueue(
                     self,
                     savepoint,
@@ -392,6 +433,15 @@ impl Vault {
                     wake.run_id.clone(),
                     now,
                 )
+            };
+            soft(self, txn, attempt, |savepoint| {
+                if let EnqueueDreamerAttemptOutcome::Existing(status) =
+                    queue(savepoint, slot.clone())?
+                    && status.attempt.state.is_running()
+                {
+                    queue(savepoint, format!("{slot}:next"))?;
+                }
+                Ok(())
             });
         }
         Ok(())
