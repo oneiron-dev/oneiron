@@ -6949,7 +6949,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 2,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -7291,14 +7291,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SignatureImagePlan"
+     ],
      "path": "src/blob_artifact/esign/signature_image.rs",
      "purpose": "Capability-bound, decoded and re-encoded signature images",
      "surface": {
       "crate-vis": 2,
-      "fn": 2
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -7377,7 +7380,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArtifactExport",
@@ -7391,7 +7394,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 4
      }
     },
@@ -7540,7 +7543,8 @@
      "path": "src/blob_artifact/version_rows.rs",
      "purpose": "The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -12448,7 +12452,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 14,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -35964,7 +35968,7 @@
      "surface": {
       "crate-vis": 11,
       "mod": 11,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -60471,15 +60475,35 @@
       "QueueTaskBrief",
       "SpawnPins",
       "StoredBrief",
-      "TypeRef"
+      "TypeRef",
+      "WorkflowBinding"
      ],
      "path": "src/task_verb/brief.rs",
      "purpose": "The queue task brief (OF-220): the typed why-carrier one TASK holds",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
-      "fn": 4,
-      "struct": 14
+      "fn": 5,
+      "struct": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TaskWorkflowAttempt",
+      "TaskWorkflowCheck",
+      "TaskWorkflowPin",
+      "TaskWorkflowReport",
+      "TaskWorkflowUnavailable"
+     ],
+     "path": "src/task_verb/browser_workflow.rs",
+     "purpose": "A TASK's bound library program, pinned per try (CUA E4; DESIGN-2 §2, owner C1 = A)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 3,
+      "fn": 12,
+      "struct": 2
      }
     },
     {
@@ -60868,7 +60892,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -60940,15 +60964,18 @@
       "TaskReportBody",
       "TaskStatusQuery",
       "TaskStatusView",
-      "TaskVia"
+      "TaskVia",
+      "TaskWorkflowHandoff",
+      "TaskWorkflowOutcome",
+      "TaskWorkflowStatus"
      ],
      "path": "src/task_verb/highway_types.rs",
      "purpose": "The task highway's typed calls, durable handles, outcomes and status view (OF-220)",
      "surface": {
       "crate-vis": 11,
-      "enum": 6,
-      "fn": 1,
-      "struct": 10
+      "enum": 8,
+      "fn": 2,
+      "struct": 11
      }
     },
     {
@@ -61003,10 +61030,10 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 43,
+      "crate-vis": 44,
       "fn": 1,
       "mod": 5,
-      "re-export": 27
+      "re-export": 28
      }
     },
     {
@@ -61299,7 +61326,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RunnerDoneAnswer",
@@ -61309,7 +61336,7 @@
      "purpose": "A runner's \"Done means met?\", answered before it settles (OF-533)",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -70171,7 +70198,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 205,
+     "files": 206,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70341,7 +70368,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4468,
+   "source_files": 4469,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74655,7 +74682,7 @@
      "purpose": "The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520)",
      "surface": {
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 2,
       "trait": 1
      }
@@ -79866,6 +79893,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CacheBackend",
+      "CacheCallUsage",
+      "CacheCounterSource",
+      "CacheDigest",
+      "CacheEpoch",
+      "CacheEvidenceError",
+      "CacheIdentity",
+      "CacheOutcome",
+      "CachePassReport",
+      "CachePassUsage",
+      "CachePhase"
+     ],
+     "path": "src/llm/cache.rs",
+     "purpose": "What a backend reported about its prompt cache on one physical model call (FIX 6567, INF 2 step 1): for each…",
+     "surface": {
+      "const": 1,
+      "enum": 5,
+      "fn": 7,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -80086,7 +80138,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -80211,7 +80263,7 @@
      "purpose": "—"
     },
     "llm": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -80220,7 +80272,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 35,
+   "source_files": 36,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -84838,7 +84890,7 @@
      "path": "src/api/esign/ingress.rs",
      "purpose": "Token-first ingress at the public signing doors (FIX 3808, Engine rulings 10-18 and 10-19)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 14
      }
     },
     {
@@ -91681,13 +91733,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 21
      }
     },
     {
@@ -92957,6 +93009,16 @@
      "purpose": "A `key_secret` provider's media leg (OF-131): each exchange a media adapter makes is one credential-broker…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/cache_usage.rs",
+     "purpose": "The prompt-cache evidence a house backend's reply carries (FIX 6567, INF 2 step 1), written into its usage…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -96282,7 +96344,7 @@
     "machine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
@@ -96301,7 +96363,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 49,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -96443,7 +96505,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1050,
+   "source_files": 1051,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -100232,6 +100294,9 @@
       "TaskWaitRequest",
       "TaskWaveReceipt",
       "TaskWaveRequest",
+      "TaskWorkflowHandoff",
+      "TaskWorkflowOutcome",
+      "TaskWorkflowStatus",
       "TasksOverflow",
       "TasksSection",
       "TeacherProbeApproval",
@@ -100474,6 +100539,7 @@
       "WitnessAssertions",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
+      "WorkflowBinding",
       "WorkflowCheck",
       "WorkflowDispatchRequest",
       "WorkflowPersonDispatchRequest",
@@ -100526,8 +100592,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 938,
-      "struct": 2944
+      "enum": 940,
+      "struct": 2946
      }
     },
     {

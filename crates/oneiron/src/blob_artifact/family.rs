@@ -180,6 +180,34 @@ impl Vault {
         }))
     }
 
+    /// [`Vault::blob_artifact_view`] for a reader held to the rows it may
+    /// read (FIX 7645): `admit` is handed the artifact and every row its
+    /// version tree shows, each version's CLAIM and its content's ASSET,
+    /// before any of the view is read or projected, from the very records the
+    /// view is then made of. A tree it does not admit whole reads as absent,
+    /// as a missing artifact does.
+    pub fn blob_artifact_view_admitted(
+        &self,
+        id: &EntityId,
+        admit: impl FnOnce(&[EntityId]) -> Result<bool>,
+    ) -> Result<Option<ArtifactView>> {
+        let versions = self.blob_artifact_versions(id)?;
+        if !admit(&super::version_rows::blob_tree_rows(id, &versions)?)? {
+            return Ok(None);
+        }
+        let Some(body) = self.get_blob_artifact(id)? else {
+            return Ok(None);
+        };
+        Ok(Some(ArtifactView {
+            artifact_id: *id,
+            kind: ArtifactKind::of_media_type(&body.media_type),
+            name: body.name,
+            media_type: body.media_type,
+            head: versions.last().map(|version| version.version),
+            versions: versions.iter().map(ArtifactVersionView::from).collect(),
+        }))
+    }
+
     /// Exports one version as a file: `version` or the head when `None`. The
     /// record is bound to its ledger claim and the bytes to its content hash.
     /// A DOCX copy shows its default author (FIX 4513); `content_hash` still
