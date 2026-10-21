@@ -152,6 +152,10 @@ pub(crate) struct BlockedRunHost {
     /// The model request the run's executor bound before the call; `None`
     /// when no request of the run reached this engine.
     pub(crate) request: Option<BlockedRunRequest>,
+    /// The capture epoch the run's host holds while every answer the run was
+    /// served is in its read-world ledger (FIX 6130); `None` when it holds
+    /// none clean.
+    pub(crate) read_worlds: Option<crate::code_run::ReadWorldSeal>,
 }
 
 /// The worlds a run's host scoped it to, as the report's filing read them.
@@ -180,6 +184,11 @@ pub(crate) struct BlockedReplaySource {
     pub(crate) reporter: EntityId,
     pub(crate) worlds: RunWorlds,
     pub(crate) reported_at: u64,
+    /// The worlds of the rows the run was served up to the report, as its
+    /// complete read-world ledger stood in the filing commit (FIX 6130);
+    /// `None` when the ledger was not complete there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) read_worlds: Option<crate::code_run::ReadWorldSnapshot>,
 }
 
 impl BlockedReplaySource {
