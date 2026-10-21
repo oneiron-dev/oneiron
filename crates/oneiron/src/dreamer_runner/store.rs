@@ -1078,6 +1078,15 @@ impl<'a> DreamerRunnerStore<'a> {
         PARKED.get(&self.vault.store, &rtxn, &attempt_id)
     }
 
+    /// [`Self::parked_attempt`] at `txn`'s revision.
+    pub(crate) fn parked_attempt_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt_id: AttemptId,
+    ) -> Result<Option<DreamerParkedAttemptRecord>> {
+        PARKED.get(&self.vault.store, txn, &attempt_id)
+    }
+
     /// Reads one Dreamer attempt and its parked row on one snapshot, so a
     /// park cleared between two reads never reads absent beside a status
     /// that still shows it parked.
