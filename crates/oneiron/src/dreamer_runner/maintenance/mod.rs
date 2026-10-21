@@ -264,6 +264,13 @@ pub(crate) fn execute(
         // Judged on the host's lent model: the wake driver hands it to the
         // host's executor, so here it can only wait for one.
         compaction_check::COMPACTION_CHECK_FACET => return Ok(compaction_check::unlent()),
+        // An urgent digest's harm question is asked on the host's shared
+        // ladder (OF-194): the wake driver hands it to the host's executor,
+        // so here it can only wait for one. Its witnessed answer runs here.
+        digest::DIGEST_ASSESS_FACET => return Ok(digest::unlent_assessment()),
+        digest::DIGEST_URGENT_FACET => {
+            digest::emit_urgent_proactivity_digest(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
         _ => return Err(invalid()),
     }
     Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
