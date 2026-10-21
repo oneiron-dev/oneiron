@@ -11,7 +11,11 @@
 //! reads and settlement mechanics live beside the markers, in
 //! `crate::dreamer_consolidation::settle`. Only the root owner takes the
 //! optional ApproveAndKeep, which approves a Keep staged in its import's
-//! review and keeps it in one transaction (FIX 6151).
+//! review and keeps it in one transaction (FIX 6151). A Keep the Gate holds
+//! is retried once as the responder's approval of that alternative (FIX
+//! 5753).
+
+use std::cell::Cell;
 
 use super::authorship::*;
 use super::{Memory, MemoryResult};
@@ -19,8 +23,9 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::dreamer_consolidation::{
     ConflictRevertReceipt, ConflictReviewScope, ConflictSettleOutcome, ConflictSettleReceipt,
-    ConflictSettlement, OpenConflict, SettledAnswer, SettlementApplied, apply_settlement_in_txn,
-    open_conflict_in_txn, open_conflicts_in_txn, revert_settlement_in_txn, settled_answers_in_txn,
+    ConflictSettlement, KeepApproval, KeepAs, OpenConflict, SettledAnswer, SettlementApplied,
+    apply_settlement_in_txn, open_conflict_in_txn, open_conflicts_in_txn, revert_settlement_in_txn,
+    settled_answers_in_txn,
 };
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
@@ -42,6 +47,28 @@ const DREAMER_AUTHORITY: &str = "dreamer.standing_review";
 /// one subject or the whole vault naming the Dreamer, which it leaves to
 /// the owner while one is live.
 const HOLD_VERB: &str = "memory.conflict_review.hold";
+/// FIX 5753 (Engine 10-20 07:4x): a Keep whose retained alternative the Gate
+/// holds is the responder's approval of that exact proposal and settlement,
+/// in their one commit: no standing permit, no actor-ceiling change.
+const KEEP_PENDING_APPROVES_EXACT: bool = true;
+/// FIX 5753: the approval retries a held Keep gets, each in a fresh write
+/// transaction after the one before aborted whole.
+const KEEP_PENDING_APPROVAL_RETRIES: u8 = 1;
+/// The Gate receipt naming a responder's approval of the alternative its
+/// Keep landed (FIX 5753): the settled receipt's `approval_ref`.
+const APPROVAL_KIND: &str = "conflict_keep_approval";
+const APPROVAL_REASON: &str = "gate.memory.conflict_keep_approval";
+
+/// What a held Keep's approval retry answers when one of its own checks
+/// fails (Engine 10-21 18:3x).
+#[derive(Debug, Clone, Copy)]
+enum KeepApprovalCheckError {
+    /// The Keep answers as it did before the retry: its first refusal, with
+    /// the retained alternative intact.
+    PreserveOriginalPath,
+}
+const KEEP_APPROVAL_CHECK_ERROR: KeepApprovalCheckError =
+    KeepApprovalCheckError::PreserveOriginalPath;
 
 impl Memory<'_> {
     /// The open conflicts this caller may settle, on `subject` alone when one
@@ -93,6 +120,15 @@ impl Memory<'_> {
     /// same owner Gate a claim settlement uses and kept in this transaction,
     /// and its approval consolidates VAD once it commits, as that
     /// settlement's does (FIX 6151).
+    ///
+    /// A Keep of a retained alternative whose Auto landing the Gate holds on
+    /// a typed reason the Keep approves is retried once, after that
+    /// transaction aborted whole, in a fresh one (FIX 5753): every check runs
+    /// again, the alternative is born Proposed and the responder approves it
+    /// as its own act (an Owner, co-Owners included, or a delegate under its
+    /// Grant; never the Dreamer), and the settlement commits with it. The
+    /// receipt then names that approval. A retry that fails answers with the
+    /// first refusal, the retained alternative intact.
     pub fn settle_conflict(
         &self,
         reviewer: Option<&AuthenticatedOwner>,
@@ -101,130 +137,255 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<ConflictSettleOutcome> {
         let mut consolidate = None;
-        let outcome = self.with_verified_actor_write_txn(|txn| {
-            let owner = self.conflict_responder_is_owner(txn, reviewer)?;
-            let dreamer = !owner && self.conflict_responder_is_dreamer()?;
-            let conflict = open_conflict_in_txn(self.vault, txn, marker)?;
-            if dreamer && conflict.reverted {
-                return Err(authority_denied(
-                    "the owner reverted the Dreamer's settlement of this conflict",
-                )
-                .into());
-            }
-            if dreamer && self.dreamer_review_hold(txn, conflict.subject)?.is_some() {
-                return Err(authority_denied("the owner holds the Dreamer's review here").into());
-            }
-            let grant_ref = if owner || dreamer {
-                None
-            } else {
-                Some(
-                    self.conflict_review_grant(txn, conflict.subject)?
-                        .ok_or_else(|| authority_denied("no named conflict review Grant"))?,
-                )
-            };
-            let actor = WriteActor::new(self.actor, self.actor_class);
-            if let ConflictSettlement::ApproveAndKeep(staged) = settlement {
-                let dreamer_run = self.approve_staged_keep_in_txn(
-                    txn,
-                    reviewer.filter(|_| owner),
-                    &conflict,
-                    staged,
-                    now,
-                )?;
-                consolidate = dreamer_run.then_some(staged);
-            }
-            let person = self.actor_class == EdgeActorClass::Human;
-            let mut provenance = vec![
-                (Value::from("surface"), Value::from(KIND)),
-                (
-                    Value::from("openMarker"),
-                    Value::Binary(marker.as_bytes().to_vec()),
-                ),
-            ];
-            if let Some(reviewer) = reviewer {
-                provenance.push((
-                    Value::from("ownerAuthentication"),
-                    Value::from(reviewer.decision_id().to_hex()),
-                ));
-            }
-            if let Some(grant) = &grant_ref {
-                provenance.push((Value::from("grant"), Value::from(grant.as_str())));
-            }
-            if dreamer {
-                provenance.push((Value::from("authority"), Value::from(DREAMER_AUTHORITY)));
-            }
-            let envelope = WriteEnvelope::new(
-                actor,
-                if person {
-                    ClaimSource::UserStated
-                } else {
-                    ClaimSource::Generated
-                },
-                WriteProvenance::new(Value::Map(provenance))?,
-                if person {
-                    ClaimApprovalStatus::Approved
-                } else {
-                    ClaimApprovalStatus::Auto
-                },
-            );
-            let settled = match apply_settlement_in_txn(
-                self.vault,
+        let held = Cell::new(false);
+        let first = self.with_verified_actor_write_txn(|txn| {
+            self.settle_in_txn(
                 txn,
-                &conflict,
-                settlement,
-                &envelope,
-                (!owner).then_some(actor),
-                person,
+                reviewer,
+                (marker, settlement),
+                (&held, false),
+                &mut consolidate,
                 now,
-            )? {
-                SettlementApplied::Settled(settled) => settled,
-                SettlementApplied::ImportReviewPending(staged) => {
-                    let mut receipt = decision(
-                        actor,
-                        KIND,
-                        "pending",
-                        REASON,
-                        Some(marker),
-                        marker.as_bytes().to_vec(),
-                        now,
-                    );
-                    receipt.grant_ref = grant_ref;
-                    self.vault
-                        .store
-                        .append_gate_decision_in_txn(txn, &receipt)?;
-                    return Ok(ConflictSettleOutcome::ImportReviewPending {
-                        staged,
-                        receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
-                    });
+            )
+        });
+        let outcome = match first {
+            Ok(outcome) => outcome,
+            Err(refusal) => {
+                consolidate = None;
+                if !(KEEP_PENDING_APPROVES_EXACT
+                    && KEEP_PENDING_APPROVAL_RETRIES > 0
+                    && held.get()
+                    && matches!(settlement, ConflictSettlement::Keep(_))
+                    && matches!(self.conflict_responder_is_dreamer(), Ok(false)))
+                {
+                    return Err(refusal);
                 }
-            };
-            let mut receipt = decision(
-                actor,
-                KIND,
-                "approved",
-                REASON,
-                Some(settled.resolved),
-                marker.as_bytes().to_vec(),
-                now,
-            );
-            receipt.grant_ref = grant_ref;
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &receipt)?;
-            Ok(ConflictSettleOutcome::Settled(ConflictSettleReceipt {
-                marker,
-                settlement,
-                resolved: settled.resolved,
-                superseded: settled.superseded,
-                receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
-            }))
-        })?;
+                let retried = self.with_verified_actor_write_txn(|txn| {
+                    self.settle_in_txn(
+                        txn,
+                        reviewer,
+                        (marker, settlement),
+                        (&held, true),
+                        &mut consolidate,
+                        now,
+                    )
+                });
+                match (retried, KEEP_APPROVAL_CHECK_ERROR) {
+                    (Ok(outcome), _) => outcome,
+                    (Err(error), KeepApprovalCheckError::PreserveOriginalPath) => {
+                        tracing::warn!(
+                            target: "oneiron::memory",
+                            code = %error.code,
+                            marker = %marker.to_hex(),
+                            "a held Keep's approval did not land; the Keep answers as before"
+                        );
+                        return Err(refusal);
+                    }
+                }
+            }
+        };
         // Consent is committed before the consolidator opens its own writer;
         // a VAD failure is returned with the settlement durable.
         if let Some(approved) = consolidate {
             self.vault.consolidate_claim_vad_now(&approved, now)?;
         }
         Ok(outcome)
+    }
+
+    /// [`Self::settle_conflict`]'s one transaction. With `approve` (its one
+    /// retry, FIX 5753) a kept retained alternative is born Proposed and
+    /// approved by this responder, rechecked here; without, it lands Auto and
+    /// `held` notes a hold the responder may approve.
+    fn settle_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        reviewer: Option<&AuthenticatedOwner>,
+        (marker, settlement): (EntityId, ConflictSettlement),
+        (held, approve): (&Cell<bool>, bool),
+        consolidate: &mut Option<EntityId>,
+        now: u64,
+    ) -> MemoryResult<ConflictSettleOutcome> {
+        let owner = self.conflict_responder_is_owner(txn, reviewer)?;
+        let dreamer = !owner && self.conflict_responder_is_dreamer()?;
+        let conflict = open_conflict_in_txn(self.vault, txn, marker)?;
+        if dreamer && conflict.reverted {
+            return Err(authority_denied(
+                "the owner reverted the Dreamer's settlement of this conflict",
+            )
+            .into());
+        }
+        if dreamer && self.dreamer_review_hold(txn, conflict.subject)?.is_some() {
+            return Err(authority_denied("the owner holds the Dreamer's review here").into());
+        }
+        let grant_ref = if owner || dreamer {
+            None
+        } else {
+            Some(
+                self.conflict_review_grant(txn, conflict.subject)?
+                    .ok_or_else(|| authority_denied("no named conflict review Grant"))?,
+            )
+        };
+        let actor = WriteActor::new(self.actor, self.actor_class);
+        if let ConflictSettlement::ApproveAndKeep(staged) = settlement {
+            let dreamer_run = self.approve_staged_keep_in_txn(
+                txn,
+                reviewer.filter(|_| owner),
+                &conflict,
+                staged,
+                now,
+            )?;
+            *consolidate = dreamer_run.then_some(staged);
+        }
+        let approval = if approve {
+            Some(self.keep_approval_in_txn(txn, reviewer.filter(|_| owner), dreamer)?)
+        } else {
+            None
+        };
+        let keep_as = approval
+            .as_ref()
+            .map_or(KeepAs::Auto(held), KeepAs::Approved);
+        let person = self.actor_class == EdgeActorClass::Human;
+        let mut provenance = vec![
+            (Value::from("surface"), Value::from(KIND)),
+            (
+                Value::from("openMarker"),
+                Value::Binary(marker.as_bytes().to_vec()),
+            ),
+        ];
+        if let Some(reviewer) = reviewer {
+            provenance.push((
+                Value::from("ownerAuthentication"),
+                Value::from(reviewer.decision_id().to_hex()),
+            ));
+        }
+        if let Some(grant) = &grant_ref {
+            provenance.push((Value::from("grant"), Value::from(grant.as_str())));
+        }
+        if dreamer {
+            provenance.push((Value::from("authority"), Value::from(DREAMER_AUTHORITY)));
+        }
+        let envelope = WriteEnvelope::new(
+            actor,
+            if person {
+                ClaimSource::UserStated
+            } else {
+                ClaimSource::Generated
+            },
+            WriteProvenance::new(Value::Map(provenance))?,
+            if person {
+                ClaimApprovalStatus::Approved
+            } else {
+                ClaimApprovalStatus::Auto
+            },
+        );
+        let settled = match apply_settlement_in_txn(
+            self.vault,
+            txn,
+            &conflict,
+            settlement,
+            &envelope,
+            (!owner).then_some(actor),
+            person,
+            keep_as,
+            now,
+        )? {
+            SettlementApplied::Settled(settled) => settled,
+            SettlementApplied::ImportReviewPending(_) if approve => {
+                return Err(not_approved().into());
+            }
+            SettlementApplied::ImportReviewPending(staged) => {
+                let mut receipt = decision(
+                    actor,
+                    KIND,
+                    "pending",
+                    REASON,
+                    Some(marker),
+                    marker.as_bytes().to_vec(),
+                    now,
+                );
+                receipt.grant_ref = grant_ref;
+                self.vault
+                    .store
+                    .append_gate_decision_in_txn(txn, &receipt)?;
+                return Ok(ConflictSettleOutcome::ImportReviewPending {
+                    staged,
+                    receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
+                });
+            }
+        };
+        // The retry approved exactly the alternative its Keep selected, or
+        // it settles nothing.
+        let approval_ref = match (&approval, settlement) {
+            (None, _) => None,
+            (Some(approval), ConflictSettlement::Keep(selector)) => {
+                let approved = approval.approved().ok_or_else(not_approved)?;
+                *consolidate = approved.dreamer_run.then_some(approved.claim);
+                let mut record = decision(
+                    actor,
+                    APPROVAL_KIND,
+                    "approved",
+                    APPROVAL_REASON,
+                    Some(approved.claim),
+                    [marker, selector, approved.claim]
+                        .iter()
+                        .flat_map(|id| *id.as_bytes())
+                        .collect(),
+                    now,
+                );
+                record.grant_ref.clone_from(&grant_ref);
+                self.vault.store.append_gate_decision_in_txn(txn, &record)?;
+                Some(format!("gate:{}", record.decision_id.to_hex()))
+            }
+            (Some(_), _) => return Err(not_approved().into()),
+        };
+        let mut receipt = decision(
+            actor,
+            KIND,
+            "approved",
+            REASON,
+            Some(settled.resolved),
+            marker.as_bytes().to_vec(),
+            now,
+        );
+        receipt.grant_ref = grant_ref;
+        self.vault
+            .store
+            .append_gate_decision_in_txn(txn, &receipt)?;
+        Ok(ConflictSettleOutcome::Settled(ConflictSettleReceipt {
+            marker,
+            settlement,
+            resolved: settled.resolved,
+            superseded: settled.superseded,
+            receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
+            approval_ref,
+        }))
+    }
+
+    /// This responder's approval of its held Keep, in the retry's
+    /// transaction (FIX 5753): an Owner, co-Owners included, authenticated as
+    /// the bound person, approves as his own act, and his proof answers the
+    /// claim's owner-answer obligation; a delegate approves with its own
+    /// actor under the conflict review Grant the caller rechecked in this
+    /// transaction, and answers no owner obligation. The Dreamer, which
+    /// opened the alternative, approves nothing: its standing review is no
+    /// owner answer.
+    fn keep_approval_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: Option<&AuthenticatedOwner>,
+        dreamer: bool,
+    ) -> Result<KeepApproval, Error> {
+        let actor = WriteActor::new(self.actor, self.actor_class);
+        if dreamer || actor == dreamer_principal()? {
+            return Err(authority_denied(
+                "the Dreamer's standing review approves no held Keep",
+            ));
+        }
+        let owner_answer = match owner {
+            Some(owner) => owner.owner_answer_in_txn(self.vault, txn)?,
+            None => None,
+        };
+        Ok(KeepApproval::new(actor, owner_answer))
     }
 
     /// The owner's approval of `staged`, a Keep of `conflict` still waiting
@@ -477,6 +638,12 @@ impl Memory<'_> {
         }
         Ok(())
     }
+}
+
+/// A held Keep's retry that did not approve exactly the alternative its Keep
+/// selected: it settles nothing.
+fn not_approved() -> Error {
+    authority_denied("the held Keep's retry approved no alternative it selected")
 }
 
 /// The vault's Dreamer principal, the System MACHINE an owner's hold names.
