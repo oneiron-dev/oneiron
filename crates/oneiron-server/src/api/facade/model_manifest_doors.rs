@@ -9,7 +9,9 @@ use oneiron::llm::manifest::doors::{
     OneironerBind,
 };
 use oneiron::llm::manifest::{ModelManifest, ModelRole, ModelSlot};
-use oneiron::memory::extraction::{EncoderInput, EncoderMessage, ExtractionEncoder, infer_encoder};
+use oneiron::memory::extraction::{
+    EncoderInput, EncoderMessage, ExtractionEncoder, ExtractionWork, infer_encoder,
+};
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EntityId, ModelId, ModelLocality, ModelTierRef};
@@ -372,7 +374,7 @@ async fn invoke(
             }
             let expected = receipt.clone();
             let server = Arc::clone(server);
-            let (output, provider) = tokio::task::spawn_blocking(move || {
+            let (output, execution, provider) = tokio::task::spawn_blocking(move || {
                 let slot = server
                     .tagger
                     .as_ref()
@@ -398,13 +400,16 @@ async fn invoke(
                     language: None,
                     speaker: None,
                 };
-                let output = infer_encoder(&input, encoder).map_err(MemoryError::bad_request)?;
-                Ok::<_, MemoryError>((output, slot.config().provider.as_str().to_owned()))
+                // The owner waits on this call: a live one.
+                let attempt = infer_encoder(&input, ExtractionWork::Live, encoder);
+                let output = attempt.result.map_err(MemoryError::bad_request)?;
+                let provider = slot.config().provider.as_str().to_owned();
+                Ok::<_, MemoryError>((output, attempt.execution, provider))
             })
             .await
             .map_err(|_| internal(VERB))??;
             receipt.provider = provider;
-            ModelRoleOutput::Tagged { output }
+            ModelRoleOutput::Tagged { output, execution }
         }
     };
     Ok(ModelRoleInvocation { receipt, output })
