@@ -1,0 +1,52 @@
+#!/bin/bash
+# Places the plan's non-package content into the image ($BUILDROOT), after
+# packages and the build script's $DESTDIR are in: the guest account, pinned
+# repo files and payloads, trees, symlinks and directories. Runs outside the
+# image with /usr from the tools tree; build.py writes the plan under
+# /work/src/plan as tab-separated files, so no list lives in this script.
+set -euo pipefail
+
+root=${BUILDROOT:?}
+src=${SRCDIR:-/work/src}
+plan=$src/plan
+
+# The guest account, as `useradd --uid U --user-group --no-create-home
+# --home-dir H` wrote it in the old Dockerfiles; the shadow date is the epoch's
+# day so the line is the same on every build.
+if [ -s "$plan/user.tsv" ]; then
+  IFS=$'\t' read -r name uid gid home shell < "$plan/user.tsv"
+  if grep -q "^$name:" "$root/etc/passwd"; then
+    echo "user $name already exists in the image" >&2
+    exit 1
+  fi
+  days=$(( ${SOURCE_DATE_EPOCH:?} / 86400 ))
+  printf '%s:x:%s:%s::%s:%s\n' "$name" "$uid" "$gid" "$home" "$shell" >> "$root/etc/passwd"
+  printf '%s:x:%s:\n' "$name" "$gid" >> "$root/etc/group"
+  if [ -e "$root/etc/shadow" ]; then
+    printf '%s:!:%s:0:99999:7:::\n' "$name" "$days" >> "$root/etc/shadow"
+  fi
+  if [ -e "$root/etc/gshadow" ]; then
+    printf '%s:!::\n' "$name" >> "$root/etc/gshadow"
+  fi
+fi
+
+# Pinned files and payloads (sources relative to the plan directory).
+while IFS=$'\t' read -r rel dest mode; do
+  install -D -m "$mode" "$plan/$rel" "$root$dest"
+done < "$plan/files.tsv"
+
+# Trees (sources relative to /work/src: a plan tree or a mounted source).
+while IFS=$'\t' read -r rel dest; do
+  mkdir -p "$root$dest"
+  cp -a "$src/$rel/." "$root$dest/"
+  chmod -R a+rX "$root$dest"
+done < "$plan/trees.tsv"
+
+while IFS=$'\t' read -r path target; do
+  mkdir -p "$(dirname "$root$path")"
+  ln -sfn "$target" "$root$path"
+done < "$plan/links.tsv"
+
+while IFS=$'\t' read -r path mode; do
+  install -d -m "$mode" "$root$path"
+done < "$plan/dirs.tsv"

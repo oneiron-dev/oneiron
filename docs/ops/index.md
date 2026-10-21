@@ -42,5 +42,6 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   `restore_source_disk` at `/restore`, the guest network's one NIC and `/config/network.json`
   (FIX 6808), the managed profile's five typed `/config` files (FIX 6809), the lost-result
   decision table and the image manifest's revision floors.
+- [Guest image family](guest-image-family.md) — the mkosi builder in `crates/oneiron-container/images/`: the release list, the package lock, build and rebuild from the mirror, retention, pins vs digests vs signatures vs boot proof, byte fields, and the candidate hand-off.
 - [Code map](../CODEMAP.md) — generated crate/module/file map (`python3 scripts/codemap/codemap.py`);
   per-crate file tables in [`../codemap/`](../codemap/).
