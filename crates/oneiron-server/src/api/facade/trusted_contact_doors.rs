@@ -1,7 +1,8 @@
 //! The host doors of the trusted-contact rows (DOOR-140 A, OF-527), beside
-//! `shared_policy_doors`. The vault owner names a trusted contact, sets its
-//! dial and a policy row's tier, and reads and answers the concern asks,
-//! under the owner's proof (`owner_proof`). The named contact consents, and
+//! `shared_policy_doors`. A live person names their trusted contact, sets
+//! its dial, and reads and answers their own concern asks under their own
+//! proof ([`own_person`], FIX 8169); a policy row's tier stays under the
+//! owner's proof (`owner_proof`). The named contact consents, and
 //! either side lists and revokes, under their own person proof
 //! (`shared_act_doors::person`): the contact is a separately credentialed,
 //! live PERSON of this vault, so the owner never asserts the contact's
@@ -53,7 +54,23 @@ fn owner_policy_config(server: &SyncServer) -> &PolicyModelConfig {
     &server.policy_doors.owner
 }
 
-/// `vault.trusted_contacts.name`: the owner names their trusted contact.
+/// The proof a person's own trusted-contact act runs under (FIX 8169):
+/// naming their contact, their own dial, and reading, answering and
+/// proposing their own concern. The owner's, as before; else any live
+/// person's own, from their verified human slip ([`person`]), which every
+/// engine door here revalidates as that person in its own transaction. A
+/// caller with neither keeps the owner refusal it had. The shared policy
+/// tier stays the owner's.
+pub(super) fn own_person(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> oneiron::memory::MemoryResult<oneiron::consent::AuthenticatedOwner> {
+    owner_proof(auth, server, verb)
+        .or_else(|refusal| person(server, auth, verb).map_err(|_| refusal))
+}
+
+/// `vault.trusted_contacts.name`: a person names their trusted contact.
 pub(crate) async fn vault_trusted_contacts_name(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -63,8 +80,8 @@ pub(crate) async fn vault_trusted_contacts_name(
     as_person_naming(
         server,
         VERB,
-        owner_proof(auth, server, VERB),
-        move |server, owner| sdk::name_trusted_contact(server.vault(), &owner, input),
+        own_person(server, auth, VERB),
+        move |server, person| sdk::name_trusted_contact(server.vault(), &person, input),
         |_| Some(Vec::new()),
     )
     .await
@@ -121,7 +138,7 @@ pub(crate) async fn vault_trusted_contacts_revoke(
     .await
 }
 
-/// `vault.trusted_contacts.dial.set`: the owner changes whether they are
+/// `vault.trusted_contacts.dial.set`: a person changes whether they are
 /// asked first.
 pub(crate) async fn vault_trusted_contacts_dial_set(
     server: &Arc<SyncServer>,
@@ -132,8 +149,8 @@ pub(crate) async fn vault_trusted_contacts_dial_set(
     as_person_naming(
         server,
         VERB,
-        owner_proof(auth, server, VERB),
-        move |server, owner| sdk::set_trusted_contact_dial(server.vault(), &owner, input),
+        own_person(server, auth, VERB),
+        move |server, person| sdk::set_trusted_contact_dial(server.vault(), &person, input),
         |_| Some(Vec::new()),
     )
     .await
@@ -156,7 +173,7 @@ pub(crate) async fn vault_trusted_contacts_tier_set(
     .await
 }
 
-/// `vault.trusted_contacts.concern.asks`: the owner's open concern asks.
+/// `vault.trusted_contacts.concern.asks`: a person's own open concern asks.
 pub(crate) async fn vault_trusted_contacts_concern_asks(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -166,15 +183,15 @@ pub(crate) async fn vault_trusted_contacts_concern_asks(
     as_person_naming(
         server,
         VERB,
-        owner_proof(auth, server, VERB),
-        move |server, owner| sdk::read_trusted_contact_asks(server.vault(), &owner, input),
+        own_person(server, auth, VERB),
+        move |server, person| sdk::read_trusted_contact_asks(server.vault(), &person, input),
         |_| Some(Vec::new()),
     )
     .await
 }
 
-/// `vault.trusted_contacts.concern.authorize`: the owner answers one open
-/// ask. A yes stages the fact-of-concern notice; it does not deliver it.
+/// `vault.trusted_contacts.concern.authorize`: a person answers one of their
+/// own open asks. A yes stages the fact-of-concern notice; it does not deliver it.
 pub(crate) async fn vault_trusted_contacts_concern_authorize(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -184,11 +201,11 @@ pub(crate) async fn vault_trusted_contacts_concern_authorize(
     as_person_naming(
         server,
         VERB,
-        owner_proof(auth, server, VERB),
-        move |server, owner| {
+        own_person(server, auth, VERB),
+        move |server, person| {
             sdk::authorize_trusted_contact_ask(
                 server.vault(),
-                &owner,
+                &person,
                 input,
                 owner_policy_config(server),
             )
@@ -209,7 +226,7 @@ pub(crate) async fn vault_trusted_contacts_concern_propose(
     input: TrustedContactConcernRequest,
 ) -> Listed<TrustedContactConcernProposal> {
     const VERB: &str = "vault.trusted_contacts.concern.propose";
-    let proof = match owner_proof(auth, server, VERB) {
+    let proof = match own_person(server, auth, VERB) {
         Ok(proof) => proof,
         Err(refusal) => return refused(refusal),
     };
