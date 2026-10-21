@@ -81,6 +81,14 @@ pub enum RunEvent {
         editor: DeclarationEditor,
         from: u32,
     },
+    /// A planned child's call was answered by `ran`, the host's own model,
+    /// because the host could not route `planned`, the model its plan picked
+    /// (FIX 2310). Nothing substitutes silently.
+    PlanModelSubstituted {
+        child: EntityId,
+        planned: ModelId,
+        ran: ModelId,
+    },
 }
 
 /// One metered stream's audio: the milliseconds it admitted and the bound
