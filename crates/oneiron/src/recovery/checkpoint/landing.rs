@@ -225,6 +225,11 @@ impl Vault {
         // custody holds, or is withheld by its world's setting; any other is
         // refused before the vault is kept (KS-5).
         let pad_notes = super::pad_custody::land(&vault, pads)?;
+        // A credential row the image carried in the clear rests sealed again
+        // under this vault's custody, one row per writer (KS-6 part 1). One
+        // custody cannot take a key for stays pending, never opened from its
+        // carrier on a custody fault; the restore goes on as on main.
+        vault.reseal_credential_carriers_warned();
         room.admit_derived(destination)?;
         let (rebuilt_entities, rebuilt_text_documents, pending_embeddings) =
             rebuild::rebuild(&vault)?;

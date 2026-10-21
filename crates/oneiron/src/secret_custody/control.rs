@@ -62,8 +62,8 @@ pub(crate) use self::revoked::{
 use super::codec::{encode_bind_input, encode_register_input};
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, CUSTODY_RECIPIENTS_MAX, CustodyChange,
-    CustodyRecipientPermit, OwnerWorkBody, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest,
-    invalid_authority,
+    CustodyRecipientPermit, CustodyRequestAuthority, OwnerWorkBody, OwnerWorkOutcome,
+    OwnerWorkRefusal, OwnerWorkRequest, invalid_authority,
 };
 use crate::error::{Error, Result, SecretError};
 use crate::secret_rotation::RotationReceipt;
@@ -472,6 +472,7 @@ impl Vault {
             input,
             holder: Some(holder),
             recipients: permits,
+            authority: CustodyRequestAuthority::Install,
         };
         let receipt =
             self.record_owner_work_for_in_txn(txn, actor, surface, change.id, seen, work)?;

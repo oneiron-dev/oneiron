@@ -388,6 +388,11 @@ impl AuthorityStructure {
             AuthorityOp::ConversationTrainingVaultSet(set) => install_key(set.machine),
             AuthorityOp::HomeCandidacy(declaration) => install_key(declaration.machine),
             AuthorityOp::AgentGrantAct(record) => install_key(record.machine),
+            // The owner's kit push (FIX 6053): a stored root's anchor signs
+            // it alone, as an anchored machine revision; no machine carries it.
+            AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
+                self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty()
+            }
             AuthorityOp::OwnerWorkRequest(request) => install_key(request.carrier),
             AuthorityOp::OwnerWorkResult(result) => install_key(result.executor),
             AuthorityOp::OwnerWorkCancel(cancel) => install_key(cancel.carrier),
@@ -441,6 +446,11 @@ impl AuthorityStructure {
             AuthorityOp::ConversationTrainingVaultSet(set) => machine_key(set.machine),
             AuthorityOp::HomeCandidacy(declaration) => machine_key(declaration.machine),
             AuthorityOp::AgentGrantAct(record) => machine_key(record.machine),
+            AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
+                !self.is_own_anchor(signer)
+                    && !matches!(signer, AuthorityKey::Ed25519(anchor)
+                        if self.awaited_anchors.contains(anchor))
+            }
             AuthorityOp::OwnerWorkRequest(request) => machine_key(request.carrier),
             AuthorityOp::OwnerWorkResult(result) => machine_key(result.executor),
             AuthorityOp::OwnerWorkCancel(cancel) => machine_key(cancel.carrier),

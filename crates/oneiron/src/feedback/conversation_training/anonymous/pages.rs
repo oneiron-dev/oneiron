@@ -69,11 +69,12 @@ impl Vault {
     /// first with none), at most `page` of them (a pace: the shipper passes
     /// [`ANONYMOUS_PAGE`]): each published piece whose files are still here,
     /// that carries no withdrawal intent, and that the intake has not yet
-    /// taken whole, filtered, refused or removed; with its C and its stored
-    /// cursor. Rejected, conflicting, invalid and unknown pieces are sent
-    /// again. The continuation comes back while more rows may follow; `None`
-    /// once the page reached the end, and the next walk starts over. While
-    /// the vault's setting is off it lists nothing: uploads pause, and
+    /// taken whole, filtered, refused, removed or signed final; with its C
+    /// and its stored cursor. Unknown pieces are sent again; rejected,
+    /// conflicting and invalid ones are final for their C and never are
+    /// (FIX 7414). The continuation comes back while more rows may follow;
+    /// `None` once the page reached the end, and the next walk starts over.
+    /// While the vault's setting is off it lists nothing: uploads pause, and
     /// resume when it is back on.
     ///
     /// # Errors
@@ -207,13 +208,19 @@ fn upload_work(id: TrainingSubmissionId, row: &SubmissionCustody) -> Option<Anon
 
 /// Whether an anonymous row is still to upload, whatever the vault's
 /// setting: published, its files still here, no withdrawal intent, and not
-/// yet taken whole, filtered, refused or removed.
+/// yet taken whole, filtered, refused or removed, nor signed final (CALLS
+/// TL6_PIECE_FINAL, FIX 7414: rejected, conflict or invalid, each final for
+/// its C at the intake, so never sent again; a `429`, an unsigned refusal
+/// or a failed request is never final).
 pub(super) fn upload_due(row: &SubmissionCustody) -> bool {
     let piece = &row.anonymous;
     let settled = matches!(
         piece.state,
         Some(
-            TrainingPieceState::Accepted
+            TrainingPieceState::Rejected
+                | TrainingPieceState::Conflict
+                | TrainingPieceState::InvalidSubmission
+                | TrainingPieceState::Accepted
                 | TrainingPieceState::Eligible
                 | TrainingPieceState::Refused
                 | TrainingPieceState::RemovalPending
