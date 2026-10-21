@@ -1,11 +1,13 @@
 //! Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals.
 
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use oneiron::federation::derivation::DerivationOwner;
+use oneiron::web_fetch::HostedPrivateOrigin;
 use oneiron_vault_contract::{CONTRACT_VERSION, GuestRuntimeFact, valid_vault_name};
 
 use crate::config::{KeystoreBackend, KeystoreConfig, ServeArgs, ServeConfig};
@@ -294,6 +296,9 @@ pub struct ManagedArgs {
     /// The supervisor's guest runtime fact for the vault's UID
     /// (`--guest-runtime-fact`), which seeds the browser's readiness.
     pub guest_runtime_fact: Option<GuestRuntimeFact>,
+    /// The private origins the operator lets the hosted egress guard admit
+    /// (`--hosted-private-origin`, FIX 7657); none without it.
+    pub hosted_private_origins: BTreeSet<HostedPrivateOrigin>,
 }
 
 impl ManagedArgs {
@@ -425,6 +430,7 @@ impl ManagedArgs {
             container_home: args.container_home.clone(),
             container_runtime_dir: args.container_runtime_dir.clone(),
             guest_runtime_fact: args.guest_runtime_fact,
+            hosted_private_origins: args.hosted_private_origins.iter().cloned().collect(),
         };
         if managed
             .artifact_socket

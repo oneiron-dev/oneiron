@@ -28,7 +28,10 @@ mod ladder;
 
 pub use client::{build_single_hop_client, build_web_fetch_client};
 pub use door::{WebCrawlRequest, WebFetchRequest};
-pub use egress::{HOSTED_INFRASTRUCTURE_REASON, HostedEgressGuard, HostedInfrastructureRefusal};
+pub use egress::{
+    HOSTED_INFRASTRUCTURE_REASON, HOSTED_PRIVATE_NETWORK_REASON, HostedEgressGuard,
+    HostedEgressRefusal, HostedPrivateOrigin,
+};
 mod render;
 mod rungs;
 
@@ -172,6 +175,9 @@ pub enum RendererErrorKind {
     /// A managed node's egress guard refused a hop, an address or a landing
     /// the rung reached (SCAN C447, FIX 6101). The ladder ends on it typed.
     HostedInfrastructure,
+    /// A managed node's egress guard refused a private-network address no
+    /// operator origin admits (FIX 7657). The ladder ends on it typed.
+    HostedPrivateNetwork,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -217,7 +223,7 @@ pub trait Renderer: Send + Sync {
     /// [`Self::render`] on a managed (hosted) node, which hands the rung its
     /// egress guard (SCAN C447, FIX 6101): a rung that reaches the network
     /// checks every hop and address it reaches with it, failing a refused one
-    /// with [`RendererError::hosted_infrastructure`]. The default renders
+    /// with [`RendererError::hosted`]. The default renders
     /// unchecked; the ladder still checks the requested URL before and the
     /// navigation-final URL the rung hands back after.
     fn render_guarded(
@@ -247,7 +253,7 @@ pub trait HeadlessRenderer: Send + Sync {
     /// FIX 6101): a browser that sees its own traffic checks every
     /// navigation, redirect and request it makes, by the address it connects
     /// to ([`HostedEgressGuard::check_request`]), and fails a refused one with
-    /// [`RendererError::hosted_infrastructure`]; a host that performs each
+    /// [`RendererError::hosted`]; a host that performs each
     /// request itself can send it with [`build_single_hop_client`]. The
     /// default navigates unchecked; the engine then checks only the requested
     /// URL and the browser-final URL.
@@ -349,6 +355,16 @@ pub enum WebFetchError {
         "web fetch refused (hosted_infrastructure): on a hosted node, {url} resolves or redirects to the hosting infrastructure (loopback, link-local, this node's own address or a cloud metadata endpoint); a self-hosted node fetches it"
     )]
     HostedInfrastructure { url: String },
+
+    /// A managed (hosted) node's fetcher refused a destination that reaches
+    /// a private network (RFC1918, CGNAT, ULA) at no origin the hosting
+    /// operator allows (FIX 7657), as [`Self::HostedInfrastructure`] is
+    /// refused. The message names [`HOSTED_PRIVATE_NETWORK_REASON`]; `url` is
+    /// the requested page, credential-redacted.
+    #[error(
+        "web fetch refused (hosted_private_network): on a hosted node, {url} resolves or redirects to a private-network address outside the hosting operator's allowed origins, and hosted nodes refuse private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7); a self-hosted node fetches it, or the hosting operator can allow its named private origin"
+    )]
+    HostedPrivateNetwork { url: String },
 }
 
 pub type WebFetchResult<T> = std::result::Result<T, WebFetchError>;
@@ -668,8 +684,9 @@ impl WebFetcher {
     /// Returns [`WebFetchError::InvalidUrl`], [`WebFetchError::UnsupportedScheme`],
     /// or [`WebFetchError::CredentialsInUrl`] for a URL this module will not
     /// fetch; [`WebFetchError::MissingRequiredRenderer`] when a required rung is
-    /// unconfigured; [`WebFetchError::HostedInfrastructure`] when a managed
-    /// node's guard refused the page, a hop or an address a rung reached; and
+    /// unconfigured; [`WebFetchError::HostedInfrastructure`] or
+    /// [`WebFetchError::HostedPrivateNetwork`] when a managed node's guard
+    /// refused the page, a hop or an address a rung reached; and
     /// [`WebFetchError::AllRenderersFailed`] carrying the ordered ladder trace
     /// when no rung produced content.
     pub fn fetch(&self, url: &str, fetched_at: u64) -> WebFetchResult<FetchResult> {

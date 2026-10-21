@@ -8,21 +8,25 @@
 //!
 //! On a managed node every name either client connects to resolves through
 //! the node's [`HostedEgressGuard`]: a name with any address that is hosted
-//! infrastructure fails its connection with [`HostedInfrastructureRefusal`],
-//! and the connection goes only to the addresses the guard just admitted.
-//! Neither client uses a proxy, so nothing resolves the name elsewhere.
+//! infrastructure, or a private-network address while the name is no
+//! operator origin's (FIX 7657), fails its connection with the
+//! [`HostedEgressRefusal`](super::HostedEgressRefusal), and the connection
+//! goes only to the addresses the guard just admitted. Neither client uses a
+//! proxy, so nothing resolves the name elsewhere.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
-use super::{HostedEgressGuard, HostedInfrastructureRefusal};
+use super::HostedEgressGuard;
 
 /// The readability rung's client: no proxy, every other setting reqwest's
 /// default. With `Some(guard)`, a managed node's client: every name it
 /// connects to, a redirect's included, resolves through `guard`, and a
-/// redirect to an address literal `guard` refuses fails with
-/// [`HostedInfrastructureRefusal`]; other redirects follow reqwest's default
-/// policy. With `None`, the plain client a self-hosted node fetches with.
+/// redirect `guard` refuses (an address literal it refuses, or a listed
+/// private name at an origin no entry lists) fails with the
+/// [`HostedEgressRefusal`](super::HostedEgressRefusal); other redirects
+/// follow reqwest's default policy. With `None`, the plain client a
+/// self-hosted node fetches with.
 ///
 /// The ladder still checks the page it is asked for, an address literal
 /// included, before this client sends the request.
@@ -42,7 +46,8 @@ pub fn build_web_fetch_client(
 /// through `guard`, and goes only to the addresses the guard admitted; the
 /// request keeps its URL, so its Host header and TLS server name stay the
 /// requested name. An address-literal URL resolves nothing: its caller checks
-/// that address with [`HostedEgressGuard::check_request`] before sending.
+/// that address with [`HostedEgressGuard::check_request`] before sending,
+/// and a named one's origin with [`HostedEgressGuard::refuses_origin`].
 ///
 /// # Errors
 /// Returns reqwest's error when the client cannot be built.
@@ -69,8 +74,8 @@ fn no_proxy_client(
 }
 
 /// A managed client's resolver: every name a fetch connects to, a
-/// redirect's included, resolves here, and a name that resolves to hosted
-/// infrastructure fails its connection.
+/// redirect's included, resolves here, and a name the guard refuses by its
+/// answers ([`HostedEgressGuard::refuses_resolved`]) fails its connection.
 struct HostedResolver(Arc<HostedEgressGuard>);
 
 impl reqwest::dns::Resolve for HostedResolver {
@@ -89,24 +94,29 @@ async fn resolve_admitted(
     let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
     // Every address the name resolves to now, at connect time: a name that
     // rebinds after the engine's own check is refused here (FIX 6101).
-    if guard.refuses_any(addresses.iter().map(SocketAddr::ip)) {
-        return Err(Box::new(HostedInfrastructureRefusal));
+    if let Some(refused) = guard.refuses_resolved(&host, addresses.iter().map(SocketAddr::ip)) {
+        return Err(Box::new(refused));
     }
     Ok(Box::new(addresses.into_iter()))
 }
 
-/// The default redirect policy, with a hop to an address literal that is
-/// hosted infrastructure refused: a named hop is checked by
+/// The default redirect policy, with a hop to an address literal the guard
+/// refuses, and every hop to a listed private name at an origin no entry
+/// lists (FIX 7657), refused: a named hop's addresses are checked by
 /// [`HostedResolver`] when it connects.
 fn hosted_redirects(guard: Arc<HostedEgressGuard>) -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(move |attempt| {
-        let literal = attempt
-            .url()
+        let url = attempt.url();
+        let literal = url
             .host_str()
             .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
             .and_then(|host| host.parse::<IpAddr>().ok());
-        if literal.is_some_and(|ip| guard.refuses(ip)) {
-            return attempt.error(HostedInfrastructureRefusal);
+        let refused = match literal {
+            Some(ip) => guard.refuses(ip),
+            None => guard.refuses_origin(url),
+        };
+        if let Some(refused) = refused {
+            return attempt.error(refused);
         }
         reqwest::redirect::Policy::default().redirect(attempt)
     })

@@ -250,30 +250,18 @@ pub(super) fn renderer_request_url(raw: &str) -> RendererResult<String> {
 ///
 /// When a host's egress guard failed the connection (SCAN C447) — its
 /// resolver's refusal of an address, a redirect hop's included, or its
-/// redirect policy's — the error is the typed
-/// [`RendererErrorKind::HostedInfrastructure`](super::RendererErrorKind::HostedInfrastructure),
-/// which ends the ladder as [`WebFetchError::HostedInfrastructure`]
+/// redirect policy's — the error is the typed refusal's kind
+/// ([`RendererErrorKind::HostedInfrastructure`](super::RendererErrorKind::HostedInfrastructure)
+/// or [`RendererErrorKind::HostedPrivateNetwork`](super::RendererErrorKind::HostedPrivateNetwork),
+/// FIX 7657), which ends the ladder as the matching [`WebFetchError`]
 /// (FIX 6101), its detail named with the engine's own text, never the
 /// chain's. Any other failure is a transport error.
 pub(super) fn transport_failure(context: &str, error: reqwest::Error) -> RendererError {
-    let refused =
-        std::iter::successors(std::error::Error::source(&error), |&source| source.source()).any(
-            |source| {
-                source.is::<super::HostedInfrastructureRefusal>()
-                    || source
-                        .downcast_ref::<std::io::Error>()
-                        .and_then(std::io::Error::get_ref)
-                        .is_some_and(|inner| inner.is::<super::HostedInfrastructureRefusal>())
-            },
-        );
+    let refused = super::HostedEgressRefusal::of_error(&error);
     let detail = format!("{context}: {}", transport_detail(error));
-    if refused {
-        RendererError::hosted_infrastructure(format!(
-            "{detail}: {}",
-            super::HostedInfrastructureRefusal
-        ))
-    } else {
-        RendererError::transport(detail)
+    match refused {
+        Some(refused) => RendererError::hosted(refused, format!("{detail}: {refused}")),
+        None => RendererError::transport(detail),
     }
 }
 

@@ -4,8 +4,11 @@
 //! On a managed node each one is checked by the address it goes to, with the
 //! render's guard, right before the host connects or sends to that exact
 //! address, a reconnect's included; a refused one is kept for the render and
-//! fails with the typed hosted-infrastructure refusal. Nothing else is
-//! refused, and no name is resolved again.
+//! fails with the guard's typed refusal. Nothing else is refused, and no
+//! name is resolved again. The relay knows only the address, never a name,
+//! so it refuses every private-network address (FIX 7657): an operator's
+//! private origin admits a page's own requests ([`super::handler`]), never a
+//! relayed connection or datagram, a WebSocket's and a worker's included.
 //!
 //! The guest's DNS (port 53, either transport) is answered by the host's own
 //! resolvers, as `/etc/resolv.conf` names them, whatever server the guest
@@ -21,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::Vault;
-use oneiron::web_fetch::HostedInfrastructureRefusal;
+use oneiron::web_fetch::HostedEgressRefusal;
 use oneiron_container::{
     EgressRelay, HostNetFloor, HostNetPermit, HttpRequest, HttpResponse, SessionManifest,
 };
@@ -69,7 +72,7 @@ impl HeadlessRelay {
         };
         self.operation
             .check(&format!("{scheme}://{target}"), target.ip())
-            .map_err(|_| refused())
+            .map_err(refused)
     }
 }
 
@@ -135,7 +138,7 @@ impl EgressRelay for HeadlessRelay {
         self.requests
             .perform(request)
             .map_err(|unanswered| match unanswered {
-                Unanswered::Refused => refused(),
+                Unanswered::Refused(reason) => refused(reason),
                 Unanswered::Failed(detail) => io::Error::other(detail),
             })
     }
@@ -152,9 +155,9 @@ impl EgressRelay for HeadlessRelay {
 }
 
 /// The error a connection or datagram the render's guard refused fails
-/// with, carrying the engine's typed refusal.
-fn refused() -> io::Error {
-    io::Error::new(io::ErrorKind::PermissionDenied, HostedInfrastructureRefusal)
+/// with, carrying the engine's typed refusal, `reason`.
+fn refused(reason: HostedEgressRefusal) -> io::Error {
+    io::Error::new(io::ErrorKind::PermissionDenied, reason)
 }
 
 /// The error the guest's network work fails with once its render ended.

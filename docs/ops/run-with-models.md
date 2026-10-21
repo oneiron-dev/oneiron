@@ -255,10 +255,11 @@ names the field and never its value:
   the like). An import queue with no `claude_code_root` and `codex_root` of
   its own would read the defaults under HOME, so it stops the vault too.
 
-The supervisor binds eight more settings on argv alone; a settings file that
+The supervisor binds ten more settings on argv alone; a settings file that
 names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
-`mesh_relays`, `shared_model_root`, `container_home` or
-`container_runtime_dir` is refused `SupervisorOwned`:
+`mesh_relays`, `shared_model_root`, `container_home`,
+`container_runtime_dir`, `guest_runtime_fact` or `hosted_private_origins` is
+refused `SupervisorOwned`:
 
 - `--browser-runtime <path>` and `--desktop-runtime <path>`: the browser and
   desktop guests' container CLI, an absolute path on the vault's own host or
@@ -293,6 +294,35 @@ names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
   `not_owned`, `unreadable` or `unsupported`), never a refused start. An
   engine from before these flags refuses them, so a supervisor passes them
   only to engines at or after the merge that added them.
+- `--guest-runtime-fact <fact>` (managed only): the supervisor's one
+  observation of the guest runtime it provisioned for the vault's UID. It
+  moves only the browser's readiness and never refuses the start.
+- `--hosted-private-origin <origin>` (managed only, repeatable): a private
+  origin the hosted node's web fetch may reach (FIX 7657). A managed node's
+  fetch refuses hosted infrastructure (loopback, "this host", link-local,
+  cloud metadata endpoints and the node's own addresses, typed
+  `hosted_infrastructure`) and private networks (RFC1918 `10.0.0.0/8`,
+  `172.16.0.0/12` and `192.168.0.0/16`, CGNAT `100.64.0.0/10` and IPv6 ULA
+  `fc00::/7`, typed `hosted_private_network`), both answered 403
+  `FORBIDDEN`. An IPv4 address spelled inside IPv6 (mapped, compatible,
+  NAT64) is judged as itself, and infrastructure anywhere in a name's
+  answers refuses the whole name. An origin is `http://<name>[:port]` or
+  `https://<name>[:port]`, the port the scheme's own by default; the name
+  has two or more labels of letters, digits and hyphens, and is never an
+  address in any spelling or a wildcard; a path other than `/`, a query, a
+  fragment or credentials refuse the entry, and an entry that does not parse
+  stops the start. A listed name's private addresses are fetched only at a
+  listed origin: its resolved answers pass, and a URL at that name with a
+  scheme or port no entry lists is refused. A listed origin never admits
+  infrastructure, an address-literal URL or a raw connection: a headless
+  render's relay (WebSocket, worker and other raw TCP or UDP traffic) knows
+  only addresses and refuses every private one. The host's DNS (its own
+  lookups and the guest's port-53 datagrams to the host's resolvers) stays
+  unchecked. Without the flag the list is empty and every private address is
+  refused. Plain serve and self-hosted nodes carry no guard and fetch as
+  before. A vault VM has no config-drive file for it. An engine from before
+  this flag refuses it, so a supervisor passes it only to engines at or
+  after the merge that added it (`version.rs`, hosted private origins).
 
 The container CLI gets `HOME` and `XDG_RUNTIME_DIR` from these two flags
 alone. Every call the engine makes to it for a guest (run, inspect and

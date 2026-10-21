@@ -899,6 +899,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // process attests the owner on each route: a request with no credential
     // is anonymous. The Linear mirror checks this declaration, not a secret.
     server_config.ingress = crate::config::IngressAuth::Supervisor;
+    server_config.hosted_private_origins = managed.hosted_private_origins.clone();
     // Stable, domain-separated custody from the verified vault DEK, not the
     // per-spawn callback token or caller-controlled HTTP identity headers.
     // A fresh spawn with the same DEK must recover the same logged host root.

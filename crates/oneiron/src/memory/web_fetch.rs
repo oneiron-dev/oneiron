@@ -278,6 +278,19 @@ fn fetch_error(error: WebFetchError) -> MemoryError {
                 "A hosted node never fetches the infrastructure it runs on; a self-hosted node fetches this address.",
             ],
         ),
-        other => MemoryError::new("WEB_FETCH_FAILED", other.to_string(), &[]),
+        // Its message names `hosted_private_network` (FIX 7657).
+        error @ WebFetchError::HostedPrivateNetwork { .. } => MemoryError::new(
+            crate::memory::MEMORY_CODE_FORBIDDEN,
+            error.to_string(),
+            &[
+                "A hosted node refuses private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7) outside the origins its hosting operator allows; a self-hosted node fetches this address, or the hosting operator can allow its named private origin.",
+            ],
+        ),
+        error @ (WebFetchError::InvalidRendererSlot { .. }
+        | WebFetchError::MissingRequiredRenderer { .. }
+        | WebFetchError::InvalidMinimumContentBytes
+        | WebFetchError::AllRenderersFailed { .. }) => {
+            MemoryError::new("WEB_FETCH_FAILED", error.to_string(), &[])
+        }
     }
 }

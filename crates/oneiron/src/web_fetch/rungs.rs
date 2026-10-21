@@ -9,7 +9,9 @@
 //!   address it resolves at connect time when the host built it with the guard
 //!   (the managed default ladder is). Whatever client it was given, this rung
 //!   checks the address the final response actually came from before reading
-//!   its body, so a re-resolved (rebound) final address is refused too.
+//!   its body, so a re-resolved (rebound) final address is refused too; a
+//!   private one passes only when the final URL is at an operator's private
+//!   origin (FIX 7657).
 //! - headless: the host browser receives the guard for every navigation,
 //!   redirect and request it makes
 //!   ([`HeadlessRenderer::render_html_guarded`](super::HeadlessRenderer::render_html_guarded)).

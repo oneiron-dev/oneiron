@@ -14,14 +14,14 @@ use reqwest::Url;
 use serde::Deserialize;
 
 use super::render::{
-    is_web_url, normalize_link_list, normalize_url, redact_url_credentials, renderer_canonical_url,
-    renderer_final_url, validated_web_url,
+    is_web_url, normalize_link_list, normalize_url, renderer_canonical_url, renderer_final_url,
+    validated_web_url,
 };
 use super::{
     ALL_RENDERERS_FAILED_REASON_PREFIX, CROSS_SITE_REDIRECT_REASON, CrawlCompletion,
     CrawlPageFailure, CrawlResult, CrawlScope, FetchResult, Renderer, RendererAttemptFailure,
-    RendererError, RendererErrorKind, RendererKind, RendererResult, WebFetchError, WebFetchResult,
-    WebFetcher, content_hash,
+    RendererError, RendererKind, RendererResult, WebFetchError, WebFetchResult, WebFetcher,
+    content_hash,
 };
 
 /// Ceiling on how many distinct URLs one walk's frontier may hold.
@@ -142,8 +142,9 @@ impl WebFetcher {
     ///
     /// # Errors
     /// Returns [`WebFetchError::MissingRequiredRenderer`] when a required rung
-    /// has no renderer, [`WebFetchError::HostedInfrastructure`] when a managed
-    /// node's guard refused the page or anything a rung reached, and
+    /// has no renderer, [`WebFetchError::HostedInfrastructure`] or
+    /// [`WebFetchError::HostedPrivateNetwork`] when a managed node's guard
+    /// refused the page or anything a rung reached, and
     /// [`WebFetchError::AllRenderersFailed`] with the ordered trace when every
     /// rung was tried and none produced content.
     pub(super) fn fetch_page(
@@ -152,8 +153,9 @@ impl WebFetcher {
         fetched_at: u64,
         require_witnessed_final_url: bool,
     ) -> WebFetchResult<(FetchResult, Vec<String>, Url)> {
-        // A managed node refuses hosted infrastructure before any rung runs
-        // (SCAN C447); a self-hosted one carries no guard.
+        // A managed node refuses hosted infrastructure and private networks
+        // before any rung runs (SCAN C447, FIX 7657); a self-hosted one
+        // carries no guard.
         self.admit_destination(url)?;
         let requested = url.to_string();
         let mut attempts = Vec::new();
@@ -194,17 +196,18 @@ impl WebFetcher {
                 require_witnessed_final_url,
             ) {
                 Ok(success) => return Ok(success),
-                // A managed node's guard refused a hop, an address or a
-                // landing this rung reached (FIX 6101): the ladder ends typed,
-                // and no lower rung is sent after the same destination.
-                Err(RendererAttemptFailure::Error { error, .. })
-                    if error.kind == RendererErrorKind::HostedInfrastructure =>
-                {
-                    return Err(WebFetchError::HostedInfrastructure {
-                        url: redact_url_credentials(&requested),
-                    });
+                Err(failure) => {
+                    // A managed node's guard refused a hop, an address or a
+                    // landing this rung reached (FIX 6101, FIX 7657): the
+                    // ladder ends typed, and no lower rung is sent after the
+                    // same destination.
+                    if let RendererAttemptFailure::Error { error, .. } = &failure
+                        && let Some(refused) = error.kind.hosted_refusal()
+                    {
+                        return Err(refused.fetch_error(&requested));
+                    }
+                    attempts.push(failure);
                 }
-                Err(failure) => attempts.push(failure),
             }
         }
         Err(WebFetchError::AllRenderersFailed {
