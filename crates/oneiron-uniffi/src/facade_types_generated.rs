@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1127 facade rows, 3873 generated types.
+// UniFFI census: 1127 facade rows, 3875 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1079.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -1443,6 +1443,20 @@ pub enum AgentHealthOutcome {
     Unresolved,
 }
 
+/// `oneiron::dreamer_runner::maintenance::agent_health::brief::HealthBriefPin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HealthBriefPin {
+    #[serde(rename = "task")]
+    pub task: String,
+    #[serde(rename = "rev")]
+    pub rev: u32,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "observed_at")]
+    pub observed_at: u64,
+}
+
 /// `oneiron::dreamer_runner::maintenance::agent_health::ask::AgentHealthPadRead`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
@@ -1577,6 +1591,12 @@ pub struct AgentHealthCoachAsk {
     pub diagnostic: Option<String>,
     #[serde(rename = "attempt")]
     pub attempt: String,
+    #[serde(
+        rename = "observed_brief",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observed_brief: Option<HealthBriefPin>,
     #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<AgentHealthCoachAnswer>,
     #[serde(
@@ -1585,6 +1605,42 @@ pub struct AgentHealthCoachAsk {
         skip_serializing_if = "Option::is_none"
     )]
     pub application: Option<AgentHealthCoachApplication>,
+}
+
+/// `oneiron::dreamer_runner::maintenance::agent_health::outcomes::HealthReviewReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HealthReviewReceipt {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "outcome")]
+    pub outcome: AgentHealthOutcome,
+    #[serde(rename = "by")]
+    pub by: String,
+    #[serde(rename = "by_owner")]
+    pub by_owner: bool,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "reviewer")]
+    pub reviewer: String,
+    #[serde(rename = "dial")]
+    pub dial: i64,
+    #[serde(rename = "measured")]
+    pub measured: i64,
+    #[serde(rename = "diagnostics")]
+    pub diagnostics: Vec<String>,
+    #[serde(rename = "evidence")]
+    pub evidence: Vec<String>,
+    #[serde(
+        rename = "observed_brief",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observed_brief: Option<HealthBriefPin>,
+    #[serde(rename = "label", default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<bool>,
+    #[serde(rename = "projected")]
+    pub projected: bool,
 }
 
 /// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCard`.
@@ -1655,6 +1711,16 @@ pub struct AgentHealthCard {
     pub updated_at: u64,
     #[serde(rename = "coach", default, skip_serializing_if = "Option::is_none")]
     pub coach: Option<AgentHealthCoachAsk>,
+    #[serde(
+        rename = "observed_brief",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observed_brief: Option<HealthBriefPin>,
+    #[serde(rename = "reviewer")]
+    pub reviewer: String,
+    #[serde(rename = "review_outcomes")]
+    pub review_outcomes: Vec<HealthReviewReceipt>,
 }
 
 /// `oneiron::run_tree::types::RunTreeStatus`.
