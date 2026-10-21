@@ -539,10 +539,11 @@ impl Vault {
                 }
             } else {
                 // Witness TURNs carry the speaker bucket and, when the writer
-                // is a PERSON, its immutable `actor` author stamp; a quoted
-                // one (FIX 2027) its reply mode and pointer as well, and its
-                // messages' quotes (FIX 2028). The private authenticated
-                // proof is their actor/project binding.
+                // is a PERSON or an Agent (its AGENT_DEF, FIX 7129), its
+                // immutable `actor` author stamp; a quoted one (FIX 2027) its
+                // reply mode and pointer as well, and its messages' quotes
+                // (FIX 2028). The private authenticated proof is their
+                // actor/project binding.
                 let mut speakers = fields
                     .iter()
                     .filter(|(key, _)| key.as_str() == Some("speaker"));

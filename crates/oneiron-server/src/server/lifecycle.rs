@@ -124,7 +124,17 @@ impl SyncServer {
             // then once an interval.
             let mut repositories_due = Instant::now();
             loop {
-                interval.tick().await;
+                // A published-ref move or a green landing wakes the mirror
+                // pushes alone, at once (FIX 6866); every other job keeps
+                // the tick.
+                let woken = tokio::select! {
+                    _ = interval.tick() => false,
+                    () = server.vault().origin_mirror_wake().notified() => true,
+                };
+                if woken {
+                    server.start_mirror_pushes(&admit, true).await;
+                    continue;
+                }
                 server.run_scheduled_lifecycle_tick().await;
                 server.finish_dependent_walks_once().await;
                 // The pass and the maintenance run on tasks of their own, so
@@ -137,8 +147,8 @@ impl SyncServer {
                     repositories_due = Instant::now() + SERVED_REPOSITORY_MAINTENANCE_EVERY;
                 }
                 // Each mirror target keeps its own cadence; the pass pushes
-                // only the due ones.
-                server.start_mirror_pushes(&admit).await;
+                // only the due ones, and repairs a full-auto wake missed.
+                server.start_mirror_pushes(&admit, false).await;
                 // The authority checkpoint upkeep runs every tick; the engine
                 // decides whether a cutoff is due (OF-469).
                 server.start_authority_checkpoint(&admit).await;

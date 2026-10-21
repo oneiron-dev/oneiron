@@ -11,6 +11,7 @@ mod check_tree;
 mod checks;
 mod initialize;
 mod landing;
+mod mirror_green;
 mod plan;
 mod reviewed;
 mod run;

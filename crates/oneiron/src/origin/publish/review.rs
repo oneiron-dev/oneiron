@@ -45,17 +45,35 @@ impl Vault {
         commit: &GitOid,
         base: Option<&GitOid>,
     ) -> Result<BuiltReview> {
+        self.build_publish_review_excluding(wire, handle, commit, base, &[])
+    }
+
+    /// [`Self::build_publish_review`] that also leaves out what `reviewed`
+    /// reach: the commits an automatic mirror plan reviewed under its earlier
+    /// refs (FIX 6866 part 2), each bound into the digest. With none, the
+    /// review and its digest are an exact publish's.
+    pub(super) fn build_publish_review_excluding(
+        &self,
+        wire: &GitWire<'_>,
+        handle: &GitWireRepo,
+        commit: &GitOid,
+        base: Option<&GitOid>,
+        reviewed: &[GitOid],
+    ) -> Result<BuiltReview> {
         let mut hasher = blake3::Hasher::new_derive_key(ORIGIN_PUBLISH_REVIEW_DIGEST_CONTEXT);
         field(&mut hasher, commit.as_str().as_bytes());
         field(
             &mut hasher,
             base.map_or(&b""[..], |base| base.as_str().as_bytes()),
         );
+        for oid in reviewed {
+            field(&mut hasher, oid.as_str().as_bytes());
+        }
         let mut pages = Vec::new();
         let mut page = Vec::new();
         let mut paths = BTreeSet::new();
         let (mut commits, mut entries) = (0_u64, 0_u64);
-        let exclude: Vec<GitOid> = base.into_iter().cloned().collect();
+        let exclude: Vec<GitOid> = base.into_iter().chain(reviewed).cloned().collect();
         wire.for_each_review_item(handle, commit, &exclude, &mut |item| {
             hash_item(&mut hasher, &item);
             page.push(match item {
@@ -115,12 +133,12 @@ impl Vault {
 /// The one hook a history policy plugs into: every review passes it before
 /// a request records it. The owner's secrets-in-history rule is pending (FIX
 /// 6866 ruling), so no rule is built and every review passes.
-fn admit_review_policy(_review: &BuiltReview) -> Result<()> {
+pub(super) fn admit_review_policy(_review: &BuiltReview) -> Result<()> {
     Ok(())
 }
 
 /// One item into the digest, each field length-prefixed.
-fn hash_item(hasher: &mut blake3::Hasher, item: &GitReviewItem) {
+pub(super) fn hash_item(hasher: &mut blake3::Hasher, item: &GitReviewItem) {
     match item {
         GitReviewItem::Commit { commit, parents } => {
             hasher.update(b"c");
@@ -152,7 +170,7 @@ fn hash_item(hasher: &mut blake3::Hasher, item: &GitReviewItem) {
     }
 }
 
-fn field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+pub(super) fn field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
     hasher.update(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
     hasher.update(bytes);
 }

@@ -35,6 +35,8 @@ mod execution_scope;
 mod failure;
 mod hub_read;
 mod ids;
+mod mirror_plan_push;
+mod mirror_plan_review;
 mod mirror_push;
 mod objects;
 mod operation;
@@ -64,6 +66,8 @@ pub use self::config::{
 pub use self::env::GitWireProcessEnv;
 pub use self::failure::{GitWireFailure, GitWireFailureClass, GitWireResult};
 pub use self::ids::{GitOid, GitRefExpectation, GitRefName, GitRefPublication, ObservedGitRef};
+pub use self::mirror_plan_push::{GitPlanPushReport, GitPlanRef, GitPlanRefOutcome};
+pub use self::mirror_plan_review::{GitPeeledRef, GitRefEnd, GitRefTag};
 pub use self::objects::{GitCommitHeader, GitCommitRequest, GitTreeEntry};
 pub use self::operation::{GitWireEffectClass, GitWireOperation};
 pub use self::plan::{GitWireObjectWrite, GitWirePlan, GitWirePlannedOid};
@@ -77,6 +81,7 @@ pub use self::repo::{GitWireRepo, GitWireRepoIdentity};
 pub use self::wire_reads::GitWire;
 
 pub(crate) use self::bridge::{redact_bridged_failure, run_bridged_git_argv};
+pub(crate) use self::mirror_push::MIRROR_PUSH_REFSPECS;
 use self::process::GitWireProcessOutput;
 #[cfg(test)]
 pub(crate) use self::repo::repository_hold_for_test;

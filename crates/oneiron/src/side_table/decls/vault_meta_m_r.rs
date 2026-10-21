@@ -195,6 +195,12 @@ side_tables! {
     /// The owner's outbound mirror of one served repository: its https URL, the custody record of
     /// its push token, the cadence and the last push. Key: id16 (repo id).
     ORIGIN_MIRROR_TARGET: VaultMeta b"origin:mirror_target:v1:" Named;
+    /// One mirror's automatic push work (FIX 6866): its head (open plan, failed reconcile reads,
+    /// kept plans) and each frozen MirrorPushPlan with its review pages and per-batch progress.
+    /// LIVE. Key: id16 (repo id) + id16 (repo id again, then `head`; or a plan id, then nothing
+    /// for the plan, `p` + u64be for a review page or `b` + u32be for a batch).
+    ORIGIN_MIRROR_WORK: VaultMeta b"origin:mirror_work:v1:" Named
+        => crate::origin::publish::erase_mirror_work_actor_in_txn;
     /// Durable journal row for one origin ref-publication attempt, across its
     /// Prepared/Published/Failed/Conflicted lifecycle. Key: id16.
     ORIGIN_PUBLICATION_RECORD: VaultMeta b"origin:publication:v1:" Named

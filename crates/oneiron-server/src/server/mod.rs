@@ -17,6 +17,7 @@ mod media_door;
 mod media_embedding;
 mod merge_queue_checker;
 mod message_stream;
+mod mirror_pushes;
 mod note_editors;
 #[cfg(unix)]
 mod organs;

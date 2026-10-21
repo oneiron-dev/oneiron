@@ -16,28 +16,31 @@
 //!
 //! A caller claims room in its class before its call queues ([`policy`]'s
 //! pending caps); past the cap the claim waits on the caller's own thread,
-//! holding no scheduler lock and no store transaction. Nothing is refused for
-//! a backlog: a call fails without a worker only when no worker is ready or
-//! coming.
+//! or, for the tagging coordinator, as an awaited future on its class's own
+//! signal ([`capacity`]), holding no scheduler lock and no store transaction.
+//! Nothing is refused for a backlog: a call fails without a worker only when
+//! no worker is ready or coming.
 //!
 //! The dispatcher belongs to its slot, one per server process: no static
 //! holds a worker.
 
 use std::collections::VecDeque;
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use oneiron::memory::extraction::{
     EncoderAttempt, EncoderExecution, EncoderInput, ExecutionPick, ExtractionWork,
 };
+use tokio::sync::{Notify, oneshot};
 
+mod capacity;
 mod policy;
 mod worker;
 
-use policy::{BULK_BATCH_CAP, BULK_PENDING_CAP, Candidate, LIVE_BATCH_CAP, LIVE_PENDING_CAP};
+use policy::{BULK_BATCH_CAP, Candidate, LIVE_BATCH_CAP};
 use worker::WorkerState;
 
+pub(crate) use capacity::{Completion, DispatchClaim, pending_cap};
 pub(crate) use worker::WorkerSpec;
 
 /// Tool name on every failure the dispatcher reports itself.
@@ -49,7 +52,7 @@ pub(super) struct Job {
     work: ExtractionWork,
     /// When it was queued: its wait is measured from here.
     pub(super) queued_at: Instant,
-    reply: SyncSender<EncoderAttempt>,
+    reply: oneshot::Sender<EncoderAttempt>,
 }
 
 /// One unit a worker runs: its calls, each with why the worker runs it.
@@ -110,8 +113,11 @@ impl Scheduler {
     }
 
     /// Queues `job`, or hands it back when no worker is ready or coming to
-    /// run it.
+    /// run it, or the dispatcher has closed.
     fn queue(&mut self, job: Job) -> Result<(), Job> {
+        if self.closed {
+            return Err(job);
+        }
         match job.work {
             ExtractionWork::Live => {
                 let candidates: Vec<Candidate> = self
@@ -201,6 +207,11 @@ impl Scheduler {
         if self.ready() || self.coming() {
             return Vec::new();
         }
+        self.drain_queued()
+    }
+
+    /// Every queued call, taken off its queue with its room given back.
+    fn drain_queued(&mut self) -> Vec<Job> {
         let mut jobs: Vec<Job> = self.unrouted.drain(..).collect();
         jobs.extend(self.bulk.drain(..));
         for worker in &mut self.workers {
@@ -213,13 +224,18 @@ impl Scheduler {
     }
 }
 
-/// The scheduler and its two signals, shared with every worker's thread.
+/// The scheduler and its signals, shared with every worker's thread and
+/// every claim.
 pub(super) struct Shared {
     scheduler: Mutex<Scheduler>,
     /// A worker may have a unit to take, or the dispatcher closed.
     work: Condvar,
-    /// A pending call was answered: a claim may have room.
+    /// Room was given back: a blocking claim may have room.
     room: Condvar,
+    /// Live room was given back: an async live claim may have room.
+    live_room: Notify,
+    /// Bulk room was given back: an async bulk claim may have room.
+    bulk_room: Notify,
 }
 
 impl Shared {
@@ -258,7 +274,7 @@ impl Shared {
             }
         }
         self.work.notify_all();
-        self.room.notify_all();
+        self.room_freed(answered.iter().map(|(job, _)| job.work));
         for (job, attempt) in answered {
             // A caller that stopped waiting has nothing to hear.
             let _ = job.reply.send(attempt);
@@ -281,7 +297,7 @@ impl Shared {
             tracing::info!(engine = %engine, state = state.as_str(), "oneironer worker");
         }
         if !stranded.is_empty() {
-            self.room.notify_all();
+            self.room_freed(stranded.iter().map(|job| job.work));
             unrun(stranded, "no oneironer worker is ready");
         }
     }
@@ -328,6 +344,8 @@ impl Dispatcher {
                 }),
                 work: Condvar::new(),
                 room: Condvar::new(),
+                live_room: Notify::new(),
+                bulk_room: Notify::new(),
             }),
         }
     }
@@ -368,90 +386,37 @@ impl Dispatcher {
     /// One call in `work`'s class: claims room, queues the call, and waits
     /// for the answer of the worker that ran it.
     pub(crate) fn call(&self, input: &EncoderInput, work: ExtractionWork) -> EncoderAttempt {
-        let input = input.clone();
-        self.claim(work).submit(input).wait()
+        let claim = capacity::claim_blocking(&self.shared, work);
+        claim.submit(input.clone()).wait()
     }
 
-    /// Room for one call in `work`'s class. Past the class's pending cap it
-    /// waits, on the caller's thread with the scheduler lock released, until
-    /// a call of the class is answered. It never refuses.
-    fn claim(&self, work: ExtractionWork) -> Claim<'_> {
-        let cap = match work {
-            ExtractionWork::Live => LIVE_PENDING_CAP,
-            ExtractionWork::Bulk => BULK_PENDING_CAP,
-        };
-        let mut scheduler = self.shared.lock();
-        while *scheduler.pending(work) >= cap {
-            scheduler = self
-                .shared
-                .room
-                .wait(scheduler)
-                .unwrap_or_else(PoisonError::into_inner);
-        }
-        *scheduler.pending(work) += 1;
-        Claim {
-            shared: &self.shared,
-            work,
-        }
+    /// Room for one call in `work`'s class, for an async caller: awaited on
+    /// its class's own signal with nothing held ([`capacity`]). The future
+    /// owns its share of the scheduler, so it outlives this borrow; dropped
+    /// before it resolves, it holds no room. It never refuses.
+    pub(crate) fn claim_async(
+        &self,
+        work: ExtractionWork,
+    ) -> impl std::future::Future<Output = DispatchClaim> + Send + 'static {
+        capacity::claim(Arc::clone(&self.shared), work)
     }
 }
 
 impl Drop for Dispatcher {
-    /// Closes: each worker's thread ends after the unit it runs. No caller
-    /// is waiting, since every call borrows the dispatcher.
+    /// Closes: each worker's thread ends after the unit it runs, and every
+    /// call still queued is answered, so no completion a claim outlived the
+    /// dispatcher with waits for good. A call submitted later is answered at
+    /// once.
     fn drop(&mut self) {
-        self.shared.lock().closed = true;
-        self.shared.work.notify_all();
-    }
-}
-
-/// Room for one call, claimed and not yet queued.
-struct Claim<'a> {
-    shared: &'a Shared,
-    work: ExtractionWork,
-}
-
-impl Claim<'_> {
-    /// Queues the call; it never waits. A call no worker is ready or coming
-    /// to run is answered at once.
-    fn submit(self, input: EncoderInput) -> Completion {
-        let (reply, answer) = sync_channel(1);
-        let job = Job {
-            input,
-            work: self.work,
-            queued_at: Instant::now(),
-            reply,
-        };
-        let unqueued = {
+        let queued = {
             let mut scheduler = self.shared.lock();
-            match scheduler.queue(job) {
-                Ok(()) => None,
-                Err(job) => {
-                    *scheduler.pending(job.work) -= 1;
-                    Some(job)
-                }
-            }
+            scheduler.closed = true;
+            scheduler.drain_queued()
         };
         self.shared.work.notify_all();
-        if let Some(job) = unqueued {
-            self.shared.room.notify_all();
-            unrun(vec![job], "no oneironer worker is ready");
+        if !queued.is_empty() {
+            self.shared.room_freed(queued.iter().map(|job| job.work));
+            unrun(queued, "the oneironer dispatcher closed");
         }
-        Completion { answer }
-    }
-}
-
-/// The handle a caller waits on for its call's answer.
-struct Completion {
-    answer: Receiver<EncoderAttempt>,
-}
-
-impl Completion {
-    /// Blocks until the worker that ran the call answers.
-    fn wait(self) -> EncoderAttempt {
-        self.answer.recv().unwrap_or_else(|_| EncoderAttempt {
-            execution: None,
-            result: Err(failure(DISPATCH_TOOL, "the oneironer dispatcher closed")),
-        })
     }
 }
