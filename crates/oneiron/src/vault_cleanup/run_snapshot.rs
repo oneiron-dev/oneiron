@@ -32,9 +32,9 @@ use crate::error::{Error, Result};
 const SNAPSHOT_LABEL: &str = "cleanup run snapshot";
 const KEY_DIGEST: &str = "digest";
 pub(super) const KEY_ENTRIES: &str = "entries";
-const KEY_REVISION: &str = "revision";
-const KEY_BEFORE: &str = "before";
-const KEY_AFTER: &str = "after";
+pub(super) const KEY_REVISION: &str = "revision";
+pub(super) const KEY_BEFORE: &str = "before";
+pub(super) const KEY_AFTER: &str = "after";
 
 /// One entry a cleanup run archived, as it stood just before its mark was
 /// written.
@@ -65,7 +65,9 @@ pub struct CleanupRunSnapshot {
     /// The digest that decision recorded.
     pub digest: EntityId,
     /// Each archived entry, in archive order. A skipped candidate has none.
-    pub entries: Vec<CleanupSnapshotEntry>,
+    /// `None` is an entry an erase reached since: no id, kind, revision or
+    /// mark stays, and a revert lifts nothing for it (FIX 7517).
+    pub entries: Vec<Option<CleanupSnapshotEntry>>,
 }
 
 /// One run that archived something: its snapshot, and its revert once there
@@ -185,7 +187,13 @@ fn encode_snapshot(snapshot: &CleanupRunSnapshot) -> Value {
         ),
         (
             Value::from(KEY_ENTRIES),
-            Value::Array(snapshot.entries.iter().map(encode_entry).collect()),
+            Value::Array(
+                snapshot
+                    .entries
+                    .iter()
+                    .map(|entry| entry.as_ref().map_or(Value::Nil, encode_entry))
+                    .collect(),
+            ),
         ),
     ])
 }
@@ -228,7 +236,10 @@ pub(super) fn decode_snapshot(value: &Value) -> Result<Option<CleanupRunSnapshot
         digest: entity_at(parts, KEY_DIGEST).ok_or_else(corrupt)?,
         entries: rows
             .iter()
-            .map(decode_entry)
+            .map(|row| match row {
+                Value::Nil => Some(None),
+                row => decode_entry(row).map(Some),
+            })
             .collect::<Option<_>>()
             .ok_or_else(corrupt)?,
     }))

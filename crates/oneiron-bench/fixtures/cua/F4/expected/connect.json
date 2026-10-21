@@ -1,0 +1,13 @@
+{
+  "note": "Hello Wemivoro Zavubexo, I would like to compare wemibexo workshop methods with your team at Wemiqemi Jovuqemi Works.",
+  "note_template": "Hello {name}, I would like to compare {note_topic} with your team at {firm}.",
+  "profile": {
+    "firm": "Wemiqemi Jovuqemi Works",
+    "id": "person-02",
+    "location": "Voroqemi District",
+    "name": "Wemivoro Zavubexo",
+    "title": "Wemivoro coordinator"
+  },
+  "send_count": 0,
+  "send_enabled": true
+}

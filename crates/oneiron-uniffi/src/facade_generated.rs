@@ -3031,6 +3031,16 @@ export_facade! {
     let output = client.vault_code_forks_get(&input)?;
     crate::codec::lift_record("vault.code.forks.get", &output)
 };
+"vault.code.imports.create" => fn vault_code_imports_create(&self, input: ExternalImportRequest) -> ExternalImportReceipt = |client| {
+    let input: oneiron::memory::origin_doors::ExternalImportRequest = crate::codec::lower_record("vault.code.imports.create", input)?;
+    let output = client.vault_code_imports_create(&input)?;
+    crate::codec::lift_record("vault.code.imports.create", &output)
+};
+"vault.code.imports.get" => fn vault_code_imports_get(&self, input: ExternalImportLookup) -> Option<ExternalImportStatus> = |client| {
+    let input: oneiron::memory::origin_doors::ExternalImportLookup = crate::codec::lower_record("vault.code.imports.get", input)?;
+    let output = client.vault_code_imports_get(&input)?;
+    crate::codec::lift_record("vault.code.imports.get", &output)
+};
 "vault.code.ingress.get" => fn vault_code_ingress_get(&self, input: CodePushIngressGetRequest) -> Option<CodePushIngressView> = |client| {
     let input: oneiron::memory::origin_doors::CodePushIngressGetRequest = crate::codec::lower_record("vault.code.ingress.get", input)?;
     let output = client.vault_code_ingress_get(&input)?;

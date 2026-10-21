@@ -151,7 +151,7 @@ pub(crate) fn room_upkeep_nudge_in_txn(
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 15] = [
+const HOST_FACETS: [&str; 16] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -166,6 +166,9 @@ const HOST_FACETS: [&str; 15] = [
     COACH_JUDGE_LABEL_RECHECKS_FACET,
     COACH_WEAVE_DIGEST_SETTINGS_FACET,
     COACH_RESEARCH_SELECT_FACET,
+    // The feedback sweep (OF-420): the inbox and each bound GitHub source,
+    // under the fixed dedupe key the owner's run-now door shares.
+    crate::feedback::COACH_FEEDBACK_SWEEP_FACET,
     COACH_FEEDBACK_DELIVERY_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.

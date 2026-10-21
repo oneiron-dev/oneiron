@@ -137,12 +137,14 @@ impl HealSourceRef {
 pub struct HealPendingProposal {
     /// The proposed claim.
     pub claim: EntityId,
-    /// The gate decision that holds it for consent.
-    pub decision: [u8; 16],
+    /// The gate decision that holds it for consent; `None` when the tray does not answer
+    /// for its sequence row, so no decision is known (FIX 7378).
+    pub decision: Option<[u8; 16]>,
     /// Its predicate; `None` when its live body is gone.
     pub predicate: Option<String>,
-    /// When it entered the tray.
-    pub proposed_at: u64,
+    /// When it entered the tray; `None` when the tray does not answer for its sequence
+    /// row (FIX 7378).
+    pub proposed_at: Option<u64>,
 }
 
 /// One attempt a residue row's source names, as its row stands now.
@@ -385,7 +387,7 @@ impl Vault {
             }
             row.proposals.push(HealPendingProposal {
                 claim: pending.claim,
-                decision: pending.decision.as_bytes(),
+                decision: pending.decision.map(crate::store::GateDecisionId::as_bytes),
                 predicate: pending.body.map(|body| body.predicate),
                 proposed_at: pending.created_at,
             });
