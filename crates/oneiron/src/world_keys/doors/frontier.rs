@@ -7,7 +7,10 @@
 //! an owner's diagnostics plan the same way from a fresh snapshot, per key
 //! and across restarts, and write nothing. The plan never mints, wraps,
 //! raises OF-520's question or touches the store: the writer raises the
-//! question when a plan is too wide ([`WrapsWide`]).
+//! question when a plan is too wide ([`WrapsWide`]). A plan on the frontier
+//! counts only the parents its records name, so a world whose explicit
+//! evidence outgrows one record is too wide only when the frontier does not
+//! carry it (FIX 5680).
 
 use std::collections::BTreeSet;
 
@@ -18,6 +21,14 @@ use crate::authority::{
 };
 use crate::error::Result;
 use crate::{EntityId, Vault};
+
+/// Whether a record's width counts only the parents it names (FIX 5680;
+/// CALLS "FIX 5680 frontier width", Engine 10-20 01:1x): a frontier
+/// candidate that carries every row the records would name explicitly takes
+/// them whatever that evidence's width, so the world asks no OF-520 question
+/// and takes no bridge record. A candidate that does not carry them leaves
+/// the plan on today's explicit rows and widths.
+const FRONTIER_WIDTH_ON_SELECTED_PARENTS: bool = true;
 
 /// Which parents an append's records may name.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -92,9 +103,10 @@ pub(crate) struct WrapPlan {
     pub(crate) on_frontier: bool,
 }
 
-/// A record would name more rows than one record may: `rows`. `base` when
-/// the world's edits and the standing rows alone are too many, else a
-/// recipient's standing beside them.
+/// A record on the explicit rows would name more rows than one record may:
+/// `rows`. `base` when the world's edits and the standing rows alone are too
+/// many, else a recipient's standing beside them. Never raised for a plan on
+/// the frontier ([`FRONTIER_WIDTH_ON_SELECTED_PARENTS`]).
 pub(crate) struct WrapsWide {
     pub(crate) rows: usize,
     pub(crate) base: bool,
@@ -103,9 +115,11 @@ pub(crate) struct WrapsWide {
 impl Vault {
     /// The plan of `input`'s wraps in `txn`'s snapshot: the world's live
     /// edits, the rows each named machine's standing rests on, the pinned
-    /// root's record and the request, counted before any split; recipients
-    /// split across records so each stays within the codec's bounds; then
-    /// the frontier choice. Reads only.
+    /// root's record and the request, counted before any split. A frontier
+    /// candidate that carries those rows and every recipient's standing takes
+    /// the records first, its parents alone counted (FIX 5680); otherwise
+    /// recipients split across records so each stays within the codec's
+    /// bounds, then the frontier choice. Reads only.
     pub(crate) fn plan_world_key_wraps_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -132,6 +146,11 @@ impl Vault {
             .collect();
         if base.union(&authors).count() <= MAX_PARENTS / 2 {
             base.extend(authors);
+        }
+        if FRONTIER_WIDTH_ON_SELECTED_PARENTS
+            && let Some(plan) = self.selected_frontier_plan_in_txn(txn, input, &base)?
+        {
+            return Ok(Ok(plan));
         }
         // Each record names its signer's previous row of the world beside
         // these: the first names the scope head, which counts once when it is
@@ -189,6 +208,60 @@ impl Vault {
         Ok(Ok(WrapPlan {
             records,
             on_frontier,
+        }))
+    }
+
+    /// The plan of `input`'s wraps on its frontier candidate (FIX 5680): when
+    /// the candidate carries `base` and every recipient's standing, the rows
+    /// today's records would name explicitly, the first record names the
+    /// candidate, which holds its signer's previous row of the world beneath
+    /// it, and each later one only the record before it. A record's width is
+    /// then its selected parents' alone (the candidate is within one record's
+    /// bound), and recipients split by [`WORLD_KEY_WRAPS_MAX`] only; no
+    /// recipients still make one record. `None` for explicit parents, a
+    /// planned chain, no candidate or one that does not carry those rows: the
+    /// plan stays on today's path.
+    fn selected_frontier_plan_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        input: &WrapPlanInput<'_>,
+        base: &BTreeSet<AuthorityEntryHash>,
+    ) -> Result<Option<WrapPlan>> {
+        let (Parents::Frontier, ChainHead::Row(chain)) = (input.parents, input.chain) else {
+            return Ok(None);
+        };
+        let mut named = base.clone();
+        for recipient in input.recipients {
+            if let WrapRecipient::Machine(id) = recipient {
+                named.extend(standing_rows(input.fold, *id));
+            }
+        }
+        let Some(mut frontier) =
+            KeyFrontier::of_in_txn(&self.store, txn, input.fold, input.world, chain)?
+        else {
+            return Ok(None);
+        };
+        if !frontier.carries_in_txn(&self.store, txn, input.fold, &named)? {
+            return Ok(None);
+        }
+        let indices: Vec<usize> = (0..input.recipients.len()).collect();
+        let records = indices
+            .chunks(WORLD_KEY_WRAPS_MAX)
+            .map(<[usize]>::to_vec)
+            .chain(input.recipients.is_empty().then(Vec::new))
+            .enumerate()
+            .map(|(index, recipients)| PlannedRecord {
+                parents: if index == 0 {
+                    frontier.parents().clone()
+                } else {
+                    BTreeSet::new()
+                },
+                recipients,
+            })
+            .collect();
+        Ok(Some(WrapPlan {
+            records,
+            on_frontier: true,
         }))
     }
 
