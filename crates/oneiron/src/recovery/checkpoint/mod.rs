@@ -32,6 +32,7 @@ mod payload;
 mod rebuild;
 mod response_rows;
 mod restore_class;
+mod side_pads;
 mod snapshot;
 mod tiers;
 mod watermark;
@@ -93,8 +94,8 @@ enum Custody<'a> {
     Replace(&'a Path, Option<&'a [crate::DreamerHomeNodeCandidate]>),
     /// A copy served beside its source gets custody of its own. It never
     /// holds a key the source's live state, when given, says is destroyed or
-    /// committed to be.
-    Fork(Option<&'a LiveCustody>),
+    /// committed to be; with it, the source's live pad rows (`side_pads`).
+    Fork(Option<(&'a LiveCustody, &'a side_pads::SidePads)>),
     /// As `Keep`, for a restore whose custody is not on this host and finds
     /// no head for it (or carries only the legacy untyped marker), on every
     /// entry point: its claim-bound rows whose keys stayed there are dropped
@@ -486,6 +487,9 @@ impl Vault {
         image.drop_machine_identity();
         // The copy holds the source's records, so its host orders hold them too.
         host_holds::carry(&mut image.databases, live.host_holds())?;
+        // A pad its forked custody lacks or cannot read comes from the
+        // source's live row (KS-5).
+        let pads = source.live_pads(&image);
         let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
@@ -494,7 +498,7 @@ impl Vault {
             config,
             RestoreReason::Restore,
             restored_at,
-            Custody::Fork(Some(&live)),
+            Custody::Fork(Some((&live, &pads))),
             &BTreeSet::new(),
             budget,
         )?;

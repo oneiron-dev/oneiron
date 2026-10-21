@@ -295,10 +295,42 @@ impl Store {
         Ok(())
     }
 
-    /// [`Self::stage_world_pad_key_erase_in_txn`] for the pad row `row`
+    /// A local hard erase of one pad row, `item` its key's (FIX 7192):
+    /// stages exactly that subject's retirement in the custody bound here,
+    /// with no census of what custody holds and no read of any state. The
+    /// finisher carries it out after the commit, an entry missing or retired
+    /// already included, and keeps one it cannot carry out yet pending.
+    ///
+    /// # Errors
+    ///
+    /// Custody and storage faults.
+    pub(crate) fn stage_world_pad_key_retirement_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        item: &WorldPadItem,
+    ) -> Result<()> {
+        if self.core.gate_custody_archived() {
+            return Ok(());
+        }
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(());
+        };
+        if !custody_present(custody.binding().root())? {
+            return Ok(());
+        }
+        let intent = RetirementIntent {
+            subject: pad_subject(custody.binding(), item)?,
+            through: 0,
+            cause: RetireCause::Erase,
+        };
+        stage_retirement_in_txn(self, wtxn, &intent)
+    }
+
+    /// [`Self::stage_world_pad_key_retirement_in_txn`] for the pad row `row`
     /// whose body names no key: a soft-erased pad's header-only shell, hard
-    /// erased (FIX 7192). The one pad custody holds whose key derives that
-    /// row id is staged, never another of its world's.
+    /// erased (FIX 7192). The one pad custody names whose key derives that
+    /// row id is staged, found by its subjects' names alone: never another
+    /// of its world's, and no other key's state is read.
     ///
     /// # Errors
     ///
@@ -311,18 +343,22 @@ impl Store {
         if self.core.gate_custody_archived() {
             return Ok(());
         }
-        for (subject, state) in self.world_pad_subjects(&[])? {
-            if state == EntryState::Retired
-                || crate::world_keys::pad_row_of_item(subject.item())? != Some(*row)
-            {
-                continue;
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(());
+        };
+        if !custody_present(custody.binding().root())? {
+            return Ok(());
+        }
+        for subject in custody.subjects_with_prefix(CustodyKind::WorldPad, &[])? {
+            let derived = crate::world_keys::pad_row_of_item(subject.item());
+            if matches!(derived, Ok(Some(found)) if found == *row) {
+                let intent = RetirementIntent {
+                    subject,
+                    through: 0,
+                    cause: RetireCause::Erase,
+                };
+                stage_retirement_in_txn(self, wtxn, &intent)?;
             }
-            let intent = RetirementIntent {
-                subject,
-                through: 0,
-                cause: RetireCause::Erase,
-            };
-            stage_retirement_in_txn(self, wtxn, &intent)?;
         }
         Ok(())
     }

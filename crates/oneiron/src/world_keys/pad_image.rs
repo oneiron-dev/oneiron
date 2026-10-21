@@ -29,7 +29,8 @@ use crate::registry::ENTITY_TYPE_WORLD_KEY_PAD;
 use crate::store::{CustodyPlan, PlannedPad, Store, WorldPadCustody, plan_world_pad};
 
 /// What an image carries for a pad current custody does not hold the same
-/// (CALLS: KS-5 pad image prepare failure).
+/// (CALLS: KS-5 pad image prepare failure; KS-5 unverified custody keeps
+/// carrier).
 enum PadImageUnprepared {
     /// Its carrier, warned, as images carried every pad before: an image is
     /// never refused for it, and no pad is left out of it.
@@ -137,12 +138,26 @@ pub(crate) fn rested_pad_row(store: &Store, raw: &[u8]) -> Result<Option<Zeroizi
     Ok(Some(row))
 }
 
+/// The bare reference row `image` with the pad the live row `live` of the
+/// same key keeps (its own beside its reference, or a carrier's), as its
+/// carrier: a side restore's row whose pad the custody it forks lacks or
+/// cannot read (KS-5). `None` when `live` holds no pad of that key.
+pub(crate) fn live_pad_carrier(image: &[u8], live: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+    let key = *decode_pad_body(pad_row_body(image)?).ok()?.key();
+    let held = decode_pad_body(pad_row_body(live)?).ok()?;
+    let pad = held.pad().filter(|_| *held.key() == key)?;
+    let mut row = Zeroizing::new(image.get(..ENTITY_METADATA_HEADER_LEN)?.to_vec());
+    row.extend_from_slice(&encode_carrier(&key, pad.bytes()));
+    Some(row)
+}
+
 /// Every pad row an archived vault holds whose pad its activation's `plan`
 /// finds retired: the vault that replaced it erased the pad since, so the
 /// row goes, never its own carrier back (KS-5, FIX 5686 part 2). A legal
 /// hold on the row, its world or a claim its key seals keeps it, as it
 /// keeps a pad from every erase (OF-470). Each other pad is planned too, so
-/// the fork copies the live ones.
+/// the fork copies the live ones. A custody fault planning one keeps its row
+/// as it is, warned: the row keeps its own pad.
 ///
 /// # Errors
 ///
@@ -161,7 +176,14 @@ pub(crate) fn plan_archived_pads(
         let Some(row) = image_pad_row_of(&raw) else {
             continue;
         };
-        if plan_world_pad(plan, &row.item)? == PlannedPad::Retired
+        let planned = plan_world_pad(plan, &row.item).unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "an archived pad row's custody did not read; the row stays"
+            );
+            PlannedPad::Missing
+        });
+        if planned == PlannedPad::Retired
             && !crate::store::legal_hold::held_in_txn(store, &txn, id.as_bytes())?
             && !held_pad_world_in_txn(store, &txn, &raw)?
         {

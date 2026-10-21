@@ -108,9 +108,12 @@ impl Store {
     }
 
     /// Journals `recipients`' policy as one `PublicationPolicy` frame when
-    /// it is not the one the last frame recorded (none recorded: no world's
-    /// pads left out of any head), then records it. The caller holds the
-    /// policy guard from before it read the policy.
+    /// it is not the one the last frame recorded, then records it. A record
+    /// missing, undecodable or unread proves no policy: the frame is
+    /// journaled again, so no head acknowledged under an older policy stays
+    /// current (KS-5). The record is a cache: a fault reading or writing it is
+    /// warned and never stops the pass. The caller holds the policy guard
+    /// from before it read the policy.
     ///
     /// # Errors
     ///
@@ -127,13 +130,28 @@ impl Store {
             return Ok(());
         }
         let policy = recipients.policy();
-        let recorded = read_whole(&journal.dir().join(POLICY))?
-            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
-            .unwrap_or_else(|| policy_digest(&BTreeSet::new(), &BTreeSet::new()));
-        if recorded == policy {
+        let recorded = match read_whole(&journal.dir().join(POLICY)) {
+            Ok(bytes) => bytes.and_then(|bytes| <[u8; 32]>::try_from(bytes).ok()),
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "the custody publication policy record did not read; the policy is \
+                     journaled again"
+                );
+                None
+            }
+        };
+        if recorded == Some(policy) {
             return Ok(());
         }
         custody.journal_entry(&LogEntry::PublicationPolicy(policy))?;
-        replace_file(journal.dir(), POLICY, &policy)
+        if let Err(error) = replace_file(journal.dir(), POLICY, &policy) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the custody publication policy record was not written; the next pass \
+                 journals it again"
+            );
+        }
+        Ok(())
     }
 }

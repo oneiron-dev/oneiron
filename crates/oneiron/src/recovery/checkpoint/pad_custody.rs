@@ -20,11 +20,13 @@
 //! and never a pad from the historical image. A row that brings its own pad
 //! (a carrier an image kept where custody could not take it, or a live row
 //! a restore over a vault carried) lands as before unless its custody
-//! retired it.
+//! retired it. Beside a source, one the forked custody lacks or cannot read
+//! lands with the pad the source's live row keeps (`side_pads`).
 
 use std::collections::BTreeSet;
 
 use heed::types::Bytes;
+use zeroize::Zeroizing;
 
 use super::{CheckpointImage, Custody, Rejected, RestoreAdmissionReason as R, codec_error};
 use crate::store::{CustodyPlan, PlannedPad, plan_world_pad};
@@ -133,22 +135,28 @@ impl PadSource {
 /// The pads a restore owes once its rows landed.
 pub(super) struct PadLanding {
     source: PadSource,
-    /// Each bare reference row the image keeps, by row key, with its key.
-    referenced: Vec<(Vec<u8>, WorldKeyId)>,
+    /// Each bare reference row the image keeps, by row key, with its key
+    /// and the carrier a side restore's source's live row gives it.
+    referenced: Vec<(Vec<u8>, WorldKeyId, Option<Zeroizing<Vec<u8>>>)>,
     notes: Vec<PadRestoreNote>,
 }
 
 /// Before the destination exists: plans each pad row of `image` through
 /// `plan`, the restore's one plan, under the custody `custody` names. A row
 /// whose pad that custody retired goes; a bare reference waits for
-/// [`land`]. A fault reading custody refuses for a bare reference, which
-/// has no pad else, and leaves a row that brings its own as it is.
+/// [`land`]. A fault reading custody refuses for a bare reference with no
+/// pad else, and leaves a row that brings its own, or that its side
+/// restore's source keeps, as it is.
 pub(super) fn require(
     image: &mut CheckpointImage,
     plan: &mut CustodyPlan,
     custody: Custody<'_>,
 ) -> std::result::Result<PadLanding, Rejected> {
     let source = PadSource::of(custody);
+    let side = match custody {
+        Custody::Fork(Some((_, side))) => Some(side),
+        _ => None,
+    };
     let rows = image
         .databases
         .get_mut("entities")
@@ -163,12 +171,13 @@ pub(super) fn require(
         let Some(row) = crate::world_keys::image_pad_row_of(raw) else {
             continue;
         };
+        let carrier = side.and_then(|side| side.carrier(row_key)).cloned();
         let planned = match source {
             PadSource::Absent => PlannedPad::Missing,
             PadSource::Kept | PadSource::Forked | PadSource::Carried => {
                 match plan_world_pad(plan, &row.item) {
                     Ok(planned) => planned,
-                    Err(_) if row.held => PlannedPad::Missing,
+                    Err(_) if row.held || carrier.is_some() => PlannedPad::Missing,
                     Err(error) => return Err(Rejected::from(error)),
                 }
             }
@@ -179,7 +188,7 @@ pub(super) fn require(
                 landing.notes.push(PadRestoreNote::erased(&row.key));
             }
             PlannedPad::Live | PlannedPad::Missing if !row.held => {
-                landing.referenced.push((row_key.clone(), row.key));
+                landing.referenced.push((row_key.clone(), row.key, carrier));
             }
             PlannedPad::Live | PlannedPad::Missing => {}
         }
@@ -189,9 +198,10 @@ pub(super) fn require(
 }
 
 /// Once the rows landed and `vault` reopened under its own custody: each
-/// bare reference rests again with the pad that custody holds beside it.
-/// Returns what the restore says of the pads it did not land at rest; a
-/// pad neither held nor withheld refuses the restore, `custody_key_missing`.
+/// bare reference rests again with the pad that custody holds beside it, or
+/// else lands as the carrier its side restore's source gave it. Returns
+/// what the restore says of the pads it did not land; a pad neither held
+/// nor withheld refuses the restore, `custody_key_missing`.
 pub(super) fn land(
     vault: &Vault,
     landing: PadLanding,
@@ -214,13 +224,18 @@ pub(super) fn land(
             .open_database::<Bytes, Bytes>(&txn, Some("entities"))
             .map_err(Error::from)?
             .ok_or_else(codec_error)?;
-        for (row_key, key) in &referenced {
+        for (row_key, key, carrier) in &referenced {
             let Some(raw) = entities.get(&txn, row_key).map_err(Error::from)? else {
                 continue;
             };
-            match crate::world_keys::rested_pad_row(&vault.store, raw)? {
-                Some(row) => rested.push((row_key, row)),
-                None => unheld.push(key),
+            match (
+                crate::world_keys::rested_pad_row(&vault.store, raw),
+                carrier,
+            ) {
+                (Ok(Some(row)), _) => rested.push((row_key, row)),
+                (Ok(None) | Err(_), Some(carrier)) => rested.push((row_key, carrier.clone())),
+                (Ok(None), None) => unheld.push(key),
+                (Err(error), None) => return Err(error.into()),
             }
         }
     }

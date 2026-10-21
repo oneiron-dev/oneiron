@@ -266,6 +266,24 @@ pub fn recover_vault_window(
     }
     let key = crate::sync::types::WindowKey::new(&snapshot.window);
     crate::sync::window::forward_recovery(vault, &prepared.window, materializer, &key, snapshot)?;
+    // A pad row the artifact names by bare reference completes only with its
+    // pad here, its stored row's or current custody's, checked before the
+    // byte-equal comparisons below: one not here stays pending, refused as
+    // not here yet, never a Healthy or repaired manifest (KS-5).
+    {
+        let txn = vault.store.env.read_txn()?;
+        for entity in &snapshot.entity_blobs {
+            let id = crate::EntityId::from_bytes(entity.id)?;
+            if let Some(waits) = crate::world_keys::pad_reference_waits_in_txn(
+                &vault.store,
+                &txn,
+                &id,
+                &entity.blob,
+            )? {
+                return Err(waits);
+            }
+        }
+    }
     // Forward replay may quarantine semantic/authority failures. Never mark a
     // partial replay complete merely because that door reported its row count.
     let actual = super::capture_canonical_window(vault, &snapshot.window, &prepared.window)?;

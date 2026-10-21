@@ -486,16 +486,44 @@ pub(crate) fn stage_pad_row_erase_in_txn(
 }
 
 /// [`stage_pad_row_erase_in_txn`] for this vault's own delete door and
-/// batch delete (FIX 7192): a custody or storage fault leaves the erase as
-/// it was before, warned by kind, never refused for it (CALLS: FIX 7192
-/// local pad-row erase).
+/// batch delete (FIX 7192): the exact subject the row's key names is staged
+/// with no census of custody's states (a header-only shell's found by its
+/// subjects' names), and the finisher keeps it pending until it retires. A
+/// custody or storage fault leaves the erase as it was before, warned by
+/// kind, never refused for it (CALLS: FIX 7192 local pad-row erase).
 pub(crate) fn stage_local_pad_row_erase_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) {
-    if let Err(error) = stage_pad_row_erase_in_txn(store, wtxn, id) {
+    if let Err(error) = stage_local_pad_row_retirement_in_txn(store, wtxn, id) {
         tracing::warn!(
             row = %id.to_hex(),
             kind = ?error.kind(),
             "a hard-erased pad row's custody entry was not staged for retirement"
         );
+    }
+}
+
+fn stage_local_pad_row_retirement_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(raw) = store.port_entity_raw(wtxn, id)?.map(Zeroizing::new) else {
+        return Ok(());
+    };
+    let Some(body) = pad_row_body(&raw) else {
+        return Ok(());
+    };
+    if body.is_empty() {
+        return store.stage_world_pad_row_erase_in_txn(wtxn, id);
+    }
+    match decode_pad_body(body) {
+        Ok(body) => store.stage_world_pad_key_retirement_in_txn(wtxn, &pad_item(body.key())),
+        Err(_) => {
+            tracing::warn!(
+                row = %id.to_hex(),
+                "a world key pad row that does not decode stages no custody retirement"
+            );
+            Ok(())
+        }
     }
 }
 

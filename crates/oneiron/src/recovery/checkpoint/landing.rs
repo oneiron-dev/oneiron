@@ -59,7 +59,7 @@ impl Vault {
         let (fork, source, home) = match custody {
             Custody::Keep | Custody::NewHost => (false, None, None),
             Custody::Replace(home, _) => (false, None, Some(home)),
-            Custody::Fork(source) => (true, source, None),
+            Custody::Fork(source) => (true, source.map(|(live, _)| live), None),
         };
         let candidacy = match custody {
             Custody::Replace(_, candidacy) => candidacy,
