@@ -149,6 +149,10 @@ pub struct HostSelfDispatcher<'a> {
     /// call's own capture noted its answer. Host-internal: no guest call
     /// reaches it.
     read_worlds: Cell<read_worlds::ReadWorldLive>,
+    /// Whether the run's task is its caller's own text (FIX 6130): only
+    /// [`Self::with_caller_task`] sets it, as the host binds the run. No
+    /// guest call reaches it.
+    caller_task: bool,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -276,6 +280,7 @@ impl<'a> HostSelfDispatcher<'a> {
             fold_log: fold_verbs::FoldLog::Site,
             program: None,
             read_worlds: Cell::default(),
+            caller_task: false,
         })
     }
 

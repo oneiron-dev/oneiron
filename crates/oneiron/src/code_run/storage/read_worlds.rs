@@ -91,6 +91,8 @@ pub(crate) enum ReadWorldUnknown {
     /// The run had a record before its ledger began: a continuation's copied
     /// prefix, or a run from before the ledger.
     NotFromStart,
+    /// The run's task is its host's, which may carry rows no capture noted.
+    HostTask,
     /// A call was answered from a read no capture covers.
     Uncaptured,
     /// A verb hook showed the guest a view of its own in place of a call's

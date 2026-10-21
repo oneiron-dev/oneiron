@@ -49,9 +49,22 @@ impl Drop for ReadWorldEntry<'_, '_> {
 }
 
 impl<'a> HostSelfDispatcher<'a> {
+    /// Declares the run's task its caller's own text (FIX 6130), as an MCP
+    /// `execute_code` caller's is: no row of the vault wrote it. A run whose
+    /// host builds its task declares nothing, and its ledger never reads
+    /// complete, since that task may carry rows no capture noted.
+    #[must_use]
+    pub fn with_caller_task(mut self) -> Self {
+        self.caller_task = true;
+        self
+    }
+
     /// Enters a capture epoch of `run`'s ledger for one entry of the run.
     pub(crate) fn enter_read_worlds(&self, run: EntityId) -> ReadWorldEntry<'_, 'a> {
         self.read_worlds.set(self.opened(run));
+        if !self.caller_task {
+            self.read_worlds_unknown(run, ReadWorldUnknown::HostTask);
+        }
         ReadWorldEntry { dispatcher: self }
     }
 }
