@@ -144,6 +144,10 @@ pub struct BrowserGuest {
     pub policy: SendPolicy,
     /// A host directory served read-only on the guest's loopback, for checks.
     pub fixture: Option<PathBuf>,
+    /// The one host:port the run relay's fixture origin
+    /// (`http://127.0.0.1:8080`) forwards to, host-side; none unless the
+    /// host's config names one, and never beside `fixture` (FIX 8061).
+    pub fixture_forward: Option<std::net::SocketAddrV4>,
     /// The engine the guest starts and the driver speaks to.
     pub engine: BrowserEngine,
 }

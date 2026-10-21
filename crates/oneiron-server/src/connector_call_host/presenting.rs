@@ -13,6 +13,15 @@
 //! question's worker keeps a scrubbed copy, as its session keeps the
 //! header, and clears each later question and the terminal reply the same
 //! way. Nothing is withheld, and elicitation is declared as it always was.
+//!
+//! A question key the clearing changed held the value: the caller answers it
+//! under a unique alias, and the original key, kept zeroized for its round
+//! only, goes back only on the wire (FIX 8051). A route's own secret is
+//! presented by the record its name resolved to before the exchange was
+//! declared, never by the name again at the door
+//! (CONNECTOR_PRESENT_BY_RECORD_ID).
+
+use zeroize::Zeroizing;
 
 use super::*;
 
@@ -27,8 +36,12 @@ enum Door {
     },
     /// The custody record a `self.use` call names.
     Record(EntityId),
-    /// The route's own secret, by name, resolved at the door.
-    Route(String),
+    /// The record the route's own secret name resolved to before the
+    /// exchange was declared, presented by its id.
+    Route(EntityId),
+    /// The route's own secret names no live record: nothing is sent, as
+    /// the door refused it before.
+    Unresolved,
 }
 
 /// One send's credential, known before its exchange is declared.
@@ -52,14 +65,20 @@ impl ServedConnectorCallHost {
                 custody,
             }),
             (None, Some(custody), _) => Some(Door::Record(custody)),
-            (None, None, Some(secret_ref)) => Some(Door::Route(secret_ref)),
+            (None, None, Some(secret_ref)) => {
+                Some(match self.vault.resolve_secret_ref(&secret_ref) {
+                    Ok(Some(custody)) => Door::Route(custody),
+                    _ => Door::Unresolved,
+                })
+            }
             (None, None, None) => None,
         };
         let text = match &door {
             Some(Door::Grant { custody, .. }) => self.vault.secret_clear_text(custody.as_ref()),
-            Some(Door::Record(custody)) => self.vault.secret_clear_text(Some(custody)),
-            Some(Door::Route(secret_ref)) => self.vault.secret_clear_text_for_ref(secret_ref),
-            None => String::new(),
+            Some(Door::Record(custody) | Door::Route(custody)) => {
+                self.vault.secret_clear_text(Some(custody))
+            }
+            Some(Door::Unresolved) | None => String::new(),
         };
         Presenting {
             effector,
@@ -102,11 +121,10 @@ impl Presenting {
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
                 .map(|receipt| Some(SentPresentation::cleared(custody, receipt.value_generation))),
-            Door::Route(secret_ref) => vault
-                .inject_secret_at_door_resolved(&secret_ref, effector, &mut present)
-                .map(|(custody, receipt)| {
-                    Some(SentPresentation::cleared(custody, receipt.value_generation))
-                }),
+            Door::Route(custody) => vault
+                .present_resolved_secret_at_door(&custody, effector, &mut present)
+                .map(|receipt| Some(SentPresentation::cleared(custody, receipt.value_generation))),
+            Door::Unresolved => Ok(None),
         };
         // The record a door that presented its value resolved (FIX 5455),
         // and the generation it released.
@@ -153,18 +171,72 @@ impl Sent {
     }
 }
 
+/// One round of a connector's questions the registry took in: its
+/// registration, the questions as the caller sees them, and the original key
+/// behind each alias.
+pub(super) struct KeptRound {
+    pub(super) registered: Registered,
+    pub(super) questions: Vec<ConnectorQuestion>,
+    pub(super) aliases: KeyAliases,
+}
+
 impl Declared<'_> {
     /// Keeps `questions` in the registry under this send's binding, each
-    /// cleared first of the value the send presented, if it presented one.
+    /// cleared first of the value the send presented, if it presented one;
+    /// `None` when the registry is full.
     pub(super) fn keep_questions(
         &self,
-        questions: &mut [ConnectorQuestion],
+        mut questions: Vec<ConnectorQuestion>,
         value: Option<&SentValue<'_>>,
-    ) -> Option<Registered> {
-        if let Some(value) = value {
-            clear_questions(questions, value);
-        }
-        self.registry.register(self.binding.clone(), questions)
+    ) -> Option<KeptRound> {
+        let aliases = match value {
+            Some(value) => clear_questions(&mut questions, value),
+            None => KeyAliases::default(),
+        };
+        let registered = self.registry.register(self.binding.clone(), &questions)?;
+        Some(KeptRound {
+            registered,
+            questions,
+            aliases,
+        })
+    }
+}
+
+/// One round's question keys the clearing changed (FIX 8051): each alias
+/// the caller answers under, beside the original key the connector asked
+/// under, which held the presented value. The original is kept zeroized for
+/// the round only, never shown, and goes back only on the wire.
+#[derive(Default)]
+pub(super) struct KeyAliases(Vec<(String, Zeroizing<String>)>);
+
+impl KeyAliases {
+    /// The key the connector asked under for the caller's key `key`.
+    fn original<'a>(&'a self, key: &'a str) -> &'a str {
+        self.0
+            .iter()
+            .find(|(alias, _)| alias == key)
+            .map_or(key, |(_, original)| original.as_str())
+    }
+
+    /// `responses`, keyed as the caller answered, keyed as the connector's
+    /// wire takes them.
+    pub(super) fn restore(&self, responses: &BTreeMap<String, Value>) -> Map<String, Value> {
+        responses
+            .iter()
+            .map(|(key, response)| (self.original(key).to_owned(), response.clone()))
+            .collect()
+    }
+
+    /// The response to the connector's own key `key`.
+    pub(super) fn response<'r>(
+        &self,
+        responses: &'r BTreeMap<String, Value>,
+        key: &str,
+    ) -> Option<&'r Value> {
+        responses
+            .iter()
+            .find(|(answered, _)| self.original(answered) == key)
+            .map(|(_, response)| response)
     }
 }
 
@@ -180,20 +252,60 @@ fn clear_reply(reply: &mut UntrustedToolResult, value: &SentValue<'_>) {
     }
 }
 
-/// Each question's key, message and schema cleared of `value`.
-pub(super) fn clear_questions(questions: &mut [ConnectorQuestion], value: &SentValue<'_>) {
-    for question in questions {
+/// Each question's key, message and schema cleared of `value`. A key the
+/// clearing changed held the value: it becomes a unique alias, its cleared
+/// text (with `#2`, `#3`, ... while another key of the round reads the
+/// same), and its original goes in the returned map (FIX 8051). A key the
+/// clearing did not change stays byte for byte.
+pub(super) fn clear_questions(
+    questions: &mut [ConnectorQuestion],
+    value: &SentValue<'_>,
+) -> KeyAliases {
+    let mut changed = Vec::new();
+    for (at, question) in questions.iter_mut().enumerate() {
+        let original = Zeroizing::new(question.key.clone());
         value.clear_string(&mut question.key);
+        if question.key != *original {
+            changed.push((at, original));
+        }
         value.clear_string(&mut question.message);
         value.clear_json(&mut question.requested_schema);
     }
+    let mut aliases = Vec::with_capacity(changed.len());
+    for (at, original) in changed {
+        let alias = unique_key(questions, at);
+        questions[at].key.clone_from(&alias);
+        aliases.push((alias, original));
+    }
+    KeyAliases(aliases)
+}
+
+/// The key of question `at`, made unique among the round's keys: as it
+/// reads, else with the first free `#n` (from 2) after it.
+fn unique_key(questions: &[ConnectorQuestion], at: usize) -> String {
+    let base = &questions[at].key;
+    let taken = |key: &str| {
+        questions
+            .iter()
+            .enumerate()
+            .any(|(other, question)| other != at && question.key == key)
+    };
+    let mut alias = base.clone();
+    let mut n = 1_u64;
+    while taken(&alias) {
+        n += 1;
+        alias = format!("{base}#{n}");
+    }
+    alias
 }
 
 /// A live exchange worker's event cleared of `value`: a next round's
 /// questions, or the terminal reply.
 pub(super) fn clear_event(event: &mut WorkerEvent, value: &SentValue<'_>) {
     match event {
-        WorkerEvent::Question { questions, .. } => clear_questions(questions, value),
+        // A terminal event carries no round to answer; a round's questions
+        // take their aliases in the worker.
+        WorkerEvent::Question { questions, .. } => drop(clear_questions(questions, value)),
         WorkerEvent::Result(reply) => clear_reply(reply, value),
         WorkerEvent::Failed { .. } => {}
     }
