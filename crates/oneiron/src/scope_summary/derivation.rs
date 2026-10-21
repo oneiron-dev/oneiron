@@ -3,7 +3,6 @@
 use super::codec::invalid;
 use super::purpose::{SummaryPurpose, purpose_in_txn};
 use super::request::{decode_request, encode_request, enqueue_in_txn, plan_in_txn};
-use crate::dreamer_consolidation::scope_summary_evidence_in_txn;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault, WriteActor};
@@ -47,6 +46,27 @@ pub struct SummaryDerivation {
     pub recorded_at: u64,
     pub generated_text_hash: [u8; 32],
     pub generated_keep_hash: [u8; 32],
+    /// A session summary's source set (FIX 7509): its sitting and its TURNs,
+    /// sorted and once each, under one domain-separated hash. `None` for
+    /// every other summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_set: Option<[u8; 32]>,
+    /// A session summary's lines as generated, each with the TURNs it came
+    /// from (FIX 7509), bound to `generated_text_hash`: an edited body's
+    /// lines are its editor's. `None` for every other summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_sources: Option<Vec<SummaryLineSources>>,
+}
+
+/// One line of a session summary as generated (FIX 7509): half-open Unicode
+/// scalar offsets into the generated text, and the full ids of the TURNs the
+/// line came from, each one the call read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SummaryLineSources {
+    pub output_start: usize,
+    pub output_end: usize,
+    pub turn_refs: Vec<String>,
 }
 
 /// The summary's own document metadata. `keep` is read before every generation.
@@ -168,6 +188,12 @@ pub(super) fn options(
         return Ok((purpose, None, String::new(), None));
     };
     let meta = crate::entity_doc::summary_meta_in_txn(vault, txn, &previous)?;
+    // A sitting's summary is written from its retained turns, never from its
+    // own earlier body (CLM-009, FIX 7509): the prior summary is lineage only
+    // and its body is not read; its keep memo stays the editor's wants.
+    if super::session::is_session_declaration(input) {
+        return Ok((purpose, Some(previous), meta.keep, None));
+    }
     // A retired source may have withdrawn the old summary. Its retained
     // document is still the editor's history; it is never evidence text.
     let text = crate::entity_doc::summary_text_in_txn(vault, txn, &previous)?;
@@ -178,7 +204,7 @@ pub(super) fn options(
 
 fn observation(vault: &Vault, txn: &mut heed::RwTxn<'_>, input: &Value) -> Result<[u8; 32]> {
     let plan = plan_in_txn(vault, txn, input)?;
-    let evidence = scope_summary_evidence_in_txn(vault, txn, &plan.sources)?;
+    let evidence = plan.evidence_in_txn(vault, txn)?;
     plan.observation(&evidence.fingerprint()?)
 }
 
@@ -206,12 +232,16 @@ pub(super) fn register_in_txn(
     input: &Value,
     summary: EntityId,
 ) -> Result<()> {
-    let request = decode_request(input)?;
+    let request = decode_request(vault, txn, input)?;
     let (purpose, _, _, _) = options(vault, txn, input)?;
     let key = projection_key(&request, &purpose.id)?;
     let normalized = declaration(&request, &purpose.id, None);
     let request = encode(&normalized)?;
-    let current_input = declaration(&decode_request(input)?, &purpose.id, Some(summary));
+    let current_input = declaration(
+        &decode_request(vault, txn, input)?,
+        &purpose.id,
+        Some(summary),
+    );
     let observed = match observation(vault, txn, &current_input) {
         Ok(observed) => observed,
         // A source TURN partly away from this replica (OF-534) has no
@@ -253,7 +283,7 @@ pub(crate) fn roll_back_summary_in_txn(
         .map(|claim| EntityId::from_hex(&claim))
         .transpose()?;
     let input = decode(&meta.derivation.request)?;
-    let request = decode_request(&input)?;
+    let request = decode_request(vault, txn, &input)?;
     let key = projection_key(&request, &meta.purpose.id)?;
     let Some(projection) = PROJECTION.get(&vault.store, txn, &key)? else {
         return Ok((None, header));
@@ -295,7 +325,13 @@ pub(crate) fn rederive_changed_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) 
             continue;
         }
         let normalized = decode(&projection.request)?;
-        let request = decode_request(&normalized)?;
+        // A sitting's summary is not re-derived at the commit boundary (FIX
+        // 7509): no later write can fail on it. Its drift waits for the
+        // stale and nightly backstop.
+        if super::session::is_session_declaration(&normalized) {
+            continue;
+        }
+        let request = decode_request(vault, txn, &normalized)?;
         let purpose = normalized
             .as_map()
             .and_then(|fields| {
@@ -335,7 +371,7 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             crate::conversation_dag::actor_in_txn(&self.store, txn, requester)?;
             let metadata = crate::entity_doc::summary_meta_in_txn(self, txn, &summary)?;
-            let mut request = decode_request(&decode(&metadata.derivation.request)?)?;
+            let mut request = decode_request(self, txn, &decode(&metadata.derivation.request)?)?;
             request.requester = requester;
             enqueue_in_txn(
                 self,

@@ -80,7 +80,7 @@ fn validate_covers_in_txn(
         }
     }
     let Some(scope) = &body.scope else {
-        return validate_note_covers_in_txn(vault, txn, summary, &body.covers);
+        return validate_note_covers_in_txn(vault, txn, summary, body);
     };
     if let ScopePath::BranchSpan { after, through } = scope.path {
         // The span's records, of which the body covers those it was written
@@ -143,27 +143,46 @@ fn validate_covers_in_txn(
 }
 
 /// A NOTE set's summary (FIX 5757) covers NOTEs its saved declaration named,
-/// each still live. No conversation, session or path holds them.
+/// each still live, and names no MESSAGE: NOTEs carry none. No conversation,
+/// session or path holds them. A sitting's summary (FIX 7509), the other
+/// summary in no conversation, is checked against its sitting instead.
 fn validate_note_covers_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     summary: &EntityId,
-    covers: &[EntityId],
+    body: &ScopeSummaryBody,
 ) -> Result<()> {
     let declared = crate::entity_doc::summary_meta_in_txn(vault, txn, summary)
         .and_then(|meta| super::derivation::decode(&meta.derivation.request))
-        .and_then(|input| super::request::decode_request(&input))
+        .and_then(|input| match super::request::decode_target(&input)? {
+            // A sitting's declaration names no requester (FIX 7509).
+            target @ super::ScopeSummaryTarget::Session { .. } => Ok(target),
+            _ => super::request::decode_request(vault, txn, &input).map(|request| request.target),
+        })
         .map_err(|_| invalid("NOTE summary has no saved declaration"))?;
-    let super::ScopeSummaryTarget::Sources {
-        scope: None,
-        sources,
-    } = declared.target
-    else {
-        return Err(invalid(
-            "summary in no conversation was not declared over NOTEs",
-        ));
+    let sources = match declared {
+        super::ScopeSummaryTarget::Session { session } => {
+            return super::session::validate_session_covers_in_txn(
+                vault,
+                txn,
+                &session,
+                &body.covers,
+            );
+        }
+        super::ScopeSummaryTarget::Sources {
+            scope: None,
+            sources,
+        } => sources,
+        _ => {
+            return Err(invalid(
+                "summary in no conversation was not declared over NOTEs",
+            ));
+        }
     };
-    for covered in covers {
+    if !body.messages.is_empty() {
+        return Err(invalid("a NOTE set's summary is composed from its NOTEs"));
+    }
+    for covered in &body.covers {
         if !sources.contains(covered)
             || crate::vault::live_entity_row_in_txn(&vault.store, txn, covered)?.live_type()
                 != Some(ENTITY_TYPE_NOTE)
