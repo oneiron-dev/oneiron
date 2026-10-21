@@ -66,15 +66,10 @@ pub(crate) fn refresh_archived_attempt_in_txn(
 ) -> Result<()> {
     let bound = marks::revision_of(before);
     let revision = marks::revision_of(after);
-    let moved = match marks::mark_in_txn(store, txn, id.as_bytes())? {
-        Some(CleanupMark::Archived {
-            revision: archived,
-            run,
-        }) if archived == bound => CleanupMark::Archived { revision, run },
-        Some(CleanupMark::Kept { revision: kept }) if kept == bound => {
-            CleanupMark::Kept { revision }
-        }
-        _ => return Ok(()),
+    let Some(moved) = marks::mark_in_txn(store, txn, id.as_bytes())?
+        .and_then(|mark| mark.moved(&bound, &revision))
+    else {
+        return Ok(());
     };
     marks::put_in_txn(store, txn, id.as_bytes(), moved)
 }
@@ -218,6 +213,19 @@ pub(super) fn keep_attempt_in_txn(
 
 fn task_prefix_bytes(task: &str) -> Vec<u8> {
     [task.as_bytes(), b"/"].concat()
+}
+
+/// Drops every archived-attempt index row of an erased `task` (FIX 7517):
+/// the index is private and keyed by the task's id, so its rows go by that
+/// key. The attempts' own marks stay as they are, archived or kept: this
+/// restores nothing.
+pub(super) fn erase_task_index_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    task: &EntityId,
+) -> Result<()> {
+    TASK_ARCHIVE.delete_from(store, txn, &task_prefix_bytes(&task.to_hex()))?;
+    Ok(())
 }
 
 pub(crate) fn restore_task_attempts(
