@@ -29796,6 +29796,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/feedback/triage/erased.rs",
+     "purpose": "The `erased` end of a feedback triage revision (FIX 7551)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "GithubIssueKind",
       "GithubIssuePage",
@@ -29818,6 +29828,7 @@
      "notable": [
       "FeedbackTriageBindingRequest",
       "FeedbackTriageChild",
+      "FeedbackTriageErased",
       "FeedbackTriageHold",
       "FeedbackTriageRun",
       "FeedbackTriageRunRequest",
@@ -29829,7 +29840,7 @@
      "surface": {
       "enum": 1,
       "fn": 4,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -69816,7 +69827,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -70714,7 +70725,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4498,
+   "source_files": 4499,
    "test_files": 902
   },
   "oneiron-android": {
