@@ -302,6 +302,23 @@ impl Vault {
             writer: row.writer,
         }))
     }
+    /// [`Self::origin_host_authority`]'s pusher rule (`Unconfigured` or
+    /// `Held`, as the mirror's due check reads it) for the repository
+    /// `repo_id`, in the caller's snapshot: an exact publish's claim
+    /// (FIX 6866) reads it in the transaction it commits in.
+    pub(in crate::origin) fn origin_pusher_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        repo_id: EntityId,
+    ) -> Result<bool> {
+        let Some(row) = AUTHORITY.get(&self.store, txn, &repo_id)? else {
+            return Ok(true);
+        };
+        let host = crate::identity::read_machine_id_in_txn(self, txn)?;
+        Ok(!row.mirror
+            && row.writer != ORIGIN_ERASED_WRITER
+            && host.is_some_and(|host| row.writer == host.to_hex()))
+    }
     /// The authority key of a served repository: its object store's identity,
     /// as admission reads it before any commit is pinned.
     fn served_repo_id(&self, repo_root: &Path) -> Result<EntityId> {

@@ -31,6 +31,16 @@ pub(super) struct MirrorEgress {
     authorization: zeroize::Zeroizing<String>,
 }
 
+impl MirrorEgress {
+    /// The egress of one outbound call carrying `authorization`, the full
+    /// header value: an exact publish (FIX 6866) rides this same profile.
+    pub(super) fn with_authorization(authorization: &str) -> Self {
+        Self {
+            authorization: zeroize::Zeroizing::new(format!("Authorization: {authorization}")),
+        }
+    }
+}
+
 impl std::fmt::Debug for MirrorEgress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("MirrorEgress(..)")

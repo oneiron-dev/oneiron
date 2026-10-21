@@ -304,6 +304,78 @@ impl FrozenGitArgv {
         Ok(Self::frozen(GitWireOperation::MirrorPush, tail))
     }
 
+    /// `ls-remote --refs -- <url> <ref>`: what one https mirror holds at one
+    /// full ref (FIX 6866). A ref the mirror lacks is absent from a
+    /// successful listing; the caller takes only the exact name.
+    pub(super) fn remote_ref(url: &str, name: &GitRefName) -> GitWireResult<Self> {
+        validate_argv_token(url)?;
+        let mut tail = os_args(&["ls-remote", "--refs", "--"]);
+        tail.push(OsString::from(url));
+        tail.push(OsString::from(name.as_str()));
+        Ok(Self::frozen(GitWireOperation::RemoteRefs, tail))
+    }
+
+    /// `push --porcelain --no-verify --no-recurse-submodules
+    /// --force-with-lease=<ref>:<old> -- <url> <oid>:<ref>`: exactly one
+    /// commit to exactly one ref (FIX 6866), and only while the mirror's ref
+    /// still holds `expected` (`None`: while it does not exist). No `+`
+    /// refspec overrides the lease, and nothing is deleted.
+    pub(super) fn publish_push(
+        url: &str,
+        name: &GitRefName,
+        commit: &GitOid,
+        expected: Option<&GitOid>,
+    ) -> GitWireResult<Self> {
+        validate_argv_token(url)?;
+        let mut tail = os_args(&[
+            "push",
+            "--porcelain",
+            "--no-verify",
+            "--no-recurse-submodules",
+        ]);
+        tail.push(OsString::from(format!(
+            "--force-with-lease={}:{}",
+            name.as_str(),
+            expected.map_or("", GitOid::as_str)
+        )));
+        tail.push(OsString::from("--"));
+        tail.push(OsString::from(url));
+        tail.push(OsString::from(format!(
+            "{}:{}",
+            commit.as_str(),
+            name.as_str()
+        )));
+        Ok(Self::frozen(GitWireOperation::PublishPush, tail))
+    }
+
+    /// `diff-tree --stdin -r -m --root --no-renames -z --raw`, each stdin
+    /// line a commit then the parents it is diffed against (FIX 6866): per
+    /// commit and parent, every path whose entry differs, NUL-framed; a root
+    /// commit against the empty tree. A commit that changes nothing prints
+    /// nothing.
+    pub(super) fn review_diffs(commits: &[(GitOid, Vec<GitOid>)]) -> Self {
+        let tail = os_args(&[
+            "diff-tree",
+            "--stdin",
+            "-r",
+            "-m",
+            "--root",
+            "--no-renames",
+            "-z",
+            "--raw",
+        ]);
+        let mut payload = Vec::new();
+        for (commit, parents) in commits {
+            payload.extend_from_slice(commit.as_str().as_bytes());
+            for parent in parents {
+                payload.push(b' ');
+                payload.extend_from_slice(parent.as_str().as_bytes());
+            }
+            payload.push(b'\n');
+        }
+        Self::frozen(GitWireOperation::ReviewDiffs, tail).with_stdin(payload)
+    }
+
     /// `worktree add --detach -- <path> <commit>`: materializes exactly one
     /// commit and never moves the repository head.
     pub(super) fn worktree_add(path: &Path, commit: &GitOid) -> GitWireResult<Self> {

@@ -3580,6 +3580,9 @@ class Oneiron:
         def mirror(self) -> "Oneiron._VaultCodeOriginMirrorVerbs":
             return Oneiron._VaultCodeOriginMirrorVerbs(self._client)
         @property
+        def publish(self) -> "Oneiron._VaultCodeOriginPublishVerbs":
+            return Oneiron._VaultCodeOriginPublishVerbs(self._client)
+        @property
         def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs":
             return Oneiron._VaultCodeOriginAuthorityVerbs(self._client)
         def publications(self, spec):
@@ -3592,14 +3595,38 @@ class Oneiron:
             """Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_get(json.dumps(spec))))
         def set(self, spec):
-            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write."""
+            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me unless named; the same URL keeps its own); the token binding is checked in the setup write."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_set(json.dumps(spec))))
+        def strategy(self, spec):
+            """Set one served origin mirror's sync strategy: ask_me sends nothing until an exact publish request is approved, schedule pushes every published ref on its cadence; it changes only the strategy and its revision."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_strategy(json.dumps(spec))))
         def clear(self, spec):
             """Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_clear(json.dumps(spec))))
         def push(self, spec):
-            """Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them."""
+            """Push one origin's published Git refs to its schedule mirror now, recording the real outcome (ask_me refuses publish_request_required); refs pushed are not readiness, which names the LFS objects the history needs."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_push(json.dumps(spec))))
+    class _VaultCodeOriginPublishVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def request(self, spec):
+            """Ask to publish one exact commit to one branch of a served origin's mirror, once: the request leases the push on the branch tip an authenticated read saw and records a full-ancestry review of what it would expose."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_publish_request(json.dumps(spec))))
+        def review(self, spec):
+            """Read one page of an exact publish request's full-ancestry review: each commit the push would expose, with its parents, and every path, mode and object those commits introduce."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_publish_review(json.dumps(spec))))
+        def get(self, spec):
+            """Read one exact publish request: its tuple, review digest, state, acts and the typed refusal that ended it, if one did."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_publish_get(json.dumps(spec))))
+        def approve(self, spec):
+            """Approve one pending exact publish request by naming its review digest, as the owner or under one Grant covering the branch and every reviewed path; no second approval is asked."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_publish_approve(json.dumps(spec))))
+        def execute(self, spec):
+            """Push one approved exact publish request's commit to its branch once, leased on the recorded tip; an unproven outcome settles from the mirror and is never sent again."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_publish_execute(json.dumps(spec))))
+        def cancel(self, spec):
+            """Cancel one pending or approved exact publish request; a request whose push is in flight or that already settled stays as it is."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_publish_cancel(json.dumps(spec))))
     class _VaultCodeOriginAuthorityVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

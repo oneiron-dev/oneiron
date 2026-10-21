@@ -18,6 +18,8 @@ pub mod conflict_tree;
 pub mod export;
 pub mod mirror;
 mod mirror_census;
+pub mod mirror_strategy;
+pub mod publish;
 pub mod registration;
 pub mod residence;
 pub mod secret_manifest;

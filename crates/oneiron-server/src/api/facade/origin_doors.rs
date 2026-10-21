@@ -152,6 +152,20 @@ pub(crate) async fn vault_code_origin_mirror_set(
     .await
 }
 
+pub(crate) async fn vault_code_origin_mirror_strategy(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OriginMirrorStrategyRequest,
+) -> Listed<oneiron::origin::mirror::OriginMirrorTarget> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.origin.mirror.strategy",
+        move |memory, owner| memory.origin_mirror_strategy_as(owner, input),
+    )
+    .await
+}
+
 pub(crate) async fn vault_code_origin_mirror_clear(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

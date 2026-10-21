@@ -13,6 +13,12 @@
 //! (bound to `origin:mirror-push`) and a cadence in seconds; the origin host
 //! pushes its published refs there on that cadence, which is the real RPO.
 //! `POST /v1/owner/origin-mirror/push` pushes now.
+//!
+//! Each mirror carries a sync strategy (FIX 6866): `schedule` is that
+//! cadenced push; `ask_me`, the default, sends nothing whole, so its push
+//! refuses with `publish_request_required` and exact reviewed commits go out
+//! through `vault.code.origin.publish.*`. `POST
+//! /v1/owner/origin-mirror/strategy` changes the strategy alone.
 
 use std::sync::Arc;
 
@@ -22,6 +28,7 @@ use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::origin::mirror::{OriginMirrorRun, OriginMirrorTarget, OriginMirrorTargetInput};
+use oneiron::origin::mirror_strategy::OriginMirrorSyncStrategy;
 use oneiron::origin::residence::{OriginAuthority, OriginResidence};
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +52,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
                 .delete(clear_origin_mirror),
         )
         .route("/origin-mirror/push", post(push_origin_mirror))
+        .route("/origin-mirror/strategy", post(set_origin_mirror_strategy))
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,6 +177,10 @@ struct SetOriginMirror {
     user: Option<String>,
     /// Seconds between pushes: the repository's RPO.
     every_secs: u64,
+    /// `ask_me` or `schedule`; absent, the same URL keeps its strategy and
+    /// a new one asks first.
+    #[serde(default)]
+    sync_strategy: Option<OriginMirrorSyncStrategy>,
 }
 
 async fn set_origin_mirror(
@@ -186,8 +198,34 @@ async fn set_origin_mirror(
                 secret_ref: request.secret_ref,
                 user: request.user,
                 every_secs: request.every_secs,
+                sync_strategy: request.sync_strategy,
             },
         )?)
+    })
+    .await?;
+    Ok(Json(row))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetOriginMirrorStrategy {
+    repo: String,
+    /// `ask_me` or `schedule`.
+    sync_strategy: OriginMirrorSyncStrategy,
+}
+
+/// Changes one mirror's sync strategy and its revision, nothing else.
+async fn set_origin_mirror_strategy(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<SetOriginMirrorStrategy>, JsonRejection>,
+) -> Result<Json<OriginMirrorTarget>, EnvelopedApiError> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let row = blocking(move || {
+        Ok(server
+            .vault()
+            .set_served_origin_mirror_strategy(&request.repo, request.sync_strategy)?)
     })
     .await?;
     Ok(Json(row))

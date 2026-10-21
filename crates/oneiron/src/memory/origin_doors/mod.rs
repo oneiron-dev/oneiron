@@ -4,15 +4,19 @@
 //! repository. None mints a lease, commits a tested tree or forces a
 //! publication result.
 //!
-//! Authority is the owner's live proof alone (`Memory::origin_owner`).
+//! Authority is the owner's live proof alone (`Memory::origin_owner`), save
+//! the exact publish doors (`publish`, FIX 6866), which also admit one live
+//! Grant in the engine's own snapshot.
 //! Export and binding also take a live checkout lease the owner holds on the
 //! served repository, through the same gate every lease-route git request
 //! redeems (`credential_door::require_checkout_lease`).
 
 mod operations;
+mod publish;
 mod setup;
 mod types;
 
+pub use publish::OriginPublishProof;
 pub use types::*;
 
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};

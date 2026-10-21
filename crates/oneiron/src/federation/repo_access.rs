@@ -229,6 +229,79 @@ impl Vault {
     }
 }
 
+// The manual publish doors' seam (FIX 6866, an L02 addition beside G1's
+// three): no existing body above changes.
+impl Vault {
+    /// [`Self::admit_repo_read_in_txn`] over the SAME live candidate Grants,
+    /// in the same id order, for a door that also needs something of the one
+    /// Grant it stands on: the first Grant that admits the read AND passes
+    /// `passes` wins, so an earlier Grant that only reads never masks a later
+    /// one that passes. Grants are never unioned. `Ok(Err(Some(refused)))`:
+    /// no Grant admits the read (the furthest refusal, as the read seam
+    /// answers); `Ok(Err(None))`: a Grant admits the read, none of those
+    /// passes.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure; never a refusal.
+    pub(crate) fn admit_repo_read_passing_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        repo: EntityId,
+        target: &RepoTarget,
+        passes: impl Fn(&AgentGrantStanding) -> bool,
+    ) -> Result<std::result::Result<RepoMembership, Option<RepoAccessRefusal>>> {
+        let intent = RepoAccessIntent::Read;
+        if principal_standing_in_txn(self, txn, actor, class, intent.verb())?.is_none() {
+            return Ok(Err(Some(RepoAccessRefusal::NoMembership)));
+        }
+        let now = self.instant_in_txn(txn)?.secs();
+        let owners = crate::policy_model::owners_in_txn(self, txn)?;
+        let shared = self
+            .shared_vault_creation_in_txn(txn)?
+            .map(|creation| creation.vault_id);
+        let mut refusal = Some(RepoAccessRefusal::NoMembership);
+        for standing in self.agent_grants_in_txn(txn)? {
+            let grant = &standing.grant;
+            let Some(bounds) = grant.repo_bounds.as_ref() else {
+                continue;
+            };
+            if bounds.repo != repo
+                || grant.member_ref != actor
+                || !grant.confers_at(now)
+                || !owners.contains(&standing.delegated_by)
+                || !grant.authority_scope.admits_repo_member(bounds)
+                || !self.agent_grant_stands_in_txn(txn, &standing, shared)?
+            {
+                continue;
+            }
+            let Some(repo_ref) = self.repo_anchor_in_txn(txn, bounds)? else {
+                continue;
+            };
+            if let Err(refused) = grant
+                .authority_scope
+                .admit_repo_target(bounds, target, intent)
+            {
+                refusal = refusal.map(|furthest| furthest.max(refused));
+                continue;
+            }
+            if !passes(&standing) {
+                refusal = None;
+                continue;
+            }
+            return Ok(Ok(RepoMembership {
+                actor,
+                class,
+                grant: standing.id,
+                bounds: bounds.clone(),
+                repo_ref,
+            }));
+        }
+        Ok(Err(refusal))
+    }
+}
+
 impl Vault {
     /// The owner's repo `bounds` for a new agent grant of `scope`, checked in
     /// the minting writer: their grammar, a Scope that lists read with their
