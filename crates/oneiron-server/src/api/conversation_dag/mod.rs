@@ -441,6 +441,12 @@ pub(crate) async fn list_core_sub_sessions(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let turn = parse_entity_id_param(&turn_id, "turn_id")?;
+    // A turn the TURN routes do not serve the caller, one of a private thread
+    // it does not read above all, lists no sub-sessions either (FIX 5869).
+    let read = super::scoped_auth::scoped_read_for_core_auth(&server.vault, &auth)?;
+    if !super::conversations::core_turn_served(&server.vault, &read, &turn)? {
+        return Err(ApiError::not_found("turn", Some(&turn_id)).into());
+    }
     let sessions = server
         .vault
         .sub_sessions(&turn)

@@ -3577,6 +3577,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.merge_queue.export_green",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueGreenExportRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.export",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactExportRequest,
@@ -6893,6 +6899,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.snapshots.get",
     "vault.code.snapshots.read",
     "vault.code.symbols.definitions",
+    "vault.code.merge_queue.export_green",
     "vault.agents.create",
     "vault.agents.get",
     "vault.agents.update",
@@ -8594,6 +8601,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.symbols.definitions" => crate::code_run::vault_read::request_schema::<
             crate::memory::codebase_doors::CodeSnapshotDefinitionsView,
+        >(),
+        "vault.code.merge_queue.export_green" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::CodeExportResult,
         >(),
         "vault.agents.create" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentDefinitionView,
@@ -14094,6 +14104,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.merge_queue.export_green" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19574,6 +19591,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::merge_queue_doors::MergeQueueCheckStatusRequest =
                 decode(value.clone())?;
         }
+        "vault.code.merge_queue.export_green" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueGreenExportRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
         }
@@ -22596,6 +22617,9 @@ pub fn invoke(
         }
         "vault.code.merge_queue.check_status" => {
             encode(vault_code_merge_queue_check_status(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.export_green" => {
+            encode(vault_code_merge_queue_export_green(memory, decode(value)?)?)
         }
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
@@ -29028,6 +29052,15 @@ pub fn vault_code_merge_queue_check_status(
 ) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueCheckWorkView> {
     memory.merge_queue_check_status_as(
         &memory.embedded_owner("vault.code.merge_queue.check_status")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_export_green(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueGreenExportRequest,
+) -> MemoryResult<crate::memory::origin_doors::CodeExportResult> {
+    memory.merge_queue_export_green_as(
+        &memory.embedded_owner("vault.code.merge_queue.export_green")?,
         input,
     )
 }
