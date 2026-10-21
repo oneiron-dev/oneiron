@@ -5013,9 +5013,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/training_pack/connector.rs` | src | m | 2 struct · 1 trait · 3 fn · 1 type · 1 crate-vis | TrainOutput, TrainRequest, TrainingConnector | One long-running connector verb |
 | `src/training_pack/custody.rs` | src | s | 5 fn · 5 crate-vis | — | Training artifacts use the existing versioned blob store, not another file store |
 | `src/training_pack/export.rs` | src | s | 1 fn | — | The existing consented reservoir becomes a reproducible, source-grouped split |
-| `src/training_pack/mod.rs` | src | s | 6 fn · 3 re-export · 3 crate-vis | — | OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap |
+| `src/training_pack/mod.rs` | src | s | 6 fn · 4 re-export · 3 crate-vis | — | OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap |
 | `src/training_pack/promotion.rs` | src | m | 2 struct · 1 enum · 7 fn · 4 crate-vis | SwapExpectation, TrainingEvalInput, ViewedSwap | Held-out scoring releases a counted cohort |
-| `src/training_pack/types.rs` | src | m | 25 struct · 7 enum · 1 fn · 1 crate-vis | ArtifactPin, CalibrationResult, CheckpointFileKind, CheckpointFilePin, CheckpointFileUpload, CheckpointUpload, ComputeChoice, ComputePin +24 | Pins and receipts shared by the training pack and its host adapters |
+| `src/training_pack/target.rs` | src | s | 1 struct · 1 enum · 3 fn · 2 const · 1 crate-vis | QuestionTarget, TrainingTarget | What a training run trains (FIX 7263): a model for one manifest role, or one two-logit head for one exact… |
+| `src/training_pack/types.rs` | src | m | 27 struct · 7 enum · 1 fn · 1 crate-vis | ArtifactPin, CalibrationResult, CheckpointFileKind, CheckpointFilePin, CheckpointFileUpload, CheckpointUpload, ComputeChoice, ComputePin +26 | Pins and receipts shared by the training pack and its host adapters |
 | `src/typed_body.rs` | src | m | 4 struct · 1 enum · 11 fn · 1 re-export · 15 crate-vis | TypedBodyCommit, TypedBodyFork, TypedBodyHead, TypedBodyWriter, TypedForkState | Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module… |
 | `src/typed_body/body_actor.rs` | src | s | 1 enum · 3 fn · 3 crate-vis | BodyActor | Who a typed-body fork names, and the erase that forgets it (FIX 3520) |
 | `src/typed_body/checkpoint.rs` | src | s | 3 crate-vis | — | The checkpoint getter of typed bodies (KS7-2): each entity's body head, head snapshot, forks, fork snapshots… |

@@ -64475,7 +64475,7 @@
      "surface": {
       "crate-vis": 3,
       "fn": 6,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -64496,6 +64496,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "QuestionTarget",
+      "TrainingTarget"
+     ],
+     "path": "src/training_pack/target.rs",
+     "purpose": "What a training run trains (FIX 7263): a model for one manifest role, or one two-logit head for one exact…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -64508,11 +64525,13 @@
       "ComputeChoice",
       "ComputePin",
       "CorpusSplit",
+      "DetectorProvenance",
       "ExportCheck",
       "HeldOutResult",
       "PinnedCheckpoint",
       "ProbeCase",
       "ProbeMeasurement",
+      "QuestionExportCheck",
       "RoleSwapReceipt",
       "SourcePin",
       "SplitPolicy",
@@ -64538,7 +64557,7 @@
       "crate-vis": 1,
       "enum": 7,
       "fn": 1,
-      "struct": 25
+      "struct": 27
      }
     },
     {
@@ -70625,7 +70644,7 @@
      "purpose": "—"
     },
     "training_pack": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -70725,7 +70744,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4499,
+   "source_files": 4500,
    "test_files": 902
   },
   "oneiron-android": {
@@ -84207,6 +84226,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_pack/trainer.rs",
+     "purpose": "The question-head trainer (FIX 7263), the one `TrainingConnector` this host ships",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_pack/wire.rs",
+     "purpose": "`oneiron.training-pack.job/1` and its receipt (FIX 7263): the request the question-head worker reads and the…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -90604,7 +90643,7 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 2,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 7
      }
     },
@@ -90650,6 +90689,22 @@
      "path": "src/config/models/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TrainingConnectorSettings",
+      "TrainingSettings"
+     ],
+     "path": "src/config/models/training.rs",
+     "purpose": "`[models.training]`: the trainer connectors this host dispatches an owner-authorized training run through…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 2
+     }
     },
     {
      "bucket": "s",
@@ -94069,6 +94124,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/training.rs",
+     "purpose": "The trainer connectors `[models.training]` names (FIX 7263), as the runtime keeps them for the host's…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/voice.rs",
      "purpose": "The voice cascade's routes on the media seats (OF-410)",
      "surface": {
@@ -96620,7 +96685,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 72,
+     "files": 74,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96704,7 +96769,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 52,
+     "files": 53,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96935,7 +97000,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 50,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -97077,7 +97142,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1058,
+   "source_files": 1062,
    "test_files": 182
   },
   "oneiron-spawn": {
