@@ -18,11 +18,11 @@ use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
     IndexPage, RESIDENCE_PAGE_REPLY_BYTES, ResidenceAdmission, SealedBundleEntry,
     SealedBundleObject, SealedBundleStage, WindowIndexEntry, ask_sealed_bundle_turn,
-    authority_append_for, authority_checkpoint_part_for, authority_range_for, authority_tail_for,
-    authority_wanted, home_search_candidates, index_selection_revision, promotion_snapshot_with,
-    replace_sealed_bundle_pads, sealed_bundle_generations, sealed_bundle_part,
-    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
-    selected_item_blob_with, stage_sealed_bundle_part, window_index_page,
+    authority_append_progress_for, authority_checkpoint_part_for, authority_range_for,
+    authority_tail_for, authority_wanted, home_search_candidates, index_selection_revision,
+    promotion_snapshot_with, replace_sealed_bundle_pads, sealed_bundle_generations,
+    sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
+    sealed_generation_hex, selected_item_blob_with, stage_sealed_bundle_part, window_index_page,
     window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
@@ -1254,8 +1254,11 @@ fn authority_checkpoint(
 }
 
 /// Imports the signed authority entries the proved machine appends, through
-/// the signed-history door (OF-469). Only a machine of the owner's is heard;
-/// any other looks missing. Answers how many rows the import wrote.
+/// the signed-history door (OF-469), every one of them in work slices: an
+/// append is never refused for its length (FIX 8887). Only a machine of the
+/// owner's is heard; any other looks missing. Answers how many rows the
+/// import wrote, and each entry's outcome as packed hashes: the entries that
+/// stand here now and those the door refused.
 fn authority_append(
     server: &SyncServer,
     peer: PeerMachine,
@@ -1263,17 +1266,25 @@ fn authority_append(
 ) -> Result<Answer, AppError> {
     let input: AuthorityAppendRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    if input.entries.len() > oneiron::sync::residence::AUTHORITY_TAIL_PAGE_MAX {
-        return Err(AppError::invalid_params());
-    }
     let entries = input
         .entries
         .iter()
         .map(|entry| base64::engine::general_purpose::STANDARD.decode(entry))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| AppError::invalid_params())?;
-    let written = authority_append_for(&server.vault, peer, &entries)
+    let progress = authority_append_progress_for(&server.vault, peer, &entries)
         .map_err(|_| AppError::bad_request("authority entries refused", Some("entries")))?
         .ok_or_else(|| AppError::not_found("authority history", None))?;
-    Ok((json!({"written": written}), Some(Vec::new())))
+    let packed = |hashes: &std::collections::BTreeSet<oneiron::authority::AuthorityEntryHash>| {
+        base64::engine::general_purpose::STANDARD
+            .encode(hashes.iter().flatten().copied().collect::<Vec<u8>>())
+    };
+    Ok((
+        json!({
+            "written": progress.written,
+            "accepted": packed(&progress.accepted),
+            "refused": packed(&progress.refused),
+        }),
+        Some(Vec::new()),
+    ))
 }

@@ -23,8 +23,9 @@ mod recall_scope;
 mod search;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_tail::{
-    AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, AuthorityCheckpointPart,
-    AuthorityPageImport, authority_append_for, authority_checkpoint_part_for, authority_range_for,
+    AUTHORITY_APPEND_WORK_SLICE, AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX,
+    AuthorityAppendProgress, AuthorityCheckpointPart, AuthorityPageImport, authority_append_for,
+    authority_append_progress_for, authority_checkpoint_part_for, authority_range_for,
     authority_tail_for, authority_wanted, held_authority_entries, held_authority_history,
     import_authority_page,
 };
