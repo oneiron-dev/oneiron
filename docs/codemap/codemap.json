@@ -21537,13 +21537,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/call_labels.rs",
      "purpose": "Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/call_labels/decision_rungs.rs",
+     "purpose": "The host ladder's model rungs through one call's labels (FIX 7506 P2)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -21611,7 +21621,7 @@
      "path": "src/dreamer_consolidation/executor/decisions.rs",
      "purpose": "The consolidation's typed questions through the host's ladder: how a conflict set resolves and which…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 1
      }
@@ -21621,9 +21631,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction.rs",
-     "purpose": "Extraction request/response projection for one admitted branch, and the typed pack that decides which listed…",
+     "purpose": "Extraction request/response projection for one admitted branch; the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 7
      }
     },
     {
@@ -21632,6 +21642,16 @@
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction/cited.rs",
      "purpose": "The extraction step's citation check (FIX 7274): a citation that verification would refuse the whole…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/extraction/corrections.rs",
+     "purpose": "The typed pack that decides which listed claim each extracted candidate corrects: one question per candidate…",
      "surface": {
       "crate-vis": 3
      }
@@ -22259,6 +22279,16 @@
       "enum": 2,
       "fn": 4,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/settle/decision_projection.rs",
+     "purpose": "A parked conflict's settlement ask as the ladder reads it (FIX 7506 P2): each stored member and retained…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -35008,7 +35038,21 @@
      "surface": {
       "enum": 3,
       "fn": 2,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DecisionWireLabels"
+     ],
+     "path": "src/llm/decision/generated/wire.rs",
+     "purpose": "A generated read's wire names (FIX 7506): what the request shows in place of each question's id and each…",
+     "surface": {
+      "crate-vis": 3,
+      "trait": 1
      }
     },
     {
@@ -68990,7 +69034,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 93,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69333,7 +69377,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 117,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70035,7 +70079,7 @@
    },
    "over_bar": 182,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4443,
+   "source_files": 4447,
    "test_files": 902
   },
   "oneiron-android": {
