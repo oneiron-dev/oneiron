@@ -150,6 +150,7 @@ impl Memory<'_> {
                 pending,
                 asks: Vec::new(),
                 last_receipt: None,
+                workflow: None,
                 observed: [0; 32],
             },
             Vec::new(),
@@ -224,6 +225,24 @@ impl Memory<'_> {
             claimed_at: record.claimed_at,
             backoff_until: record.scheduled_at,
         });
+        // CUA E4: a bound TASK's try and its pinned program, read only for a
+        // bound brief or a handle naming the try, so an unbound TASK reads
+        // exactly as before.
+        let bound = body
+            .brief
+            .as_ref()
+            .is_some_and(|stored| stored.brief.context.workflow.is_some());
+        let workflow = if bound || attempt.is_some() {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            super::browser_workflow::workflow_status_in(
+                self.vault(),
+                &txn,
+                task_ref,
+                attempt.map(|handle| handle.attempt_ref),
+            )?
+        } else {
+            None
+        };
         let mut asks = Vec::new();
         if let Some(TaskExecutionState::Blocked { on, .. }) = &body.state {
             for wait in on {
@@ -244,6 +263,7 @@ impl Memory<'_> {
                 pending: false,
                 asks,
                 last_receipt,
+                workflow,
                 observed: [0; 32],
             },
             Vec::new(),
@@ -270,6 +290,7 @@ impl Memory<'_> {
                 pending: !settled,
                 asks: vec![(group, status)],
                 last_receipt: None,
+                workflow: None,
                 observed: [0; 32],
             },
             Vec::new(),
