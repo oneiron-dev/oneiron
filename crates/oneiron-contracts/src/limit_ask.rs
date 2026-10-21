@@ -457,6 +457,12 @@ pub enum EngineLimit {
     /// whether everything is okay and the record is signed and kept whole;
     /// only a codec's own frame bound splits it.
     AuthorityRecordItems,
+    /// Live question sets one server holds for its connectors' callers: the
+    /// rounds of foreign MCP questions (elicitation) waiting on an answer
+    /// (FIX 3895). Past it the question registers and waits like any other
+    /// and the row asks whether everything is okay; only the memory floor
+    /// and a round's own deadline end a question.
+    ConnectorLiveQuestions,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

@@ -264,6 +264,13 @@ pub trait ConnectorCallHost: OutboundResultSender {
         None
     }
 
+    /// Ends the live questions `handle` names, which no caller will hold:
+    /// the send's ledger step did not reach Done, or the call's row could
+    /// not keep the delivery (FIX 3844). Their worker cancels them now
+    /// instead of at the round's deadline. A host that keeps no questions
+    /// ignores it.
+    fn abandon_awaiting_input(&mut self, _handle: &str) {}
+
     /// Takes the custody record the last `send` presented, as its door
     /// resolved it (FIX 5455): an empty list when it presented none, `None`
     /// when this host cannot say, which leaves the call's rows unknown.
@@ -887,9 +894,13 @@ impl Vault {
                 ConnectorCallOutcome::Delivered { intent, result }
             }
             // The call reached the connector: its row keeps the delivery,
-            // receipt-only. The questions live with the host, never here.
+            // receipt-only. The questions live with the host, never here;
+            // a row that cannot keep it leaves no caller to answer them.
             Step::AwaitingInput { intent, input } => {
-                settle(call_ref, SettledConnectorCall::Delivered { intent })?;
+                if let Err(error) = settle(call_ref, SettledConnectorCall::Delivered { intent }) {
+                    host.abandon_awaiting_input(&input.handle);
+                    return Err(error);
+                }
                 ConnectorCallOutcome::AwaitingInput { intent, input }
             }
             Step::Refused {
@@ -1079,9 +1090,12 @@ impl Vault {
             grant_id,
             name: pending.name.clone(),
         }));
-        // A reply left from an earlier send is never this call's.
+        // A reply or questions left from an earlier send are never this
+        // call's, and no caller holds such questions (FIX 3844).
         drop(host.take_result());
-        drop(host.take_awaiting_input());
+        if let Some(left) = host.take_awaiting_input() {
+            host.abandon_awaiting_input(&left.handle);
+        }
         let dispatch = prepared.execute(
             self,
             &authority,
@@ -1093,9 +1107,7 @@ impl Vault {
             now_ms(),
             &mut *host,
         )?;
-        let reply = host.take_result();
-        let awaiting = host.take_awaiting_input();
-        Ok(step_from_dispatch(&dispatch, reply, awaiting))
+        Ok(step_from_host(&dispatch, host))
     }
 
     /// The principal's grant for `server` and `tool`, the governing key it
@@ -1237,11 +1249,30 @@ impl Vault {
     }
 }
 
+/// Maps one execute onto a step, with the reply and the questions `host`
+/// kept for its send. Questions a step that is not Done leaves behind have
+/// no caller to answer them, so the host ends them at once (FIX 3844).
+pub(super) fn step_from_host<H: ConnectorCallHost>(
+    dispatch: &ScopedMcpDispatchResult,
+    host: &mut H,
+) -> Step {
+    let reply = host.take_result();
+    let awaiting = host.take_awaiting_input();
+    let handle = awaiting.as_ref().map(|input| input.handle.clone());
+    let step = step_from_dispatch(dispatch, reply, awaiting);
+    if let Some(handle) = handle
+        && !matches!(step, Step::AwaitingInput { .. })
+    {
+        host.abandon_awaiting_input(&handle);
+    }
+    step
+}
+
 /// Maps one execute onto a step. AutoFire alone proves nothing: only a Done
 /// ledger row is delivery, and the gate's own outcome tells a hold from a
 /// denial. A delivered send whose connector asked for input carries its
 /// questions in place of a reply.
-pub(super) fn step_from_dispatch(
+fn step_from_dispatch(
     dispatch: &ScopedMcpDispatchResult,
     reply: Option<UntrustedToolResult>,
     awaiting: Option<ConnectorAwaitingInput>,

@@ -11,7 +11,10 @@
 //! caller that reads the settled wait later), and only then acknowledged, so
 //! the engine keeps the row until that reply has committed. A crash in
 //! between leaves a settled row, whose next pass delivers its receipt with no
-//! reply body (`result_not_retained`); nothing is resent to rebuild one. The
+//! reply body (`result_not_retained`); nothing is resent to rebuild one. A
+//! resumed call whose connector asked for input delivers its questions and
+//! their handle the same way, so the run or caller waiting on it answers
+//! them through `connector.answer` (FIX 3839). The
 //! acknowledgement keeps who called it, so `connector.call_status` serves the
 //! settled wait to that caller and the owner alone (FIX 2279). The reply is
 //! delivered beside the rows the call's passes picked (FIX 5455), which the
@@ -29,6 +32,7 @@ use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
 use oneiron::code_run::WaitDeliveries;
+use oneiron::outbound_consent::ConnectorCallHost as _;
 use oneiron::outbound_intent_ledger::IntentLedgerError;
 use oneiron::task_verb::sdk::ConnectorCallReply;
 
@@ -180,19 +184,34 @@ fn settle_connector_calls(
             }
         };
         let reply = ConnectorCallReply::project(&call.name, &call.tool, outcome);
-        // A connector that asked for input mid-call received the call: its
-        // row now keeps that delivery, which a later pass delivers to the
-        // wait, receipt-only. Nobody parked on the wait holds the questions'
-        // handle, so they lapse unanswered.
-        if reply.wait_ref().is_some() || matches!(reply, ConnectorCallReply::AwaitingInput { .. }) {
+        if reply.wait_ref().is_some() {
             backoffs.defer(call.call_ref, now);
             continue;
         }
-        let reply = serde_json::to_value(&reply)
-            .map_err(|_| IntentLedgerError::InvalidRecord("connector call reply"))?;
-        // The reply rides beside the rows the call's passes picked, kept
-        // through every resume (FIX 5455): unknown stays unknown.
-        deliveries.deliver_listing(call.call_ref, &reply, rows.as_deref(), now_ms())?;
+        // A connector that asked for input mid-call received the call: its
+        // questions and their handle are the call's reply, delivered to the
+        // wait like any other, so whoever waits on the call answers them
+        // (FIX 3839). A delivery that fails leaves no one to, so they end.
+        let asked = match &reply {
+            ConnectorCallReply::AwaitingInput { handle, .. } => Some(handle.clone()),
+            _ => None,
+        };
+        let delivered = serde_json::to_value(&reply)
+            .map_err(|_| IntentLedgerError::InvalidRecord("connector call reply"))
+            .and_then(|reply| {
+                // The reply rides beside the rows the call's passes picked,
+                // kept through every resume (FIX 5455): unknown stays
+                // unknown.
+                deliveries
+                    .deliver_listing(call.call_ref, &reply, rows.as_deref(), now_ms())
+                    .map_err(IntentLedgerError::from)
+            });
+        if let Err(error) = delivered {
+            if let Some(handle) = asked {
+                host.abandon_awaiting_input(&handle);
+            }
+            return Err(error);
+        }
         // Its caller stays bound once the row goes, so `connector.call_status`
         // reads the settled wait for that caller and the owner alone.
         vault.ack_connector_call_delivery_keeping_caller(&call.call_ref)?;

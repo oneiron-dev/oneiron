@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 118] = [
+    pub const ALL: [Self; 119] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -124,6 +124,7 @@ impl EngineLimit {
         Self::BackupHandoffPendingBackups,
         Self::BackupHandoffPendingBytes,
         Self::AuthorityRecordItems,
+        Self::ConnectorLiveQuestions,
     ];
 
     /// The config key that sets the row.
@@ -247,6 +248,7 @@ impl EngineLimit {
             Self::BackupHandoffPendingBackups => "limits.backup_handoff_pending_backups",
             Self::BackupHandoffPendingBytes => "limits.backup_handoff_pending_bytes",
             Self::AuthorityRecordItems => "limits.authority_record_items",
+            Self::ConnectorLiveQuestions => "limits.connector_live_questions",
         }
     }
 
@@ -422,6 +424,8 @@ impl EngineLimit {
             // revision's acknowledged acts (CALLS `Phase2 authority record
             // items row`).
             Self::AuthorityRecordItems => 4_096,
+            // The connector question registry's old fixed bound.
+            Self::ConnectorLiveQuestions => 64,
         }
     }
 }

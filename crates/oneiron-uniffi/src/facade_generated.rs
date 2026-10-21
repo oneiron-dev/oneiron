@@ -5506,6 +5506,11 @@ export_facade! {
     let output = client.vault_identity_proposals_for_pair(&input)?;
     crate::codec::lift_record("vault.identity.proposals.for_pair", &output)
 };
+"connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
+    let output = client.connector_answer(&input)?;
+    crate::codec::lift_record("connector.answer", &output)
+};
 "self.browser.open" => fn self_browser_open(&self, input: LiveRunRequestOpenInput) -> BrowserAnswerObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserOpenInput> = crate::codec::lower_record("self.browser.open", input)?;
     let output = client.self_browser_open(&input)?;

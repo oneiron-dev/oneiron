@@ -23,21 +23,26 @@
 //! The calls (canon silent), each in one place:
 //! - [`ELICITATION_WAIT`]: a round of questions lapses this long after it
 //!   arrived; its worker then cancels it and ends the session.
-//! - [`MAX_LIVE_ELICITATIONS`]: the live question sets one server holds; a
-//!   connector that asks while it is full gets a `cancel` at once and the
-//!   call goes on without it.
+//! - The live question sets one server holds are the `[limits]` row
+//!   `connector_live_questions` (FIX 3895): a question past it still
+//!   registers and waits like any other, and the row asks whether
+//!   everything is okay. Only the memory floor and a round's deadline end
+//!   a question.
 //! - [`answer_connector_question`]'s owner ask: under `always ask` an answer
 //!   that carries content waits, within the round's deadline, for the
 //!   owner's yes on exactly that answer; a no sends a decline, a lapse
 //!   cancels.
+//! - [`check_answer`]: the answer that goes is read by the release check's
+//!   secret shapes; a match raises the owner's typed "is everything okay"
+//!   check and never stops the answer (FIX 3841).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
-use std::sync::{Mutex, MutexGuard, PoisonError, mpsc};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::EntityId;
-use oneiron::llm::decision::DecisionAnswer;
+use oneiron::llm::decision::{DecisionAnswer, DecisionAsks};
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use oneiron::outbound_consent::{
     ConnectorAwaitingInput, ConnectorCallOutcome, ConnectorElicitationAnswer,
@@ -55,9 +60,6 @@ use crate::server::SyncServer;
 /// How long one round of a connector's questions stays live, from when it
 /// arrived.
 pub(crate) const ELICITATION_WAIT: Duration = Duration::from_secs(120);
-
-/// The live question sets one server holds at once.
-pub(crate) const MAX_LIVE_ELICITATIONS: usize = 64;
 
 /// How often an answer waiting on the owner reads the ask again, for an
 /// answer given through a door that wakes no waiter.
@@ -85,7 +87,7 @@ pub(crate) struct QuestionBinding {
 }
 
 impl QuestionBinding {
-    fn authority(&self) -> ConnectorElicitationBinding {
+    pub(crate) fn authority(&self) -> ConnectorElicitationBinding {
         ConnectorElicitationBinding {
             principal_ref: self.principal.to_hex(),
             grant_id: self.grant_id,
@@ -120,12 +122,14 @@ pub(crate) enum WorkerEvent {
 }
 
 /// A question set the registry took in: its handle, its round's deadline,
-/// and the worker's end of its channel.
+/// the worker's end of its channel, and the live sets the registry held
+/// with it.
 pub(crate) struct Registered {
     pub(crate) handle: String,
     pub(crate) deadline: Instant,
     pub(crate) expires_at_ms: u64,
     pub(crate) commands: mpsc::Receiver<AnswerCommand>,
+    pub(crate) live: usize,
 }
 
 /// One live question set.
@@ -152,17 +156,15 @@ impl ConnectorElicitationRegistry {
         self.live.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Takes in a new question set and mints its handle; `None` when the
-    /// registry is full.
+    /// Takes in a new question set and mints its handle. It never refuses
+    /// one: how many it holds is the `[limits]` row's to measure
+    /// (FIX 3895).
     pub(crate) fn register(
         &self,
         binding: QuestionBinding,
         questions: &[ConnectorQuestion],
-    ) -> Option<Registered> {
+    ) -> Registered {
         let mut live = self.lock();
-        if live.len() >= MAX_LIVE_ELICITATIONS {
-            return None;
-        }
         let handle = loop {
             let handle = mint_handle();
             if !live.contains_key(&handle) {
@@ -191,12 +193,13 @@ impl ConnectorElicitationRegistry {
                 commands: sender,
             },
         );
-        Some(Registered {
+        Registered {
             handle,
             deadline,
             expires_at_ms,
             commands,
-        })
+            live: live.len(),
+        }
     }
 
     /// Opens round `generation` of `handle` with `questions` and a fresh
@@ -479,6 +482,7 @@ pub(crate) fn answer_connector_question(
             }
         }
     };
+    check_answer(server, &claim, &authority, &responses);
     let (name, tool, intent) = (
         claim.binding.name.clone(),
         claim.binding.tool.clone(),
@@ -524,6 +528,46 @@ pub(crate) fn answer_connector_question(
     .noting(reasons))
 }
 
+/// Runs the release check's secret shapes over the answer about to go, as
+/// it goes (FIX 3841, ruled 10-22): a match raises the owner's typed "is
+/// everything okay" check on detached work, and the answer goes either way.
+/// Nothing here refuses, holds or waits on the check, its storage or the
+/// owner; a check that cannot be raised is logged.
+fn check_answer(
+    server: &SyncServer,
+    claim: &Claim<'_>,
+    authority: &ConnectorElicitationBinding,
+    responses: &BTreeMap<String, Value>,
+) {
+    let mut checked = Value::Object(responses.clone().into_iter().collect());
+    let digest = *blake3::hash(checked.to_string().as_bytes()).as_bytes();
+    // The check reads a copy: what goes is `responses`, untouched.
+    if !oneiron::batch::export::redact_credentials(&mut checked) {
+        return;
+    }
+    let vault = Arc::clone(server.vault());
+    let (authority, handle, generation) =
+        (authority.clone(), claim.handle.clone(), claim.generation);
+    let raise = move || {
+        if let Err(error) =
+            vault.queue_connector_elicitation_answer_check(&authority, &handle, generation, digest)
+        {
+            tracing::warn!(%error, "connector answer check not queued");
+        }
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(runtime) => drop(runtime.spawn_blocking(raise)),
+        Err(_) => {
+            if let Err(error) = std::thread::Builder::new()
+                .name("connector-answer-check".to_owned())
+                .spawn(raise)
+            {
+                tracing::warn!(%error, "connector answer check not started");
+            }
+        }
+    }
+}
+
 /// The reply to an answer whose round lapsed before it went: nothing was
 /// sent, and the worker cancels the questions.
 fn lapsed() -> ConnectorCallReply {
@@ -535,7 +579,8 @@ fn lapsed() -> ConnectorCallReply {
 
 /// Asks the owner about exactly `frozen`, and waits for the ruling within
 /// the round's deadline. A lapsed ask is withdrawn, so it leaves the
-/// owner's queue.
+/// owner's queue, and so are the linked parts of a long one once it is
+/// decided or lapses (FIX 3842).
 fn owner_rules(
     server: &SyncServer,
     claim: &Claim<'_>,
@@ -549,20 +594,30 @@ fn owner_rules(
         answers: &frozen.text,
         digest: frozen.digest,
     };
-    let seq = match server
+    let asked = match server
         .vault()
         .queue_connector_elicitation_owner_ask(authority, &answer)
     {
-        Ok(seq) => seq,
+        Ok(asked) => asked,
         Err(error) => {
             tracing::warn!(%error, "connector elicitation owner ask not queued");
             return OwnerRuling::Unasked;
         }
     };
     let asks = server.decision_host().asks();
+    let ruling = owner_ruling(asks, asked.seq, claim.deadline);
+    for part in asked.parts {
+        drop(asks.withdraw(part));
+    }
+    ruling
+}
+
+/// Waits for the owner's ruling on ask `seq` until `deadline`; a lapsed ask
+/// is withdrawn.
+fn owner_ruling(asks: &DecisionAsks, seq: u64, deadline: Instant) -> OwnerRuling {
     let runtime = tokio::runtime::Handle::try_current().ok();
     loop {
-        let left = claim.deadline.saturating_duration_since(Instant::now());
+        let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
             drop(asks.withdraw(seq));
             return OwnerRuling::Lapsed;

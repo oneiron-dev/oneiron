@@ -1355,6 +1355,54 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         }))
     }
 
+    /// The run's answer to the questions one of its connector calls waits on
+    /// (FIX 3838): the host door an MCP `connector.answer` meets, for this
+    /// connector's caller on the credential `execute_code` was admitted on.
+    /// The run's admission and verb hooks already ran around it. The reply
+    /// is foreign data and serves no vault rows.
+    fn connector_answer(
+        &self,
+        request: &oneiron::task_verb::sdk::ConnectorAnswerRequest,
+        invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        let Some(auth) = self.actor.auth.clone() else {
+            return Ok(Err(AgentVerbRefusal {
+                code: "mcp_auth_required".to_owned(),
+            }));
+        };
+        // The run's worker thread drives its own reactor; the answer runs on
+        // the server runtime, as a tool call would, and the worker waits.
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let server = Arc::clone(&self.server);
+        let caller = (self.actor.actor_ref, self.actor.actor_class);
+        let request = request.clone();
+        self.runtime.spawn(async move {
+            let (answered, _) = crate::api::facade::host_doors::connector_answer(
+                &server,
+                &auth,
+                caller,
+                Some(invocation),
+                request,
+            )
+            .await;
+            let _ = sender.send(answered);
+        });
+        let refusal = |code: &str| AgentVerbRefusal {
+            code: code.to_owned(),
+        };
+        Ok(match receiver.recv() {
+            Ok(Ok(reply)) => match serde_json::to_value(reply) {
+                Ok(output) => Ok(AgentVerbAnswer {
+                    output,
+                    rows: Some(Vec::new()),
+                }),
+                Err(_) => Err(refusal("engine_error")),
+            },
+            Ok(Err(error)) => Err(refusal(&error.code)),
+            Err(_) => Err(refusal("engine_error")),
+        })
+    }
+
     /// A call the run serves itself meets this connector's door at each call
     /// too: a run row needs its own binding, and every call needs the
     /// credential `execute_code` was admitted on, still live. A search reads
