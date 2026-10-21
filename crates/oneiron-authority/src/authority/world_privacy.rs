@@ -18,8 +18,6 @@ use crate::error::Result;
 use super::*;
 
 pub const OP_KIND_WORLD_PRIVACY: &str = "world_privacy";
-/// At most this many model routes in one order.
-pub const WORLD_MODEL_ROUTES_MAX: usize = 16;
 /// The longest model route id, in bytes.
 pub const WORLD_MODEL_ROUTE_MAX_BYTES: usize = 128;
 const WORLD_PRIVACY_KEYS: [&str; 8] = [
@@ -101,13 +99,15 @@ impl Default for WorldPrivacy {
 }
 
 impl WorldPrivacy {
+    /// Routes non-empty, distinct and each a valid id. An order is never
+    /// refused for how many routes it names (Phase2 A, FIX 7912): its writer
+    /// measures them.
     pub fn validate(&self) -> Result<()> {
         let ModelOrder::Ordered(routes) = &self.models else {
             return Ok(());
         };
         let distinct: std::collections::BTreeSet<_> = routes.iter().collect();
         if routes.is_empty()
-            || routes.len() > WORLD_MODEL_ROUTES_MAX
             || distinct.len() != routes.len()
             || routes.iter().any(|route| {
                 route.is_empty()

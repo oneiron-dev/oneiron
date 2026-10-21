@@ -19,6 +19,10 @@
 //! route waits for it is ended at an idle limit. All of it runs before any
 //! route does, so it holds for a caller with no credential at all.
 //!
+//! A socket that finds the floor full raises the pool's live pressure check
+//! (FIX 7656): the owner reads which credentials' open request bodies hold
+//! the most connections. It only observes; nothing is cut or refused.
+//!
 //! The router still sees each request's peer as `ConnectInfo<SocketAddr>`,
 //! which is what the caller-locality rule reads.
 
@@ -44,8 +48,10 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 
-use crate::admission::{Admission, Permit};
-use crate::wire_telemetry::{LimitQuestions, LimitRow};
+use crate::admission::{Admission, Permit, WaitTimedOut};
+use crate::wire_telemetry::{
+    LimitQuestions, LimitRow, ObservedBody, ObservedSocket, PoolPressure, with_body_credential,
+};
 
 /// The listener's bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -114,11 +120,15 @@ pub(crate) async fn serve(
 pub(crate) struct ConnectionPool {
     floor: Admission<()>,
     strangers: Strangers,
+    /// The live pressure check the floor's waiters raise, where `questions`
+    /// is a vault server's (FIX 7656).
+    pressure: Option<Arc<PoolPressure>>,
 }
 
 impl ConnectionPool {
     pub(crate) fn new(limits: &ConnectionLimits, questions: Arc<LimitQuestions>) -> Self {
         Self {
+            pressure: questions.pool_pressure().cloned(),
             floor: Admission::<()>::new(
                 LimitRow::Connections,
                 questions,
@@ -164,7 +174,11 @@ pub(crate) async fn serve_with_pool(
     limits: ConnectionLimits,
     shutdown: impl Future<Output = ()>,
 ) {
-    let ConnectionPool { floor, strangers } = pool;
+    let ConnectionPool {
+        floor,
+        strangers,
+        pressure,
+    } = pool;
     let (stopping, stop) = watch::channel(false);
     let (open, open_watch) = watch::channel(());
     let mut shutdown = pin!(shutdown);
@@ -192,7 +206,7 @@ pub(crate) async fn serve_with_pool(
         // backlog.
         let permit = loop {
             tokio::select! {
-                permit = floor.admit(()) => {
+                permit = admit_observed(floor, pressure.as_deref(), limits.max_connections) => {
                     if let Ok(permit) = permit {
                         break permit;
                     }
@@ -203,9 +217,13 @@ pub(crate) async fn serve_with_pool(
         let connection = Arc::new(Connection {
             stranger: Mutex::new(stranger),
         });
+        let observed = pressure
+            .as_ref()
+            .map(|pressure| Arc::new(pressure.socket()));
         let io = TokioIo::new(AdmittedStream {
             stream,
             _permit: permit,
+            _observed: observed.clone(),
         });
         let routes = TowerToHyperService::new(app.clone());
         let body_idle = limits.body_idle_timeout;
@@ -213,13 +231,26 @@ pub(crate) async fn serve_with_pool(
         // (FIX 811): minted here, never derived from the peer's address.
         let socket_id = crate::api::call_receipt::mint_connection_id();
         let service = hyper::service::service_fn(move |request: hyper::Request<Incoming>| {
-            let mut request = request.map(|body| idle_body(body, body_idle));
+            // A body with bytes still to come counts in the pool's pressure
+            // check until it ends, under the credential its request is
+            // accepted on.
+            let ended = hyper::body::Body::is_end_stream(request.body());
+            let counted = match &observed {
+                Some(socket) if !ended => Some(socket.body()),
+                _ => None,
+            };
+            let (counted, credential) = counted.unzip();
+            let mut request =
+                request.map(|body| Body::new(IdleBody::new(body, body_idle, counted)));
             request.extensions_mut().insert(ConnectInfo(peer));
             CONNECTION.scope(
                 Arc::clone(&connection),
-                crate::api::call_receipt::on_connection(
-                    socket_id,
-                    hyper::service::Service::call(&routes, request),
+                with_body_credential(
+                    credential,
+                    crate::api::call_receipt::on_connection(
+                        socket_id,
+                        hyper::service::Service::call(&routes, request),
+                    ),
                 ),
             )
         });
@@ -248,6 +279,32 @@ pub(crate) async fn serve_with_pool(
     drop(listener);
     drop(open_watch);
     open.closed().await;
+}
+
+/// A permit from `floor` for one socket. The first time the socket finds it
+/// has to wait, the floor's crossing in progress raises the pool's pressure
+/// check, which clears when nobody waits. It only observes: the wait is the
+/// floor's own.
+async fn admit_observed(
+    floor: &Admission<()>,
+    pressure: Option<&PoolPressure>,
+    bound: usize,
+) -> Result<Permit, WaitTimedOut> {
+    let mut admitting = pin!(floor.admit(()));
+    let mut waited = false;
+    std::future::poll_fn(|cx| {
+        let polled = admitting.as_mut().poll(cx);
+        if polled.is_pending() && !waited {
+            waited = true;
+            if let Some(pressure) = pressure
+                && let Some(epoch) = floor.crossing_epoch()
+            {
+                pressure.raise(epoch, bound.max(1) as u64);
+            }
+        }
+        polled
+    })
+    .await
 }
 
 /// One accepted connection, as its requests see it.
@@ -342,14 +399,29 @@ struct IdleBody {
     body: Incoming,
     idle: Duration,
     waiting: Option<Pin<Box<tokio::time::Sleep>>>,
+    /// Its record in the pool's pressure check, on this listener's own
+    /// sockets, until it ends.
+    counted: Option<ObservedBody>,
 }
 
 impl IdleBody {
-    fn new(body: Incoming, idle: Duration) -> Self {
+    fn new(body: Incoming, idle: Duration, counted: Option<ObservedBody>) -> Self {
         Self {
             body,
             idle,
             waiting: None,
+            counted,
+        }
+    }
+
+    /// Counts a frame's data in the body's record, and ends the record at
+    /// the body's last frame, its end or its error.
+    fn count(&mut self, frame: Option<&Result<Frame<Bytes>, hyper::Error>>) {
+        if let (Some(counted), Some(Ok(frame))) = (&self.counted, frame) {
+            counted.carried(frame.data_ref().map_or(0, Bytes::len));
+        }
+        if !matches!(frame, Some(Ok(_))) || hyper::body::Body::is_end_stream(&self.body) {
+            self.counted = None;
         }
     }
 }
@@ -359,7 +431,7 @@ impl IdleBody {
 /// channels an embedded engine serves (FIX 2663), which meet the same
 /// idle limit and no connection floor or stranger share.
 pub(crate) fn idle_body(body: Incoming, idle: Duration) -> Body {
-    Body::new(IdleBody::new(body, idle))
+    Body::new(IdleBody::new(body, idle, None))
 }
 
 impl hyper::body::Body for IdleBody {
@@ -373,6 +445,7 @@ impl hyper::body::Body for IdleBody {
         let this = self.get_mut();
         if let Poll::Ready(frame) = Pin::new(&mut this.body).poll_frame(cx) {
             this.waiting = None;
+            this.count(frame.as_ref());
             return Poll::Ready(frame.map(|frame| frame.map_err(BoxError::from)));
         }
         let idle = this.idle;
@@ -383,6 +456,7 @@ impl hyper::body::Body for IdleBody {
             return Poll::Pending;
         }
         this.waiting = None;
+        this.counted = None;
         Poll::Ready(Some(Err(BoxError::from(io::Error::new(
             io::ErrorKind::TimedOut,
             "request body stalled",
@@ -403,6 +477,8 @@ impl hyper::body::Body for IdleBody {
 struct AdmittedStream {
     stream: TcpStream,
     _permit: Permit,
+    /// Its place in the pool's pressure check, which ends with it.
+    _observed: Option<Arc<ObservedSocket>>,
 }
 
 impl AsyncRead for AdmittedStream {
