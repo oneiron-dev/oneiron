@@ -21527,7 +21527,7 @@
      "path": "src/dreamer_consolidation/retained_keep.rs",
      "purpose": "Keeping a conflict's retained alternative (OF-023, FIX 496): where the Keep lands it, and what a Keep of…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1,
       "struct": 1
      }
@@ -21885,7 +21885,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/turn_text/projection.rs",
-     "purpose": "The exact projection a consolidation branch read of one witnessed TURN (FIX 5755)",
+     "purpose": "The exact projection a consolidation branch read of one witnessed TURN (FIX 5755), and a retained citation…",
      "surface": {
       "crate-vis": 2
      }
@@ -22097,7 +22097,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4,
       "re-export": 5,
       "struct": 3
@@ -22150,7 +22150,7 @@
      "path": "src/dreamer_promotion/imported_keep.rs",
      "purpose": "A kept alternative from imported words (FIX 5754): the selected landing's review route",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
