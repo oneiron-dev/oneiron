@@ -27,7 +27,9 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::write_envelope::WriteActor;
 
 mod actor_erase;
+mod sourced;
 pub(crate) use actor_erase::{erase_setting_actor_in_txn, names_no_actor};
+pub(crate) use sourced::setting_value_sourced_in_txn;
 
 /// One learned knob: its key, its bounds and the value it ships with.
 #[derive(Debug, Clone, Copy, PartialEq)]

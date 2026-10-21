@@ -1,14 +1,16 @@
 //! Evidence door and ordered idempotent projection from evidence to judgments and edit proposals.
 
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::skill_optimize::union_source_rows;
 
 use super::codec::{
     CURSOR, EDIT_PROPOSAL, EVIDENCE, EvidenceRow, JUDGMENT, evidence_after,
     next_evidence_sequence_in_txn, validate_evidence,
 };
 use super::judge::{AttributionDecisions, verdict_subject};
-use super::split::{classify_split, unclear_floor};
+use super::split::{classify_split, unclear_floor_sourced};
 use super::types::{
     AttributionJudgment, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
     SkillEditProposal,
@@ -90,7 +92,7 @@ pub fn run_attribution_projector_with_decisions(
     decisions: Option<&AttributionDecisions<'_>>,
 ) -> Result<Vec<AttributionJudgment>> {
     let pending = evidence_after(vault, since_cursor)?;
-    let floor = unclear_floor(vault)?;
+    let (floor, floor_rows) = unclear_floor_sourced(vault)?;
     let mut judgments = Vec::new();
     let mut revisions = Vec::new();
     let mut unclear = Vec::new();
@@ -98,11 +100,18 @@ pub fn run_attribution_projector_with_decisions(
     let mut highest = since_cursor;
     for (sequence, evidence) in pending {
         highest = highest.max(sequence);
+        // The rows a model-tier note reads (FIX 7101); the rule tier writes
+        // no note, so it reads none.
+        let sources = match decisions {
+            Some(_) => union_source_rows([evidence_rows(vault, &evidence), floor_rows.clone()]),
+            None => None,
+        };
         let request = JudgeRequest {
             lane: AttributionLane::Attempt,
             evidence: &evidence,
             hunks: &[],
             floor,
+            sources: sources.as_deref(),
         };
         let Some((split, revision)) = classify_split(decisions, &request, &[])? else {
             continue;
@@ -299,4 +308,28 @@ fn edit_proposal_for(judgment: &AttributionJudgment) -> Option<SkillEditProposal
             evidence_receipts: judgment.evidence_receipts.clone(),
             at: judgment.at,
         })
+}
+
+/// The rows `evidence`'s terminal pack receipt stands on, as the receipt
+/// trace cites them (FIX 7101). `None` with no receipt or trace, or when the
+/// read fails: a capture never fails the pass.
+fn evidence_rows(vault: &Vault, evidence: &OutcomeEvidence) -> Option<Vec<EntityId>> {
+    read_evidence_rows(vault, evidence).unwrap_or_else(|error| {
+        tracing::debug!(kind = ?error.kind(), "an attribution request's sources were not read");
+        None
+    })
+}
+
+fn read_evidence_rows(vault: &Vault, evidence: &OutcomeEvidence) -> Result<Option<Vec<EntityId>>> {
+    let receipt = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::receipt::attempt_pack_receipt_in_txn(&vault.store, &rtxn, &evidence.receipt_ref)?
+    };
+    let Some(receipt) = receipt else {
+        return Ok(None);
+    };
+    Ok(
+        super::trace::receipt_attribution_trace_sourced(vault, &receipt)?
+            .and_then(|(_, rows)| rows),
+    )
 }
