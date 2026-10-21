@@ -32212,7 +32212,7 @@
      "path": "src/git_wire/argv.rs",
      "purpose": "Frozen typed argv: one constructor per git verb plus the token validators",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 39
      }
     },
     {
@@ -32232,6 +32232,7 @@
      "path": "src/git_wire/checkout.rs",
      "purpose": "Checkout custody: owned handle directories plus the `CheckoutRepoOps` trait impl",
      "surface": {
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -32242,7 +32243,7 @@
      "path": "src/git_wire/checkout_remote.rs",
      "purpose": "Lease-bound worktree remotes",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -32278,7 +32279,7 @@
      "path": "src/git_wire/execution_context.rs",
      "purpose": "Typed Git invocation context: repository selector and operation policy travel together",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -32348,7 +32349,7 @@
      "path": "src/git_wire/import_fetch.rs",
      "purpose": "The outside import's Git legs (FIX 6871, G7 PR1): one exact fetch of one outside ref into a fresh private…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -32381,19 +32382,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GitPeeledRef",
       "GitRefEnd",
-      "GitRefTag"
+      "GitRefTag",
+      "GitRetainedPeeledRef",
+      "GitRetainedRefTag"
      ],
      "path": "src/git_wire/mirror_plan_review.rs",
      "purpose": "What a whole ref an automatic mirror plan pushes names beyond the commits it reaches (FIX 6866 part 2), and…",
      "surface": {
       "enum": 1,
-      "fn": 4,
-      "struct": 2
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -32414,8 +32417,8 @@
      "path": "src/git_wire/mod.rs",
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
-      "crate-vis": 5,
-      "re-export": 16
+      "crate-vis": 6,
+      "re-export": 18
      }
     },
     {
@@ -32429,7 +32432,7 @@
      "path": "src/git_wire/objects.rs",
      "purpose": "Commit and tree object model: tree entries, commit headers, commit-request bytes, tree parsers",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 3
      }
@@ -32462,7 +32465,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -32474,6 +32477,30 @@
      "purpose": "The crate's single git child-process constructor plus its bounded IO and thread-pump helpers",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/projected_checkout.rs",
+     "purpose": "A lease's checkout of a masked copy (FIX 7608 slice 2b-i): the constructors a later slice selects, with no…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GitProjectedPayload"
+     ],
+     "path": "src/git_wire/projected_object.rs",
+     "purpose": "A masked copy's objects and its store (FIX 7608 slice 2b-i, CALL P2 `PreservePayload`)",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -32502,7 +32529,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -32512,7 +32539,7 @@
      "path": "src/git_wire/publish_review_trees.rs",
      "purpose": "The tree-by-tree half of an exact publish's review (FIX 6866): one commit whose diff alone passed its output…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -32570,6 +32597,22 @@
      "purpose": "Admission of immutable Git layout and worktree semantics before an attribute-consuming effect",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GitObjectKind",
+      "GitRetainedObject"
+     ],
+     "path": "src/git_wire/retained_object.rs",
+     "purpose": "Retained Git object IO (FIX 7608 slice 2b-i, Rule 5)",
+     "surface": {
+      "crate-vis": 20,
+      "enum": 1,
+      "fn": 11,
+      "struct": 1
      }
     },
     {
@@ -40197,7 +40240,8 @@
      "path": "src/memory/repo_secret_reads.rs",
      "purpose": "Repo bytes a Memory handle's masked reader reads (FIX 7608 slice 2a, ASK 1)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 9,
+      "fn": 1
      }
     },
     {
@@ -43892,7 +43936,7 @@
      "path": "src/origin/secret_marks/read.rs",
      "purpose": "The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -43902,17 +43946,37 @@
      "path": "src/origin/secret_projection.rs",
      "purpose": "Who reads a marked repo blob's real bytes (FIX 7608 slice 2a, owner ruling SECRETS-IN-REPOS = A, ASK 1)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_projection/claims.rs",
+     "purpose": "A masked Git copy's record (FIX 7608 slice 2b-i, CALL M): value-free `repo.secret_projection` claims at…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_projection/git.rs",
+     "purpose": "The Git side of a marked repo's projection",
+     "surface": {
+      "crate-vis": 17
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/origin/secret_projection/git.rs",
-     "purpose": "The exact-source identity (FIX 7608, owner ruling A2): an export back to a repo's own original source is…",
+     "path": "src/origin/secret_projection/graph_objects.rs",
+     "purpose": "The copy of a masked Git graph's object closure (FIX 7608 slice 2b-i): every object the roots reach, written…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 6
      }
     },
     {
@@ -43937,7 +44001,7 @@
      "path": "src/origin/smart_http/advertise.rs",
      "purpose": "The publication-gated ref-advertisement rewrite: pkt-line state machine and keep policy",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -44287,6 +44351,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/read_projection.rs",
+     "purpose": "The read-only backend over a masked Git copy (FIX 7608 slice 2b-i): its constructor only, with no serving…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -44352,7 +44426,7 @@
      "path": "src/origin/smart_http/serve_cmd.rs",
      "purpose": "The frozen `git http-backend` invocation: typed request, closed argv/env command, and the running child handle",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 13,
       "struct": 3
      }
@@ -71528,7 +71602,7 @@
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 34,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -71759,7 +71833,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 111,
+     "files": 114,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72405,7 +72479,7 @@
    },
    "over_bar": 171,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4640,
+   "source_files": 4646,
    "test_files": 902
   },
   "oneiron-android": {
