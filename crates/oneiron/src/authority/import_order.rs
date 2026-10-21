@@ -107,6 +107,11 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
                 entry.signer_key().clone(),
             )]
         }
+        // The owner's kit push (FIX 6053) waits for its signer to be an
+        // owner anchor, as an anchored machine revision does.
+        AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
+            vec![Grant::Anchor(entry.signer_key().clone())]
+        }
         AuthorityOp::OwnerWorkRequest(request) => {
             vec![Grant::InstallKey(
                 request.carrier,

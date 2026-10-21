@@ -161,8 +161,9 @@ pub(crate) fn inherit_response_owner_in_txn(
 
 impl ExecutorStorage<'_> {
     /// Whether an erase of run `owner`'s actor took its replies (FIX 5718),
-    /// as the run's storage reads it. A session's run keeps its rows on its
-    /// own route, which stamps no owner: never erased here.
+    /// as the run's storage reads it. A session's run reads its owner row
+    /// through its room's composed view: an on-record stretch stamps one in
+    /// base (FIX 7429), and an off-record row stamps none (FIX 7464).
     ///
     /// # Errors
     ///
@@ -176,7 +177,12 @@ impl ExecutorStorage<'_> {
                         .is_some_and(ResponseOwner::erased),
                 )
             }
-            Self::Session(_) => Ok(false),
+            Self::Session(binding) => binding.answered(|| {
+                binding.session.routed_side_read(|rtxn, dbs| {
+                    Ok(response_owner_in_txn(&dbs, rtxn, &owner)?
+                        .is_some_and(ResponseOwner::erased))
+                })
+            }),
         }
     }
 
@@ -184,7 +190,8 @@ impl ExecutorStorage<'_> {
     /// the record's owner, `actor`'s run `run`, stamped in the same writer
     /// unless it has one (FIX 5718): how a run's start and a write's
     /// reservation name whose replies the record will hold. A session's run
-    /// keeps its rows on its own route and stamps none here.
+    /// stamps it only on an on-record stretch, where its rows land in base
+    /// (FIX 7429); an off-record row stamps none.
     ///
     /// # Errors
     ///
@@ -203,8 +210,8 @@ impl ExecutorStorage<'_> {
                 None,
                 |wtxn| stamp_response_owner_in_txn(*vault, wtxn, record.run_id, run, actor),
             ),
-            Self::Session(_) => {
-                self.put_code_run_replay_record_if_generation_with_heal(record, expected, None)
+            Self::Session(binding) => {
+                binding.put_owned_replay_record_if_generation(record, expected, run, actor)
             }
         }
     }

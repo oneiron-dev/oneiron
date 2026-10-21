@@ -123,15 +123,32 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
     let mut vm = VaultVm::prepare(config, run.vault_name.clone())?;
     vm.attach_anchor(anchor)?;
     let ledger = bind_unix_socket(&vm.ledger_socket())?;
+    // Heard from here on, through a restore too (FIX 7078): a SIGTERM drops
+    // the restore, which wakes its read of C, then stops the VM, and the
+    // socket is never bound.
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let credentials = match (restore, credentials) {
-        (Some(io), _) => vm.start_restore(io, &fscrypt_key, API_TIMEOUT).await?,
+        (Some(io), _) => {
+            let restored = tokio::select! {
+                restored = vm.start_restore(io, &fscrypt_key, API_TIMEOUT) => Some(restored?),
+                _ = terminate.recv() => None,
+            };
+            match restored {
+                Some(credentials) => credentials,
+                None => {
+                    if vm.is_running() {
+                        vm.stop(STOP_GRACE).await?;
+                    }
+                    return Ok(());
+                }
+            }
+        }
         (None, credentials) => {
             credentials.ok_or_else(|| anyhow::anyhow!("no credential frame was read"))?
         }
     };
     let token = TokenHex::from_token(&credentials.token);
     let front = bind_unix_socket(&run.listen)?;
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let open = Arc::new(AtomicUsize::new(0));
     let mut last_activity = Instant::now();
     let mut tick = tokio::time::interval(Duration::from_secs(1));

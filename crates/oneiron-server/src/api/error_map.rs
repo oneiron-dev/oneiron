@@ -194,6 +194,22 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
                 [oneiron::error::LEGAL_HOLD_SUGGESTION],
             )
         }
+        // KS-6: a credential's custody key does not open, or custody could
+        // not take a new one: the vault's state, as the facade answers it;
+        // the message names the credential and its way out, never a byte.
+        ErrorKind::CredentialLeafUnreadable | ErrorKind::CredentialCustodyUnavailable => {
+            let state = match error.kind() {
+                ErrorKind::CredentialCustodyUnavailable => "credential_custody_unavailable",
+                _ => "credential_leaf_unreadable",
+            };
+            ApiError::new(
+                error.to_string(),
+                ApiErrorDetails::InvalidState {
+                    state: Some(state.to_owned()),
+                },
+                ["Do what the message names: retry, or re-enter or reissue that credential."],
+            )
+        }
         // An erase took the reply this read names (FIX 5718): the record's
         // state, as the facade answers it, never this plane's 500.
         ErrorKind::ResponseErased => ApiError::new(

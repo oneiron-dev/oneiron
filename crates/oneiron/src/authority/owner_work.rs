@@ -45,6 +45,7 @@
 
 mod cancel;
 mod custody;
+mod kit_custody;
 mod privacy_basis;
 mod root_basis;
 
@@ -203,6 +204,7 @@ impl AuthorityFold {
             .iter()
             .filter(move |(hash, folded)| {
                 folded.counts
+                    && folded.request.kit_root().is_none()
                     && folded.request.executor == executor
                     && !self.owner_work.results.contains_key(*hash)
                     && !cancel::closed(&self.owner_work, hash, &folded.request)
@@ -343,6 +345,11 @@ fn apply_request(
     // Base reality has no key and no owner work.
     if request.act.target == crate::claim::base_world_id() {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    // The owner's kit push (FIX 6053): no machine carries it, so its
+    // authority is judged before any carrier is.
+    if let Some(root) = request.kit_root() {
+        return kit_custody::apply_kit_request(state, entry, request, hash, root, pin);
     }
     let standing = Standing::new(state, pin, counted);
     let key = install_signer(&standing, state, entry, request.carrier, hash)?;
@@ -501,14 +508,17 @@ pub(super) fn folded_owner_work(
             .requests
             .iter()
             .map(|(hash, folded)| {
+                // A kit request runs no carrier's race: no machine carries
+                // it (FIX 6053).
                 let counts = !folded.narrow_only
-                    && standing.owner_act_race(
-                        folded.request.carrier,
-                        hash,
-                        &folded.key,
-                        &folded.marks,
-                        StandingView::Install,
-                    );
+                    && (folded.request.kit_root().is_some()
+                        || standing.owner_act_race(
+                            folded.request.carrier,
+                            hash,
+                            &folded.key,
+                            &folded.marks,
+                            StandingView::Install,
+                        ));
                 (
                     *hash,
                     FoldedWorkRequest {
@@ -541,13 +551,14 @@ pub(super) fn counted_request<'s>(
 ) -> Option<&'s OwnerWorkRequest> {
     let folded = standing.state().owner_work.requests.get(hash)?;
     let counts = !folded.narrow_only
-        && standing.owner_act_race(
-            folded.request.carrier,
-            hash,
-            &folded.key,
-            &folded.marks,
-            StandingView::Install,
-        );
+        && (folded.request.kit_root().is_some()
+            || standing.owner_act_race(
+                folded.request.carrier,
+                hash,
+                &folded.key,
+                &folded.marks,
+                StandingView::Install,
+            ));
     counts.then_some(&folded.request)
 }
 
@@ -566,7 +577,8 @@ pub(super) fn pending_carried_by(
         .requests
         .iter()
         .filter(move |(hash, folded)| {
-            folded.request.carrier == machine
+            folded.request.kit_root().is_none()
+                && folded.request.carrier == machine
                 && !fold.owner_work.results.contains_key(*hash)
                 && !cancel::closed(&fold.owner_work, hash, &folded.request)
         })

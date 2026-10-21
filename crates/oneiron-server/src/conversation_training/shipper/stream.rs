@@ -8,6 +8,12 @@
 //! manifest's `ciphertext_digest`, and the facts digest the contract's one
 //! fn over the whole lists. C is never read here: it is the custody row's.
 //!
+//! A head whose compact JSON is over the intake's cap carries its filter's
+//! model as a digest and a short preview instead ([`model_digest_form`],
+//! FIX 7415), and the facts digest is over the head as it is sent. A head
+//! within the cap is sent as the manifest gives it. The piece is never
+//! refused or dropped for its head.
+//!
 //! A window reads its own range only. Each chunk file the range touches is
 //! read through once, its length and BLAKE3 checked against the manifest,
 //! and only the range's share of it kept. A file that is not what the
@@ -32,6 +38,13 @@ use oneiron_vault_contract::conversation_training::{
 const DIGEST_HEX: usize = 64;
 /// The buffer a chunk file is read through.
 const READ_BUFFER: usize = 64 * 1024;
+/// CALLS TL6_HEAD_MODEL_DIGEST: the intake's cap on a head's compact JSON
+/// (LC's `HEAD_JSON_MAX`, 8 KiB, which it counts in UTF-16 units), counted
+/// here in its UTF-8 bytes, which are never fewer.
+const HEAD_JSON_MAX: usize = 8 * 1024;
+/// CALLS TL6_HEAD_MODEL_DIGEST: the most characters of the filter's model
+/// a head over the cap keeps beside the model's digest.
+const MODEL_PREVIEW_CHARS: usize = 64;
 
 /// Why a piece's files ship nothing this pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +69,7 @@ impl Unreadable {
 /// One released piece's facts, from its manifest.
 pub(super) struct Piece {
     /// The scalar facts: the manifest's body less its signature, its lists
-    /// and its chunk file names.
+    /// and its chunk file names, within the intake's cap ([`within_cap`]).
     pub(super) head: PieceFactsHeadV1,
     /// The person codes.
     pub(super) persons: Vec<String>,
@@ -108,7 +121,7 @@ impl Piece {
             });
             files.push(chunk.file);
         }
-        let head = PieceFactsHeadV1 {
+        let head = within_cap(PieceFactsHeadV1 {
             submission_id: body.submission_id,
             scope: body.scope,
             event_seq: body.event_seq,
@@ -120,7 +133,7 @@ impl Piece {
             key_id: body.payload.key_id,
             text_bytes: body.payload.text_bytes,
             prepared_at: body.prepared_at,
-        };
+        })?;
         let facts_digest = piece_facts_digest(&head, &body.persons, &body.worlds, &chunks)
             .map_err(|_| Unreadable::Mismatch)?;
         Ok(Self {
@@ -243,6 +256,54 @@ fn open_regular(path: &Path) -> Result<File, Unreadable> {
         return Err(Unreadable::Mismatch);
     }
     File::open(path).map_err(|_| Unreadable::Missing)
+}
+
+/// `head` within the intake's cap (FIX 7415): as it is when its compact
+/// JSON fits [`HEAD_JSON_MAX`]; else with its filter's model in
+/// [`model_digest_form`], the preview cut a character shorter until the
+/// head fits. A head that fits not even with no preview goes in that
+/// smallest form: the piece is never refused or dropped here.
+///
+/// # Errors
+/// [`Unreadable::Mismatch`]: a head that does not encode.
+fn within_cap(mut head: PieceFactsHeadV1) -> Result<PieceFactsHeadV1, Unreadable> {
+    if head_json_len(&head)? <= HEAD_JSON_MAX {
+        return Ok(head);
+    }
+    let model = std::mem::take(&mut head.filter.model);
+    let mut preview = MODEL_PREVIEW_CHARS;
+    loop {
+        head.filter.model = model_digest_form(&model, preview);
+        if preview == 0 || head_json_len(&head)? <= HEAD_JSON_MAX {
+            return Ok(head);
+        }
+        preview -= 1;
+    }
+}
+
+/// CALLS TL6_HEAD_MODEL_DIGEST (FIX 7415): the filter's `model` as a head
+/// over the intake's cap carries it, in the contract's own `model` field:
+/// `blake3:`, the BLAKE3 of the model's UTF-8 bytes as 64 lower-case hex,
+/// `:`, then the model's first `preview` characters, cut on a character
+/// boundary. No contract type changes; LC's intake reads this form.
+fn model_digest_form(model: &str, preview: usize) -> String {
+    let digest = oneiron_vault_contract::hex(blake3::hash(model.as_bytes()).as_bytes());
+    let end = model
+        .char_indices()
+        .nth(preview)
+        .map_or(model.len(), |(at, _)| at);
+    let kept = model.get(..end).unwrap_or_default();
+    format!("blake3:{digest}:{kept}")
+}
+
+/// The length of `head`'s compact JSON, as serde_json writes it.
+///
+/// # Errors
+/// [`Unreadable::Mismatch`]: a head that does not encode.
+fn head_json_len(head: &PieceFactsHeadV1) -> Result<usize, Unreadable> {
+    serde_json::to_vec(head)
+        .map(|json| json.len())
+        .map_err(|_| Unreadable::Mismatch)
 }
 
 /// A length as a `u64`.

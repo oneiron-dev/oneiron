@@ -26,10 +26,11 @@
 //!
 //! # The value never leaves the body (S1 plane discipline)
 //!
-//! `SecretCustodyRecord.value_bytes` is **plaintext bytes at rest under the
-//! vault DEK plane** — the same at-rest protection every entity body gets.
-//! The custody discipline is about planes, not a second encryption layer:
-//! the value NEVER leaves this body into claims (secrets are never claims),
+//! At rest the value is **sealed under its own erasable custody key**, one
+//! per credential generation (KS-6, stored schema 2, `storage_seal`), inside
+//! the vault DEK plane every entity body gets; `SecretCustodyRecord` is the
+//! opened, in-memory form. The custody discipline is about planes too: the
+//! value NEVER leaves this body into claims (secrets are never claims),
 //! same-vault sync, cross-vault export, receipts, or logs. A peer cannot prove
 //! the owner wrote a custody body, so every replicated door refuses the type
 //! byte and every sync egress drops it (`reject_secret_custody_byte`). `Debug`
@@ -64,6 +65,7 @@
 //! and the narrow-only validator (manifest ∧ vault floor, most-restrictive
 //! wins).
 
+mod carrier_custody;
 mod carrier_marks;
 mod codec;
 mod control;
@@ -75,6 +77,7 @@ mod masked_files;
 mod owner_door;
 mod reveal;
 mod sighted_file;
+mod storage_seal;
 mod transition;
 mod types;
 mod use_handle;
@@ -113,6 +116,7 @@ pub(crate) use self::doors::{
     restore_secret_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
+// KS-6: the stored schema-2 form, its value sealed under its custody key.
 pub use self::found_keys::{
     FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyNotice, FoundKeySettled,
     NOTIFICATION_PRODUCER_FOUND_KEY,
@@ -142,6 +146,11 @@ pub use self::reveal::{
 pub(crate) use self::reveal::{
     RevealAsker, RevealAuthority, erase_reveal_actor_in_txn, parse_secret_handle,
     reveal_value_in_txn,
+};
+pub(crate) use self::storage_seal::{
+    StoredValue, archive_custody_body, credentials_eligible_for_heads, image_credential_carrier,
+    plan_archived_credentials, put_stored_custody_in_txn, read_secret_custody_meta_in_txn,
+    read_stored_custody_in_txn, stored_value_held_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::holds_custody_carrier_in_txn;
