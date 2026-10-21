@@ -22,7 +22,8 @@ use crate::code_run::{
     DelegatedSource, ReaderActor, ReaderJobState, ReaderReportReceipt, ReaderRoute,
     ReaderSpawnReceipt, ScopedChildPorts, ScopedChildSpec, SelfReaderReportCall,
     SelfReaderSpawnCall, SpawnHostSeat, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall,
-    reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, valid_reader_key, vault_ref,
+    reader_attempt_id, reader_run_id, reader_task_id, reader_wait_cutoff, reader_wait_id,
+    valid_reader_key, vault_ref,
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Error, Result};
@@ -154,14 +155,25 @@ impl HostSelfDispatcher<'_> {
 
     /// Whether the bound reader child's job is still active at the
     /// generation it was claimed at: a child its cutoff settled, or one
-    /// claimed again since, reads nothing more.
+    /// claimed again since, reads nothing more. A scoped child (FIX 7507)
+    /// reads and calls its ports only before its cutoff, not just until its
+    /// run's next await, and, when it borrowed its parent attempt's lease,
+    /// only while that lease holds (`scoped_parent_lease_holds`).
     pub(crate) fn reader_job_live(&self) -> Result<bool> {
         let Some(child) = &self.reader_child else {
             return Ok(false);
         };
-        Ok(self.storage.reader_job(child.task)?.is_some_and(|job| {
+        let Some(job) = self.storage.reader_job(child.task)?.filter(|job| {
             job.state == ReaderJobState::Active && job.generation == child.generation
-        }))
+        }) else {
+            return Ok(false);
+        };
+        if job.scoped_spec().is_some()
+            && crate::unix_millis_now() >= job.binding.child_cutoff_unix_ms
+        {
+            return Ok(false);
+        }
+        self.storage.scoped_parent_lease_holds(&job)
     }
 
     /// A bound reader child's refusal of `effect`, when it is one it may
@@ -267,6 +279,7 @@ impl HostSelfDispatcher<'_> {
             },
             kind: crate::code_run::ReaderJobKind::Read,
             ask: call.ask,
+            parent_lease: None,
         };
         let (job, replay) =
             match self
@@ -321,15 +334,17 @@ impl HostSelfDispatcher<'_> {
         let Some(finding) = call.bound else {
             return Ok(failed("finding_not_own"));
         };
-        let replay =
-            match self
-                .storage
-                .report_reader_finding(call.task, child.generation, &finding)?
-            {
-                ReportOutcome::Kept => false,
-                ReportOutcome::Replay => true,
-                ReportOutcome::Settled => return Ok(failed("reader_task_settled")),
-            };
+        let reported = self.storage.report_reader_finding(
+            call.task,
+            child.generation,
+            &finding,
+            crate::unix_millis_now(),
+        )?;
+        let replay = match reported {
+            ReportOutcome::Kept => false,
+            ReportOutcome::Replay => true,
+            ReportOutcome::Settled => return Ok(failed("reader_task_settled")),
+        };
         Ok(SelfDispatchOutcome::ReaderReport(ReaderReportReceipt {
             task: call.task,
             finding: finding.handle,
@@ -387,7 +402,11 @@ impl HostSelfDispatcher<'_> {
         if tasks.is_empty() || !valid_reader_key(&call.step_key) {
             return Ok(failed("task_wait_invalid"));
         }
-        let cutoff = parent.deadline.child_cutoff();
+        // It lasts as long as the latest of the named jobs that are its own,
+        // never past the parent's outer cutoff (`reader_wait_cutoff`): a
+        // summary's wait may run into the fold reserve, a read's may not.
+        let own = self.storage.own_reader_jobs(parent_run, &tasks)?;
+        let cutoff = reader_wait_cutoff(&parent, &own);
         let wait = reader_wait_id(parent_run, &call.step_key)?;
         let set = TaskWaitSet {
             id: wait,

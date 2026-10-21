@@ -67,6 +67,9 @@ const READ_ALL_FOLD_TO = 1;
 // Why a read ends refused when a chunk page, a summary or its member is
 // withheld.
 const READ_ALL_WITHHELD_REASON = "tainted";
+// Why a read ends refused when a wait's stored reply, read whole, is not a
+// reply: it is never read as a wait that found nothing.
+const READ_ALL_INVALID_REPLY = "invalid_wait_reply";
 // What a host call throws once the run has parked: the wait's reply holds
 // no output (wasmtime_runtime/typed.rs). Any other throw is the call's own.
 const READ_ALL_PARKED = "missing_host_response_field";
@@ -190,6 +193,77 @@ function readAllSplit(refs) {
   return [{refs: a}, {refs: b}];
 }
 
+// A host reply past one message's size arrives as its stored result's card
+// in its place (FIX 2549): its handle, size, kind, taint, read path and
+// reads. That shape alone is one; an object that merely holds a `handle`
+// is not. Answers the card's handle, or null for an inline reply.
+function storedReplyRef(value) {
+  if (!value || typeof value !== "object" || isArray(value)) return null;
+  const {handle, bytes, kind, read, more, taint} = value;
+  if (typeof handle !== "string" || typeof bytes !== "number" || typeof read !== "string") return null;
+  if (kind !== "text" && kind !== "binary") return null;
+  return isArray(more) && taint && typeof taint === "object" ? handle : null;
+}
+
+// Reads the stored reply `progress.ref` on from `progress.next`, a page a
+// call through `read(ref, selection)` (the caller's `slice`), each page's
+// text added to `progress.text`, until it is whole (`next` null) or
+// `stop()` says this phase's calls are spent. Answers the withheld page
+// that ends it, if one does: the reply is then not read at all.
+async function readReplyPages(progress, read, stop) {
+  while (progress.next) {
+    if (stop()) return null;
+    const piece = await read(progress.ref, progress.next);
+    if (piece.withheld) return piece;
+    progress.text += typeof piece.text === "string" ? piece.text : "";
+    progress.next = piece.done || !piece.next ? null : piece.next;
+  }
+  return null;
+}
+
+// A wait's reply followed to its end (FIX 2549): an inline reply as it is;
+// a stored one (`storedReplyRef`) read a page at a time and parsed only once
+// whole. `progress`, kept in the read's state, holds its ref, the page to
+// read next and the text so far, so a phase whose host calls are spent
+// answers `{done: false}` and goes on from that page when called again.
+// A withheld page, or text that is not a reply, answers `{done: true,
+// refused, detail}`: never a wait that found nothing.
+async function loadWaitReply(value, progress, host, spent, slice) {
+  if (!progress.ref) {
+    const ref = storedReplyRef(value);
+    if (ref === null) return {done: true, value};
+    progress.ref = ref;
+    progress.next = {bytes: [0]};
+    progress.text = "";
+  }
+  const withheld = await readReplyPages(progress, (ref, selection) => host(slice, ref, selection), spent);
+  if (withheld) return {done: true, refused: READ_ALL_WITHHELD_REASON, detail: withheld};
+  if (progress.next) return {done: false};
+  let reply = null;
+  try { reply = parse(progress.text); } catch (_) { /* not a reply */ }
+  if (!reply || typeof reply !== "object" || isArray(reply))
+    return {done: true, refused: READ_ALL_INVALID_REPLY, detail: {ref: progress.ref}};
+  return {done: true, value: reply};
+}
+
+// `readJsonReply(value)` for a consumer that reads a reply's own fields: an
+// inline reply as it is; a stored one (`storedReplyRef`) read through
+// `slice` to its end and parsed once whole. Each page is a read of the
+// result, with every check a read makes. A withheld page throws
+// `reply_withheld` and text that is not JSON `invalid_json_reply`: neither
+// is ever an empty reply. Nothing else is read or inflated unasked.
+async function readJsonReply(value, slice) {
+  const ref = storedReplyRef(value);
+  if (ref === null) return value;
+  const progress = {ref, next: {bytes: [0]}, text: ""};
+  if (await readReplyPages(progress, slice, () => false)) throw new TypeError("reply_withheld");
+  try {
+    return parse(progress.text);
+  } catch (_) {
+    throw new TypeError("invalid_json_reply");
+  }
+}
+
 function makeReaderForks(api) {
   "use strict";
   const {slice, chunks, store, spawn, wait, can, summarize, describe} = api;
@@ -264,6 +338,31 @@ function makeReaderForks(api) {
       groups: state.groups?.length ?? 0,
       level: state.level ?? 0,
     });
+    // One wait of `phase` (`request`), its reply followed to its end
+    // (`loadWaitReply`): `{settled}`, or `{stop}`, what the phase answers
+    // instead (paused, parked or refused). A read paused mid-reply goes on
+    // from `state.reply`, making no second wait.
+    const waitFor = async (request, phase) => {
+      let reply;
+      if (!state.reply) {
+        if (spent()) return {stop: await pause()};
+        try {
+          reply = await host(wait, request);
+        } catch (error) {
+          if (error !== READ_ALL_PARKED) throw error;
+          // Parked: the run resumes once the wait settles, and the next call
+          // goes on from here.
+          await save();
+          return {stop: freeze({done: false, phase, waiting: true, progress: progress()})};
+        }
+        state.reply = {};
+      }
+      const loaded = await loadWaitReply(reply, state.reply, host, spent, slice);
+      if (!loaded.done) return {stop: await pause()};
+      delete state.reply;
+      if (loaded.refused) return {stop: freeze({done: true, refused: loaded.refused, detail: loaded.detail})};
+      return {settled: loaded.value};
+    };
 
     if (state.phase === "start") {
       const verdict = await host(can, {read: source, child: {}});
@@ -312,21 +411,13 @@ function makeReaderForks(api) {
     }
 
     if (state.phase === "wait") {
-      if (spent()) return await pause();
       const request = {tasks: state.tasks, step_key: readAllStepKey(key, "wait")};
       const count = readAllWaitCount(options.n_of, state.tasks.length);
       if (count !== undefined) request.n_of = count;
       if (isInteger(state.until)) request.until = state.until;
-      let settled;
-      try {
-        settled = await host(wait, request);
-      } catch (error) {
-        if (error !== READ_ALL_PARKED) throw error;
-        // Parked: the run resumes once the wait settles, and the next call
-        // goes on from here.
-        await save();
-        return freeze({done: false, phase: "wait", waiting: true, progress: progress()});
-      }
+      const waited = await waitFor(request, "wait");
+      if (waited.stop) return waited.stop;
+      const settled = waited.settled;
       const byTask = create(null);
       for (let i = 0; i < state.chunks.length && i < state.tasks.length; ++i) byTask[state.tasks[i]] = i;
       state.ready = [];
@@ -385,15 +476,9 @@ function makeReaderForks(api) {
         if (g.task && !g.result && !g.failed) push(pending, g.task);
       }
       if (pending.length) {
-        if (spent()) return await pause();
-        let settled;
-        try {
-          settled = await host(wait, {tasks: pending, step_key: readAllStepKey(key, "sum" + state.level + "_" + state.round)});
-        } catch (error) {
-          if (error !== READ_ALL_PARKED) throw error;
-          await save();
-          return freeze({done: false, phase: "summarize", waiting: true, progress: progress()});
-        }
+        const waited = await waitFor({tasks: pending, step_key: readAllStepKey(key, "sum" + state.level + "_" + state.round)}, "summarize");
+        if (waited.stop) return waited.stop;
+        const settled = waited.settled;
         const found = finished(settled), failures = settled.failed ?? [], groups = [];
         for (let i = 0; i < state.groups.length; ++i) {
           const group = state.groups[i];

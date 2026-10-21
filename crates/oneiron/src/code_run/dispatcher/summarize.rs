@@ -78,6 +78,7 @@ impl HostSelfDispatcher<'_> {
                 window_tokens: seat.window_tokens,
             },
             ask: SUMMARIZE_JOB_ASK.to_owned(),
+            parent_lease: None,
         };
         let job = match self
             .storage

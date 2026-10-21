@@ -225,8 +225,14 @@
     // The bundled helpers (reader_forks.js, diff.js): plain JS over the
     // calls above, never engine verbs. Each step they take is one of those
     // calls, checked and recorded as the program's own.
-    for (const name of ["readAll", "diff"])
+    for (const name of ["readAll", "diff", "readJsonReply"])
       if (name in bare) throw new TypeError("verb row shadows a host import");
+    // `readJsonReply(value)`: a reply as its own fields, for a consumer that
+    // reads them. A reply stored as a card in its place is read through
+    // `slice` and parsed once whole (reader_forks.js); an inline one is as it
+    // is. Only what a consumer passes is followed: no card is inflated unasked.
+    const slicer = bare.slice;
+    bare.readJsonReply = value => readJsonReply(value, slicer);
     const helpers = {
       slice: bare.slice, chunks: bare.chunks, store: bare.store, describe: bare.describe,
       can: bare.can, summarize: bare.summarize, spawn: sdk.self.spawn, wait: sdk.tasks?.wait,
