@@ -30,7 +30,9 @@ use oneiron::feedback::{
     FeedbackBundle, FeedbackRedactionError, FeedbackRedactor, FilteredFeedback, FilteredText,
     TextFilter, TextFilterError, TextFilterIdentity, UnredactedFeedback, apply_recognised_spans,
 };
-use oneiron::memory::extraction::{EncoderInput, EncoderMessage, ExtractionEncoder, ExtractionWork};
+use oneiron::memory::extraction::{
+    EncoderInput, EncoderMessage, ExtractionEncoder, ExtractionWork,
+};
 
 use crate::oneironer::{EncoderNotSelected, TaggerSlot};
 use crate::server::SyncServer;

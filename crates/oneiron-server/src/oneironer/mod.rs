@@ -16,7 +16,9 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use oneiron::memory::extraction::{EncoderAttempt, EncoderInput, ExtractionEncoder, ExtractionWork};
+use oneiron::memory::extraction::{
+    EncoderAttempt, EncoderInput, ExtractionEncoder, ExtractionWork,
+};
 use oneiron::tagging::{TaggingOutcome, TaggingTrace};
 use oneiron::{ModelId, embed::EmbedderLocality};
 

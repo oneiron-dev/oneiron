@@ -27,7 +27,10 @@ pub(crate) const BULK_PENDING_CAP: usize = 64;
 
 // The workers run a live unit the moment they take it; a hold would need a
 // worker that waits for company, which none does.
-const _: () = assert!(LIVE_HOLD.is_zero(), "a nonzero LIVE_HOLD needs a holding worker");
+const _: () = assert!(
+    LIVE_HOLD.is_zero(),
+    "a nonzero LIVE_HOLD needs a holding worker"
+);
 
 /// One ready worker as live routing sees it.
 pub(super) struct Candidate {

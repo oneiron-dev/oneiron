@@ -103,8 +103,12 @@ pub struct ModelRoleInvocation {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ModelRoleOutput {
-    Generated { response: LlmResponse },
-    Embedded { vector: Vec<f32> },
+    Generated {
+        response: LlmResponse,
+    },
+    Embedded {
+        vector: Vec<f32>,
+    },
     Tagged {
         output: EncoderOutput,
         /// What ran this call: the worker's runtime, compute and pick. Never
