@@ -601,6 +601,23 @@ impl AgentDispatcher<'_> {
         attempt: AttemptId,
         result_ref: &str,
     ) -> Result<Option<crate::compaction::output::OutputRef>> {
+        Ok(self
+            .resident_run_answer_with_turn(attempt, result_ref)?
+            .map(|(answer, _)| answer))
+    }
+
+    /// [`Self::resident_run_answer`] with the result TURN it read the answer
+    /// from (FIX 7103): one source of a seal check's prompt, never the whole
+    /// set, since the answer's bytes and the check's objectives have their own.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn resident_run_answer_with_turn(
+        &self,
+        attempt: AttemptId,
+        result_ref: &str,
+    ) -> Result<Option<(crate::compaction::output::OutputRef, EntityId)>> {
         let Ok(turn) = EntityId::from_hex(result_ref) else {
             return Ok(None);
         };
@@ -636,7 +653,7 @@ impl AgentDispatcher<'_> {
             .outputs
             .iter()
             .find(|output| output.complete && output.handle == handle && output.raw_len == length)
-            .map(crate::code_run::CodeRunRawOutput::output_ref))
+            .map(|output| (output.output_ref(), turn)))
     }
 }
 
