@@ -5,13 +5,17 @@
 //! asks the generative role once on the Dreamer's budget, and hands the
 //! answer back pre-materialized. The owner's own instruction is the system
 //! message; the sources go as data. What lands is a representation proposal
-//! the owner reviews at `/v1/owner/representation` before any send.
+//! the owner reviews at `/v1/owner/representation` before any send. A draft
+//! the owner's rule moved under while it was written is drafted again at
+//! once against the current rule (FIX 6079).
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::dreamer_runner::maintenance::representation::PrematerializedDraft;
-use oneiron::dreamer_runner::maintenance::stewardship::StewardshipDraftRequest;
+use oneiron::dreamer_runner::maintenance::stewardship::{
+    StewardshipDraftOutcome, StewardshipDraftRequest,
+};
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
     LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
@@ -61,7 +65,7 @@ async fn draft_round(
     failed: &mut HashSet<EntityId>,
 ) -> oneiron::Result<()> {
     let mut drafted = 0;
-    for draft in vault.stewardship_draft_requests(ROUND.saturating_add(failed.len()))? {
+    for mut draft in vault.stewardship_draft_requests(ROUND.saturating_add(failed.len()))? {
         if drafted == ROUND {
             break;
         }
@@ -69,9 +73,40 @@ async fn draft_round(
             continue;
         }
         drafted += 1;
-        if let Err(error) = draft_one(vault, runtime, budget_units, &draft).await {
-            failed.insert(draft.proposal);
-            tracing::warn!(kind = ?error.kind(), "a stewardship follow-up was not drafted");
+        // A draft the owner's rule moved under is drafted again at once
+        // against the current rule (FIX 6079): a fresh request and a fresh
+        // call, each counted, none against the round, with no cap. A request
+        // read again that did not move is not drafted again.
+        let mut redrafts: u64 = 0;
+        loop {
+            match draft_one(vault, runtime, budget_units, &draft).await {
+                Ok(StewardshipDraftOutcome::Scheduled(_)) => break,
+                Ok(StewardshipDraftOutcome::Stale) => {
+                    redrafts += 1;
+                    tracing::info!(
+                        proposal = %draft.proposal.to_hex(),
+                        redrafts,
+                        "a stewardship draft went stale against the owner's current rule"
+                    );
+                    let Some(current) = vault.stewardship_draft_request(draft.proposal)? else {
+                        break;
+                    };
+                    if !current.moved_from(&draft) {
+                        failed.insert(draft.proposal);
+                        tracing::warn!(
+                            proposal = %draft.proposal.to_hex(),
+                            "a stale stewardship draft's rule did not move; it is not drafted again"
+                        );
+                        break;
+                    }
+                    draft = current;
+                }
+                Err(error) => {
+                    failed.insert(draft.proposal);
+                    tracing::warn!(kind = ?error.kind(), "a stewardship follow-up was not drafted");
+                    break;
+                }
+            }
         }
     }
     Ok(())
@@ -84,12 +119,14 @@ fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     }
 }
 
+/// One model draft of `draft`, scheduled as the request it was written for:
+/// `Stale` when the owner's rule or the reach-out moved meanwhile.
 async fn draft_one(
     vault: &Vault,
     runtime: &ModelRuntime,
     budget_units: u64,
     draft: &StewardshipDraftRequest,
-) -> oneiron::Result<()> {
+) -> oneiron::Result<StewardshipDraftOutcome> {
     let context = vault.representation_context(&draft.request)?;
     let seat = runtime
         .seat(CHAT_ROLE)
@@ -166,6 +203,5 @@ async fn draft_one(
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
-    vault.schedule_stewardship_draft(draft.proposal, &mut PrematerializedDraft { text }, now)?;
-    Ok(())
+    vault.schedule_stewardship_draft(draft, &mut PrematerializedDraft { text }, now)
 }

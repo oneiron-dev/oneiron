@@ -14,9 +14,12 @@
 //!
 //! A rule with a draft route also lets the host draft the follow-up through
 //! the representation seam ([`Vault::stewardship_draft_requests`] →
-//! [`Vault::schedule_stewardship_draft`]). The draft is saved at once for
-//! the owner's send review, and only their approval at
-//! `/v1/owner/representation/approve` schedules a send; nothing here sends.
+//! [`Vault::schedule_stewardship_draft`]). A draft whose rule the owner
+//! edited while it was written is stale, and the host drafts again at once
+//! against the current rule ([`Vault::stewardship_draft_request`], FIX
+//! 6079). The draft is saved at once for the owner's send review, and only
+//! their approval at `/v1/owner/representation/approve` schedules a send;
+//! nothing here sends.
 //! Reverting the reach-out withdraws the plans drafted from it, and each
 //! plan's own applied row closes with it.
 use super::applied::{self, MaintenanceInverse, MaintenanceRevert};
@@ -102,6 +105,18 @@ pub struct StewardshipDraftRequest {
     pub request: RepresentationRequest,
     /// The reach-out's revision the draft is pinned to.
     revision: [u8; 32],
+}
+
+/// What scheduling a host's draft came to.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StewardshipDraftOutcome {
+    /// The draft's plan is queued and its reach-out marked drafted.
+    Scheduled(EnqueueDreamerAttemptOutcome),
+    /// The request the draft was written for no longer stands as it was
+    /// (FIX 6079): the owner edited its rule, the reach-out moved or went,
+    /// or it was drafted meanwhile. Its text is not used; the host drafts
+    /// again against [`Vault::stewardship_draft_request`], when there is one.
+    Stale,
 }
 
 fn bad_text(text: &str) -> bool {
@@ -249,44 +264,59 @@ impl Vault {
         Ok(requests)
     }
 
-    /// Schedules the host's draft for one reach-out through the
-    /// representation seam, once. The request is derived again here, so a
-    /// reach-out the owner reverted or declined, or a rule they removed,
-    /// meanwhile drafts nothing; the queued draft carries the reach-out and
-    /// lands only while it still stands. The planner, its checks and the
-    /// stored draft run outside any writer; the plan's row, its queued
-    /// landing and the reach-out's draft mark then commit in one write
-    /// (FIX 1000), so a crash between them drafts nothing twice.
-    pub fn schedule_stewardship_draft(
+    /// The draft request the reach-out `proposal` makes now, when it is a
+    /// standing reach-out of the Dreamer's whose rule routes drafts and that
+    /// has no draft yet: what a host drafts again against once its draft
+    /// went stale (FIX 6079).
+    pub fn stewardship_draft_request(
         &self,
         proposal: EntityId,
+    ) -> Result<Option<StewardshipDraftRequest>> {
+        let Some(rules) = self.stewardship_rules()? else {
+            return Ok(None);
+        };
+        let authority = self.dreamer_authority()?.entity_ref();
+        draft_request(self, &dreamer_reader(self)?, &rules, authority, proposal)
+    }
+
+    /// Schedules the host's draft of `draft`, the request it was written
+    /// for, through the representation seam, once. The plan is that
+    /// request's, never one derived again: its reach-out must still stand
+    /// undrafted at its revision and its rule still route it exactly,
+    /// checked before the planner and again in the writer, or the draft is
+    /// [`StewardshipDraftOutcome::Stale`] and schedules nothing (FIX 6079),
+    /// so text written under an old rule never goes out under a new one. A
+    /// reach-out the owner reverted or declined, or a rule they removed, is
+    /// stale too. The queued draft carries the reach-out and lands only
+    /// while it still stands. The planner, its checks and the stored draft
+    /// run outside any writer; the plan's row, its queued landing and the
+    /// reach-out's draft mark then commit in one write (FIX 1000), so a
+    /// crash between them drafts nothing twice.
+    pub fn schedule_stewardship_draft(
+        &self,
+        draft: &StewardshipDraftRequest,
         planner: &mut dyn RepresentationPlanner,
         now: u64,
-    ) -> Result<EnqueueDreamerAttemptOutcome> {
-        let rules = self.stewardship_rules()?.ok_or_else(invalid)?;
+    ) -> Result<StewardshipDraftOutcome> {
         let authority = self.dreamer_authority()?.entity_ref();
-        let draft = draft_request(self, &dreamer_reader(self)?, &rules, authority, proposal)?
-            .ok_or_else(invalid)?;
-        let plan = self.prepare_follow_up(&draft.request, proposal, draft.revision, planner)?;
+        {
+            let txn = self.store.env.read_txn()?;
+            if !still_drafts_in_txn(self, &txn, authority, draft)? {
+                return Ok(StewardshipDraftOutcome::Stale);
+            }
+        }
+        let plan =
+            self.prepare_follow_up(&draft.request, draft.proposal, draft.revision, planner)?;
         self.with_write_txn_grouped(|txn| {
             // The writer's own snapshot: still undrafted, the reach-out still
             // stands at the drafted revision, and its rule still routes this
             // draft.
-            if DRAFTED.contains(&self.store, &*txn, &proposal)? {
-                return Err(invalid());
-            }
-            let (body, revision) =
-                standing_reach_out_in_txn(self, &*txn, authority, proposal)?.ok_or_else(invalid)?;
-            let rules = RULES.get(&self.store, &*txn, &())?.ok_or_else(invalid)?;
-            if revision != draft.revision
-                || !draft_route(&rules, &body)?
-                    .is_some_and(|(_, route)| draft.drafted_by(rules.owner, route))
-            {
-                return Err(invalid());
+            if !still_drafts_in_txn(self, &*txn, authority, draft)? {
+                return Ok(StewardshipDraftOutcome::Stale);
             }
             let outcome = plan.enqueue_in_txn(self, txn, now)?;
-            DRAFTED.put(&self.store, txn, &proposal, &now)?;
-            Ok(outcome)
+            DRAFTED.put(&self.store, txn, &draft.proposal, &now)?;
+            Ok(StewardshipDraftOutcome::Scheduled(outcome))
         })
     }
 }
@@ -573,6 +603,20 @@ fn draft_route<'a>(
 }
 
 impl StewardshipDraftRequest {
+    /// Whether this request, read after `stale` went stale, is the owner's
+    /// rule or the reach-out really moved (FIX 6079): its revision or its
+    /// exact route differs. The evidence it cites may differ either way.
+    #[must_use]
+    pub fn moved_from(&self, stale: &Self) -> bool {
+        self.revision != stale.revision
+            || self.request.owner != stale.request.owner
+            || self.instruction != stale.instruction
+            || self.request.verb != stale.request.verb
+            || self.request.channel != stale.request.channel
+            || self.request.target != stale.request.target
+            || self.request.voice != stale.request.voice
+    }
+
     /// Whether `route`, in rules set by `owner`, still drafts this request.
     fn drafted_by(&self, owner: EntityId, route: &StewardshipDraftRoute) -> bool {
         self.request.owner == owner
@@ -582,6 +626,30 @@ impl StewardshipDraftRequest {
             && self.request.target == route.target
             && self.request.voice == route.voice
     }
+}
+
+/// Whether `draft` still drafts as it was requested, read in `txn` (FIX
+/// 1000, 6079): its reach-out undrafted and still standing at its revision,
+/// and the owner's rules still routing it exactly.
+fn still_drafts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    authority: EntityId,
+    draft: &StewardshipDraftRequest,
+) -> Result<bool> {
+    if DRAFTED.contains(&vault.store, txn, &draft.proposal)? {
+        return Ok(false);
+    }
+    let Some((body, revision)) = standing_reach_out_in_txn(vault, txn, authority, draft.proposal)?
+    else {
+        return Ok(false);
+    };
+    let Some(rules) = RULES.get(&vault.store, txn, &())? else {
+        return Ok(false);
+    };
+    Ok(revision == draft.revision
+        && draft_route(&rules, &body)?
+            .is_some_and(|(_, route)| draft.drafted_by(rules.owner, route)))
 }
 
 /// The draft request one claim makes, when it is a standing reach-out of

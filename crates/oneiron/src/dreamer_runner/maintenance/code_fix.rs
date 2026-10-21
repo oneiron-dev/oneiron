@@ -29,7 +29,9 @@
 //! matched pair on the host's shadow runner once the Coach's own Grant reads
 //! the failing run's scope (FIX 6357, `engine`); until that runner can run a
 //! candidate engine, each such pair is kept not run, never a verdict, and
-//! tried once more when the engine's shadow protocol moves on.
+//! tried once more when the engine's shadow protocol moves on; one kept for
+//! want of that Grant is tried again once the Grant reads that scope (FIX
+//! 7031). An erased capsule's call is replayed by no run (FIX 6251).
 use std::cell::RefCell;
 use std::ops::Bound;
 use std::time::{Duration, Instant};
@@ -37,6 +39,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use self::engine::read_granted_in_txn;
 use self::instruction::{CoachReplay, CoachScrubber, Ran};
 use self::work::{
     enqueue_run_in_txn, failure_context, keep_in_txn, keep_run_in_txn, not_run, untried,
@@ -45,10 +48,10 @@ use super::coach::COACH_CODE_FIX_FACET;
 use super::coach_heal::HealRoute;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::failure_signals::{
-    CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld,
+    CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplay,
     ExactReplayRequest, FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft,
     InventedMessage, ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_subject_in,
-    exact_replay_request,
+    exact_replay,
 };
 use crate::limit_ask::EngineLimit;
 use crate::llm::decision::catalogue::CODE_FIX_JUDGMENT;
@@ -148,10 +151,13 @@ pub struct CandidateRun {
 
 impl CandidateRun {
     /// Whether this run stands for its candidate: every run does but an
-    /// engine pair kept not run at another shadow protocol, which is tried
-    /// once more (FIX 1661, 2144).
-    fn tried(&self) -> bool {
-        self.engine.as_ref().is_none_or(|engine| !engine.retries())
+    /// engine pair kept not run at another shadow protocol, or kept for want
+    /// of the Coach's Grant when `read_granted` says that Grant now reads
+    /// the run's scope; each is tried once more (FIX 1661, 2144, 7031).
+    fn tried(&self, read_granted: bool) -> bool {
+        self.engine
+            .as_ref()
+            .is_none_or(|engine| !engine.retries(read_granted))
     }
 }
 
@@ -329,7 +335,8 @@ impl Vault {
     /// a failure settled on that failure (OF-380): reads up to 256 work rows
     /// after `after` and queues a top-up run for at most 2 settled ones with
     /// no run that stands of some id in `pinned` (an engine pair kept not run
-    /// at another shadow protocol stands no longer). Returns the key the next
+    /// at another shadow protocol stands no longer, nor one kept for want of
+    /// a Grant the Coach now holds, FIX 7031). Returns the key the next
     /// step goes on after, or `None` once the last row is read. A deployment
     /// that does not export queues nothing.
     ///
@@ -345,6 +352,8 @@ impl Vault {
         if pinned.is_empty() || !self.config.failure_signals.exports() {
             return Ok(None);
         }
+        // Resolved outside the writer: resolving it opens a writer of its own.
+        let coach = self.coach_authority()?.entity_ref();
         self.with_write_txn_grouped(|txn| {
             let start = after.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
             let rows: Vec<(EntityId, CodeFixWork)> = WORK
@@ -359,11 +368,12 @@ impl Vault {
                 let Some(settled) = &work.settled else {
                     continue;
                 };
+                let granted = read_granted_in_txn(self, &*txn, settled, &work.source, coach)?;
                 let lacks = pinned.iter().any(|id| {
                     !settled
                         .candidates
                         .iter()
-                        .any(|run| run.candidate_id == *id && run.tried())
+                        .any(|run| run.candidate_id == *id && run.tried(granted))
                 });
                 if !lacks {
                     continue;
@@ -385,7 +395,8 @@ impl Vault {
     /// replay, kept here and sent through its own door. A replay returns what
     /// the first run kept, with a run of each pinned publisher candidate it
     /// had none of, and an engine pair it kept not run at another shadow
-    /// protocol run again in its place. Every record a run sealed is queued
+    /// protocol, or for want of a Grant the Coach now holds (FIX 7031), run
+    /// again in its place. Every record a run sealed is queued
     /// in the write that keeps the run, and one a run that lost the race to
     /// keep sealed is dropped unsent.
     pub fn run_coach_code_fix(
@@ -411,7 +422,13 @@ impl Vault {
         };
         let route = HealRoute::parse(&work.route).ok_or_else(super::invalid)?;
         if let Some(settled) = work.settled {
-            let missing = untried(&settled, host.publisher_candidates());
+            // The Coach's Grant is read again in the write that keeps a run.
+            let coach = self.coach_authority()?.entity_ref();
+            let granted = {
+                let txn = self.store.env.read_txn()?;
+                read_granted_in_txn(self, &txn, &settled, &work.source, coach)?
+            };
+            let missing = untried(&settled, host.publisher_candidates(), granted);
             if missing.is_empty() || !self.config.failure_signals.exports() {
                 return Ok(settled);
             }
@@ -422,19 +439,24 @@ impl Vault {
                     .get(&self.store, &*txn, &key)?
                     .ok_or_else(super::invalid)?;
                 let mut settled = work.settled.take().ok_or_else(super::invalid)?;
+                let granted = read_granted_in_txn(self, &*txn, &settled, &work.source, coach)?;
                 for run in runs {
                     let kept = settled
                         .candidates
                         .iter()
                         .position(|kept| kept.candidate_id == run.0.candidate_id);
                     if kept.is_some_and(|at| {
-                        settled.candidates.get(at).is_some_and(CandidateRun::tried)
+                        settled
+                            .candidates
+                            .get(at)
+                            .is_some_and(|held| held.tried(granted))
                     }) {
                         continue;
                     }
                     let run = keep_run_in_txn(self, txn, &work.source, run)?;
-                    // A pair kept not run at another shadow protocol is run
-                    // again, in its place.
+                    // A pair kept not run at another shadow protocol, or for
+                    // want of a Grant the Coach now holds, is run again, in
+                    // its place.
                     match kept.and_then(|at| settled.candidates.get_mut(at)) {
                         Some(stale) => *stale = run,
                         None => settled.candidates.push(run),
@@ -505,7 +527,15 @@ impl Vault {
             Ok(read) => read,
             Err(reason) => return Ok(withheld(FailureClassV1::Other, reason)),
         };
-        let exact = exact_replay_request(self, source)?;
+        let exact = exact_replay(self, source)?;
+        // An erased capsule's call is never replayed, rebuilt or not (FIX
+        // 6251): nothing is classed or drafted for it.
+        if matches!(exact, ExactReplay::Erased) {
+            return Ok(withheld(
+                FailureClassV1::Other,
+                CodeFixWithheld::ReplayUnavailable,
+            ));
+        }
         let case = subject.case.as_ref();
         let (evidence, reports) = failure_context(self, case, &subject.reports)?;
         // A blocked report with no case has no ladder class and names no
@@ -611,7 +641,8 @@ impl Vault {
     /// The runs of `missing`, publisher candidates a settled run never
     /// tried, or kept an engine pair of not run at another shadow protocol,
     /// each replayed once against the failure and sent through its door. The first run's class and example stand. A failure that no longer
-    /// stands, or whose text cannot be read, keeps each as not run.
+    /// stands, or whose text cannot be read, keeps each as not run, as does
+    /// one whose call's capsule was erased (FIX 6251).
     fn code_fix_top_up(
         &self,
         source: &CodeFixSource,
@@ -632,7 +663,10 @@ impl Vault {
             Ok(read) => read,
             Err(reason) => return Ok(not_run(missing, reason)),
         };
-        let exact = exact_replay_request(self, source)?;
+        let exact = exact_replay(self, source)?;
+        if matches!(exact, ExactReplay::Erased) {
+            return Ok(not_run(missing, CodeFixWithheld::ReplayUnavailable));
+        }
         measure_candidates(self, missing);
         let (evidence, reports) = failure_context(self, subject.case.as_ref(), &subject.reports)?;
         let job = CodeFixJob {

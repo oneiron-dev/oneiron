@@ -6,13 +6,15 @@
 //! reads the request its row keeps, or the call of its run that the row
 //! names by its hash. A request that no longer reads as the copy kept, or
 //! that was never kept, leaves the replay to rebuild the call, and the
-//! replay says so.
+//! replay says so. A capsule the wall withheld its request from keeps no
+//! copy, and says why (FIX 6348). An erased capsule's call is replayed by
+//! no copy and no rebuild (FIX 6251).
 
 use serde::{Deserialize, Serialize};
 
 use super::{CodeFixSource, failed_case_in};
 use crate::attempt_queue::AttemptId;
-use crate::code_run::{CapsuleRungBinding, capsule_request, step_replay_capsules};
+use crate::code_run::{CapsuleRequest, CapsuleRungBinding, capsule_request, step_replay_capsules};
 use crate::self_heal::blocked_reports::{SentRequest, blocked_source_in, step_sources_in};
 use crate::{EntityId, LlmRequest, Result, Vault};
 
@@ -65,6 +67,14 @@ pub(crate) enum ExactReplay {
     /// None was kept, or the copy no longer reads as kept: the replay
     /// rebuilds the call.
     NotKept,
+    /// The call's capsule keeps no copy: the side-row wall withheld its
+    /// request at capture, for `reasons` (FIX 6254, 6348). A durable step's
+    /// row of the call, when one reads, is `fallback`; with none the replay
+    /// rebuilds the call, as for `NotKept`.
+    Withheld {
+        reasons: Vec<String>,
+        fallback: Option<Box<ExactReplayRequest>>,
+    },
     /// The call's replay capsule was erased with its actor (FIX 6144): no
     /// replay of the call runs, rebuilt or not.
     Erased,
@@ -74,22 +84,24 @@ impl ExactReplay {
     fn of(copy: Option<ExactReplayRequest>) -> Self {
         copy.map_or(Self::NotKept, |copy| Self::Kept(Box::new(copy)))
     }
+
+    /// The request a replay sends: the copy kept, or a withheld capsule's
+    /// step-row copy. `None` leaves the replay to rebuild the call, or once
+    /// erased, to run none.
+    pub(crate) fn request(&self) -> Option<&ExactReplayRequest> {
+        match self {
+            Self::Kept(request)
+            | Self::Withheld {
+                fallback: Some(request),
+                ..
+            } => Some(request),
+            Self::NotKept | Self::Withheld { fallback: None, .. } | Self::Erased => None,
+        }
+    }
 }
 
-/// The request the failure `source` names was sent as, when the vault kept
-/// it; `None` leaves the replay to rebuild the call. An erased capsule's
-/// request is `None` here too: [`exact_replay`] tells it apart.
-pub(crate) fn exact_replay_request(
-    vault: &Vault,
-    source: &CodeFixSource,
-) -> Result<Option<ExactReplayRequest>> {
-    Ok(match exact_replay(vault, source)? {
-        ExactReplay::Kept(request) => Some(*request),
-        ExactReplay::NotKept | ExactReplay::Erased => None,
-    })
-}
-
-/// What the vault kept of the request the failure `source` names.
+/// What the vault kept of the request the failure `source` names. A request
+/// the report's own row keeps is read there, under that row's own erase.
 pub(crate) fn exact_replay(vault: &Vault, source: &CodeFixSource) -> Result<ExactReplay> {
     let txn = vault.store.env.read_txn()?;
     // The attempt whose kept calls hold it, and the hash of the one a report
@@ -124,7 +136,16 @@ pub(crate) fn exact_replay(vault: &Vault, source: &CodeFixSource) -> Result<Exac
         }
     };
     drop(txn);
-    attempt_request(vault, attempt, digest)
+    let replay = attempt_request(vault, attempt, digest)?;
+    if let ExactReplay::Withheld { reasons, fallback } = &replay {
+        // Local only (FIX 6348): why the capsule keeps no copy.
+        tracing::debug!(
+            ?reasons,
+            step_copy = fallback.is_some(),
+            "the failing call's capsule withheld its request"
+        );
+    }
+    Ok(replay)
 }
 
 /// `request` while it still reads as the copy kept, whose hash is `stored`;
@@ -147,7 +168,9 @@ fn as_kept(
 
 /// The failing call among `attempt`'s kept calls: the one whose hash is
 /// `digest`, or with none named, the last one it sent. Its replay capsule
-/// first, then a durable step's row.
+/// first, then a durable step's row. A capsule whose copy reads as none is
+/// read again before a step's row stands in for it, so an erase meanwhile
+/// reads as erased (FIX 6251).
 fn attempt_request(
     vault: &Vault,
     attempt: EntityId,
@@ -157,6 +180,8 @@ fn attempt_request(
         .into_iter()
         .rev()
         .find(|capsule| digest.is_none_or(|digest| capsule.request_hash == digest));
+    // The selected capsule, once it read as live but its copy as none.
+    let mut held = None;
     if let Some(capsule) = capsule {
         // An erased capsule's request went with its actor (FIX 6144): no
         // other copy stands in for it.
@@ -173,6 +198,7 @@ fn attempt_request(
                 as_sent,
             })));
         }
+        held = Some(capsule);
     }
     let steps = {
         let txn = vault.store.env.read_txn()?;
@@ -190,5 +216,25 @@ fn attempt_request(
                 source.request.stored,
             )
         });
-    Ok(ExactReplay::of(copy))
+    let Some(capsule) = held else {
+        return Ok(ExactReplay::of(copy));
+    };
+    // Read again after the step's row, before its copy stands in: an erase
+    // since the first read takes the call, and no copy replays it.
+    let erased = step_replay_capsules(vault, attempt)?
+        .iter()
+        .find(|again| {
+            again.lease_generation == capsule.lease_generation && again.step == capsule.step
+        })
+        .is_some_and(|again| again.content.actor().is_none());
+    if erased {
+        return Ok(ExactReplay::Erased);
+    }
+    Ok(match capsule.request {
+        CapsuleRequest::Withheld { reasons } => ExactReplay::Withheld {
+            reasons,
+            fallback: copy.map(Box::new),
+        },
+        CapsuleRequest::Kept { .. } => ExactReplay::of(copy),
+    })
 }
