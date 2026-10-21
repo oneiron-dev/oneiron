@@ -241,6 +241,9 @@ impl MergeQueue<'_> {
             None => self.initialize(&baseline_id, WorkspaceGraph::unfiltered())?,
         };
         config.stage = QueueCheckInitStage::Initialized { baseline_id };
+        // The attached branch at the approved baseline enrolls the queue for
+        // automatic driving; a detached HEAD enrolls nothing (G2 PR2).
+        config.driver_target = self.attached_target(config.repo)?;
         self.vault.finish_queue_check(
             work,
             WorkUpdate {

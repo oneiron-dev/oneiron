@@ -1,3 +1,6 @@
+// The checked claim writer, shared with the merge queue's overlap handoff.
+mod write;
+
 use crate::ports::EntityStoreRead;
 use std::path::Path;
 use std::sync::atomic::Ordering;
@@ -34,6 +37,8 @@ use super::trailer::commit_message_with_provenance_trailer;
 use super::types::{RepoConflictClaim, RepoConflictResolutionClaim};
 use super::worktree::apply_prepared_commit_file;
 use crate::error::{ClaimError, CodeError};
+use write::put_engine_repo_conflict_claim_checked;
+pub(super) use write::{QueueConflictTrees, record_queue_conflict_claim};
 
 impl Vault {
     /// Lists active typed repo conflict claims attached to a branch subject.
@@ -434,129 +439,6 @@ fn put_engine_repo_conflict_claim(
         &[],
     )
     .map(|_| ())
-}
-
-fn put_engine_repo_conflict_claim_checked(
-    vault: &Vault,
-    claim_id: EntityId,
-    branch_subject: EntityId,
-    body: &ClaimBody,
-    learned_at: u64,
-    owner: Option<(&crate::consent::AuthenticatedOwner, EntityId)>,
-    proposals: &[super::proposal::RepoProposal],
-) -> Result<EntityId> {
-    let data = encode_claim_body(body)?;
-    let reconciliation_owner = if body.predicate == PREDICATE_CONFLICT_OPEN && owner.is_none() {
-        Some(
-            vault
-                .ensure_embedded_owner_actor()
-                .map_err(|error| Error::Code(CodeError::RepoMutationFailed(error.to_string())))?,
-        )
-    } else {
-        None
-    };
-    let mut wtxn = vault.store.env.write_txn()?;
-    let reconciliation_owner = match owner {
-        Some((owner, repository)) => {
-            let value = decode_repo_conflict_open_value(&body.value)?;
-            super::proposal::require_repo_artifact_in_txn(
-                vault,
-                &wtxn,
-                repository,
-                &value.repo_ref,
-            )?;
-            Some(owner.revalidate_in_txn(vault, &wtxn)?)
-        }
-        None => reconciliation_owner,
-    };
-    for expected in proposals {
-        if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, &wtxn, &expected.id)? {
-            return Err(Error::EntityNotFound);
-        }
-        let stored = super::proposal::PROPOSAL
-            .get(&vault.store, &wtxn, &expected.id)?
-            .ok_or(Error::EntityNotFound)?;
-        if stored.repo != expected.repo
-            || stored.path != expected.path
-            || stored.content != expected.content
-            || stored.pre_action_fork_hash != expected.pre_action_fork_hash
-            || stored.actor != expected.actor
-            || stored.status != expected.status
-        {
-            return Err(super::proposal::invalid("conflict source proposal changed"));
-        }
-    }
-    if body.predicate == PREDICATE_CONFLICT_OPEN {
-        for id in vault.claims_for_subject_in_txn(&wtxn, &branch_subject)? {
-            if let Some(existing) = vault.get_claim_in_txn(&wtxn, &id)?
-                && existing.predicate == body.predicate
-                && existing.lifecycle == ClaimLifecycleStatus::Active
-                && existing.value == body.value
-            {
-                return Ok(id);
-            }
-        }
-    }
-    if vault
-        .store
-        .port_entity_record(&wtxn, &branch_subject)?
-        .is_none()
-    {
-        return Err(Error::EntityNotFound);
-    }
-    let claim_of_weight = EdgeKind::ClaimOf
-        .default_weight()
-        .ok_or(Error::InvariantViolation(
-            "ClaimOf edge missing default weight",
-        ))?;
-    apply_ops(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
-        &mut wtxn,
-        vec![
-            BatchOp::Put {
-                id: claim_id,
-                entity_type: ENTITY_TYPE_CLAIM,
-                occurred: TimeRange {
-                    start: learned_at,
-                    end: learned_at,
-                },
-                learned_at,
-                data,
-                allow_maintenance: true,
-                allow_reserved_predicate: true,
-                hub_sync_imported: false,
-            },
-            BatchOp::Edge {
-                src: claim_id,
-                kind: EdgeKind::ClaimOf,
-                tgt: branch_subject,
-                weight: claim_of_weight,
-                vad: Vad::NEUTRAL,
-            },
-        ],
-        vault.text_index_trusted.load(Ordering::Acquire),
-        false,
-        true,
-    )?;
-    if let Some(owner) = reconciliation_owner {
-        let value = decode_repo_conflict_open_value(&body.value)?;
-        let conflict = RepoConflictClaim {
-            claim_id,
-            subject: branch_subject,
-            repo_ref: value.repo_ref,
-            branch: value.branch,
-            base_tree: value.base_tree,
-            ours_tree: value.ours_tree,
-            theirs_tree: value.theirs_tree,
-            conflicted_paths: value.conflicted_paths,
-            proposals: value.proposals,
-        };
-        vault.create_repo_reconciliation_task_in_txn(&mut wtxn, &conflict, owner, learned_at)?;
-    }
-    wtxn.commit()?;
-    Ok(claim_id)
 }
 
 fn supersede_repo_conflict_claim(

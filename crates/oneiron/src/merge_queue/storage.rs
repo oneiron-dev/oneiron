@@ -12,8 +12,8 @@ use crate::{
 const QUEUE_STATE: SideTable<String, QueueRecord, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_STATE);
 
-/// One merge batch, keyed by `{repo_hex}:{batch_id}` exactly as `batch_key` spelled it —
-/// a plain `String` key rather than a split key type, since nothing ever scans this table.
+/// One merge batch, keyed by `{repo_hex}:{batch_id}` exactly as `batch_key` spelled it.
+/// One repo's batches are read by the `{repo_hex}:` prefix (`repo_batches_in_txn`).
 pub(super) const BATCHES: SideTable<String, MergeBatch, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_BATCH);
 
@@ -124,6 +124,8 @@ impl MergeQueue<'_> {
             )?;
         }
         txn.commit()?;
+        // The queue driver wakes on a committed queue write (FIX 6868).
+        self.vault.store.notify_attempt_observers();
         Ok(())
     }
     /// [`Self::save`] of one new batch whose writer's first act is `admit`
@@ -154,6 +156,7 @@ impl MergeQueue<'_> {
             batch,
         )?;
         txn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(Ok(()))
     }
 
