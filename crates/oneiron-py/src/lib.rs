@@ -6121,6 +6121,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_merge_queue_export_green(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.export_green")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.export_green", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_artifacts_export(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.artifacts.export")?;
         let output = py

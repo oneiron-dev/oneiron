@@ -86,6 +86,8 @@ impl MergeQueue<'_> {
                 order: 0,
             });
         }
+        // Green is terminal for checks, not for an outstanding seal (G2 PR3).
+        self.seal_work(&mut works, &batches, pass)?;
         for (index, batch) in batches.iter().enumerate() {
             let order = index as u64;
             let drive = batch.drive.as_ref();
@@ -144,7 +146,7 @@ impl MergeQueue<'_> {
         }
         match work {
             QueueWork::Recover => self.drive_recover(),
-            QueueWork::SettleSlow { .. } => Ok(match self.settle_slow() {
+            QueueWork::SettleSlow { .. } => Ok(match self.settle_slow_driven() {
                 Ok(_) => QueueDriveOutcome::Changed,
                 Err(error) => QueueDriveOutcome::Waiting(QueueDriveHold::new(
                     QueueDriveHoldReason::HeldRecovery,
@@ -183,6 +185,7 @@ impl MergeQueue<'_> {
             QueueWork::RequeueSurvivors { batch, .. } => self.requeue_survivors_driven(batch),
             QueueWork::LandReviewed { batch, .. } => self.drive_land(batch, pass),
             QueueWork::HandoffOverlap { batch, .. } => self.drive_handoff(config, batch, pass),
+            QueueWork::SealTested { target, .. } => self.drive_seal(target),
         }
     }
 

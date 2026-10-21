@@ -9974,6 +9974,21 @@
       "host_door_lists": true
     },
     {
+      "name": "vault.code.merge_queue.export_green",
+      "description": "Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueGreenExportRequest",
+      "output": "crate::memory::origin_doors::CodeExportResult",
+      "call": "memory.merge_queue_export_green_as(&memory.embedded_owner(\"vault.code.merge_queue.export_green\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.artifacts.export",
       "description": "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it.",
       "input": "crate::blob_artifact::ArtifactExportRequest",

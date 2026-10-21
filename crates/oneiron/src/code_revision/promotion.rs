@@ -104,6 +104,14 @@ impl Vault {
     }
 
     pub(crate) fn require_code_revision_promotion(&self, revision_id: EntityId) -> Result<()> {
+        // A queue-sealed record answers to its own multi-source verifier
+        // (G2 PR3); every other revision keeps these checks.
+        if self
+            .get_code_revision(&revision_id)?
+            .is_some_and(|revision| revision.tested_queue.is_some())
+        {
+            return self.require_queue_revision_promotion(revision_id);
+        }
         let reviews = self.code_revision_promotions(revision_id)?;
         self.require_inherited_file_mode_reviews(revision_id)?;
         self.check_code_revision_reviews(revision_id, &reviews, false)
@@ -298,6 +306,26 @@ impl Vault {
         };
         ids.iter().map(|id| EntityId::from_hex(id)).collect()
     }
+}
+
+/// The immutable promotion receipt of `revision` in `txn`, for the queue
+/// verifier: the same table, never a second approval store.
+pub(super) fn promotion_receipt_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    revision: &EntityId,
+) -> Result<Option<Vec<String>>> {
+    PROMOTIONS.get(store, txn, revision)
+}
+
+/// Writes `revision`'s promotion receipt, which must be new.
+pub(super) fn put_promotion_receipt_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    revision: &EntityId,
+    ids: Vec<String>,
+) -> Result<()> {
+    PROMOTIONS.put(store, txn, revision, &ids)
 }
 
 fn file_mode(revision: &super::CodeRevision, document: &[u8; 32]) -> u32 {

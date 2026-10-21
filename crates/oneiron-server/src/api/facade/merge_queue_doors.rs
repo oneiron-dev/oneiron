@@ -139,3 +139,17 @@ pub(crate) async fn vault_code_merge_queue_recover(
     )
     .await
 }
+
+pub(crate) async fn vault_code_merge_queue_export_green(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: MergeQueueGreenExportRequest,
+) -> Listed<oneiron::memory::origin_doors::CodeExportResult> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.merge_queue.export_green",
+        move |memory, owner| memory.merge_queue_export_green_as(owner, input),
+    )
+    .await
+}

@@ -2028,6 +2028,9 @@ impl OneironClient {
                 "vault.code.merge_queue.check_status" => remote_agent_verb_output::<
                     oneiron::memory::merge_queue_doors::MergeQueueCheckWorkView,
                 >(client, verb, &input),
+                "vault.code.merge_queue.export_green" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::CodeExportResult,
+                >(client, verb, &input),
                 "vault.artifacts.export" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactExportFile>,
                 >(client, verb, &input),
@@ -11443,6 +11446,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.merge_queue.check_status", value)
+    }
+    pub fn vault_code_merge_queue_export_green(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueGreenExportRequest,
+    ) -> Result<oneiron::memory::origin_doors::CodeExportResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.export_green", value)
     }
     /// One version's export file (base64), with its pinned name and media type.
     pub fn vault_artifacts_export(

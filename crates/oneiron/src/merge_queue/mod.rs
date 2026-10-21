@@ -21,6 +21,10 @@ mod reviewed;
 mod run;
 mod staging;
 mod storage;
+mod tested;
+mod tested_export;
+mod tested_store;
+mod tested_types;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -52,6 +56,13 @@ pub use driver_types::{
 pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
 pub use reviewed::ReviewedProposalLanding;
 pub use run::{RepoQueueOrder, RepoQueuePredecessor};
+// The tested-revision seal at green (FIX 6868, G2 PR3).
+pub(crate) use tested_types::QueueRevisionSeal;
+pub use tested_types::{
+    GreenQueueRevision, QueueAppliedSource, QueueExportHold, QueueExportHoldReason,
+    QueueGreenExportView, QueueReceiptLink, QueueRevisionIntent, QueueRevisionLink,
+    QueueSealTarget, QueueTestedRevision, QueueTestedTarget,
+};
 pub use types::{
     BatchState, CheckInvocation, CheckPhase, CheckReport, LandingPermit, MergeBatch, MergeFile,
     MergeLanding, MergeProposal, MergeQueuePointers, Quarantine, SpeculativePath, TestedBatch,

@@ -66,6 +66,14 @@ impl AuthenticatedOwner {
 }
 
 impl QueuedCheckApproval {
+    /// The live owner who gave this approval, as recorded: a value read for
+    /// a checked baseline's canonical author (G2 PR3), never a new owner
+    /// proof or any authority.
+    #[must_use]
+    pub(crate) fn recorded_actor(&self) -> EntityId {
+        self.actor
+    }
+
     /// Whether this approval still authorizes `repo`'s plan `plan_digest`
     /// in `txn`: the same repository and plan, a live owner and, when a
     /// credential carried it, that credential still live.

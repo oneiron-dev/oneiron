@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1117 facade rows, 3836 declarations.
-Inputs: 1052 of 1117 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1004 of 1117 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1118 facade rows, 3840 declarations.
+Inputs: 1053 of 1118 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1005 of 1118 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -10934,12 +10934,17 @@ class ContractVerdict(TypedDict):
     candidate: str
     tests_passed: bool
     diffs: list[ContractDiff]
-QueueDriveStatus = Literal["unenrolled", "driving", "waiting_check", "waiting_symbols", "waiting_review", "waiting_admission", "held_needs_new_base", "held_diverged", "held_binding", "held_materialization", "held_overlap", "held_task_authority", "held_recovery", "held_check", "needs_configuration", "unavailable", "done"]
+QueueDriveStatus = Literal["unenrolled", "driving", "waiting_check", "waiting_symbols", "waiting_review", "waiting_admission", "held_needs_new_base", "held_diverged", "held_binding", "held_materialization", "held_overlap", "held_task_authority", "held_recovery", "held_check", "needs_configuration", "held_seal", "unavailable", "done"]
 class QueueConflictView(TypedDict):
     source_proposals: list[str]
     conflict: str
     task: NotRequired[str | None]
     resolution_batch: NotRequired[str | None]
+QueueExportHoldReason = Literal["seal_pending", "held_seal_ancestor", "held_binding", "held_object", "held_unsupported_tree", "held_unreviewed_change", "held_store", "held_untouched_promotion", "author_erased", "author_unavailable", "unenrolled", "unavailable"]
+class QueueExportHold(TypedDict):
+    reason: QueueExportHoldReason
+    detail: str
+    way_out: str
 class QueueDriveView(TypedDict):
     batch_ref: str
     status: QueueDriveStatus
@@ -10948,6 +10953,12 @@ class QueueDriveView(TypedDict):
     receipt_refs: list[str]
     conflicts: list[QueueConflictView]
     survivor_batch: NotRequired[str | None]
+    tested_revision: NotRequired[str | None]
+    seal_hold: NotRequired[QueueExportHold | None]
+class QueueGreenExportView(TypedDict):
+    green_commit: str
+    tested_revision: NotRequired[str | None]
+    hold: NotRequired[QueueExportHold | None]
 class MergeQueueObservation(TypedDict):
     repo: EntityId
     head_commit: str
@@ -10956,6 +10967,7 @@ class MergeQueueObservation(TypedDict):
     batches: list[MergeQueueBatchView]
     verdicts: list[ContractVerdict]
     drive: list[QueueDriveView]
+    green_export: QueueGreenExportView
 class MergeQueueRequeueView(TypedDict):
     source_batch_ref: str
     batch: NotRequired[MergeQueueBatchView | None]
@@ -11001,6 +11013,14 @@ class MergeQueueDiagnoseRequest(TypedDict):
 class MergeQueueCheckStatusRequest(TypedDict):
     repo: EntityId
     work_ref: str
+class MergeQueueGreenExportRequest(TypedDict):
+    repo: EntityId
+    served_repo: str
+    checkout: str
+    epoch: int
+    ref_name: str
+    expected_old_oid: NotRequired[str | None]
+    endpoint: str
 class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]

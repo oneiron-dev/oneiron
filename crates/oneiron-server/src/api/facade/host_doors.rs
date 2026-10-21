@@ -1787,6 +1787,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.merge_queue.check"
         | "vault.code.merge_queue.diagnose"
         | "vault.code.merge_queue.check_status"
+        | "vault.code.merge_queue.export_green"
         | "vault.trusted_contacts.name"
         | "vault.trusted_contacts.dial.set"
         | "vault.trusted_contacts.tier.set"

@@ -47,6 +47,12 @@ pub struct CodeRevision {
     /// Tested per-file states, distinct from the per-session revision frontier.
     pub file_frontiers: BTreeMap<[u8; 32], CodeDocumentFrontier>,
     pub commit_metadata: Option<super::CodeCommitMetadata>,
+    /// A tested queue revision's untouched paths, by path (G2 PR3); empty
+    /// on every ordinary revision. Only the queue seal writes them.
+    pub blob_frontiers: BTreeMap<String, super::CodeTreeBlob>,
+    /// The queue record a tested queue revision was sealed from; `None` on
+    /// every ordinary revision.
+    pub tested_queue: Option<crate::merge_queue::QueueTestedRevision>,
 }
 
 impl CodeRevision {
@@ -62,6 +68,8 @@ impl CodeRevision {
             finalized_at,
             file_frontiers: BTreeMap::new(),
             commit_metadata: None,
+            blob_frontiers: BTreeMap::new(),
+            tested_queue: None,
         }
     }
 
@@ -95,6 +103,8 @@ impl CodeRevision {
             finalized_at,
             file_frontiers: BTreeMap::new(),
             commit_metadata: None,
+            blob_frontiers: BTreeMap::new(),
+            tested_queue: None,
         }
     }
 

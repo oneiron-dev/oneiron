@@ -3246,6 +3246,11 @@ export_facade! {
     let output = client.vault_code_merge_queue_check_status(&input)?;
     crate::codec::lift_record("vault.code.merge_queue.check_status", &output)
 };
+"vault.code.merge_queue.export_green" => fn vault_code_merge_queue_export_green(&self, input: MergeQueueGreenExportRequest) -> CodeExportResult = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueGreenExportRequest = crate::codec::lower_record("vault.code.merge_queue.export_green", input)?;
+    let output = client.vault_code_merge_queue_export_green(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.export_green", &output)
+};
 "vault.artifacts.export" => fn vault_artifacts_export(&self, input: ArtifactExportRequest) -> Option<ArtifactExportFile> = |client| {
     let input: oneiron::blob_artifact::ArtifactExportRequest = crate::codec::lower_record("vault.artifacts.export", input)?;
     let output = client.vault_artifacts_export(&input)?;

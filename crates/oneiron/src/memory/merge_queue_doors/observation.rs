@@ -37,6 +37,7 @@ impl Memory<'_> {
             batches: batches.into_iter().map(batch_view).collect(),
             verdicts,
             drive,
+            green_export: queue.green_export_view(),
         })
     }
 

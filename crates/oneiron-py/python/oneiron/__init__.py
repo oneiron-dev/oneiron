@@ -3744,6 +3744,9 @@ class Oneiron:
         def check_status(self, spec):
             """Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_check_status(json.dumps(spec))))
+        def export_green(self, spec):
+            """Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_export_green(json.dumps(spec))))
     class _VaultResultsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

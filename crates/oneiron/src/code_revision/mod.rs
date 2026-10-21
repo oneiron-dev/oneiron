@@ -9,7 +9,11 @@ mod graph;
 mod integrity;
 mod keys;
 mod proposals;
+mod queue;
+mod queue_promotion;
 mod storage;
+mod tree_codec;
+mod tree_inventory;
 mod types;
 pub(crate) use self::keys::archive_revision_tables;
 pub(crate) use self::promotion::archive_promotion_table;
@@ -26,6 +30,11 @@ pub(crate) use self::storage::{
     delete_code_revision_lifecycle_in_txn, has_finalized_code_revision_in_txn,
 };
 pub use self::types::{CodeRevision, CodeRevisionFork, CodeRevisionKind};
+// The tested queue revision (FIX 6868, G2 PR3).
+pub(crate) use self::queue::{queue_aggregation_session, queue_provenance_id, queue_revision_id};
+pub(crate) use self::queue_promotion::QueuePromotionGap;
+pub use self::tree_inventory::CodeTreeBlob;
+pub(crate) use self::tree_inventory::{CodeTreeInventory, MODE_GITLINK};
 
 #[cfg(test)]
 mod tests;
