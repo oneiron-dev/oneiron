@@ -1,6 +1,9 @@
 //! Deployment-selected feedback transport. Every send still crosses the core consent gate.
-use oneiron::feedback::{FeedbackSendRoute, FeedbackTransport, FeedbackTransportRequest};
-use oneiron::outbound::OutboundExecutionOutcome;
+use oneiron::feedback::{
+    FeedbackSendRoute, FeedbackTransport, FeedbackTransportRequest, REPORT_SIGNATURE_VERB,
+    ReportPublisherEndpoint, ReportSignatureTransport, ReportSignatureTransportRequest,
+};
+use oneiron::outbound::{OutboundExecutionOutcome, OutboundExecutionRequest};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -43,6 +46,21 @@ pub enum FeedbackDeliveryError {
     Network,
     #[error("feedback destination returned HTTP {0}")]
     Http(u16),
+}
+/// What one POST carries: an approved bundle, or a content-free issue
+/// signature (OF-420). Both ride one client, one exact route and one outcome
+/// mapping.
+#[derive(Clone, Copy)]
+enum FeedbackWirePayload<'a> {
+    Bundle {
+        bytes: &'a [u8],
+        digest: &'a str,
+        encoding: &'static str,
+    },
+    IssueSignature {
+        body: &'a [u8],
+        digest: &'a str,
+    },
 }
 pub struct HttpFeedbackTransport {
     config: FeedbackDeliveryConfig,
@@ -93,65 +111,84 @@ impl HttpFeedbackTransport {
     }
     fn deliver(
         &self,
-        request: &FeedbackTransportRequest<'_>,
+        execution: &OutboundExecutionRequest<'_>,
+        payload: FeedbackWirePayload<'_>,
     ) -> Result<String, FeedbackDeliveryError> {
         let route = self.config.route();
-        let intent = request.execution.intent;
-        if intent.channel != route.channel
-            || intent.verb != route.verb
-            || intent.target != route.target
-        {
+        let (verb, digest) = match payload {
+            FeedbackWirePayload::Bundle { digest, .. } => (route.verb.as_str(), digest),
+            FeedbackWirePayload::IssueSignature { digest, .. } => (REPORT_SIGNATURE_VERB, digest),
+        };
+        let intent = execution.intent;
+        if intent.channel != route.channel || intent.verb != verb || intent.target != route.target {
             return Err(FeedbackDeliveryError::RouteMismatch);
         }
-        if request.execution.space_posting.is_some() {
+        if execution.space_posting.is_some() {
+            return Err(FeedbackDeliveryError::RouteMismatch);
+        }
+        let github = self.config.destination == FeedbackDestination::GithubIssue;
+        // A GitHub issue destination takes no signatures: each would open a
+        // public issue, and nothing there deduplicates a retried POST.
+        if github && matches!(payload, FeedbackWirePayload::IssueSignature { .. }) {
             return Err(FeedbackDeliveryError::RouteMismatch);
         }
         let mut post = self
             .client
             .post(&self.config.endpoint)
             .header("User-Agent", "oneiron-feedback")
-            .header("Idempotency-Key", request.execution.intent_ref)
-            .header("X-Oneiron-Bundle-Digest", request.bundle_digest)
-            // The token travels beside the bytes, so a receiver never guesses
-            // which shape it was handed.
-            .header("X-Oneiron-Bundle-Encoding", request.bundle_encoding);
+            .header("Idempotency-Key", execution.intent_ref);
+        post = match payload {
+            FeedbackWirePayload::Bundle { encoding, .. } => post
+                .header("X-Oneiron-Bundle-Digest", digest)
+                // The token travels beside the bytes, so a receiver never guesses
+                // which shape it was handed.
+                .header("X-Oneiron-Bundle-Encoding", encoding),
+            FeedbackWirePayload::IssueSignature { .. } => {
+                post.header("X-Oneiron-Signature-Digest", digest)
+            }
+        };
         if let Some(token) = &self.bearer {
             post = post.bearer_auth(token.as_str());
         }
-        if self.config.destination == FeedbackDestination::GithubIssue {
-            use base64::Engine;
-            let encoded = base64::engine::general_purpose::STANDARD.encode(request.bundle_bytes);
-            // Binary MessagePack survives the issue API's text-only body exactly.
-            let body = serde_json::json!({"title":format!("Feedback {}",request.bundle_digest),
-                "body":format!("{}\n```base64\n{}\n```",request.bundle_encoding,encoded)});
-            post = post
-                .header("Content-Type", "application/json")
-                .body(body.to_string());
-        } else {
-            post = post
+        post = match payload {
+            FeedbackWirePayload::Bundle {
+                bytes, encoding, ..
+            } if github => {
+                use base64::Engine;
+                let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+                // Binary MessagePack survives the issue API's text-only body exactly.
+                let body = serde_json::json!({"title":format!("Feedback {digest}"),
+                    "body":format!("{encoding}\n```base64\n{encoded}\n```")});
+                post.header("Content-Type", "application/json")
+                    .body(body.to_string())
+            }
+            FeedbackWirePayload::Bundle { bytes, .. } => post
                 .header("Content-Type", "application/msgpack")
-                .body(request.bundle_bytes.to_vec());
-        }
+                .body(bytes.to_vec()),
+            FeedbackWirePayload::IssueSignature { body, .. } => post
+                .header("Content-Type", "application/json")
+                .body(body.to_vec()),
+        };
         let response = post.send().map_err(|_| FeedbackDeliveryError::Network)?;
         if !response.status().is_success() {
             return Err(FeedbackDeliveryError::Http(response.status().as_u16()));
         }
-        Ok(request.bundle_digest.to_owned())
+        Ok(digest.to_owned())
     }
-}
-impl FeedbackTransport for HttpFeedbackTransport {
-    fn send_feedback_bundle(
+
+    /// The ordinary execution outcome of one POST. A client rejection proves
+    /// non-delivery, except timeouts and operation conflicts: either can
+    /// follow an accepted send. Network, redirect and server failures remain
+    /// indeterminate.
+    fn outcome(
         &mut self,
-        request: &FeedbackTransportRequest<'_>,
+        delivered: Result<String, FeedbackDeliveryError>,
     ) -> OutboundExecutionOutcome {
         self.last_error = None;
-        match self.deliver(request) {
+        match delivered {
             Ok(reference) => OutboundExecutionOutcome::delivered_to_channel(reference),
             Err(error) => {
                 let mut outcome = OutboundExecutionOutcome::failed(error.to_string());
-                // A client rejection proves non-delivery, except timeouts and
-                // operation conflicts: either can follow an accepted send.
-                // Network, redirect and server failures remain indeterminate.
                 let possible_delivery = match error {
                     FeedbackDeliveryError::Network => true,
                     FeedbackDeliveryError::Http(status) => {
@@ -166,6 +203,48 @@ impl FeedbackTransport for HttpFeedbackTransport {
                 outcome
             }
         }
+    }
+}
+impl FeedbackTransport for HttpFeedbackTransport {
+    fn send_feedback_bundle(
+        &mut self,
+        request: &FeedbackTransportRequest<'_>,
+    ) -> OutboundExecutionOutcome {
+        let delivered = self.deliver(
+            request.execution,
+            FeedbackWirePayload::Bundle {
+                bytes: request.bundle_bytes,
+                digest: request.bundle_digest,
+                encoding: request.bundle_encoding,
+            },
+        );
+        self.outcome(delivered)
+    }
+}
+/// The typed adapter for a content-free issue signature (OF-420): the same
+/// client, exact route, disabled redirects, `Idempotency-Key` and
+/// possible-delivery mapping as a bundle, on the `signature` verb.
+impl ReportSignatureTransport for HttpFeedbackTransport {
+    fn destination(&self) -> Option<ReportPublisherEndpoint> {
+        let route = self.config.route();
+        Some(ReportPublisherEndpoint {
+            channel: route.channel,
+            endpoint: route.target,
+        })
+    }
+
+    fn send_issue_signature(
+        &mut self,
+        request: &ReportSignatureTransportRequest<'_>,
+    ) -> OutboundExecutionOutcome {
+        let delivered = self.deliver(
+            request.execution,
+            FeedbackWirePayload::IssueSignature {
+                body: request.body,
+                digest: request.digest,
+            },
+        );
+        self.outcome(delivered)
     }
 }
 
