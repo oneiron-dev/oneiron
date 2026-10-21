@@ -33,11 +33,13 @@ pub(crate) struct ExportSnapshotRun {
     pub(crate) receipts: Vec<(crate::code_run::ReaderFoldReceipt, Option<&'static str>)>,
 }
 
-/// One result body a clean occurrence names: its bytes, or why they are
+/// One result body a clean occurrence names: its bytes as they stream, read
+/// under the snapshot and checked to their end (FIX 5392), or why they are
 /// not exported.
-pub(crate) struct ExportSnapshotBody {
+pub(crate) struct ExportSnapshotBody<'t> {
     pub(crate) bytes: u64,
-    pub(crate) body: std::result::Result<Vec<u8>, &'static str>,
+    pub(crate) body:
+        std::result::Result<crate::code_run::CodeRunResultBodyReader<'t>, &'static str>,
 }
 
 /// One live row as the snapshot reads it, with what it carries beside it.
@@ -605,7 +607,7 @@ impl Vault {
                     super::whole_vault_export_withholds_result(self, rtxn, run_id, &output)?;
                 if withheld.is_none() && bodies.insert(output.raw_blake3) {
                     let body = self
-                        .code_run_result_body_in_txn(rtxn, &output)?
+                        .code_run_result_body_reader_in_txn(rtxn, &output)?
                         .ok_or("absent");
                     writer.result_body(
                         output.raw_blake3,

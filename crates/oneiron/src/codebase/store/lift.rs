@@ -12,11 +12,11 @@ use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
 
-use super::super::ingest::read_asset_blob_in_txn;
+use super::super::ingest::with_asset_blob_reader_in_txn;
 use super::super::snapshot::{CodebaseForkHash, CodebaseSnapshot};
 use super::{CUSTODY_REPORTS, SNAPSHOTS, codebase_custody_key};
 use crate::Vault;
-use crate::batch::secret_scan::scan_file_content;
+use crate::batch::secret_scan::scan_file_content_reader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::secret_snapshot::{SecretLiftProposal, SnapshotCustodyReport, suggested_secret_name};
@@ -108,14 +108,18 @@ impl Vault {
             if withheld.contains(&entry.path) {
                 continue;
             }
-            let bytes = match read_asset_blob_in_txn(self, txn, &entry.content_hash) {
-                Ok(bytes) => bytes,
+            // The release scan reads each file as it streams, never whole
+            // (FIX 5399): the checked reader verifies it to its end.
+            let hit = match with_asset_blob_reader_in_txn(self, txn, &entry.content_hash, |body| {
+                scan_file_content_reader(&entry.path, body)
+            }) {
+                Ok(hit) => hit,
                 // A file whose ASSET is gone or holds other bytes has
                 // nothing of its own to read.
                 Err(Error::EntityNotFound | Error::CorruptedIndex(_) | Error::Code(_)) => continue,
                 Err(error) => return Err(error),
             };
-            if let Some(reason) = scan_file_content(&entry.path, &bytes) {
+            if let Some(reason) = hit {
                 hits.push((entry.path.clone(), reason));
             }
         }

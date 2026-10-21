@@ -4,6 +4,10 @@
 
 use super::*;
 
+mod reader;
+
+pub(crate) use self::reader::CodeRunResultBodyReader;
+
 impl Vault {
     /// A writer for one result body, into this vault's `bodies/`. Each value
     /// custody knows is replaced by its handle as it streams (OF-560 C).

@@ -11,7 +11,7 @@
 //! holds; so a row nulled alone at its depth from the document root is the row
 //! the whole-document pass leaves.
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Seek, Write};
+use std::io::{Seek, SeekFrom, Write};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -27,7 +27,7 @@ use crate::batch::export::{
     ExportSkillBundle, ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotRun,
     ExportSourceVault, FileSpool, OmissionLedger, RecordSpool, SideRowBytes, VAULT_ARCHIVE_FORMAT,
     VAULT_OKF_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocumentManifest,
-    WholeVaultExportReceipt, archive_slot_rows, blake3_hex,
+    WholeVaultExportReceipt, archive_slot_rows,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -260,39 +260,39 @@ impl<'v> DocumentWriter<'v> {
         self.push_nulled(ArchiveRecordKind::Run, &row, 3)
     }
 
-    /// One result body a clean occurrence names, once. Its text goes through
-    /// the release door's scan; a body that is no UTF-8 text (Docs Q20) goes
-    /// in `files/` as it is, never base64-encoded into the text around that
-    /// scan. A text body the nulling pass changed no longer matches its digest,
-    /// so it is withheld as a credential rather than shipped under a name it
-    /// does not hash to.
-    pub(crate) fn result_body(&mut self, digest: [u8; 32], body: ExportSnapshotBody) -> Result<()> {
+    /// One result body a clean occurrence names, once. It is copied as it
+    /// streams into an owner-only spool, checked to its end against its
+    /// length and digest, and read there by the release door's scan, never
+    /// held whole (FIX 5392); a body the scan passes goes in `files/` as it
+    /// is, never base64-encoded into the text around that scan (Docs Q20),
+    /// and its row carries no content. A row the nulling pass leaves naming
+    /// other bytes than the copy hashes to is withheld as a credential
+    /// rather than shipped under a name it does not hash to.
+    pub(crate) fn result_body(
+        &mut self,
+        digest: [u8; 32],
+        body: ExportSnapshotBody<'_>,
+    ) -> Result<()> {
         let hex = crate::entity_id::bytes_to_hex_lower(&digest);
-        let mut binary = None;
-        let (content, withheld) = match body.body {
-            Err(reason) => (None, Some(reason)),
-            Ok(bytes) => match String::from_utf8(bytes) {
-                Err(error) => {
-                    let bytes = error.into_bytes();
-                    match crate::batch::secret_scan::scan_file_content("", &bytes) {
-                        Some(_) => (None, Some("credential")),
-                        None => {
-                            binary = Some(bytes);
-                            (None, None)
-                        }
+        let mut clean = None;
+        let withheld = match body.body {
+            Err(reason) => Some(reason),
+            Ok(reader) => {
+                let mut spool = self.vault.archive_spool_file()?;
+                reader.copy_checked(&mut spool)?;
+                match crate::batch::secret_scan::scan_file_content_from("", &mut spool)? {
+                    Some(_) => Some("credential"),
+                    None => {
+                        clean = Some(spool);
+                        None
                     }
                 }
-                Ok(text) => match crate::batch::secret_scan::scan_file_content("", text.as_bytes())
-                {
-                    Some(_) => (None, Some("credential")),
-                    None => (Some(text), None),
-                },
-            },
+            }
         };
         let row = ExportResultBody {
             blake3: hex.clone(),
             bytes: body.bytes,
-            content,
+            content: None,
             withheld: withheld.map(str::to_owned),
         };
         let mut row = nulled(&row, "", 3)?;
@@ -302,24 +302,14 @@ impl<'v> DocumentWriter<'v> {
                 .get("withheld")
                 .is_some_and(|reason| !reason.is_null())
             {
-                let digest = fields
+                let named = fields
                     .get("blake3")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
-                match (content, digest) {
-                    (Some(Value::String(text)), Some(digest))
-                        if blake3_hex(text.as_bytes()) == digest =>
-                    {
-                        self.files.attach_as(digest, text.as_bytes())?;
-                    }
-                    (Some(Value::Null) | None, Some(digest))
-                        if binary
-                            .as_deref()
-                            .is_some_and(|bytes| blake3_hex(bytes) == digest) =>
-                    {
-                        if let Some(bytes) = &binary {
-                            self.files.attach_as(digest, bytes)?;
-                        }
+                match (content, named, clean.as_mut()) {
+                    (Some(Value::Null) | None, Some(named), Some(spool)) if named == hex => {
+                        spool.seek(SeekFrom::Start(0))?;
+                        self.files.attach_reader_as(named, body.bytes, spool)?;
                     }
                     _ => {
                         fields.insert("withheld".to_owned(), Value::from("credential"));

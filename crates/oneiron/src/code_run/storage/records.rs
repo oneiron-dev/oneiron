@@ -28,8 +28,8 @@ mod bodies;
 pub(crate) use self::admitted::ReplyBody;
 use self::bodies::owned_body;
 pub(crate) use self::bodies::{
-    FinishedOutput, StagedSinks, code_run_body_file_of_row, code_run_body_row_key,
-    code_run_inline_body_of_row,
+    CodeRunResultBodyReader, FinishedOutput, StagedSinks, code_run_body_file_of_row,
+    code_run_body_row_key, code_run_inline_body_of_row,
 };
 pub(super) use self::bodies::{
     body_drifted, finish_output, load_whole_body, open_body_file, read_body_row_range,
