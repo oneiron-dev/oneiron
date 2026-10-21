@@ -347,7 +347,7 @@ pub(crate) use principal_standing::{
     GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,
 };
 pub(crate) use principal_standing::{
-    NoStanding, PACT_STANDING_LAPSED, StandingHome, principal_standing_in,
+    NoStanding, PACT_STANDING_LAPSED, StandingHome, live_agent_principal_in, principal_standing_in,
     principal_standing_in_txn, principal_standing_or_lapse_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;

@@ -97,6 +97,22 @@ pub(crate) fn stage_retirement_in_txn(
     RETIRE_PENDING.put(dbs, wtxn, &intent.subject, &value)
 }
 
+/// Withdraws the Retention intent standing for `subject`, in `wtxn`, when
+/// its client's policy keeps the entries now (FIX 6022): an erase's is never
+/// withdrawn. `true` when one went.
+pub(crate) fn withdraw_retention_in_txn(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    subject: &CustodySubject,
+) -> Result<bool> {
+    match RETIRE_PENDING.get(dbs, &*wtxn, subject)? {
+        Some(standing) if standing.cause == RetireCause::Retention => {
+            RETIRE_PENDING.delete(dbs, wtxn, subject)
+        }
+        _ => Ok(false),
+    }
+}
+
 /// The intent standing for `subject`, if any.
 pub(crate) fn retirement_in_txn(
     dbs: &impl SideTableDbs,

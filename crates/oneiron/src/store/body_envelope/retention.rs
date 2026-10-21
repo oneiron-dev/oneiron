@@ -17,7 +17,7 @@
 use heed::{RoTxn, RwTxn};
 
 use super::custody::{instance_id, instance_of};
-use super::rows::BODY_KEYS;
+use super::rows::{BODY_INSTANCES, BODY_KEYS, remembered_body_instances_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable, SideTableDbs};
@@ -45,12 +45,39 @@ pub(crate) const INLINE_ASSETS: SideTable<EntityId, [u8; 16], Raw> =
 const RAW_OUTPUT_ROWS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT);
 
+/// The erased rows one erase writer notes, journaled in custody before it
+/// commits (FIX 6229, 7470), so a restore of an image older than the erase
+/// still knows whose erase retired each instance.
+#[derive(Default)]
+pub(super) struct ErasedNotes(Vec<(Vec<u8>, Vec<u8>)>);
+
+impl ErasedNotes {
+    /// Notes `instance` for `owner`'s receipt in `wtxn`.
+    pub(super) fn note(
+        &mut self,
+        dbs: &impl SideTableDbs,
+        wtxn: &mut RwTxn<'_>,
+        owner: &EntityId,
+        instance: &[u8; 16],
+    ) -> Result<()> {
+        let key = (*owner, *instance);
+        ERASED.put(dbs, wtxn, &key, &Vec::new())?;
+        self.0.push((ERASED.key_bytes(&key), Vec::new()));
+        Ok(())
+    }
+
+    /// Journals the notes, one frame, before the writer commits.
+    pub(super) fn journal<D: ManifestDbs>(self, dbs: &D) -> Result<()> {
+        dbs.key_custody().journal_body_history(self.0)
+    }
+}
+
 /// Stages the erase of `instance` in `wtxn` and notes it for `owner`'s
-/// receipt.
+/// receipt in `notes`.
 pub(super) fn stage_erase<D: ManifestDbs + SideTableDbs>(
     dbs: &D,
     wtxn: &mut RwTxn<'_>,
-    owner: Option<&EntityId>,
+    (owner, notes): (Option<&EntityId>, &mut ErasedNotes),
     instance: &[u8; 16],
 ) -> Result<()> {
     let Some(custody) = dbs.key_custody().local() else {
@@ -68,7 +95,37 @@ pub(super) fn stage_erase<D: ManifestDbs + SideTableDbs>(
         },
     )?;
     if let Some(owner) = owner {
-        ERASED.put(dbs, wtxn, &(*owner, *instance), &Vec::new())?;
+        notes.note(dbs, wtxn, owner, instance)?;
+    }
+    Ok(())
+}
+
+/// Every instance the body `digest` is or was bound under in `txn` (FIX
+/// 6023): its row's, then each one remembered, a vault row's only.
+fn digest_instances_in_txn<D: SideTableDbs>(
+    dbs: &D,
+    txn: &RoTxn<'_>,
+    digest: &[u8; 32],
+) -> Result<Vec<[u8; 16]>> {
+    let mut instances = remembered_body_instances_in_txn(dbs, txn, digest)?;
+    if let Some(row) = BODY_KEYS.get(dbs, txn, digest)?
+        && row.is_vault()
+        && !instances.contains(&row.instance)
+    {
+        instances.insert(0, row.instance);
+    }
+    Ok(instances)
+}
+
+/// Drops the remembered `instances` of `digest`, each retired now.
+fn forget_remembered_in_txn<D: SideTableDbs>(
+    dbs: &D,
+    wtxn: &mut RwTxn<'_>,
+    digest: &[u8; 32],
+    instances: &[[u8; 16]],
+) -> Result<()> {
+    for instance in instances {
+        BODY_INSTANCES.delete(dbs, wtxn, &(*digest, *instance))?;
     }
     Ok(())
 }
@@ -112,25 +169,29 @@ pub(crate) fn erase_bodies_for_owner_in_txn(
     held: &[[u8; 32]],
     retain_inline: bool,
 ) -> Result<()> {
+    let mut notes = ErasedNotes::default();
     for digest in held {
-        let row = BODY_KEYS.get(store, wtxn, digest)?;
+        // Every instance the digest was bound under, so an inline/file
+        // switch or a release leaves no older image's copy behind (FIX 6023).
+        let instances = digest_instances_in_txn(store, wtxn, digest)?;
         if crate::provenance::body::digest_is_held_in_txn(store, wtxn, digest)? {
-            if let Some(row) = row {
-                ERASE_PENDING.put(store, wtxn, &row.instance, digest)?;
-                ERASED.put(store, wtxn, &(*erase_owner, row.instance), &Vec::new())?;
+            for instance in &instances {
+                ERASE_PENDING.put(store, wtxn, instance, digest)?;
+                notes.note(store, wtxn, erase_owner, instance)?;
             }
             continue;
         }
         // The last holder's inline result goes with it, bound or not, so no
         // later checkpoint carries its bytes.
         drop_inline_result_in_txn(store, wtxn, digest)?;
-        if let Some(row) = row {
-            ERASE_PENDING.delete(store, wtxn, &row.instance)?;
-            stage_erase(store, wtxn, Some(erase_owner), &row.instance)?;
+        for instance in &instances {
+            ERASE_PENDING.delete(store, wtxn, instance)?;
+            stage_erase(store, wtxn, (Some(erase_owner), &mut notes), instance)?;
         }
+        forget_remembered_in_txn(store, wtxn, digest, &instances)?;
     }
     let Some(instance) = INLINE_ASSETS.get(store, wtxn, body_owner)? else {
-        return Ok(());
+        return notes.journal(store);
     };
     if retain_inline {
         // The digest an inline ASSET holds is its row body's: its content
@@ -142,12 +203,13 @@ pub(crate) fn erase_bodies_for_owner_in_txn(
             })
             .unwrap_or_default();
         ERASE_PENDING.put(store, wtxn, &instance, &digest)?;
-        ERASED.put(store, wtxn, &(*erase_owner, instance), &Vec::new())?;
-        return Ok(());
+        notes.note(store, wtxn, erase_owner, &instance)?;
+        return notes.journal(store);
     }
     INLINE_ASSETS.delete(store, wtxn, body_owner)?;
     ERASE_PENDING.delete(store, wtxn, &instance)?;
-    stage_erase(store, wtxn, Some(erase_owner), &instance)
+    stage_erase(store, wtxn, (Some(erase_owner), &mut notes), &instance)?;
+    notes.journal(store)
 }
 
 /// The final teardown of `owner`'s row, by any door, in its transaction:
@@ -172,7 +234,35 @@ pub(crate) fn settle_inline_asset_in_txn(
         return Ok(());
     }
     INLINE_ASSETS.delete(store, wtxn, owner)?;
-    stage_erase(store, wtxn, erase.then_some(owner), &instance)
+    let mut notes = ErasedNotes::default();
+    stage_erase(store, wtxn, (erase.then_some(owner), &mut notes), &instance)?;
+    notes.journal(store)
+}
+
+/// After a claim's erase tore down its response version's ASSET: when the
+/// inline instance `captured` before the teardown is bound no longer (its
+/// settlement staged its retirement), `erase_owner`'s receipt names it too,
+/// the final eraser beside the first (FIX 8502). Sharing is unchanged.
+///
+/// # Errors
+///
+/// Storage and custody errors.
+pub(crate) fn note_settled_inline_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    erase_owner: &EntityId,
+    asset: &EntityId,
+    captured: Option<[u8; 16]>,
+) -> Result<()> {
+    let Some(instance) = captured else {
+        return Ok(());
+    };
+    if INLINE_ASSETS.contains(store, wtxn, asset)? {
+        return Ok(());
+    }
+    let mut notes = ErasedNotes::default();
+    notes.note(store, wtxn, erase_owner, &instance)?;
+    notes.journal(store)
 }
 
 /// The content handle of the result body `digest`.
@@ -197,14 +287,23 @@ pub(crate) fn release_body_in_txn<D: ManifestDbs + SideTableDbs>(
     wtxn: &mut RwTxn<'_>,
     digest: &[u8; 32],
 ) -> Result<()> {
-    let Some(row) = BODY_KEYS.get(dbs, wtxn, digest)? else {
-        return Ok(());
-    };
-    if !ERASE_PENDING.delete(dbs, wtxn, &row.instance)? {
+    // Each instance the digest was bound under that an erase owes (FIX
+    // 6023): its row's and every one remembered.
+    let mut owed = Vec::new();
+    for instance in digest_instances_in_txn(dbs, wtxn, digest)? {
+        if ERASE_PENDING.delete(dbs, wtxn, &instance)? {
+            owed.push(instance);
+        }
+    }
+    if owed.is_empty() {
         return Ok(());
     }
     drop_inline_result_in_txn(dbs, wtxn, digest)?;
-    stage_erase(dbs, wtxn, None, &row.instance)
+    let mut notes = ErasedNotes::default();
+    for instance in &owed {
+        stage_erase(dbs, wtxn, (None, &mut notes), instance)?;
+    }
+    forget_remembered_in_txn(dbs, wtxn, digest, &owed)
 }
 
 /// Drops the inline result row of `digest`, and its instance row, when the
@@ -239,7 +338,9 @@ fn drop_inline_result_in_txn<D: ManifestDbs + SideTableDbs>(
 /// inline binding and no row-held response's binding names the instance any
 /// longer, so no live ciphertext, refcount or row needs its key, and the
 /// collector has taken its file past every reader's pin. A retirement still
-/// waiting on a holder defers.
+/// waiting on a holder defers; so does a Retention one that a lease, a kept
+/// copy or a standing hold needs now (FIX 6022), read under the finisher's
+/// custody write guard and writer.
 fn ready_in_txn(store: &Store, txn: &RoTxn<'_>, intent: &RetirementIntent) -> Result<bool> {
     let Some(instance) = instance_of(&intent.subject.at(0)) else {
         return Ok(false);
@@ -258,6 +359,9 @@ fn ready_in_txn(store: &Store, txn: &RoTxn<'_>, intent: &RetirementIntent) -> Re
         if row?.1 == instance {
             return Ok(false);
         }
+    }
+    if intent.cause == RetireCause::Retention {
+        return super::retention_policy::retention_ready_in_txn(store, txn, &instance);
     }
     Ok(true)
 }

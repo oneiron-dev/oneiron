@@ -14,6 +14,7 @@ use super::reader::BodyFile;
 use super::rows::{BODY_KEYS, BodyKeyRow, body_key_row_in_txn};
 use super::{DirSeal, KeyScope, sealed_body_file_name};
 use crate::error::{Error, Result};
+use crate::store::key_custody::BodyLease;
 use crate::store::{BodyDir, LINE_INDEX_BLOCK_BYTES, LINE_INDEX_SUFFIX, Store, body_file_name};
 
 /// A body file a writer staged, and the instance row the row or descriptor
@@ -25,6 +26,9 @@ pub(crate) struct StagedBodyKey {
     scope: KeyScope,
     /// The opened key of a sealed file; `None` for a plain one.
     key: Option<Arc<FileKey>>,
+    /// The vault instance's lease, until the writer naming it is done (FIX
+    /// 6022).
+    _lease: Option<BodyLease>,
 }
 
 impl StagedBodyKey {
@@ -88,6 +92,8 @@ pub(crate) struct BodySpill {
     /// The vault instance it is, `None` for an off-record session's file
     /// and for a temp that is never published.
     instance: Option<[u8; 16]>,
+    /// That instance's lease, carried on to its staged row (FIX 6022).
+    lease: Option<BodyLease>,
 }
 
 enum Out {
@@ -111,7 +117,9 @@ impl BodySpill {
         match (dir.session, instance) {
             (false, Some(instance)) => {
                 let key = dir.sealed.as_ref().map(|_| Arc::clone(instance.key()));
-                Self::open(dir, key, Some(*instance.instance()))
+                let mut spill = Self::open(dir, key, Some(*instance.instance()))?;
+                spill.lease = instance.lease;
+                Ok(spill)
             }
             (true, None) => {
                 let key = match &dir.sealed {
@@ -158,6 +166,7 @@ impl BodySpill {
             temp,
             out,
             instance,
+            lease: None,
         })
     }
 
@@ -204,12 +213,14 @@ impl BodySpill {
                 row: BodyKeyRow::off_record(dir.seal()?, &key, digest, len)?,
                 scope: KeyScope::OffRecord,
                 key: Some(key),
+                _lease: None,
             }),
             (key, Some(instance)) => Some(StagedBodyKey {
                 digest: *digest,
                 row: BodyKeyRow::vault(instance, len, false),
                 scope: KeyScope::Vault,
                 key: key.map(|(key, _)| key),
+                _lease: self.lease,
             }),
             _ => None,
         };
