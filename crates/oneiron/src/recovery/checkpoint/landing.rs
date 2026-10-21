@@ -12,7 +12,7 @@ use super::test_hooks::{RestoreStep, fail_at};
 use super::{
     CheckpointImage, Custody, ForkedCustody, RESTORE_EPOCH, RecoveryWriteBudget, Rejected,
     RestoreEpoch, RestoreReason, RestoreReport, artifact, carried_bodies, codec_error, rebuild,
-    write_budget,
+    response_rows, write_budget,
 };
 use crate::store::{DB_MANIFEST, MadeDestination};
 use crate::{EntityId, Result, Vault, VaultConfig};
@@ -134,6 +134,9 @@ impl Vault {
             (body_custody.as_ref(), &retired),
         )
         .map_err(Rejected::landing)?;
+        // A queue row landed from its carried bytes goes unleased, as the
+        // snapshot unleased every other (FIX 7115).
+        response_rows::unlease_carried_attempts(&mut image, &retired).map_err(Rejected::landing)?;
         room.landing_rows(&image)?;
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
