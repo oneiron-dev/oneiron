@@ -533,6 +533,9 @@ impl<'a> EngineNativeExecutor<'a> {
             skill: entry.skill,
             args: entry.args.clone(),
         });
+        // A kept preparation stays pinned through an entry whose call did
+        // not reach its step.
+        let pinned_preparation = kept.as_ref().map(|(_, kept)| kept.identity());
         let mut lent = PinnedSourceRuntime {
             runtime: &mut *self.runtime,
             kept,
@@ -619,7 +622,9 @@ impl<'a> EngineNativeExecutor<'a> {
             observation,
         )?;
         record_terminal_output(&self.storage, &mut record, seq, &status)?;
-        let preparation = self.keep_preparation(&mut record, ran)?;
+        let preparation = self
+            .keep_preparation(&mut record, ran)?
+            .or(pinned_preparation);
         let script = format!("pinned:{}@{}", entry.skill.to_hex(), entry.content_hash);
         let state_hash = prepared_step_state_hash(
             previous_state_hash(&record),

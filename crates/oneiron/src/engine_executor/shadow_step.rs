@@ -97,8 +97,8 @@ pub fn run_shadow_step(
     // Prepared once, as a run's step is (FIX 8276): a TypeScript program's
     // executed JavaScript and its preparation record stay in the arm's own
     // store beside the program.
-    let prepared = prepare_source(&healed.code);
-    if let Some(transpiled) = prepared.transpiled() {
+    let source = prepare_source(&healed.code);
+    if let Some(transpiled) = source.transpiled() {
         let executed = transpiled.executed_js().as_bytes();
         outputs.push(store.put(executed_output_path(seq), executed)?);
         let record = transpiled.record_json(&healed.code)?;
@@ -114,7 +114,7 @@ pub fn run_shadow_step(
         boundary,
         determinism: prepared.determinism,
     };
-    let ran = runtime.run_prepared_step_cancellable(step, &prepared, &mut host, cancel);
+    let ran = runtime.run_prepared_step_cancellable(step, &source, &mut host, cancel);
     // An erase that took the source's content while the step ran leaves the
     // arm nothing to publish of it (FIX 5718).
     if let Some(withheld) = store.source_withheld() {
