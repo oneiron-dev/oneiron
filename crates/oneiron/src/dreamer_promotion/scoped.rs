@@ -227,6 +227,10 @@ fn attach_evidence(
         candidate.evidence_turn_refs.iter().copied().collect();
     // Read on this thread: a grouped commit may run the closure elsewhere.
     let auto_write_rate = crate::own_rate::auto_write_rate();
+    // The Dreamer's own read, the one the fence holds every pin to: each
+    // record the gated body names must resolve under it in the writer below
+    // (OF-063, FIX 1218).
+    let reader = fence.reader(vault)?;
     vault.with_write_txn_grouped(|txn| {
         // Source grants are judged at this writer's own clock.
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
@@ -249,7 +253,7 @@ fn attach_evidence(
         let gate_body =
             gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
-        crate::gate::check_claim_policy_for_write(
+        crate::gate::check_claim_policy_for_write_with_record_with_reader(
             &vault.store,
             txn,
             &head,
@@ -269,7 +273,8 @@ fn attach_evidence(
                 can_resolve_pending_consent: false,
                 include_source_in_gate_input: true,
             },
-            false,
+            &mut None,
+            &reader,
         )?;
         // The gate is not an authority-granting preflight: all materialization
         // below and its receipt share this transaction, including live pins.

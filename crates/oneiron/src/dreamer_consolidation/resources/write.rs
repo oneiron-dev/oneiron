@@ -3,7 +3,7 @@
 use super::{BranchResources, FallbackOutputPin, SourcePin, document_version};
 #[cfg(test)]
 use crate::claim::ClaimSource;
-use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
+use crate::claim::{ScopedRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_consolidation::PromotionCandidate;
 use crate::dreamer_consolidation::evidence::{
     ResolvedConflictOutput, VerifiedCandidate, VerifiedEvidenceSet,
@@ -240,16 +240,23 @@ impl ConsolidationFence {
         Ok(())
     }
 
-    pub(crate) fn validate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+    /// The pinned Dreamer actor's own scoped read: the read every pin is held
+    /// to, and the writer's read a record its write names must resolve under
+    /// (OF-063, FIX 1218).
+    pub(crate) fn reader<'v>(&self, vault: &'v Vault) -> Result<ScopedRead<'v>> {
         let actor = ScopedReadActorKey::with_actor_class(
             self.actor.entity_ref().to_hex(),
             self.actor.actor_class().gate_actor_class(),
         )
         .ok_or_else(|| invalid_consolidation("invalid pinned actor"))?;
-        let recorded = vault
-            .scoped_read(actor.clone())
+        Ok(vault.scoped_read(actor))
+    }
+
+    pub(crate) fn validate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        let recorded = self
+            .reader(vault)?
             .with_claim_status(crate::claim::ClaimReadStatus::Recorded);
-        let read = vault.scoped_read(actor);
+        let read = self.reader(vault)?;
         let rules: crate::dreamer_consolidation::routing::PredicateKeyRules =
             match crate::dreamer_consolidation::routing::KEY_RULES.get(&vault.store, txn, &())? {
                 Some(rules) => rules,

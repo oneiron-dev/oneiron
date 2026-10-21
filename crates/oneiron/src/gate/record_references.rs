@@ -77,27 +77,46 @@ pub(crate) fn validate_record_references(
     read: &Memory<'_>,
     refs: &[NamedRecordRef],
 ) -> Result<(), ReferenceRefusal> {
+    let unresolved = validate_record_references_with(refs, |reference| {
+        match read.get_entity(reference) {
+            Ok(result) => Ok(result.value.is_some()),
+            Err(error)
+                if error.code == MEMORY_CODE_NOT_FOUND || error.code == MEMORY_CODE_BAD_REQUEST =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    })
+    .map_err(ReferenceRefusal::Read)?;
+    match unresolved {
+        None => Ok(()),
+        Some(pointer) => Err(ReferenceRefusal::Unresolved {
+            pointer: pointer.to_owned(),
+        }),
+    }
+}
+
+/// The one reference walk: each ref in `refs` judged by `resolves`, the
+/// writer's own read wherever it reads (a [`Memory`] lane, or a scoped read
+/// in the final write's own snapshot). A ref named twice is judged once. The
+/// first ref that does not resolve answers its slot's pointer; a read that
+/// fails answers its error and judges nothing further. Invented, missing and
+/// unreadable are one `false` from `resolves`.
+pub(crate) fn validate_record_references_with<'r, E>(
+    refs: &'r [NamedRecordRef],
+    mut resolves: impl FnMut(&str) -> Result<bool, E>,
+) -> Result<Option<&'r str>, E> {
     let mut judged = BTreeSet::new();
     for named in refs {
         if !judged.insert(named.reference.as_str()) {
             continue;
         }
-        let resolves = match read.get_entity(&named.reference) {
-            Ok(result) => result.value.is_some(),
-            Err(error)
-                if error.code == MEMORY_CODE_NOT_FOUND || error.code == MEMORY_CODE_BAD_REQUEST =>
-            {
-                false
-            }
-            Err(error) => return Err(ReferenceRefusal::Read(error)),
-        };
-        if !resolves {
-            return Err(ReferenceRefusal::Unresolved {
-                pointer: named.pointer.clone(),
-            });
+        if !resolves(&named.reference)? {
+            return Ok(Some(named.pointer.as_str()));
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// The string refs `input` holds at `pointers`, in pointer order. A slot that
