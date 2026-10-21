@@ -21,6 +21,7 @@ mod engine;
 mod executor;
 mod fanout_hold;
 mod observe;
+mod payload_erase;
 mod ports;
 mod read_set;
 mod result;
@@ -64,17 +65,22 @@ pub use types::{
 };
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
+pub(crate) use payload_erase::{
+    erase_attempt_payload_actor_in_txn, erase_attempt_payload_actors_in_txn,
+};
 #[cfg(test)]
 pub(crate) fn encode_signal_record(record: &AttemptRecord) -> crate::Result<Vec<u8>> {
     encoding::encode_record(record)
 }
 /// A signal row's bytes, read once by the side-row wall in the writer's
-/// transaction ([`encoding::encode_admitted_record`]).
+/// transaction ([`encoding::encode_admitted_record`]). An erased dispatch
+/// target's text leaves the row first, as on every queue write (FIX 7076).
 pub(crate) fn encode_admitted_signal_record(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: &mut AttemptRecord,
 ) -> crate::Result<Vec<u8>> {
+    payload_erase::scrub_hard_erased_payload_in_txn(&vault.store, wtxn, record);
     encoding::encode_admitted_record(vault, wtxn, record)
 }
 pub(crate) fn validate_signal_cancel(actor: &str, reason: Option<&str>) -> crate::Result<()> {
