@@ -748,6 +748,8 @@ impl BrowserSession {
             engine: Some(self.driver.engine()),
             fact: None,
             engine_switch: Some(record),
+            text_source: None,
+            text_ref: None,
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(started),
         };

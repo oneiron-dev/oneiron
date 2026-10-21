@@ -90,14 +90,15 @@ use crate::{
     AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserEngine, BrowserError,
     BrowserPersonInput, BrowserTab, ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE,
     EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput,
-    ExpectOutput, FindInput, FindOutput, HandleInfo, HandoverInput, HandoverOutput, ImageOutput,
-    LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
+    ExpectOutput, FieldWriter, FindInput, FindOutput, HandleInfo, HandoverInput, HandoverOutput,
+    ImageOutput, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
     LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider,
-    Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput,
-    ProposeOutput, ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
-    ScreenshotTrigger, SecretCustody, SecretKind, SelectInput, SendPolicy, StoragePhase,
-    SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TypeInput,
-    ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
+    NoWriter, Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode,
+    ProposeInput, ProposeOutput, ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput,
+    ScreenshotOutput, ScreenshotTrigger, SecretCustody, SecretKind, SelectInput, SendPolicy,
+    StoragePhase, SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord,
+    TextProvenance, TypeInput, ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput,
+    site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -166,6 +167,11 @@ pub struct BrowserSession {
     receipts: Vec<EffectReceipt>,
     receipt_seq: u64,
     decider: Option<Box<dyn RoutineDecider>>,
+    /// The host's writer of a Fill's text (CUA E6), lent with the decider.
+    field_writer: Option<Box<dyn FieldWriter>>,
+    /// Where the text the next type receipt names came from, set by the
+    /// type that makes it.
+    typed: Option<TextProvenance>,
     library: Option<Box<dyn WorkflowLibrary>>,
     receipt_sink: Option<Box<dyn ReceiptEvidenceSink>>,
     /// Who has the browser now.
@@ -242,6 +248,8 @@ impl BrowserSession {
             receipts: Vec::new(),
             receipt_seq: 0,
             decider: None,
+            field_writer: None,
+            typed: None,
             library: None,
             receipt_sink: None,
             takeover: Takeover::Agent,
@@ -267,30 +275,43 @@ impl BrowserSession {
         self.library = Some(library);
     }
 
-    /// Runs `act` over the session with its library and decider lent out, so
-    /// a library verb drives the session's own gated verbs.
+    /// Runs `act` over the session with its library, decider and field
+    /// writer lent out, so a library verb drives the session's own gated
+    /// verbs.
     fn with_library<T>(
         &mut self,
         act: impl FnOnce(
             &mut Self,
             &mut dyn WorkflowLibrary,
             &mut dyn RoutineDecider,
+            &dyn FieldWriter,
         ) -> Result<T, BrowserError>,
     ) -> Result<T, BrowserError> {
         let mut library = self.library.take().ok_or_else(no_library)?;
         let mut decider = self.decider.take();
+        let writer = self.field_writer.take();
+        let lent: &dyn FieldWriter = match writer.as_deref() {
+            Some(writer) => writer,
+            None => &NoWriter,
+        };
         let result = match decider.as_deref_mut() {
-            Some(decider) => act(self, library.as_mut(), decider),
-            None => act(self, library.as_mut(), &mut NoDecider),
+            Some(decider) => act(self, library.as_mut(), decider, lent),
+            None => act(self, library.as_mut(), &mut NoDecider, lent),
         };
         self.library = Some(library);
         self.decider = decider;
+        self.field_writer = writer;
         result
     }
 
     /// Gives the session's batches the host's routine decider.
     pub fn set_decider(&mut self, decider: Box<dyn RoutineDecider>) {
         self.decider = Some(decider);
+    }
+
+    /// Gives the session's Fill steps the host's field writer (CUA E6).
+    pub fn set_field_writer(&mut self, writer: Box<dyn FieldWriter>) {
+        self.field_writer = Some(writer);
     }
 
     /// Gives the session the host's keeper of receipt screenshots.
@@ -587,6 +608,32 @@ impl BrowserSession {
         press_for(&mut self.policy, class, row)
     }
 
+    /// Types `input`, its receipt naming where the text came from
+    /// (`provenance`, CUA E6): a `type` names `supplied`, a Fill its own.
+    fn type_as(
+        &mut self,
+        input: TypeInput,
+        provenance: TextProvenance,
+    ) -> Result<Observation, BrowserError> {
+        let started = Instant::now();
+        let entry = entry(input.text.as_deref(), input.secret.as_deref())?;
+        let target = self.live()?.resolve_target(&input.target)?;
+        let base = Base::of(input.base);
+        let typed = self.driver.type_target(&target, entry, input.clear, &base);
+        let mut observation = self.crossed(typed)?;
+        self.typed = Some(provenance);
+        self.receipt(
+            "type",
+            Some(&target.row),
+            None,
+            PressMode::None,
+            &mut observation,
+            started,
+        );
+        self.undelivered()?;
+        Ok(observation)
+    }
+
     /// Stamps `observation` with the receipt of the effect that made it,
     /// which its verb entered at `started`. The receipt's screenshot is
     /// best-effort: an effect that already happened is receipted even when
@@ -628,9 +675,15 @@ impl BrowserSession {
             engine: Some(self.driver.engine()),
             fact: observation.fact.clone(),
             engine_switch: None,
+            text_source: None,
+            text_ref: None,
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(started),
         };
+        // A type's text provenance, before the host keeps the receipt.
+        if let Some(typed) = self.typed.take() {
+            typed.stamp(&mut receipt);
+        }
         // The pixels are kept before the receipt is stored, while the
         // session still holds them.
         if let Some(mut sink) = self.receipt_sink.take() {
@@ -815,22 +868,15 @@ impl BrowserDriver for BrowserSession {
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
-        let started = Instant::now();
-        let entry = entry(input.text.as_deref(), input.secret.as_deref())?;
-        let target = self.live()?.resolve_target(&input.target)?;
-        let base = Base::of(input.base);
-        let typed = self.driver.type_target(&target, entry, input.clear, &base);
-        let mut observation = self.crossed(typed)?;
-        self.receipt(
-            "type",
-            Some(&target.row),
-            None,
-            PressMode::None,
-            &mut observation,
-            started,
-        );
-        self.undelivered()?;
-        Ok(observation)
+        self.type_as(input, TextProvenance::supplied())
+    }
+
+    fn fill_text(
+        &mut self,
+        input: TypeInput,
+        provenance: TextProvenance,
+    ) -> Result<Observation, BrowserError> {
+        self.type_as(input, provenance)
     }
 
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
@@ -913,8 +959,8 @@ impl BrowserDriver for BrowserSession {
     fn library_run(&mut self, input: LibraryRunInput) -> Result<LibraryRunOutput, BrowserError> {
         // A run refused mid-takeover would count as a missed postcondition.
         self.agent_has()?;
-        let mut output = self.with_library(|session, library, decider| {
-            crate::library::run(session, library, decider, input)
+        let mut output = self.with_library(|session, library, decider, writer| {
+            crate::library::run(session, library, decider, writer, input)
         })?;
         self.page_batch(&mut output.batch);
         Ok(output)
@@ -984,11 +1030,17 @@ impl BrowserDriver for BrowserSession {
 
     fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {
         let mut decider = self.decider.take();
+        let writer = self.field_writer.take();
+        let lent: &dyn FieldWriter = match writer.as_deref() {
+            Some(writer) => writer,
+            None => &NoWriter,
+        };
         let output = match decider.as_deref_mut() {
-            Some(decider) => self.batch_with(input, decider),
-            None => self.batch_with(input, &mut NoDecider),
+            Some(decider) => self.batch_with(input, decider, lent),
+            None => self.batch_with(input, &mut NoDecider, lent),
         };
         self.decider = decider;
+        self.field_writer = writer;
         let mut output = output?;
         self.page_batch(&mut output);
         Ok(output)

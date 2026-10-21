@@ -4,7 +4,10 @@
 //! check and what its read found, so the planner repairs from evidence;
 //! every other stop names its true cause, never a guess.
 
-use crate::{BrowserError, ExpectInput, ExpectOutput, Observation};
+use crate::{
+    BatchOutput, BrowserDriver, BrowserError, EffectReceipt, ExpectInput, ExpectOutput,
+    FieldTextReason, Observation, ObservationBase, ObserveInput, SubgoalStatus,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -33,8 +36,9 @@ pub enum BatchStopCause {
     PressNeeded,
     /// A person has the desktop or the browser.
     TakenOver,
-    /// A field's text could not be resolved without a writer (CUA E6).
-    FieldText,
+    /// A Fill step's text was not resolved, or the page did not take it
+    /// (CUA E6), for `reason`.
+    FieldText { reason: FieldTextReason },
     /// Steps went on and the page did not change (CUA E3).
     NoProgress,
     /// Any other refusal of the browser or its guest, by its stable code.
@@ -73,6 +77,9 @@ pub enum AskUpReason {
     /// A strict run's step that only a model could answer, denied before
     /// any model ran, at zero tokens.
     Strict { denied: StrictDenial },
+    /// The decider asked to look again where there is no page to look at:
+    /// a Fill step's choice among its references (CUA E6).
+    Reobserve,
 }
 
 /// Why a strict run's step needed a model.
@@ -85,6 +92,9 @@ pub enum StrictDenial {
     NoRule,
     /// The step reads a screenshot, which only a model reads.
     Image,
+    /// A Fill step's text only a writer could write (CUA E6): no writer
+    /// was asked.
+    FieldGenerationRequiresModel,
 }
 
 /// A strict run's routine decision that no model was asked (CUA E2): the
@@ -186,11 +196,13 @@ impl BatchStopCause {
 }
 
 /// A step that stopped its batch: the refusal its stable code comes from,
-/// its cause, and the checks it missed.
+/// its cause, the checks it missed, and the receipt of an effect it made
+/// before it stopped (a Fill whose field the page did not take).
 pub(crate) struct Stop {
     pub(crate) error: BrowserError,
     pub(crate) cause: BatchStopCause,
     pub(crate) missed: Vec<CheckReceipt>,
+    pub(crate) receipt: Option<EffectReceipt>,
 }
 
 impl Stop {
@@ -199,6 +211,7 @@ impl Stop {
             error,
             cause,
             missed: Vec::new(),
+            receipt: None,
         }
     }
 
@@ -238,6 +251,7 @@ impl Stop {
             error,
             cause,
             missed: vec![missed],
+            receipt: None,
         })
     }
 
@@ -256,6 +270,52 @@ impl From<BrowserError> for Stop {
     fn from(error: BrowserError) -> Self {
         Self::new(BatchStopCause::of(&error), error)
     }
+}
+
+/// `output`, its batch started at `started`, stopped at step `step` by
+/// `stop`: a press or a person's hold is a person's (`NEEDS_YOU`), any
+/// other stop the planner's (`NEEDS_AGENT`), with the step's receipt and
+/// the page as it is at the stop, as an edit of `base`, not as the last
+/// effect left it: a read the guest refuses leaves none. An effect the
+/// step made before it stopped keeps its receipt.
+pub(crate) fn stopped<D: BrowserDriver + ?Sized>(
+    driver: &mut D,
+    mut output: BatchOutput,
+    step: usize,
+    stop: Stop,
+    base: Option<ObservationBase>,
+    started: std::time::Instant,
+) -> BatchOutput {
+    output.status = if matches!(
+        stop.error,
+        BrowserError::NeedsPress(_)
+            | BrowserError::TakenOver(_)
+            | BrowserError::BrowserTakenOver(_)
+    ) {
+        SubgoalStatus::NeedsYou
+    } else {
+        SubgoalStatus::NeedsAgent
+    };
+    output.failed_step = Some(step);
+    let code = stop.code();
+    let observation = driver
+        .observe(ObserveInput {
+            base,
+            ..ObserveInput::default()
+        })
+        .ok();
+    output.receipts.extend(stop.receipt);
+    output.error = Some(code.clone());
+    output.stop_cause = Some(stop.cause.clone());
+    output.failed_receipt = Some(FailedStepReceipt {
+        step: Some(step),
+        stop_cause: stop.cause,
+        missed: stop.missed,
+        observation,
+        error: Some(code),
+    });
+    output.elapsed_ms = elapsed_ms(started);
+    output
 }
 
 /// The detail of a batch `expect` step's unmet refusal.

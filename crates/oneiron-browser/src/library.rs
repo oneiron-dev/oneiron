@@ -33,6 +33,7 @@
 mod admission;
 mod live_run;
 mod secret_slots;
+mod targets;
 
 pub use admission::{
     AdmissionRefusal, Admitted, RecentCounts, ReplayGuest, SupersedeOutcome, SupersedeRefusal,
@@ -48,7 +49,7 @@ pub use secret_slots::SecretParam;
 #[cfg(feature = "driver")]
 use crate::CheckReceipt;
 #[cfg(feature = "driver")]
-use crate::{BatchInput, BrowserDriver, ObserveInput, RoutineDecider, SwitchStage};
+use crate::{BatchInput, BrowserDriver, NoWriter, ObserveInput, RoutineDecider, SwitchStage};
 use crate::{
     BatchOutput, BatchStep, BrowserError, EffectReceipt, ExpectInput, ObservationBase,
     SubgoalStatus, is_live_handle,
@@ -366,39 +367,6 @@ pub trait WorkflowLibrary: Send {
     }
 }
 
-impl BatchStep {
-    /// Every element the step names, by handle or locator.
-    fn targets(&self) -> Vec<&String> {
-        match self {
-            Self::Click { target } | Self::Type { target, .. } | Self::Select { target, .. } => {
-                vec![target]
-            }
-            Self::WaitFor { targets, .. } => targets.iter().collect(),
-            Self::Expect { target, .. }
-            | Self::Key { target, .. }
-            | Self::Scroll { target, .. } => target.iter().collect(),
-            Self::Decide(step) => step.targets.iter().collect(),
-            Self::Open { .. } | Self::Screenshot { .. } | Self::Hotkey { .. } => Vec::new(),
-        }
-    }
-
-    /// The same, to put back to locators.
-    #[cfg(feature = "driver")]
-    fn targets_mut(&mut self) -> Vec<&mut String> {
-        match self {
-            Self::Click { target } | Self::Type { target, .. } | Self::Select { target, .. } => {
-                vec![target]
-            }
-            Self::WaitFor { targets, .. } => targets.iter_mut().collect(),
-            Self::Expect { target, .. }
-            | Self::Key { target, .. }
-            | Self::Scroll { target, .. } => target.iter_mut().collect(),
-            Self::Decide(step) => step.targets.iter_mut().collect(),
-            Self::Open { .. } | Self::Screenshot { .. } | Self::Hotkey { .. } => Vec::new(),
-        }
-    }
-}
-
 impl WorkflowProgram {
     /// The site the program runs on, once its shape holds: a subgoal,
     /// distinct named parameters, one or more steps opening with a page
@@ -507,23 +475,12 @@ fn fill_slots(
 ) -> Result<(), BrowserError> {
     match value {
         serde_json::Value::String(text) if text.contains("{{") => {
-            let mut filled = String::with_capacity(text.len());
-            let mut rest = text.as_str();
-            while let Some(open) = rest.find("{{") {
-                filled.push_str(&rest[..open]);
-                let after = &rest[open + 2..];
-                let close = after
-                    .find("}}")
-                    .ok_or_else(|| BrowserError::Input("a {{ slot is never closed".to_owned()))?;
-                let name = after[..close].trim();
-                let arg = args.get(name).ok_or_else(|| {
+            *text = fill_text(text, args).map_err(|gap| match gap {
+                SlotGap::Unclosed => BrowserError::Input("a {{ slot is never closed".to_owned()),
+                SlotGap::Missing(name) => {
                     BrowserError::Input(format!("slot {{{{{name}}}}} is no parameter"))
-                })?;
-                filled.push_str(arg);
-                rest = &after[close + 2..];
-            }
-            filled.push_str(rest);
-            *text = filled;
+                }
+            })?;
         }
         serde_json::Value::Array(items) => {
             for item in items {
@@ -538,6 +495,33 @@ fn fill_slots(
         _ => {}
     }
     Ok(())
+}
+
+/// A slot [`fill_text`] could not fill: one `args` holds no value for, by
+/// its name, or one never closed.
+pub(crate) enum SlotGap {
+    Missing(String),
+    Unclosed,
+}
+
+/// `text` with every `{{name}}` slot filled from `args`: the one slot
+/// filler a program's fields and a Fill's template share (CUA E6).
+pub(crate) fn fill_text(text: &str, args: &BTreeMap<String, String>) -> Result<String, SlotGap> {
+    let mut filled = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find("{{") {
+        filled.push_str(&rest[..open]);
+        let after = &rest[open + 2..];
+        let close = after.find("}}").ok_or(SlotGap::Unclosed)?;
+        let name = after[..close].trim();
+        let arg = args
+            .get(name)
+            .ok_or_else(|| SlotGap::Missing(name.to_owned()))?;
+        filled.push_str(arg);
+        rest = &after[close + 2..];
+    }
+    filled.push_str(rest);
+    Ok(filled)
 }
 
 #[cfg(feature = "driver")]
@@ -740,6 +724,8 @@ pub(crate) fn replay_and_file<D: BrowserDriver + ?Sized>(
             no_model: true,
         },
         decider,
+        // A replay asks no model, so a Fill's generation goes up unasked.
+        &NoWriter,
     )?;
     let missed = if replay.status == SubgoalStatus::Done {
         unmet(fresh, &checks)?

@@ -9,10 +9,10 @@ use super::{LibraryRunInput, LibraryRunOutput, WorkflowLibrary, missed};
 use super::{WorkflowProgram, WorkflowProof};
 #[cfg(feature = "driver")]
 use crate::{
-    BatchInput, BrowserDriver, BrowserError, CheckReceipt, FailedStepReceipt, ObserveInput,
-    RoutineDecider, SubgoalStatus, stop::elapsed_ms,
+    BatchInput, BrowserDriver, BrowserError, CheckReceipt, FailedStepReceipt, FieldWriter,
+    ObserveInput, RoutineDecider, SubgoalStatus, stop::elapsed_ms,
 };
-use crate::{BatchStopCause, STRICT_DENIED, StrictDenied};
+use crate::{BatchStopCause, FIELD_WRITER, STRICT_DENIED, StrictDenied};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -86,7 +86,8 @@ pub fn default_mode(proof: &WorkflowProof) -> LibraryRunMode {
 /// the rung that answered, is the rule rung's or a person's. A model rung
 /// that ran counts even where the decision then abstained. A strict
 /// decision no rung gave a receipt for ([`StrictDenied`]) asked no model
-/// and spent nothing.
+/// and spent nothing. A Fill's writer call ([`FIELD_WRITER`]) is a model's
+/// (CUA E6).
 ///
 /// # Errors
 ///
@@ -103,6 +104,9 @@ pub fn model_free(decisions: &[Value]) -> Result<bool, usize> {
 /// One decision's [`model_free`] reading; none when its record shows
 /// neither its rungs nor a strict denial at zero tokens.
 fn decision_model_free(decision: &Value) -> Option<bool> {
+    if decision.get(FIELD_WRITER).is_some() {
+        return Some(false);
+    }
     if let Some(denied) = decision.get(STRICT_DENIED) {
         let denied = StrictDenied::deserialize(denied).ok()?;
         return (denied.tokens == 0).then_some(true);
@@ -155,13 +159,15 @@ fn rung_model_free(rung: &str) -> bool {
 }
 
 #[cfg(feature = "driver")]
-/// Runs a library program live in its mode, then checks its postcondition
-/// on the page. A run that missed it goes back to the planner with each
-/// check it missed, what its read found, and the page.
+/// Runs a library program live in its mode, its Fill steps' generation
+/// through `writer`, then checks its postcondition on the page. A run that
+/// missed it goes back to the planner with each check it missed, what its
+/// read found, and the page.
 pub(crate) fn run<D: BrowserDriver + ?Sized>(
     driver: &mut D,
     library: &mut dyn WorkflowLibrary,
     decider: &mut dyn RoutineDecider,
+    writer: &dyn FieldWriter,
     input: LibraryRunInput,
 ) -> Result<LibraryRunOutput, BrowserError> {
     let started = std::time::Instant::now();
@@ -179,6 +185,7 @@ pub(crate) fn run<D: BrowserDriver + ?Sized>(
             no_model: mode == LibraryRunMode::Strict,
         },
         decider,
+        writer,
     )?;
     let misses = if batch.status == SubgoalStatus::Done {
         missed(driver, &checks)?
