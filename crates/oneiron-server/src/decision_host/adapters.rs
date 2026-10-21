@@ -3,8 +3,8 @@
 //! Definitions: types stay in the parent; this module owns the listed impls.
 
 use super::{
-    Arc, AutoCheckCandidate, AutoCheckNotes, BudgetLease, CallOutcome, DecisionAnswer, DecisionCall,
-    DecisionPack, DecisionProvider, DecisionReadGate, GatedRead, HOUSE_READ_RUN,
+    Arc, AutoCheckCandidate, AutoCheckNotes, BudgetLease, CallOutcome, DecisionAnswer,
+    DecisionCall, DecisionPack, DecisionProvider, DecisionReadGate, GatedRead, HOUSE_READ_RUN,
     HostingPrivacyPosture, HouseGate, HouseRead, LadderNotes, ModelId, ProviderCapability,
     ProviderDecision, ProviderPin, ReasoningEffort, RemoteDecisionSeat, RetrievalDeadline,
     SeatCandidate, SeatNotes, SeatPhase, SeatRequest, SeatTask, SystemOneRung,

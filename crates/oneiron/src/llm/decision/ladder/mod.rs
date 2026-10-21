@@ -18,7 +18,8 @@ mod runner;
 
 pub use providers::{
     DecisionCall, DecisionModel, DecisionPack, DecisionProvider, MAX_DECISION_STATE_BYTES,
-    ModelDecisionProvider, PairedAnswer, ProviderCapability, ProviderDecision, RuleDecisionProvider,
+    ModelDecisionProvider, PairedAnswer, ProviderCapability, ProviderDecision,
+    RuleDecisionProvider,
 };
 pub use roles::{
     AskAct, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue, HumanDecisionRequest,
