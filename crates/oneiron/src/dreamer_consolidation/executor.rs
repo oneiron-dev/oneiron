@@ -853,7 +853,11 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 Ok(charges.checkpoint())
             }
             Ok(PartitionRun::Checkpoint) => Ok(charges.checkpoint()),
-            Ok(PartitionRun::Refused { reason }) => Ok(charges.park(&reason)),
+            // A refused extraction retries at the next pass, as a checkpoint
+            // does (FIX 7218): a private park would keep its row leased.
+            Ok(PartitionRun::Refused { reason }) => {
+                Ok(charges.park_for(&reason, DreamerParkCause::Checkpoint))
+            }
             // A turn demoted after the model answered waits too (FIX 6060),
             // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {
