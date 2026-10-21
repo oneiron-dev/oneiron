@@ -15,9 +15,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 mod after_notice;
 mod private_sources;
+mod urgent;
 mod view;
 pub use after_notice::{APPLIED_GROUP, APPLIED_VIEW, DigestApplied, DigestAppliedItem};
 pub use private_sources::DigestPrivateSource;
+use urgent::DigestAudience;
+pub use urgent::{
+    DIGEST_ASSESS_FACET, DIGEST_ASSESS_UNLENT_PARK_REASON, DIGEST_URGENT_FACET, DigestHarmAsk,
+    DigestHarmCandidate, DigestHarmJudgeInput, DigestHarmResult, DigestNeededBefore,
+    DigestVersionRef, UrgentDigestAssessment,
+};
+pub(crate) use urgent::{emit_urgent_proactivity_digest, unlent_assessment};
 pub use view::ProactivityDigestView;
 const CADENCE: SideTable<(), ProactivityCadence, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_CADENCE);
@@ -136,12 +144,6 @@ impl ProactivityPolicyRequest {
 pub struct ProactivityPolicyProposal {
     pub request: ProactivityPolicyRequest,
     pub revision: [u8; 32],
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UrgentDigestWake {
-    pub intent_ref: EntityId,
-    pub needed_before: u64,
-    pub waiting_harms_intent: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -469,7 +471,7 @@ impl Vault {
             return Ok(None);
         }
         let generation = self.store.proactivity_generation();
-        let result = self.assemble_proactivity_digest(None, now, None);
+        let result = self.assemble_proactivity_digest(DigestAudience::Timer, now);
         if result.is_err() {
             self.store
                 .suspend_proactivity_digest_if_unchanged(generation);
@@ -478,16 +480,17 @@ impl Vault {
     }
 
     /// Builds a display projection only. Pending decisions remain pending.
-    /// The urgent assessment comes from the host, but must name a live,
-    /// approved intent whose deadline is before the next cadence boundary.
+    /// The urgent assessment comes from the host: a yes on the owner's own
+    /// live, approved stated intent breaks the cadence (OF-194).
     /// The answer is the recipient's own view of the digest (FIX 6411).
     pub fn proactivity_digest(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         now: u64,
-        urgent: Option<&UrgentDigestWake>,
+        urgent: Option<&UrgentDigestAssessment>,
     ) -> Result<Option<ProactivityDigestView>> {
-        let Some(digest) = self.assemble_proactivity_digest(Some(owner), now, urgent)? else {
+        let audience = DigestAudience::Owner(owner, urgent);
+        let Some(digest) = self.assemble_proactivity_digest(audience, now)? else {
             return Ok(None);
         };
         let viewer = digest.recipient.ok_or_else(invalid)?;
@@ -497,63 +500,46 @@ impl Vault {
 
     fn assemble_proactivity_digest(
         &self,
-        owner: Option<&crate::consent::AuthenticatedOwner>,
+        audience: DigestAudience<'_>,
         now: u64,
-        urgent: Option<&UrgentDigestWake>,
     ) -> Result<Option<ProactivityDigest>> {
         let authority = self.dreamer_authority()?.entity_ref();
         let pending_offers = crate::skill_optimize::pending_training_offers(self)?;
         self.with_write_txn_grouped(|txn| {
-            let recipient = owner
-                .map(|owner| super::validate_owner_in_txn(self, txn, owner))
-                .transpose()?;
+            // A witnessed answer whose intent or owner moved delivers nothing.
+            let Some(recipient) = audience.recipient_in(self, txn)? else {
+                return Ok(None);
+            };
             let cadence = load_cadence(self, &*txn)?;
             let presentation = load_presentation(self, &*txn)?;
             let mut state = load_state(self, &*txn)?;
             let next = state
                 .last_regular
                 .map(|last| last.saturating_add(cadence.period_secs));
-            let due = next.is_none_or(|next| now >= next);
+            // A witnessed urgent delivery never runs the regular cadence, so
+            // it never moves `last_regular` (OF-194).
+            let due = audience.regular() && next.is_none_or(|next| now >= next);
             // Judge and eval label asks spend one human's funded minutes, so
             // each recipient keeps its own mark on the shared vault cadence:
             // one person's digest never consumes another's.
             let asks_due = match &recipient {
-                Some(actor) => load_ask_mark(self, &*txn, actor)?
+                Some(actor) if audience.regular() => load_ask_mark(self, &*txn, actor)?
                     .is_none_or(|last| now >= last.saturating_add(cadence.period_secs)),
-                None => false,
+                _ => false,
             };
             let breakthrough =
-                if let (Some(wake), Some(next), Some(owner)) = (urgent, next, recipient) {
-                    if cadence.urgent_breakthrough
-                        && wake.waiting_harms_intent
-                        && wake.needed_before < next
-                    {
-                        self.get_claim_in_txn(&*txn, &wake.intent_ref)?
-                            .is_some_and(|body| {
-                                body.predicate == "profile.intent"
-                                    && body.subject == crate::ClaimSubject::Entity(owner)
-                                    && body.source == Some(ClaimSource::UserStated)
-                                    && body
-                                        .value
-                                        .as_str()
-                                        .is_some_and(|text| !text.trim().is_empty())
-                                    && body.approval == ClaimApprovalStatus::Approved
-                                    && body.lifecycle == ClaimLifecycleStatus::Active
-                                    && !body.stale
-                            })
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                audience.breaks_through_in(self, txn, recipient, next, now, &cadence)?;
             if !due && !breakthrough && !asks_due {
                 return Ok(None);
             }
             let mut groups: BTreeMap<String, Vec<DigestProposal>> = BTreeMap::new();
             for (group, mut proposal) in pending_proposals(self, txn, authority, &state, &cadence)?
             {
-                if !due && (!breakthrough || !presentation.urgent_groups.contains(&group)) {
+                if !due
+                    && (!breakthrough
+                        || !presentation.urgent_groups.contains(&group)
+                        || !audience.carries(&proposal))
+                {
                     continue;
                 }
                 // FIX 6411: the private thread turns its words come from are

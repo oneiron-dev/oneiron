@@ -379,7 +379,7 @@ pub(crate) async fn room_export(
 ) -> Result<Export, ApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
-    let actor = person(auth)?;
+    let actor = exporter(auth)?;
     let room = parse_entity_id_param(&request.room, "room")?;
     // The slip was checked with the headers; the body may have arrived long
     // after. The copy is released only if it is still live once the talk is
@@ -490,7 +490,7 @@ pub(crate) fn door_admits(auth: &CoreAuth, verb: &str) -> Result<(), ApiError> {
         "vault.off_record.rooms.export" => {
             auth.require(CoreScope::Read)?;
             auth.require_unrestricted_record_scope()?;
-            person(auth).map(drop)
+            exporter(auth).map(drop)
         }
         "vault.off_record.rooms.suggest_save" => suggesting_agent(auth).map(drop),
         _ => holder(auth).map(drop),
@@ -542,11 +542,17 @@ fn starter(auth: &CoreAuth) -> Result<EntityId, ApiError> {
     }
 }
 
-/// Exporting is a person's own act.
-fn person(auth: &CoreAuth) -> Result<EntityId, ApiError> {
+/// Who exports a stretch: a person, or an agent acting within its Grant on a
+/// verified slip of its own (FIX 7854). Either takes only its own copy:
+/// `export_talk_by` asks that it is in the room and gathers only the turns
+/// its membership shows it, with the same live-credential check.
+fn exporter(auth: &CoreAuth) -> Result<EntityId, ApiError> {
     match participant(auth)? {
         (actor, EdgeActorClass::Human) => Ok(actor),
-        _ => Err(forbidden("only a person exports an off-record stretch")),
+        (actor, EdgeActorClass::Agent) if auth.verified_slip().is_some() => Ok(actor),
+        _ => Err(forbidden(
+            "an agent exports an off-record stretch only on a slip of its own",
+        )),
     }
 }
 

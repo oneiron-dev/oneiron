@@ -322,6 +322,27 @@ pub struct ProviderConfig {
     pub request_compression: Option<RequestCompression>,
 }
 
+/// An offer's capabilities as resolved (FIX 8418): `reasoning_content_history`
+/// declared without `reasoning` does nothing, since admission refuses a
+/// reasoning part on such an offer, so it is said once here. A warning
+/// only: the config stands as written. `model` names a `model_capabilities`
+/// entry; `None` is the provider's own list.
+fn warn_history_without_reasoning(
+    provider: &str,
+    model: Option<&str>,
+    capabilities: &[LlmCapability],
+) {
+    if capabilities.contains(&LlmCapability::ReasoningContentHistory)
+        && !capabilities.contains(&LlmCapability::Reasoning)
+    {
+        tracing::warn!(
+            provider,
+            model,
+            "models.providers: reasoning_content_history is declared without reasoning; the flag has no effect"
+        );
+    }
+}
+
 impl ProviderFile {
     pub(super) fn resolve(self, name: &str) -> anyhow::Result<ProviderConfig> {
         let kind = self
@@ -437,6 +458,13 @@ impl ProviderFile {
                 Payer::Local
             }
         });
+        let capabilities = self
+            .capabilities
+            .unwrap_or_else(|| kind.default_capabilities());
+        warn_history_without_reasoning(name, None, &capabilities);
+        for (model, declared) in &self.model_capabilities {
+            warn_history_without_reasoning(name, Some(model.as_str()), declared);
+        }
         Ok(ProviderConfig {
             kind,
             base_url,
@@ -448,9 +476,7 @@ impl ProviderFile {
             max_output_tokens: self.max_output_tokens,
             output_limit_field: self.output_limit_field.unwrap_or_default(),
             response_format: self.response_format.unwrap_or_default(),
-            capabilities: self
-                .capabilities
-                .unwrap_or_else(|| kind.default_capabilities()),
+            capabilities,
             model_capabilities: self.model_capabilities,
             family: self.family.map(|family| family.trim().to_owned()),
             model_families: self
