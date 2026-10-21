@@ -110,6 +110,17 @@ impl Vault {
         id: &EntityId,
         event: &DiagnosticEvent,
     ) -> Result<()> {
+        self.with_write_txn_grouped(|wtxn| self.emit_diagnostic_event_in_txn(wtxn, id, event))
+    }
+
+    /// [`Self::emit_diagnostic_event`] in the caller's write, so a finding and what it files
+    /// commit together (OF-418 L3).
+    pub(crate) fn emit_diagnostic_event_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        event: &DiagnosticEvent,
+    ) -> Result<()> {
         let data = encode_diagnostic_event_body(event)?;
         let learned_at = self.store.clock.now_recorded_at();
         // An absent `valid_to` means STILL VALID, not "valid for an instant".
@@ -123,27 +134,25 @@ impl Vault {
             start: event.valid_from,
             end: event.valid_to.unwrap_or(u64::MAX),
         };
-        self.with_write_txn_grouped(|wtxn| {
-            apply_ops(
-                &self.store,
-                &self.config,
-                &self.analyzer,
-                wtxn,
-                vec![BatchOp::Put {
-                    id: *id,
-                    entity_type: ENTITY_TYPE_DIAGNOSTIC,
-                    occurred,
-                    learned_at,
-                    data,
-                    allow_maintenance: true,
-                    allow_reserved_predicate: false,
-                    hub_sync_imported: false,
-                }],
-                self.text_index_trusted.load(Ordering::Acquire),
-                false,
-                true,
-            )
-        })
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            vec![BatchOp::Put {
+                id: *id,
+                entity_type: ENTITY_TYPE_DIAGNOSTIC,
+                occurred,
+                learned_at,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            self.text_index_trusted.load(Ordering::Acquire),
+            false,
+            true,
+        )
     }
 }
 

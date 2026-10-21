@@ -249,7 +249,8 @@ impl DreamerRunnerStore<'_> {
                 now,
             )?;
         }
-        if crate::self_heal::blocked_reports::any_pending_in_txn(self.vault, &*txn)? {
+        // A waiting report or model issue (OF-418 L3) wakes the Issues job.
+        if crate::self_heal::issue_work::any_pending_in_txn(self.vault, &*txn)? {
             self.enqueue_coach_issues_in_txn(txn, parent_attempt, run_id, now)?;
         }
         Ok(())

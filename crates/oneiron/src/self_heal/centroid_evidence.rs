@@ -3,8 +3,12 @@
 use super::{
     DiagnosticSourceKind,
     distillation::{MintedExample, centroid_labels},
-    tiered::{DetectorPolicy, ProposedDiagnostic, ProposedTier, propose, valid_runs},
+    tiered::{
+        DetectorPolicy, FindingBasis, ProposedDiagnostic, ProposedTier, propose, recipe_revision,
+        valid_runs,
+    },
 };
+use crate::entity_id::bytes_to_hex_lower;
 use crate::learning_setting::{SettingSpec, setting_value};
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
@@ -89,6 +93,23 @@ pub(crate) fn snapshot_live_in_txn(
     let canonical = rmp_serde::to_vec_named(&evidence)
         .map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
     Ok(evidence.version == 1 && raw == canonical)
+}
+
+/// A T2a corpus's revision (FIX 2078): its threshold, then each label, by id, with its vector.
+/// [`CentroidCorpus::revision`] and a centroid finding's recipe (OF-418 L3) read the same one.
+fn corpus_revision(labeled: &[VectorEvidence], min_similarity: f32) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron.self_heal.centroid_corpus.v1\0");
+    hash.update(&min_similarity.to_bits().to_be_bytes());
+    hash.update(&(labeled.len() as u64).to_be_bytes());
+    for item in labeled {
+        hash.update(&item.id);
+        hash.update(&(item.vector.len() as u64).to_be_bytes());
+        for value in &item.vector {
+            hash.update(&value.to_bits().to_be_bytes());
+        }
+    }
+    *hash.finalize().as_bytes()
 }
 
 fn similarity(candidate: &[f32], labeled: &[VectorEvidence]) -> Option<f64> {
@@ -189,6 +210,7 @@ impl Vault {
         if score < f64::from(min_similarity) {
             return Ok(None);
         }
+        let corpus = corpus_revision(&labeled_vectors, min_similarity);
         let snapshot = CentroidEvidence {
             version: 1,
             run: run.clone(),
@@ -217,6 +239,20 @@ impl Vault {
         refs.extend(labeled.iter().copied());
         refs.sort();
         refs.dedup();
+        // OF-418 L3: the recipe folds in the corpus's revision; the snapshot is what it read.
+        let basis = FindingBasis {
+            recipe_revision: recipe_revision(
+                policy,
+                ProposedTier::Centroid,
+                (&[], &[]),
+                Some(&corpus),
+            ),
+            source_pins: vec![
+                format!("corpus:{}", bytes_to_hex_lower(&corpus)),
+                format!("centroid:{}", bytes_to_hex_lower(&hash)),
+            ],
+            context_digest: hash,
+        };
         propose(
             self,
             ProposedTier::Centroid,
@@ -224,6 +260,7 @@ impl Vault {
             std::slice::from_ref(run),
             Some((hash, refs)),
             Vec::new(),
+            basis,
         )
     }
 
@@ -246,21 +283,11 @@ impl Vault {
             }
         }
         labeled.sort_by_key(|item| item.id);
-        let mut hash = blake3::Hasher::new();
-        hash.update(b"oneiron.self_heal.centroid_corpus.v1\0");
-        hash.update(&min_similarity.to_bits().to_be_bytes());
-        hash.update(&(labeled.len() as u64).to_be_bytes());
-        for item in &labeled {
-            hash.update(&item.id);
-            hash.update(&(item.vector.len() as u64).to_be_bytes());
-            for value in &item.vector {
-                hash.update(&value.to_bits().to_be_bytes());
-            }
-        }
+        let revision = corpus_revision(&labeled, min_similarity);
         Ok(CentroidCorpus {
             labeled,
             min_similarity,
-            revision: *hash.finalize().as_bytes(),
+            revision,
         })
     }
 

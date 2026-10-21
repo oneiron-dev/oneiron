@@ -70,6 +70,7 @@ pub use heal_context::{
     HealContextPolicy, HealContextSeed, HealEvidenceContext, HealLink, HealUnavailable,
 };
 mod invariant_canonical;
+pub(crate) mod issue_work;
 pub mod scheduled;
 pub mod served_signals;
 mod session_text;

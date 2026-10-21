@@ -1,4 +1,6 @@
-//! Model-graded detection over ARCH-0037 runs. No signed T1 run is minted here.
+//! Model-graded detection over ARCH-0037 runs. No signed T1 run is minted here. A positive
+//! finding files the Coach's issue in the write that emits it (OF-418 L3).
+use super::issue_work::ModelFinding;
 use super::{
     DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
     DiagnosticSourceKind, diagnostic_event_id, encode_diagnostic_event_body, validate_token,
@@ -241,6 +243,12 @@ fn with_wording<'s>(
     Ok(Cow::Owned(state))
 }
 
+/// Folds one asked state's exact bytes into a window's context digest (OF-418 L3).
+fn read_state(context: &mut blake3::Hasher, bytes: &[u8]) {
+    context.update(&(bytes.len() as u64).to_be_bytes());
+    context.update(bytes);
+}
+
 /// A proposed-only output. No conversion from this type to SignedDetectorRun exists.
 #[derive(Clone, Debug)]
 pub struct ProposedDiagnostic {
@@ -251,6 +259,64 @@ pub struct ProposedDiagnostic {
     pub decisions: Vec<DecisionReceipt>,
 }
 
+/// What a positive finding was judged on beside its runs (OF-418 L3): the revision of its
+/// recipe, the pins of what it read, and a digest of the exact states its questions read. Its
+/// Coach issue is keyed by the recipe; the basis rides whole in the issue's row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FindingBasis {
+    /// The recipe it ran under: [`recipe_revision`].
+    pub(crate) recipe_revision: [u8; 32],
+    /// Engine-authored pins of what it read: `question:<id>@<version>`, `example:<id>`,
+    /// `corpus:<revision>` and `centroid:<snapshot>`.
+    pub(crate) source_pins: Vec<String>,
+    /// blake3 over every asked part's exact state, in order, each length-prefixed; a
+    /// centroid finding's snapshot hash.
+    pub(crate) context_digest: [u8; 32],
+}
+
+/// The revision of the recipe a finding runs under (OF-418 L3): its tier, family, class, whole
+/// prompt and rubric, consecutive count, the reviewed positive and negative examples it asks
+/// with, and a T2a corpus's revision. A changed recipe is a new revision, never an equivalent.
+pub(super) fn recipe_revision(
+    policy: &DetectorPolicy,
+    tier: ProposedTier,
+    examples: (&[EntityId], &[EntityId]),
+    corpus: Option<&[u8; 32]>,
+) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron.self_heal.finding_recipe.v1\0");
+    for part in [
+        tier.token(),
+        policy.family.as_str(),
+        policy.class.as_str(),
+        policy.prompt.as_str(),
+        policy.rubric.as_str(),
+    ] {
+        hash.update(&(part.len() as u64).to_be_bytes());
+        hash.update(part.as_bytes());
+    }
+    hash.update(&(policy.consecutive as u64).to_be_bytes());
+    for ids in [examples.0, examples.1] {
+        hash.update(&(ids.len() as u64).to_be_bytes());
+        for id in ids {
+            hash.update(id.as_bytes());
+        }
+    }
+    match corpus {
+        Some(revision) => {
+            hash.update(&[1]);
+            hash.update(revision);
+        }
+        None => {
+            hash.update(&[0]);
+        }
+    }
+    *hash.finalize().as_bytes()
+}
+
+/// Emits a positive finding and files its Coach issue, keyed by `basis`, in the same write
+/// (OF-418 L3), then captures its failure-signal witness, an export of its own opt-in. A
+/// failed intake errors, so the host leaves the window ungraded and the next pass files it.
 pub(super) fn propose(
     vault: &Vault,
     tier: ProposedTier,
@@ -258,6 +324,7 @@ pub(super) fn propose(
     runs: &[RetrievalRunRecord],
     centroid: Option<([u8; 32], Vec<EntityId>)>,
     decisions: Vec<DecisionReceipt>,
+    basis: FindingBasis,
 ) -> Result<Option<ProposedDiagnostic>> {
     let Some(last) = runs.last() else {
         return Ok(None);
@@ -300,7 +367,15 @@ pub(super) fn propose(
     };
     let body = encode_diagnostic_event_body(&event)?;
     let id = diagnostic_event_id(&event.detector_id, &body);
-    vault.emit_diagnostic_event(&id, &event)?;
+    vault.file_model_diagnostic(ModelFinding {
+        id,
+        event: &event,
+        tier,
+        policy,
+        runs,
+        decisions: &decisions,
+        basis,
+    })?;
     vault.capture_tier1_retrieval_window(id, runs, centroid_snapshot)?;
     Ok(Some(ProposedDiagnostic {
         tier,
@@ -356,6 +431,12 @@ pub struct WindowGrade<'w> {
     streak: Vec<DecisionReceipt>,
     /// T3 and session: the receipts of the parts that raised.
     raised: Vec<DecisionReceipt>,
+    /// The recipe the window is graded under (OF-418 L3).
+    recipe: [u8; 32],
+    /// What its questions read: the question, then each reviewed example (OF-418 L3).
+    pins: Vec<String>,
+    /// Every asked part's exact state, in order (OF-418 L3).
+    context: blake3::Hasher,
 }
 
 impl Vault {
@@ -447,6 +528,18 @@ impl Vault {
                 return Err(Error::InvalidConfig("mixed sessions".into()));
             }
         }
+        let mut pins = vec![format!(
+            "question:{}@{}",
+            asked.question.id.to_hex(),
+            asked.question.version
+        )];
+        pins.extend(
+            examples
+                .0
+                .iter()
+                .chain(examples.1)
+                .map(|id| format!("example:{}", id.to_hex())),
+        );
         Ok(WindowGrade {
             policy,
             tier,
@@ -456,6 +549,9 @@ impl Vault {
             graded: 0,
             streak: Vec::new(),
             raised: Vec::new(),
+            recipe: recipe_revision(policy, tier, examples, None),
+            pins,
+            context: blake3::Hasher::new(),
         })
     }
 
@@ -486,8 +582,10 @@ impl Vault {
                     evidence.extend(&grade.examples);
                     let state = targeted(decisions.state, run, wording)?;
                     // The state goes whole: past `limits.maintenance_text_bytes` it asks.
-                    let bytes = serde_json::to_vec(&state).map_or(0, |bytes| bytes.len());
-                    let _ = self.measure_limit(EngineLimit::MaintenanceTextBytes, bytes as u64);
+                    let bytes = serde_json::to_vec(&state).unwrap_or_default();
+                    let _ =
+                        self.measure_limit(EngineLimit::MaintenanceTextBytes, bytes.len() as u64);
+                    read_state(&mut grade.context, &bytes);
                     let (raised, receipt) =
                         decisions.raised_with_state(&grade.asked.question, &evidence, &state)?;
                     if raised {
@@ -499,6 +597,10 @@ impl Vault {
             }
             ProposedTier::Judge | ProposedTier::SessionJudge | ProposedTier::Centroid => {
                 let state = with_wording(decisions.state, wording)?;
+                read_state(
+                    &mut grade.context,
+                    &serde_json::to_vec(&*state).unwrap_or_default(),
+                );
                 let (raised, receipt) =
                     decisions.raised_with_state(&grade.asked.question, &run_ids(part)?, &state)?;
                 if raised {
@@ -542,7 +644,12 @@ impl Vault {
                 (grade.window, grade.raised)
             }
         };
-        propose(self, grade.tier, grade.policy, runs, None, decisions)
+        let basis = FindingBasis {
+            recipe_revision: grade.recipe,
+            source_pins: grade.pins,
+            context_digest: *grade.context.finalize().as_bytes(),
+        };
+        propose(self, grade.tier, grade.policy, runs, None, decisions, basis)
     }
 
     /// `grade`'s whole window asked as one part: the single-call detector doors.
