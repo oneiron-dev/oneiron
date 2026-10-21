@@ -1243,13 +1243,16 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SourcedTypeTree"
+     ],
      "path": "src/agent_dispatch/task_type_tree.rs",
      "purpose": "The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and…",
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 4
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -22946,13 +22949,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/code_fix/work.rs",
      "purpose": "A code fix's work rows (OF-380): each failure's row and its key, the `coach.code_fix` run a filed heal…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -27305,7 +27308,7 @@
      "path": "src/failure_signals/code_fix/exact.rs",
      "purpose": "The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -27329,7 +27332,7 @@
      "path": "src/failure_signals/code_fix/subject.rs",
      "purpose": "What a code fix reads of the real failure behind its source: the text and every world it touched, a failure…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -27439,7 +27442,7 @@
      "path": "src/failure_signals/witness.rs",
      "purpose": "Vault-local, non-serializable producer observations",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 1
      }
@@ -49742,13 +49745,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/self_heal/tier1_source.rs",
      "purpose": "Producer-owned, vault-local source proofs over the existing base ledgers",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -61475,10 +61478,11 @@
      "path": "src/team/receipt.rs",
      "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 9,
-      "struct": 5
+      "fn": 11,
+      "struct": 5,
+      "type": 1
      }
     },
     {
@@ -61512,8 +61516,9 @@
      "purpose": "OF-540: what the host saw a team start do, and the team a run works in",
      "surface": {
       "crate-vis": 1,
-      "fn": 7,
-      "struct": 1
+      "fn": 9,
+      "struct": 1,
+      "type": 1
      }
     },
     {

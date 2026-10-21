@@ -6,6 +6,10 @@
 //! confession count. A confession is control evidence, never a payoff feature.
 //! The receipt is written once; its anchored outcome settles later and is
 //! the only thing that moves the pattern skill's `learning.reliability`.
+//!
+//! Beside the receipt its row keeps, apart, the entity rows its facts and
+//! its outcome were read from, as the writer that assembled each named them
+//! (FIX 7103). A writer that names none leaves them unknown.
 
 use std::collections::BTreeMap;
 
@@ -19,13 +23,40 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::{Anchor, EvidenceSource, LearningEvidence, Observation, TypeRef};
 use crate::side_table::{self, Named, SideTable};
+use crate::skill_optimize::union_source_rows;
 use crate::task_type::TypeTree;
 
 use super::pattern::{TeamAxis, TeamPattern, model_mix, pattern_cell};
 
 /// Team receipts. Key: team reference (the run id).
-const TEAM_RECEIPT: SideTable<String, TeamReceipt, Named> =
+const TEAM_RECEIPT: SideTable<String, StoredTeamReceipt, Named> =
     SideTable::new(&side_table::TEAM_RECEIPT);
+
+/// A team receipt with the entity rows it was read from (FIX 7103); `None`
+/// is unknown.
+pub type SourcedTeamReceipt = (TeamReceipt, Option<Vec<EntityId>>);
+
+/// One stored team receipt: the receipt, and the entity rows its facts and
+/// its outcome were read from, kept apart so a replaced outcome takes only
+/// its own. `None` is unknown, never an empty set.
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredTeamReceipt {
+    receipt: TeamReceipt,
+    fact_sources: Option<Vec<EntityId>>,
+    /// `None` too while the receipt has no outcome.
+    outcome_sources: Option<Vec<EntityId>>,
+}
+
+impl StoredTeamReceipt {
+    /// The receipt with every row it was read from: its facts' and, once it
+    /// has an outcome, the outcome's. Unknown when either is.
+    fn sourced(self) -> SourcedTeamReceipt {
+        let settled = self.receipt.outcome.is_some();
+        let outcome = settled.then_some(self.outcome_sources);
+        let rows = union_source_rows(std::iter::once(self.fact_sources).chain(outcome));
+        (self.receipt, rows)
+    }
+}
 
 /// Longest reference or model id kept.
 const MAX_REF_BYTES: usize = 256;
@@ -220,15 +251,38 @@ impl TeamReceipt {
 /// [`Error::InvalidClaimBody`] for a malformed receipt or one that already
 /// exists; storage errors.
 pub fn record_team_receipt(vault: &Vault, receipt: &TeamReceipt) -> Result<()> {
+    record_team_receipt_sourced(vault, receipt, None, None)
+}
+
+/// [`record_team_receipt`], keeping the entity rows the receipt's facts and
+/// its outcome were read from (FIX 7103). `None` is unknown: the caller
+/// names a set only when it covers every fact. Outcome sources are kept only
+/// with an outcome. The sources ride in the receipt's own row and never
+/// fail its write.
+///
+/// # Errors
+///
+/// As [`record_team_receipt`].
+pub fn record_team_receipt_sourced(
+    vault: &Vault,
+    receipt: &TeamReceipt,
+    fact_sources: Option<Vec<EntityId>>,
+    outcome_sources: Option<Vec<EntityId>>,
+) -> Result<()> {
     receipt.validate()?;
     // The stamp names a node of the tree in force for its project, at that
     // tree's version: an unknown node is invalid, never untyped.
     crate::task_type::validate_type_ref(vault, receipt.project, &receipt.type_ref)?;
+    let stored = StoredTeamReceipt {
+        receipt: receipt.clone(),
+        fact_sources,
+        outcome_sources: receipt.outcome.as_ref().and(outcome_sources),
+    };
     vault.with_write_txn_grouped(|wtxn| {
         if TEAM_RECEIPT.contains(&vault.store, wtxn, &receipt.team_ref)? {
             return Err(Error::InvalidClaimBody("a team receipt is written once"));
         }
-        TEAM_RECEIPT.put(&vault.store, wtxn, &receipt.team_ref, receipt)?;
+        TEAM_RECEIPT.put(&vault.store, wtxn, &receipt.team_ref, &stored)?;
         if let (Some(outcome), Some(skill)) = (&receipt.outcome, &receipt.pattern_skill) {
             feed_pattern_payoff_in_txn(vault, wtxn, receipt, skill.skill, outcome)?;
         }
@@ -263,19 +317,37 @@ pub(crate) fn settle_team_outcome_in_txn(
     team_ref: &str,
     outcome: &TeamOutcome,
 ) -> Result<TeamReceipt> {
+    settle_team_outcome_sourced_in_txn(vault, wtxn, team_ref, outcome, None)
+}
+
+/// [`settle_team_outcome_in_txn`], keeping the entity rows the outcome was
+/// read from (FIX 7103); `None` is unknown. A replaced outcome's sources go
+/// with it, and the receipt's fact sources stay as they are.
+///
+/// # Errors
+///
+/// As [`settle_team_outcome`].
+pub(crate) fn settle_team_outcome_sourced_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    team_ref: &str,
+    outcome: &TeamOutcome,
+    outcome_sources: Option<Vec<EntityId>>,
+) -> Result<TeamReceipt> {
     bounded(
         &outcome.receipt,
         "an outcome receipt is 1..=256 bytes without NUL",
     )?;
-    let mut receipt = TEAM_RECEIPT
+    let mut stored = TEAM_RECEIPT
         .get(&vault.store, wtxn, &team_ref.to_owned())?
         .ok_or(Error::EntityNotFound)?;
-    receipt.outcome = Some(outcome.clone());
-    TEAM_RECEIPT.put(&vault.store, wtxn, &receipt.team_ref, &receipt)?;
-    if let Some(skill) = &receipt.pattern_skill {
-        feed_pattern_payoff_in_txn(vault, wtxn, &receipt, skill.skill, outcome)?;
+    stored.receipt.outcome = Some(outcome.clone());
+    stored.outcome_sources = outcome_sources;
+    TEAM_RECEIPT.put(&vault.store, wtxn, &stored.receipt.team_ref, &stored)?;
+    if let Some(skill) = &stored.receipt.pattern_skill {
+        feed_pattern_payoff_in_txn(vault, wtxn, &stored.receipt, skill.skill, outcome)?;
     }
-    Ok(receipt)
+    Ok(stored.receipt)
 }
 
 /// Whether a team's outcome teaches its pattern skill's cell: a team that
@@ -374,7 +446,9 @@ pub(super) fn team_receipt_in_txn(
     txn: &heed::RoTxn<'_>,
     team_ref: &str,
 ) -> Result<Option<TeamReceipt>> {
-    TEAM_RECEIPT.get(&vault.store, txn, &team_ref.to_owned())
+    Ok(TEAM_RECEIPT
+        .get(&vault.store, txn, &team_ref.to_owned())?
+        .map(|stored| stored.receipt))
 }
 
 /// Every team receipt, optionally only those of one task type.
@@ -393,12 +467,45 @@ pub(super) fn team_receipts_in_txn(
     txn: &heed::RoTxn<'_>,
     type_ref: Option<&TypeRef>,
 ) -> Result<Vec<TeamReceipt>> {
-    let mut rows: Vec<TeamReceipt> = TEAM_RECEIPT
+    Ok(stored_receipts_in_txn(vault, txn, type_ref)?
+        .into_iter()
+        .map(|stored| stored.receipt)
+        .collect())
+}
+
+/// [`team_receipts`], each receipt with the entity rows it was read from
+/// (FIX 7103): its facts' and, once settled, its outcome's. `None` is
+/// unknown: a receipt or outcome whose writer named no sources.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn team_receipts_sourced(
+    vault: &Vault,
+    type_ref: Option<&TypeRef>,
+) -> Result<Vec<SourcedTeamReceipt>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(stored_receipts_in_txn(vault, &rtxn, type_ref)?
+        .into_iter()
+        .map(StoredTeamReceipt::sourced)
+        .collect())
+}
+
+/// The stored receipts [`team_receipts_in_txn`] reads, in its order.
+fn stored_receipts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    type_ref: Option<&TypeRef>,
+) -> Result<Vec<StoredTeamReceipt>> {
+    let mut rows: Vec<StoredTeamReceipt> = TEAM_RECEIPT
         .scan(&vault.store, txn)?
         .into_iter()
         .map(|(_, row)| row)
-        .filter(|row| type_ref.is_none_or(|t| row.type_ref == *t))
+        .filter(|row| type_ref.is_none_or(|t| row.receipt.type_ref == *t))
         .collect();
-    rows.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.team_ref.cmp(&b.team_ref)));
+    rows.sort_by(|a, b| {
+        let (a, b) = (&a.receipt, &b.receipt);
+        a.at.cmp(&b.at).then_with(|| a.team_ref.cmp(&b.team_ref))
+    });
     Ok(rows)
 }
