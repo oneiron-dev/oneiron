@@ -6,6 +6,7 @@ mod backfill;
 mod graph_ask;
 mod health_ask;
 mod outcomes;
+mod reader_authority;
 mod recipe;
 mod records;
 mod refresh;
@@ -38,6 +39,7 @@ pub(crate) use outcomes::calibration_pairs_in_txn;
 pub use outcomes::{
     calibration_pairs, outcome_labels, person_changed_pairs, project_bound_outcomes,
 };
+pub(crate) use reader_authority::question_lane;
 pub(crate) use recipe::run_graph_question_with_proposals;
 pub use recipe::{GraphQuestionInput, GraphQuestionRef, run_graph_question};
 pub use records::*;

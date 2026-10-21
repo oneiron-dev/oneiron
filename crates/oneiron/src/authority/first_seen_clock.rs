@@ -176,6 +176,20 @@ pub(crate) fn authority_observation_secs(
         .observation_secs_at(previous_floor, candidate_wall_secs, Instant::now())
 }
 
+/// `Vault::instant_in_txn`'s reading, in unix seconds, for a reader that
+/// holds a `Store` and no `Vault` (FIX 7461): the persisted floor read
+/// through `txn`, raised through [`authority_observation_secs`]. Pure, as
+/// that reading is: it writes nothing back.
+pub(crate) fn authority_instant_secs_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<u64> {
+    let persisted_floor = AUTHORITY_FIRST_SEEN
+        .get_lenient(store, txn, &authority_first_seen_clock_key())?
+        .unwrap_or(0);
+    Ok(authority_observation_secs(store, persisted_floor, store.clock.now_recorded_at()))
+}
+
 /// Production writes go through [`AUTHORITY_FIRST_SEEN`]'s typed door (`u64`'s
 /// built-in big-endian [`crate::side_table::RawValue`]); this raw encoder
 /// stays only for `credential_door::tests`, which pins the clock floor by

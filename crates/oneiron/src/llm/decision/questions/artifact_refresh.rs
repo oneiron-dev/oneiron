@@ -339,7 +339,7 @@ impl Asking<'_> {
             let txn = vault.store.env.read_txn()?;
             let key = source_actor_key(vault, &txn, principal, None)?
                 .require_access_grants(Some(principal));
-            let read = vault.scoped_read(key);
+            let read = super::reader_authority::question_lane(vault, key);
             let mut readable = BTreeSet::new();
             for id in std::iter::once(&artifact).chain(&files) {
                 if read.entity_raw_live_in(&txn, id)?.is_some() {
