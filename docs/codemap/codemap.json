@@ -35964,7 +35964,7 @@
      "surface": {
       "crate-vis": 11,
       "mod": 11,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -79866,6 +79866,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CacheBackend",
+      "CacheCallUsage",
+      "CacheCounterSource",
+      "CacheDigest",
+      "CacheEpoch",
+      "CacheEvidenceError",
+      "CacheIdentity",
+      "CacheOutcome",
+      "CachePassReport",
+      "CachePassUsage",
+      "CachePhase"
+     ],
+     "path": "src/llm/cache.rs",
+     "purpose": "What a backend reported about its prompt cache on one physical model call (FIX 6567, INF 2 step 1): for each…",
+     "surface": {
+      "const": 1,
+      "enum": 5,
+      "fn": 7,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -80086,7 +80111,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -80211,7 +80236,7 @@
      "purpose": "—"
     },
     "llm": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -80220,7 +80245,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 35,
+   "source_files": 36,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -92963,6 +92988,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/cache_usage.rs",
+     "purpose": "The prompt-cache evidence a house backend's reply carries (FIX 6567, INF 2 step 1), written into its usage…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/catalog.rs",
      "purpose": "Config model references to engine catalog rows",
      "surface": {
@@ -96301,7 +96336,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 49,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -96443,7 +96478,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1050,
+   "source_files": 1051,
    "test_files": 182
   },
   "oneiron-spawn": {
