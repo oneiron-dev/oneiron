@@ -435,11 +435,16 @@ async fn idempotent(
     } else {
         None
     };
+    // Any other route's own owner gate, whose verdict also names the
+    // partition of a verified individual caller (FIX 5404).
+    let owner_auth = core_auth
+        .is_none()
+        .then(|| require_owner_auth(request.headers(), &state.server.config, revoked));
     let auth_ok = match &core_auth {
         Some(Ok(auth)) if legacy_caller => auth.is_owner_grade(),
         Some(Ok(auth)) => !auth.principal().is_empty(),
         Some(Err(_)) => false,
-        None => require_owner_auth(request.headers(), &state.server.config, revoked).is_ok(),
+        None => owner_auth.as_ref().is_some_and(Result::is_ok),
     };
     if has_idempotency_header && !auth_ok {
         return api_error_response(ApiError::unauthorized(), is_core_auth_route);
@@ -456,7 +461,11 @@ async fn idempotent(
         Some(Err(_)) => {
             return api_error_response(ApiError::unauthorized(), is_core_auth_route);
         }
-        None => principal_for_non_core_route(&state.server.config),
+        None => owner_auth
+            .as_ref()
+            .and_then(|auth| auth.as_ref().ok())
+            .and_then(|auth| caller::individual_principal(auth, request.headers()))
+            .unwrap_or_else(|| principal_for_non_core_route(&state.server.config)),
     };
     let store_key = store_key(&principal, &key);
     let target = request_target(&request);
@@ -673,13 +682,15 @@ fn is_core_auth_route(path: &str) -> bool {
     path.starts_with("/v1/core/") || path.starts_with("/v1/companion/")
 }
 
-/// Idempotency principal for non-core routes.
+/// Idempotency principal for non-core routes whose caller presents no
+/// verified individual credential ([`caller::individual_principal`] keys one
+/// that does under its own, FIX 5404).
 ///
-/// A configured secret means every caller here is the same owner-grade
+/// A configured secret means every such caller here is the same owner-grade
 /// principal; without one the server is in unauthenticated dev mode and all
-/// callers share the anonymous principal. There is no per-caller partition to
-/// derive, and the previous header-derived one was never a boundary — any
-/// client could pick its own.
+/// such callers share the anonymous principal. Nothing in their requests
+/// names a caller to partition by, and the previous header-derived one was
+/// never a boundary — any client could pick its own.
 fn principal_for_non_core_route(config: &SyncServerConfig) -> String {
     if config.auth_secret.is_some() {
         SHARED_SECRET_PRINCIPAL.to_owned()
@@ -728,6 +739,7 @@ fn hex(bytes: &[u8]) -> String {
     encoded
 }
 
+mod caller;
 mod reclaim;
 
 #[cfg(test)]

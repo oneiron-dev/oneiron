@@ -1280,8 +1280,8 @@ impl Memory<'_> {
     /// position, a TASK host, a decision path, an off-record session or a
     /// door's rewrite admission. Where the caller sits decides nothing here.
     /// An owner surface ([`Self::with_owner_surface`]) does not stop a plain
-    /// resume: the rebuilt handle records the default `ThisInstall`, as every
-    /// act did before FIX 4650, since the surface is audit only.
+    /// resume: the target keeps it, and the rebuilt handle records it, for
+    /// audit only (FIX 5364).
     /// `None` resumes only on the caller's retry.
     pub(crate) fn plain_resume(&self) -> Option<crate::runtime_hooks::verb::PlainRowResume> {
         let rebuilt = !self.credential
@@ -1309,6 +1309,7 @@ impl Memory<'_> {
                 self.transport_invocation,
                 self.origin_conversation,
                 self.host_action.as_ref(),
+                self.owner_surface,
             )
         })
     }

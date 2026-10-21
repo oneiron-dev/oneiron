@@ -29,6 +29,13 @@ const REQUEST_CODE_CONTEXT: &str = "oneiron/machine-request-code/v1";
 /// mine, and never a hosted node, which only the managed host's own node is.
 pub(crate) const SERVING_INSTALL_ROLE: MachineRole = MachineRole::Unanswered;
 
+/// Whether a restore that loads no keys names this install's serving machine
+/// by the public half of its machine key the install cached when its keys
+/// last loaded (FIX 5472; CALLS "FIX 5472 offline machine identity", Engine
+/// 10-21 02:4x). A loaded signer still answers first; with neither, the
+/// restore judges the row as it did before.
+const SERVING_MACHINE_PUBLIC_CACHE: bool = true;
+
 /// Why this install's own profile does not stand after an ensure (FIX 4648):
 /// each refusal's typed reason. The owner's acts then refuse "no carrier" on
 /// this install, as they did before it had one.
@@ -189,20 +196,23 @@ impl Vault {
     /// install's machine key, in any role and any standing (FIX 4728): the
     /// one machine row an authority-preserving restore keeps live. Read in
     /// `txn`'s snapshot alone: nothing is minted, loaded or ensured, and no
-    /// role selects it. `None` with no machine id, no signer loaded for it,
-    /// no profile of it naming that key, or a fold this snapshot cannot
-    /// answer: the restore then judges the row as it did before.
+    /// role selects it. The key is the loaded signer's for that id, else the
+    /// public half this install cached for it (FIX 5472), so a restore that
+    /// loads no keys finds it too. `None` with no machine id, neither a
+    /// signer loaded for it nor a cached key that reads, no profile of it
+    /// naming that key, or a fold this snapshot cannot answer: the restore
+    /// then judges the row as it did before.
     pub(crate) fn serving_machine_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Option<EntityId>> {
         let Some(machine) = crate::identity::read_machine_id_in_txn(self, txn)? else {
             return Ok(None);
         };
-        let Some(signer) = self
+        let loaded = self
             .loaded_install_signer()
             .filter(|signer| signer.machine == machine)
-        else {
+            .map(|signer| signer.machine_key.verifying_key().to_bytes());
+        let Some(key) = loaded.or_else(|| self.cached_serving_key_in_txn(txn)) else {
             return Ok(None);
         };
-        let key = signer.machine_key.verifying_key().to_bytes();
         let Ok(fold) = self.authority_view_readonly_in_txn(txn) else {
             return Ok(None);
         };
@@ -210,6 +220,25 @@ impl Vault {
             .machine(machine)
             .is_some_and(|folded| folded.names_key(&key))
             .then_some(machine))
+    }
+
+    /// The public half of this install's machine key it cached
+    /// (`identity::cache_machine_pk`), for a snapshot with no signer loaded:
+    /// `None` with no cache, or one that does not read, which is logged as
+    /// the corruption it is and leaves the restore as before. Never minted
+    /// here, and no keystore is opened.
+    fn cached_serving_key_in_txn(&self, txn: &heed::RoTxn<'_>) -> Option<[u8; 32]> {
+        if !SERVING_MACHINE_PUBLIC_CACHE {
+            return None;
+        }
+        crate::identity::read_machine_verifying_key_in_txn(self, txn).unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "this install's cached machine public key did not read; a restore with no keys \
+                 loaded judges its machine row as before"
+            );
+            None
+        })
     }
 }
 

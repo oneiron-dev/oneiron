@@ -20,6 +20,10 @@
 //!   match the derived key fails closed (`CorruptedIndex`) — signing with a
 //!   key peers no longer hold would silently orphan every new receipt at
 //!   their replay doors.
+//! - `m:machine_pk` — 32 B Ed25519 verifying key of the machine key (FIX
+//!   5472), so a restore that loads no keys still names its serving machine.
+//!   Written once while the keys load; a row that does not match the derived
+//!   key is `CorruptedIndex`, never written over or minted again.
 //!
 //! No signing secret is in LMDB (P6c, ruling R2). One 32-byte seed in the
 //! install's `DeviceSigning` keystore slot, named by the store's id and the
@@ -61,6 +65,8 @@ const DEVICE_PK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENT
 /// is a CRDT peer id. A checkpoint image restored directly drops it, so a copy
 /// on another install never is this machine. Key: `()`.
 const MACHINE_ID: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_MACHINE_ID);
+/// Cached Ed25519 verifying key of the machine key (FIX 5472). Key: `()`.
+const MACHINE_PK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_MACHINE_PK);
 
 /// `derive_key` contexts for the two keys of one `DeviceSigning` seed.
 const MACHINE_SIGNING_CONTEXT: &str = "oneiron/install-signing/machine/v1";
@@ -231,6 +237,64 @@ pub(crate) fn read_device_verifying_key_in_txn(
         .transpose()
 }
 
+/// Keeps the public half of `signer`'s machine key in `m:machine_pk` while
+/// `signer`'s machine is this install's (FIX 5472; CALLS "FIX 5472 offline
+/// machine identity"), so a restore that loads no keys still names its
+/// serving machine. A present row is only read; an absent one is written in a
+/// write of its own. Best effort: a row naming another key, or one that does
+/// not read, is logged as the corruption it is and left as it is, never
+/// written over, and the keys stay loaded as before.
+pub(crate) fn cache_machine_pk(vault: &Vault, signer: &InstallSigner) {
+    if let Err(error) = put_machine_pk_once(vault, signer) {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "this install's machine public key is not cached; a restore with no keys loaded \
+             judges its machine row as before"
+        );
+    }
+}
+
+/// [`cache_machine_pk`]'s read, then its write when the row is absent.
+fn put_machine_pk_once(vault: &Vault, signer: &InstallSigner) -> Result<()> {
+    let key = signer.machine_key.verifying_key().to_bytes();
+    {
+        let txn = vault.store.env.read_txn()?;
+        match read_machine_verifying_key_in_txn(vault, &txn)? {
+            Some(cached) if cached == key => return Ok(()),
+            Some(_) => return Err(Error::CorruptedIndex("machine public key row")),
+            None => {}
+        }
+    }
+    vault.with_write_txn_grouped(|wtxn| {
+        if read_machine_id_in_txn(vault, wtxn)? != Some(signer.machine) {
+            return Ok(());
+        }
+        let derived = key.to_vec();
+        match MACHINE_PK.get(&vault.store, wtxn, &())? {
+            Some(raw) if raw == derived => Ok(()),
+            Some(_) => Err(Error::CorruptedIndex("machine public key row")),
+            None => MACHINE_PK.put(&vault.store, wtxn, &(), &derived),
+        }
+    })
+}
+
+/// The cached verifying key of this install's machine key under the
+/// caller's transaction, or `None` before its keys first loaded. Reads the
+/// public row only, never the keystore; a row of another length is
+/// `CorruptedIndex`.
+pub(crate) fn read_machine_verifying_key_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<[u8; 32]>> {
+    MACHINE_PK
+        .get(&vault.store, txn, &())?
+        .map(|raw| {
+            <[u8; 32]>::try_from(raw.as_slice())
+                .map_err(|_| Error::CorruptedIndex("machine public key row"))
+        })
+        .transpose()
+}
+
 /// This install's MACHINE id, minted once inside the caller's txn. The keys
 /// for it come from its keystore slot, loaded outside any transaction.
 pub(crate) fn load_or_mint_machine_id_in_txn(
@@ -285,15 +349,16 @@ pub(crate) fn read_machine_signing_key_in_txn(
 }
 
 /// A machine identity row: a checkpoint image restored directly, which may
-/// land on any install, leaves these behind. The device key's public cache
-/// goes with them, since the new machine's slot holds another seed. The
-/// pinned root goes with them too:
+/// land on any install, leaves these behind. The device and machine keys'
+/// public caches go with them, since the new machine's slot holds another
+/// seed. The pinned root goes with them too:
 /// a new machine trusts no root until a pin door on its own install pins one,
 /// so an old image never rolls trust back to an older root, and an image a
 /// host made never arrives pinned to the host's.
 pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
     key == side_table::IDENTITY_MACHINE_ID.prefix
         || key == side_table::IDENTITY_DEVICE_PK.prefix
+        || key == side_table::IDENTITY_MACHINE_PK.prefix
         || crate::authority::is_pinned_root_row(key)
 }
 
@@ -305,6 +370,7 @@ pub(crate) fn drop_machine_identity_in_txn(
 ) -> Result<()> {
     MACHINE_ID.delete(store, wtxn, &())?;
     DEVICE_PK.delete(store, wtxn, &())?;
+    MACHINE_PK.delete(store, wtxn, &())?;
     crate::authority::drop_pinned_root_in_txn(store, wtxn)
 }
 

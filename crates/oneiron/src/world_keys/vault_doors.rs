@@ -77,14 +77,18 @@ impl Vault {
     ///   machine and joins as a new one. No seed is ever imported into a slot.
     /// - It writes the device key's public half when absent, and refuses one that
     ///   names another key.
+    /// - It caches the machine key's public half when absent, on either path, for
+    ///   a restore that loads no keys (FIX 5472); a cache it cannot write or check
+    ///   is logged, and the keys load as before (`identity::cache_machine_pk`).
     pub fn prepare_install_signing(&self) -> Result<EntityId> {
         let keystore = self.device_keystore()?;
         for _ in 0..2 {
             let machine = self.provision_machine_identity()?;
-            if self
+            if let Some(signer) = self
                 .loaded_install_signer()
-                .is_some_and(|signer| signer.machine == machine)
+                .filter(|signer| signer.machine == machine)
             {
+                crate::identity::cache_machine_pk(self, &signer);
                 return Ok(machine);
             }
             let slot = KeystoreSlot {
@@ -125,6 +129,7 @@ impl Vault {
                 crate::identity::load_or_mint_client_id_in_txn(self, wtxn)?;
                 crate::identity::put_or_check_device_pk_in_txn(self, wtxn, &signer.device_key)
             })?;
+            crate::identity::cache_machine_pk(self, &signer);
             *self
                 .world_keys
                 .signer
