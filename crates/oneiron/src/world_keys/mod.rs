@@ -75,7 +75,7 @@ pub use self::owner_work::{
 };
 pub(crate) use self::pad_custody::{
     admit_pad_put_in_txn, image_pad_row, live_route_row, pad_row_erased_in_txn, pad_row_of_item,
-    stage_pad_row_erase_in_txn,
+    stage_local_pad_row_erase_in_txn, stage_pad_row_erase_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::pad_custody::{

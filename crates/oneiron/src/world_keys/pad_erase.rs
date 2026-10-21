@@ -12,7 +12,7 @@
 use heed::RwTxn;
 use zeroize::Zeroizing;
 
-use super::pad_custody::{decode_pad_body, pad_row_body, stage_pad_row_erase_in_txn};
+use super::pad_custody::{decode_pad_body, pad_row_body, stage_local_pad_row_erase_in_txn};
 use super::pads::pad_window;
 use crate::batch::EntityMetadataHeader;
 use crate::deletion::{TombstoneReason, TombstoneValueV2, stage_engine_row_hard_erasure_at_in_txn};
@@ -48,7 +48,7 @@ pub(crate) fn erase_batch_pad_row_in_txn(
         (Some(world), Some(header)) => pad_window(world, header.learned_at),
         _ => crate::deletion::deletion_window_for_row(store, wtxn, id, &raw)?,
     };
-    stage_pad_row_erase_in_txn(store, wtxn, id)?;
+    stage_local_pad_row_erase_in_txn(store, wtxn, id);
     let tombstone = TombstoneValueV2 {
         reason: TombstoneReason::UserHardDelete,
         deleted_at,

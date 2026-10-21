@@ -85,7 +85,7 @@ impl Vault {
             // another of its world's (KS-5, FIX 7192): every caller wrote
             // the row's hard marker in this transaction, which the
             // finisher reads after the commit.
-            crate::world_keys::stage_pad_row_erase_in_txn(&self.store, wtxn, id)?;
+            crate::world_keys::stage_local_pad_row_erase_in_txn(&self.store, wtxn, id);
         }
         // Capture before tear: a project's signed history outlives its row.
         self.capture_project_before_tear_in_txn(wtxn, *id)?;

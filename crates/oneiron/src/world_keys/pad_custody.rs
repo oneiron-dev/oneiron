@@ -462,7 +462,16 @@ pub(crate) fn stage_pad_row_erase_in_txn(
         return Ok(());
     };
     if body.is_empty() {
-        return store.stage_world_pad_row_erase_in_txn(wtxn, id);
+        // A custody fault here leaves the erase as it was before FIX 7192,
+        // warned: never refused for it.
+        if let Err(error) = store.stage_world_pad_row_erase_in_txn(wtxn, id) {
+            tracing::warn!(
+                row = %id.to_hex(),
+                kind = ?error.kind(),
+                "a hard-erased pad shell's custody entry was not staged for retirement"
+            );
+        }
+        return Ok(());
     }
     match decode_pad_body(body) {
         Ok(body) => store.stage_world_pad_key_erase_in_txn(wtxn, &pad_item(body.key())),
@@ -473,6 +482,20 @@ pub(crate) fn stage_pad_row_erase_in_txn(
             );
             Ok(())
         }
+    }
+}
+
+/// [`stage_pad_row_erase_in_txn`] for this vault's own delete door and
+/// batch delete (FIX 7192): a custody or storage fault leaves the erase as
+/// it was before, warned by kind, never refused for it (CALLS: FIX 7192
+/// local pad-row erase).
+pub(crate) fn stage_local_pad_row_erase_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) {
+    if let Err(error) = stage_pad_row_erase_in_txn(store, wtxn, id) {
+        tracing::warn!(
+            row = %id.to_hex(),
+            kind = ?error.kind(),
+            "a hard-erased pad row's custody entry was not staged for retirement"
+        );
     }
 }
 

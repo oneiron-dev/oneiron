@@ -75,6 +75,19 @@ impl std::fmt::Display for PadRestoreNote {
     }
 }
 
+/// What a restore does with a pad its image names by reference that no
+/// custody it took holds (CALLS: KS-5 pad restore withheld).
+enum MissingPad {
+    /// Withheld, its row kept as a reference pending the pad from one of
+    /// the owner's machines, when the restore kept its image's custody or
+    /// found none and the world's sealed copies keep its pads off a custody
+    /// head (`Vault::pad_worlds_kept_local`, hosted); else refused,
+    /// `custody_key_missing`, before the vault is kept.
+    WithheldByPolicyElseRefused,
+}
+
+const MISSING_PAD: MissingPad = MissingPad::WithheldByPolicyElseRefused;
+
 /// Where a restore takes its pads' custody from.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PadSource {
@@ -193,9 +206,11 @@ pub(super) fn land(
     let mut missing = 0_usize;
     if !unheld.is_empty() {
         // The worlds whose sealed copies keep their pads off a custody head.
-        let withheld = match source {
-            PadSource::Live => BTreeSet::new(),
-            PadSource::Kept | PadSource::Absent => vault.pad_worlds_kept_local(true)?,
+        let withheld = match (MISSING_PAD, source) {
+            (MissingPad::WithheldByPolicyElseRefused, PadSource::Live) => BTreeSet::new(),
+            (MissingPad::WithheldByPolicyElseRefused, PadSource::Kept | PadSource::Absent) => {
+                vault.pad_worlds_kept_local(true)?
+            }
         };
         for key in unheld {
             if withheld.contains(key.world.as_bytes()) {
