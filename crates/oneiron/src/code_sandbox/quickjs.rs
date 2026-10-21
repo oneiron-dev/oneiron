@@ -36,9 +36,13 @@ impl QuickJsRuntimeFactory {
             budget,
         )?;
         let mut host = ProbeHost;
+        // No ambient `process` or `fetch`. A `fetch` the catalog serves is
+        // the SDK's own web-fetch verb (FIX 7262), a global the bootstrap
+        // installs non-configurable, as it installs every SDK global; an
+        // engine's own `fetch` is configurable.
         let result = template.run_step(JsCodeModeStep {
             run_id: EntityId::from_bytes([1; 16])?, seq: 0,
-            script: "const xs = [1,2,3].map(x => x * 7); finish(JSON.stringify({sum:xs.reduce((a,b)=>a+b,0), now:Date.now(), clean:typeof process === 'undefined' && typeof fetch === 'undefined', typed:typeof self !== 'undefined' && [vault.search, vault.claims.put, vault.claims.supersede, vault.edges.put, vault.recall].every(f => typeof f === 'function') && !('verbs' in self) && typeof ask === 'function' && ['speak','think','express'].every(k => typeof self[k] === 'function') && typeof sandbox.fs.read_file === 'function' && typeof sandbox.credential.call === 'function' && typeof oneiron.clock.now_unix_ms === 'function' && typeof oneiron.random.bytes === 'function'}));",
+            script: "const xs = [1,2,3].map(x => x * 7); finish(JSON.stringify({sum:xs.reduce((a,b)=>a+b,0), now:Date.now(), clean:typeof process === 'undefined' && (typeof fetch === 'undefined' || !Object.getOwnPropertyDescriptor(globalThis, 'fetch').configurable), typed:typeof self !== 'undefined' && [vault.search, vault.claims.put, vault.claims.supersede, vault.edges.put, vault.recall].every(f => typeof f === 'function') && !('verbs' in self) && typeof ask === 'function' && ['speak','think','express'].every(k => typeof self[k] === 'function') && typeof sandbox.fs.read_file === 'function' && typeof sandbox.credential.call === 'function' && typeof oneiron.clock.now_unix_ms === 'function' && typeof oneiron.random.bytes === 'function'}));",
             boundary: SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer),
             determinism: CodeRunDeterminism::new(1_700_000_000_000, [7; 32]),
         }, &mut host)?;
@@ -46,9 +50,12 @@ impl QuickJsRuntimeFactory {
             || result.observation != r#"{"sum":42,"now":1700000000000,"clean":true,"typed":true}"#
             || !result.outputs.is_empty()
         {
-            return Err(Error::InvalidConfig(
-                "QuickJS component readiness probe failed".into(),
-            ));
+            // The failure names what the probe saw (FIX 7262).
+            let (done, observation, outputs) =
+                (result.done, &result.observation, result.outputs.len());
+            return Err(Error::InvalidConfig(format!(
+                "QuickJS component readiness probe failed: done {done}, observation {observation}, {outputs} outputs"
+            )));
         }
         Ok(Self {
             bytes: bytes.into(),
