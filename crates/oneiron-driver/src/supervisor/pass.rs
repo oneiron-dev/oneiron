@@ -4,6 +4,7 @@ use oneiron::{
     BudgetGuard, DreamerConsolidationScope, DreamerWakeDriver, RunWakePass, Vault,
     WakeCancellation, WakePassDeadline, WakePassReport, WakeTrigger,
 };
+use tokio::sync::watch;
 
 use super::config::{NowSeconds, WakeSupervisorConfig};
 use super::factory::PassExecutorFactory;
@@ -32,11 +33,12 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     tick: &Tick,
     cancel: &WakeCancellation,
 ) -> std::result::Result<WakePassReport, PassRunError> {
-    // FIX 5661 C2b (FIX 6211): a new home adopts the handoff its move
-    // carried, or records that none came, before this pass opens a cycle or
-    // admits a free-time item. Best effort: the pass goes on as today.
-    if let Err(error) = oneiron::sync::residence::prepare_home_handoff(vault) {
-        tracing::warn!(kind = ?error.kind(), "home handoff not prepared before the pass");
+    // The host's pause for this pass (FIX 6909): with one, the handoff
+    // waits for the host's admission, and no next unit after the wake
+    // starts while it holds. Without one the order is as before.
+    let pause = factory.pass_pause();
+    if pause.is_none() {
+        prepare_handoff(vault);
     }
     let (scope, trigger) = pass_shape(tick);
     let deadline = WakePassDeadline::new(config.pass_ceiling_ms);
@@ -70,9 +72,17 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     };
     // Asked after the meter exists so attached work spends this pass's
     // budget; a refusal stops the pass before any attempt is admitted.
-    let attachment = factory
+    let mut attachment = factory
         .pass_attachment(vault, &guard)
         .map_err(PassRunError::PreAdmission)?;
+    // What the host's admission holds stays until the pass's timer work
+    // below is done, not only its wake (FIX 6909).
+    let _hold = attachment
+        .as_mut()
+        .and_then(|attachment| attachment.take_pass_hold());
+    if pause.is_some() {
+        prepare_handoff(vault);
+    }
     // The Coach's optimizer lives for the pass and is lent to its driver.
     let optimizer = factory
         .skill_optimizer(vault, &guard)
@@ -104,13 +114,18 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     // due digests are display projections on their own cadence, so a
     // Deadline tick still serves them before it fails (each redrive serves
     // what fell due since). The attachment above already let this vault
-    // run, so a managed vault frozen for reap still serves none.
+    // run, so a managed vault frozen for reap still serves none, and the
+    // host's pause starts neither digest (FIX 6909).
     if executors.is_err() && matches!(tick, Tick::Deadline(_)) {
         let now = (*now_secs)();
-        if let Err(error) = vault.emit_due_proactivity_digest(now, config.local_node_id) {
+        if !paused(pause.as_ref())
+            && let Err(error) = vault.emit_due_proactivity_digest(now, config.local_node_id)
+        {
             tracing::error!(?error, "scheduled digest projection failed");
         }
-        if let Err(error) = vault.serve_due_weave_digests(now, config.local_node_id) {
+        if !paused(pause.as_ref())
+            && let Err(error) = vault.serve_due_weave_digests(now, config.local_node_id)
+        {
             tracing::error!(?error, "scheduled weave digests failed");
         }
     }
@@ -146,26 +161,48 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     // the designated home produce it; ordinary pushes cannot force a send.
     // It runs once the pass is done, whatever the pass made of its work, so
     // what that pass committed (a night's cleanup, its consolidations) is in
-    // this digest rather than the next.
+    // this digest rather than the next. The host's pause starts none of the
+    // three past its point (FIX 6909): the supervisor drives the tick again
+    // once the pause lifts.
     if matches!(tick, Tick::Deadline(_)) {
         // Digest rendering is a display projection, not admission authority
         // for an independently due attempt. Leave its work pending on error
         // and keep the failure observable without redriving this tick forever.
-        if let Err(error) = vault.emit_due_proactivity_digest(now, config.local_node_id) {
+        if !paused(pause.as_ref())
+            && let Err(error) = vault.emit_due_proactivity_digest(now, config.local_node_id)
+        {
             tracing::error!(?error, "scheduled digest projection failed");
         }
         // Each reader's due weave digest, on the same home-only timer.
-        if let Err(error) = vault.serve_due_weave_digests(now, config.local_node_id) {
+        if !paused(pause.as_ref())
+            && let Err(error) = vault.serve_due_weave_digests(now, config.local_node_id)
+        {
             tracing::error!(?error, "scheduled weave digests failed");
         }
         // The host's standing questions due on the home node (OF-506). Their
         // text can quote the vault, so a failure logs by kind only.
         drop(executors);
-        if let Err(error) = factory.run_home_timer(vault, now, config.local_node_id) {
+        if !paused(pause.as_ref())
+            && let Err(error) = factory.run_home_timer(vault, now, config.local_node_id)
+        {
             tracing::error!(kind = ?error.kind(), "standing questions failed");
         }
     }
     report
+}
+
+/// FIX 5661 C2b (FIX 6211): a new home adopts the handoff its move carried,
+/// or records that none came, before the pass opens a cycle or admits a
+/// free-time item. Best effort: the pass goes on as today.
+fn prepare_handoff(vault: &Vault) {
+    if let Err(error) = oneiron::sync::residence::prepare_home_handoff(vault) {
+        tracing::warn!(kind = ?error.kind(), "home handoff not prepared before the pass");
+    }
+}
+
+/// Whether the host's pause holds (FIX 6909): the pass starts no next unit.
+pub(super) fn paused(pause: Option<&watch::Receiver<bool>>) -> bool {
+    pause.is_some_and(|pause| *pause.borrow())
 }
 
 /// The units ORDINARY pass execution may spend: the dialed total minus the
