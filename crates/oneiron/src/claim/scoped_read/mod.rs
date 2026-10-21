@@ -24,6 +24,7 @@ mod context_pack_filter;
 mod diagnostic_reads;
 mod facet_gate;
 mod graph_reads;
+mod loop_decision_read;
 mod named_reads;
 mod note_visibility;
 mod pinned_reads;
