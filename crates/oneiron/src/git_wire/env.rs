@@ -24,6 +24,7 @@ pub struct GitWireProcessEnv {
     pub(super) max_output_bytes: usize,
     pub(super) hub_root: Option<PathBuf>,
     pub(super) mirror_egress: Option<super::mirror_push::MirrorEgress>,
+    pub(super) import_profile: Option<super::import_fetch::ImportProcessProfile>,
     #[cfg(test)]
     pub(super) after_attribute_snapshot: Option<(PathBuf, Vec<u8>)>,
 }
@@ -53,6 +54,7 @@ impl GitWireProcessEnv {
             max_output_bytes: GIT_WIRE_DEFAULT_MAX_OUTPUT_BYTES,
             hub_root: None,
             mirror_egress: None,
+            import_profile: None,
             #[cfg(test)]
             after_attribute_snapshot: None,
         })

@@ -2294,6 +2294,8 @@ class Oneiron:
         @property
         def forks(self) -> "Oneiron._VaultCodeForksVerbs": ...
         @property
+        def imports(self) -> "Oneiron._VaultCodeImportsVerbs": ...
+        @property
         def ingress(self) -> "Oneiron._VaultCodeIngressVerbs": ...
         @property
         def origin(self) -> "Oneiron._VaultCodeOriginVerbs": ...
@@ -2329,6 +2331,11 @@ class Oneiron:
     class _VaultCodeForksVerbs:
         def get(self, spec: Facade.CodeForkGetRequest) -> Facade.CodeForkView | None:
             """Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork."""
+    class _VaultCodeImportsVerbs:
+        def create(self, spec: Facade.ExternalImportRequest) -> Facade.ExternalImportReceipt:
+            """Fetch one exact outside source and send it through the existing authenticated Git door; retain source and receive links without approval or enqueue."""
+        def get(self, spec: Facade.ExternalImportLookup) -> Facade.ExternalImportStatus | None:
+            """Read one external import and its actual receive, aggregate candidate and checker work. Local only; never fetches, pushes or runs checks."""
     class _VaultCodeIngressVerbs:
         def get(self, spec: Facade.CodePushIngressGetRequest) -> Facade.CodePushIngressView | None:
             """Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance."""

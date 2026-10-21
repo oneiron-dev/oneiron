@@ -35,6 +35,7 @@ mod execution_scope;
 mod failure;
 mod hub_read;
 mod ids;
+mod import_fetch;
 mod mirror_plan_push;
 mod mirror_plan_review;
 mod mirror_push;
@@ -66,6 +67,7 @@ pub use self::config::{
 pub use self::env::GitWireProcessEnv;
 pub use self::failure::{GitWireFailure, GitWireFailureClass, GitWireResult};
 pub use self::ids::{GitOid, GitRefExpectation, GitRefName, GitRefPublication, ObservedGitRef};
+pub use self::import_fetch::{FetchedExternalGit, GitImportFetchOutcome, GitImportPushOutcome};
 pub use self::mirror_plan_push::{GitPlanPushReport, GitPlanRef, GitPlanRefOutcome};
 pub use self::mirror_plan_review::{GitPeeledRef, GitRefEnd, GitRefTag};
 pub use self::objects::{GitCommitHeader, GitCommitRequest, GitTreeEntry};

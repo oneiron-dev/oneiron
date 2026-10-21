@@ -638,6 +638,8 @@ vaultCodeExport(input: unknown): unknown
 vaultCodeImport(input: unknown): unknown
 vaultCodeReposGet(input: unknown): unknown
 vaultCodeForksGet(input: unknown): unknown
+vaultCodeImportsCreate(input: unknown): unknown
+vaultCodeImportsGet(input: unknown): unknown
 vaultCodeIngressGet(input: unknown): unknown
 vaultCodeOriginRegister(input: unknown): unknown
 vaultCodeOriginMirrorGet(input: unknown): unknown

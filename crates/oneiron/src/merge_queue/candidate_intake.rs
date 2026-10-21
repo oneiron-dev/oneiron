@@ -65,6 +65,35 @@ impl MergeQueue<'_> {
         Ok(moved)
     }
 
+    /// What this queue's intake knows of its own store, read as the drain
+    /// reads it: its local folder, its sealed green and its sealed checked
+    /// Baseline. `None` for a queue its checker does not drive. A pure
+    /// read: an outside import resolves its exact base through it (FIX
+    /// 6871).
+    ///
+    /// # Errors
+    /// A store failure reading the queue.
+    pub(crate) fn candidate_queue(&self) -> Result<Option<CandidateQueue>> {
+        let Some(config) = self
+            .checker_configuration()?
+            .filter(QueueCheckConfiguration::drives_queue)
+        else {
+            return Ok(None);
+        };
+        let RepoRef::LocalFolder { path, .. } = self.repo.repo_ref() else {
+            return Ok(None);
+        };
+        let green = self.green_revision()?.ok().map(|green| green.revision);
+        let baseline = self
+            .seal_link(&config, &QueueSealTarget::Baseline)?
+            .and_then(|link| link.sealed());
+        Ok(Some(CandidateQueue {
+            folder: path.clone(),
+            green,
+            baseline,
+        }))
+    }
+
     /// This queue's batch refs and checker work refs, ids only, in key
     /// order: the owner's workbench links (G4 PR2). A pure read.
     ///

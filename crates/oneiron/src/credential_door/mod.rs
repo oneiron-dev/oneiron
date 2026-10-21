@@ -19,6 +19,7 @@
 //! [`VaultInstant`] has no `From<u64>` and no public constructor, so callers
 //! cannot choose the clock that decides credential expiry.
 //!
+mod binary_scan;
 mod checkout_ticket;
 mod door_authority;
 mod door_consent;

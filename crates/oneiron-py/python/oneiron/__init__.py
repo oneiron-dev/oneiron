@@ -3541,6 +3541,9 @@ class Oneiron:
         def forks(self) -> "Oneiron._VaultCodeForksVerbs":
             return Oneiron._VaultCodeForksVerbs(self._client)
         @property
+        def imports(self) -> "Oneiron._VaultCodeImportsVerbs":
+            return Oneiron._VaultCodeImportsVerbs(self._client)
+        @property
         def ingress(self) -> "Oneiron._VaultCodeIngressVerbs":
             return Oneiron._VaultCodeIngressVerbs(self._client)
         @property
@@ -3600,6 +3603,15 @@ class Oneiron:
         def get(self, spec):
             """Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork."""
             return json.loads(_translate(lambda: self._client.vault_code_forks_get(json.dumps(spec))))
+    class _VaultCodeImportsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            """Fetch one exact outside source and send it through the existing authenticated Git door; retain source and receive links without approval or enqueue."""
+            return json.loads(_translate(lambda: self._client.vault_code_imports_create(json.dumps(spec))))
+        def get(self, spec):
+            """Read one external import and its actual receive, aggregate candidate and checker work. Local only; never fetches, pushes or runs checks."""
+            return json.loads(_translate(lambda: self._client.vault_code_imports_get(json.dumps(spec))))
     class _VaultCodeIngressVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

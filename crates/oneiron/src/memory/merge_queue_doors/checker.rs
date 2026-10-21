@@ -88,7 +88,7 @@ impl Memory<'_> {
 
 /// A work row as the wire carries it: statuses, keys and references, never
 /// host paths, plan command bodies or command exhaust.
-fn check_work_view(
+pub(crate) fn check_work_view(
     config: Option<QueueCheckConfiguration>,
     work: QueueCheckWork,
 ) -> MergeQueueCheckWorkView {

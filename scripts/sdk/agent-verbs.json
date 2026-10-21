@@ -9338,6 +9338,34 @@
       "host_door_lists": true
     },
     {
+      "name": "vault.code.imports.create",
+      "description": "Fetch one exact outside source and send it through the existing authenticated Git door; retain source and receive links without approval or enqueue.",
+      "input": "crate::memory::origin_doors::ExternalImportRequest",
+      "output": "crate::memory::origin_doors::ExternalImportReceipt",
+      "call": "memory.code_external_import_create_as(&memory.external_import_proof(\"vault.code.imports.create\"), input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.imports.get",
+      "description": "Read one external import and its actual receive, aggregate candidate and checker work. Local only; never fetches, pushes or runs checks.",
+      "input": "crate::memory::origin_doors::ExternalImportLookup",
+      "output": "Option<crate::memory::origin_doors::ExternalImportStatus>",
+      "call": "memory.code_external_import_get_as(&memory.external_import_proof(\"vault.code.imports.get\"), input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
       "name": "vault.code.ingress.get",
       "description": "Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance.",
       "input": "crate::memory::origin_doors::CodePushIngressGetRequest",

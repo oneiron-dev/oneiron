@@ -64,13 +64,6 @@ pub(crate) enum CredentialDoorError {
         /// Which arm of the one evaluator call refused.
         reason: DoorDenyReason,
     },
-    /// A pushed blob carries a NUL byte or invalid UTF-8. Rejected regardless
-    /// of entropy, magic bytes, or size: unscannable bytes have no pass path.
-    #[error("credential door rejected binary content at {path}")]
-    BinaryContentRejected {
-        /// The pushed blob's path.
-        path: String,
-    },
     /// The scan could not run (unusable seam input, or the scanner itself
     /// failed). Fail-closed: a scan that did not happen is a rejection.
     #[error("credential door scan failed for {path}: {reason}")]

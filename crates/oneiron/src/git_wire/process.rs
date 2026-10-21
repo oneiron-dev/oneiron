@@ -162,7 +162,12 @@ fn spawn_git_child(
     if let Some(egress) = &process_env.mirror_egress {
         super::mirror_push::configure(&mut command, egress);
     }
-    let isolated = process_env.hub_root.is_some() || process_env.mirror_egress.is_some();
+    if let Some(profile) = &process_env.import_profile {
+        profile.configure(&mut command, repo_root)?;
+    }
+    let isolated = process_env.hub_root.is_some()
+        || process_env.mirror_egress.is_some()
+        || process_env.import_profile.is_some();
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     command.stdin(if stdin_payload.is_some() {
         Stdio::piped()
@@ -174,9 +179,15 @@ fn spawn_git_child(
     let cap = process_env.max_output_bytes;
     let out_reader = child.stdout.take().map(|pipe| spawn_reader(pipe, cap));
     let err_reader = child.stderr.take().map(|pipe| spawn_reader(pipe, cap));
+    // An import leg's profile lifts the wall-clock bound (Rule 5); every
+    // other child keeps it.
+    let timeout = match &process_env.import_profile {
+        Some(profile) if profile.lifts_child_bound() => None,
+        _ => Some(process_env.timeout),
+    };
     let status = wait_bounded(
         &mut child,
-        process_env.timeout,
+        timeout,
         process_env.hub_root.as_deref(),
         isolated,
     );
@@ -255,22 +266,23 @@ fn read_capped<R: Read>(mut pipe: R, cap: usize) -> (Vec<u8>, bool) {
 }
 
 /// Waits for the child under a wall-clock bound, killing and reaping it on
-/// expiry. `None` means the bound was exceeded.
+/// expiry; `None` waits for the child itself. An answer of `None` means the
+/// bound was exceeded.
 fn wait_bounded(
     child: &mut Child,
-    timeout: Duration,
+    timeout: Option<Duration>,
     hub_root: Option<&Path>,
     isolated: bool,
 ) -> Result<Option<ExitStatus>> {
-    let deadline = Instant::now() + timeout;
+    let deadline = timeout.map(|timeout| Instant::now() + timeout);
     loop {
-        if let Some(root) = hub_root {
+        if let (Some(root), Some(deadline)) = (hub_root, deadline) {
             super::hub_read::check_budget(root, deadline)?;
         }
         if let Some(status) = child.try_wait()? {
             return Ok(Some(status));
         }
-        if Instant::now() >= deadline {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             stop_child(child, isolated);
             return Ok(None);
         }

@@ -43,7 +43,7 @@ pub(crate) use lifecycle::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use lifecycle::{is_lfs_chunk_asset_in_txn, is_lfs_chunk_blob};
-pub(crate) use scanner::CredentialStream;
+pub(crate) use scanner::{CredentialStream, find_custody_credential};
 
 #[cfg(test)]
 mod chunk_tests;

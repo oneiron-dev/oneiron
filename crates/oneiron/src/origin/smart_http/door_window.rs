@@ -340,11 +340,9 @@ const DOOR_MAX_RECORD_HEADER_BYTES: u64 = 8 * 1024;
 /// (`terminated`) carries the same records, each followed by the one `\n`
 /// `git cat-file --batch` writes after an object's bytes.
 ///
-/// The door is handed each blob's whole content, because the whole blob is
-/// what the push would make durable. Content the door cannot scan (binary,
-/// invalid UTF-8) is the door's own rejection, and a stream this function
-/// cannot read whole is a refusal at the window — never a silently empty
-/// scan.
+/// The door receives the whole original blob, binary bytes included, and
+/// scans it before disposition. A stream this function cannot read whole
+/// refuses at the window; it is never a silently empty scan.
 pub(super) fn for_each_framed_blob(
     stream: &mut dyn BufRead,
     terminated: bool,

@@ -51,6 +51,7 @@
 //! rate cap is added here, and a large pack rides through without ever being
 
 mod gate;
+mod import_relay;
 mod routes;
 mod serve;
 mod status_codec;
@@ -61,4 +62,5 @@ pub(super) mod tests_lifetime;
 #[cfg(test)]
 mod tests_push;
 
+pub(crate) use self::import_relay::external_import_host;
 pub(crate) use self::routes::git_http_routes;

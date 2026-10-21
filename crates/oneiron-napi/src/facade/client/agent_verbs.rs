@@ -5265,6 +5265,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_imports_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.imports.create", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_imports_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.imports.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_ingress_get(
         &self,
         input: serde_json::Value,
