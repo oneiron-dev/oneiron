@@ -3724,7 +3724,7 @@
      "path": "src/authority/principal_standing.rs",
      "purpose": "FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 8
      }
     },
     {
@@ -22063,6 +22063,16 @@
       "crate-vis": 3,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/output.rs",
+     "purpose": "A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came from by the labels the engine…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -49587,6 +49597,7 @@
      "notable": [
       "ScopeSummaryMetadata",
       "SummaryDerivation",
+      "SummaryLineSources",
       "SummarySourceVersion"
      ],
      "path": "src/scope_summary/derivation.rs",
@@ -49594,7 +49605,7 @@
      "surface": {
       "crate-vis": 8,
       "fn": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -49618,7 +49629,7 @@
      "path": "src/scope_summary/mod.rs",
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 7
      }
     },
@@ -49697,10 +49708,20 @@
      "path": "src/scope_summary/request.rs",
      "purpose": "Scope-only declarations, exact-source fences and atomic Dreamer landings",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/session.rs",
+     "purpose": "A sitting's summary (FIX 7509, ARCH-0026 Dreamer row 4): queued by the sitting's close, written from the…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -49714,7 +49735,7 @@
      "purpose": "Caller-visible queued completion and failure, without exposing runner payloads",
      "surface": {
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -51356,7 +51377,7 @@
      "path": "src/session_lifecycle.rs",
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 3,
       "fn": 13,
       "re-export": 1,
@@ -68525,7 +68546,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 84,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69183,7 +69204,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69570,7 +69591,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4406,
+   "source_files": 4408,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92978,7 +92999,7 @@
      "path": "src/owner/backup/checkpoint_fact.rs",
      "purpose": "Each backup's checkpoint fact beside it (FIX 7327): the signed fact the snapshot's receipt carries (FIX…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -99150,6 +99171,7 @@
       "SummaryForkView",
       "SummaryKeepRequest",
       "SummaryKeepResult",
+      "SummaryLineSources",
       "SummaryMutationResult",
       "SummaryPatchRequest",
       "SummaryPath",
@@ -99569,7 +99591,7 @@
      "purpose": "—",
      "surface": {
       "enum": 928,
-      "struct": 2930
+      "struct": 2931
      }
     },
     {

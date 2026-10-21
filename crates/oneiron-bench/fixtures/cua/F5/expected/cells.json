@@ -1,0 +1,68 @@
+{
+  "computed": {
+    "E2": "210",
+    "E3": "195",
+    "E4": "480",
+    "E5": "150",
+    "E6": "138",
+    "E7": "594"
+  },
+  "named_range": {
+    "name": "Leads",
+    "range": "A4:D6"
+  },
+  "unchanged": {
+    "A2": "Weminuxa Zavubexo",
+    "A3": "Zavuzavu Rivunuxa",
+    "A7": "Jovutazu Daxijovu",
+    "B2": "Zavujovu Vorojovu Works",
+    "B3": "Vorotazu Jovuvoro Works",
+    "B7": "Lumilumi Tazubexo Works",
+    "C2": "5",
+    "C3": "5",
+    "C7": "9",
+    "D2": "42",
+    "D3": "39",
+    "D7": "66",
+    "E2": "=C2*D2",
+    "E3": "=C3*D3",
+    "E4": "=C4*D4",
+    "E5": "=C5*D5",
+    "E6": "=C6*D6",
+    "E7": "=C7*D7"
+  },
+  "unchanged_cells": [
+    "A2",
+    "A3",
+    "A7",
+    "B2",
+    "B3",
+    "B7",
+    "C2",
+    "C3",
+    "C7",
+    "D2",
+    "D3",
+    "D7",
+    "E2",
+    "E3",
+    "E4",
+    "E5",
+    "E6",
+    "E7"
+  ],
+  "writes": {
+    "A4": "Tazupelu Pelujovu",
+    "A5": "Nuxavoro Qemidaxi",
+    "A6": "Vorobexo Bexovoro",
+    "B4": "Rivutazu Qemizavu Works",
+    "B5": "Tazubexo Tazunuxa Works",
+    "B6": "Rivuzavu Rivutazu Works",
+    "C4": "8",
+    "C5": "6",
+    "C6": "2",
+    "D4": "60",
+    "D5": "25",
+    "D6": "69"
+  }
+}
