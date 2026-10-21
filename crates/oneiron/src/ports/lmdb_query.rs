@@ -48,6 +48,20 @@ impl<T: ManifestDbs> EntityStoreRead for T {
             Ok((id, value.to_vec()))
         })))
     }
+    fn port_entity_raw_records_borrowed<'a>(
+        &self,
+        txn: &'a RoTxn<'_>,
+    ) -> Result<PortRows<'a, (EntityId, std::borrow::Cow<'a, [u8]>)>> {
+        Ok(Box::new(self.entities().iter(txn)?.map(|row| {
+            let (key, value) = row?;
+            let id = EntityId::from_bytes(
+                key.as_ref()
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("entity key"))?,
+            )?;
+            Ok((id, value))
+        })))
+    }
     fn port_entity_records<'a>(
         &self,
         txn: &'a RoTxn<'_>,
@@ -205,6 +219,12 @@ impl EntityStoreRead for Vault {
         txn: &'a RoTxn<'_>,
     ) -> Result<PortRows<'a, (EntityId, Vec<u8>)>> {
         self.store.port_entity_raw_records(txn)
+    }
+    fn port_entity_raw_records_borrowed<'a>(
+        &self,
+        txn: &'a RoTxn<'_>,
+    ) -> Result<PortRows<'a, (EntityId, std::borrow::Cow<'a, [u8]>)>> {
+        self.store.port_entity_raw_records_borrowed(txn)
     }
     fn port_entity_records<'a>(
         &self,

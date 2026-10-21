@@ -612,6 +612,11 @@ pub enum ReaderRunEnd {
     Failed(String),
     Cutoff,
     SpendExhausted,
+    /// Its host stopped it, with this code, because its parent's own durable
+    /// step parked or checkpointed (FIX 7508): it settles partial with its
+    /// latest finding, or failed with none, its reason the code, never a
+    /// generic run failure.
+    Trapped(String),
 }
 
 impl ReaderRunEnd {
@@ -619,7 +624,7 @@ impl ReaderRunEnd {
     pub(crate) fn reason(&self) -> &str {
         match self {
             Self::Completed => "completed",
-            Self::Failed(reason) => reason,
+            Self::Failed(reason) | Self::Trapped(reason) => reason,
             Self::Cutoff => "cutoff",
             Self::SpendExhausted => "spend",
         }
