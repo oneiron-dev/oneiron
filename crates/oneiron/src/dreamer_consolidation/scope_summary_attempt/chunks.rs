@@ -170,8 +170,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 return Ok(charges.checkpoint());
             }
             // Each page answers to the page contract inside its step.
-            let check = |response: &LlmResponse| {
-                output::paged_output(response, &labels)
+            let check_labels = labels.clone();
+            let check = move |response: &LlmResponse| {
+                output::paged_output(response, &check_labels)
                     .map(drop)
                     .map_err(str::to_owned)
             };
