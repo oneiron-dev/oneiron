@@ -60,8 +60,9 @@ DEFAULT_IN_FLIGHT = 4
 SOLO_FIELD = "oneiron_solo"
 # The shared KV pool, in tokens, when the launcher names none; never less than
 # one full request (`full_request_pool`).
-# E5: a 22196 MiB peak at batch 4 over this pool, over 2 GiB below the card's 24564 MiB.
-DEFAULT_CACHE_TOKENS = 32768
+# INF 1 (FIX 6974): the largest pool measured at four in flight whose peak
+# leaves 2 GiB of the card's 24564 MiB, at a 22488 MiB peak.
+DEFAULT_CACHE_TOKENS = 40192
 # Submitted requests that wait for admission. Past it a request waits in its
 # own handler for a place; it is never refused.
 INGRESS_CAPACITY = 4
