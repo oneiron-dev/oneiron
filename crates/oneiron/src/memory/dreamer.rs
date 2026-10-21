@@ -95,6 +95,9 @@ pub enum DreamerParkCauseView {
     /// A refusal or error park, resumed as the same try once its retry
     /// delay has passed.
     Retry,
+    /// The host's pause stopped the pass before the attempt dispatched;
+    /// resumed as the same try by a later pass.
+    Paused,
     /// The pass was cancelled.
     Cancelled,
     /// It waits on a signal: a budget approval, a seat login, a peer.
@@ -110,6 +113,7 @@ impl From<DreamerParkCause> for DreamerParkCauseView {
             DreamerParkCause::ExecutorError => Self::ExecutorError,
             DreamerParkCause::Checkpoint => Self::Checkpoint,
             DreamerParkCause::Retry => Self::Retry,
+            DreamerParkCause::Paused => Self::Paused,
             DreamerParkCause::Cancelled => Self::Cancelled,
             DreamerParkCause::Signal => Self::Signal,
             DreamerParkCause::Other => Self::Other,
