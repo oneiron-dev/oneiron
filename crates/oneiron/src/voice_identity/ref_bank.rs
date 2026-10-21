@@ -259,9 +259,9 @@ impl VoiceRenderDecision {
         match (&self.basis, self.subject_kind) {
             (Some(basis), _) => basis.validate(),
             (None, VoiceRefSubjectKind::Designed) => Ok(()),
-            (None, VoiceRefSubjectKind::Person) => {
-                Err(invalid("a person's voice render decision needs how it was captured"))
-            }
+            (None, VoiceRefSubjectKind::Person) => Err(invalid(
+                "a person's voice render decision needs how it was captured",
+            )),
         }
     }
 }

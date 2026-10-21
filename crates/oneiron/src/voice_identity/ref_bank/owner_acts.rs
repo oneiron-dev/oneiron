@@ -254,8 +254,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let party = actor.revalidate_in_txn(self, &txn)?;
         party.bind_in(&self.store, &txn, voice_id)?;
-        read_identity(&self.store, &txn, voice_id)?
-            .ok_or_else(|| invalid("unknown voice identity"))
+        read_identity(&self.store, &txn, voice_id)?.ok_or_else(|| invalid("unknown voice identity"))
     }
 
     /// [`Self::record_voice_target_clone`] for the actor's own voice, under
