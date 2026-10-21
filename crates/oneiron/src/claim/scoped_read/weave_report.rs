@@ -14,6 +14,8 @@ use crate::scan_check::{EngineScan, ScanCount};
 use crate::{EdgeKind, EntityId, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
+// The Admissions section's loop decisions (OF-499 A2).
+pub(super) mod admissions;
 // The SieveScore section's sampled sieve audits (OF-499).
 pub(super) mod sieve_score;
 
@@ -96,6 +98,26 @@ pub enum WeaveItem {
         attempt: crate::attempt_queue::AttemptId,
         audit: crate::dreamer_wake::SieveAudit,
     },
+    /// One loop decision (OF-499 A2), in an Admissions section after its
+    /// predicate rows: a loop's run or action admitted, held or refused, as
+    /// the authorised loop-decision read admitted it for this reader. Its
+    /// `outcome` and `kind` are exactly as stored (`pending` is its own),
+    /// `family` names admission or action, and a `redacted` skeleton keeps
+    /// no reasons and no actor. Each ref is shown only past the reader's
+    /// own floor; `evidence_refs` are the rows its admission stood on,
+    /// evidence only, never a correction target or a read grant.
+    LoopDecision {
+        decision_id: crate::store::GateDecisionId,
+        created_at: u64,
+        family: String,
+        kind: String,
+        outcome: String,
+        reason_codes: Vec<String>,
+        redacted: bool,
+        claim_ref: Option<EntityId>,
+        actor_ref: Option<EntityId>,
+        evidence_refs: Vec<EntityId>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -112,8 +134,8 @@ pub struct WeaveReport {
 impl WeaveReport {
     /// The rows the read that selected this report's items read them from
     /// (DEC-0005): each claim, project, goal, budget and link endpoint, a
-    /// dreaming's resident, what an agent-health card is built from, and
-    /// the rows a sieve audit stands on.
+    /// dreaming's resident, what an agent-health card is built from, the
+    /// rows a sieve audit stands on, and a loop decision's evidence refs.
     #[must_use]
     pub fn source_rows(&self) -> Vec<EntityId> {
         let mut rows = Vec::new();
@@ -136,6 +158,10 @@ impl WeaveReport {
                 WeaveItem::AgentHealth { card } => rows.extend(card_rows(card)),
                 WeaveItem::SieveAudit { audit, .. } => {
                     rows.extend(sieve_score::sieve_audit_rows(audit));
+                }
+                // The rows a loop decision's admission stood on, as evidence.
+                WeaveItem::LoopDecision { evidence_refs, .. } => {
+                    rows.extend(evidence_refs.iter().copied());
                 }
             }
         }
@@ -362,6 +388,11 @@ impl ScopedRead<'_> {
             // predicate rows (OF-499), each one this reader's floor admits.
             if spec.kind == WeaveSectionKind::SieveScore {
                 items.extend(self.weave_sieve_audits_in(txn, &policy, &filter));
+            }
+            // An Admissions section shows the loop decisions this reader may
+            // see after its predicate rows (OF-499 A2), in ledger order.
+            if spec.kind == WeaveSectionKind::Admissions {
+                items.extend(self.weave_loop_decisions_in_txn(txn, reader));
             }
             // Each resident gets its own digest through its dreaming
             // (ARCH-0063 §6): its progress leads its own Digest section.

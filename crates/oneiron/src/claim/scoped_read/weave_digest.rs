@@ -26,6 +26,8 @@ use std::collections::BTreeSet;
 // The owner's digest settings and the Coach's changes to them (FIX 5495).
 mod changes;
 mod coach;
+// A saved period's loop-decision rows: carrier, erase index, recheck (OF-499 A2).
+mod loop_decisions;
 mod settings;
 pub use changes::WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER;
 pub use coach::WeaveDigestSettingsDrafter;
@@ -317,6 +319,7 @@ enum WireItem {
         attempt: crate::attempt_queue::AttemptId,
         audit: crate::dreamer_wake::SieveAudit,
     },
+    LoopDecision(loop_decisions::WireLoopDecision),
 }
 
 impl WireDigest {
@@ -378,6 +381,9 @@ impl WireDigest {
                                             audit: audit.clone(),
                                         }
                                     }
+                                    WeaveItem::LoopDecision { .. } => WireItem::LoopDecision(
+                                        loop_decisions::WireLoopDecision::of(i)?,
+                                    ),
                                 })
                             })
                             .collect::<Result<Vec<_>>>()?,
@@ -451,6 +457,7 @@ impl WireDigest {
                                         WireItem::SieveAudit { attempt, audit } => {
                                             WeaveItem::SieveAudit { attempt, audit }
                                         }
+                                        WireItem::LoopDecision(row) => row.into_item(),
                                     })
                                 })
                                 .collect::<Result<Vec<_>>>()?,
@@ -464,6 +471,8 @@ impl WireDigest {
 
 /// Include the copied claim and every typed reference carried by its saved
 /// projection. This is an index over byte carriers, not a read authorization.
+/// A loop row's refs join only the erase index
+/// (`loop_decisions::indexed_sources`), never the period's gates.
 fn report_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
     let mut sources = BTreeSet::new();
     for section in &report.sections {
@@ -509,6 +518,10 @@ fn report_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
                 WeaveItem::SieveAudit { audit, .. } => {
                     sources.extend(super::weave_report::sieve_score::sieve_audit_rows(audit));
                 }
+                // A loop row's refs index its period for erasure apart
+                // (`loop_decisions::indexed_sources`): the row is rechecked
+                // whole on its own, so its refs never gate the period.
+                WeaveItem::LoopDecision { .. } => {}
             }
         }
     }
@@ -580,7 +593,7 @@ fn erase_weave_digest_in_txn(
         // decoded, orphan index keys contain references but no body bytes.
         if let Ok(wire) = serde_json::from_slice::<WireDigest>(&raw)
             && let Ok(report) = wire.into_report()
-            && let Ok(sources) = report_sources(&report.value)
+            && let Ok(sources) = loop_decisions::indexed_sources(&report.value)
         {
             for other in sources {
                 store
@@ -943,7 +956,7 @@ impl Vault {
                 }
                 let read = self.scoped_read(key);
                 let txn = self.store.env.read_txn()?;
-                return read.saved_weave_digest_in_txn(&txn, reader, scheduled_for);
+                return read.saved_weave_digest_in_txn(&txn, reader, scheduled_for, None);
             }
         };
         let memory = self.memory(reader.id(), class);
@@ -1127,7 +1140,7 @@ impl ScopedRead<'_> {
             WeaveReader::Owner(_) => WeaveDigestReader::Owner(id),
             WeaveReader::Agent(_) => WeaveDigestReader::Agent(id),
         };
-        self.saved_weave_digest_in_txn(&txn, reader_key, scheduled_for)
+        self.saved_weave_digest_in_txn(&txn, reader_key, scheduled_for, Some(reader))
     }
 
     /// `reader_key`'s saved period at `scheduled_for` in `txn`, under this
@@ -1136,12 +1149,16 @@ impl ScopedRead<'_> {
     /// The saved sections must still be the reader's, each source live and
     /// retrievable, each claim's current body exactly its saved one and
     /// readable, each link still admitted and each card still the reader's;
-    /// anything else is withheld (`None`).
+    /// anything else is withheld (`None`). Each loop decision row is
+    /// rechecked on its own under `opener`, the bound reader, or with none
+    /// (the owner's proofless background lens) its recorded owner's hook; a
+    /// row that no longer reads as saved is withheld alone (OF-499 A2).
     pub(super) fn saved_weave_digest_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         reader_key: WeaveDigestReader,
         scheduled_for: u64,
+        opener: Option<WeaveReader<'_>>,
     ) -> Result<Option<StoredWeaveDigest>> {
         let id = reader_key.id();
         let role = match reader_key {
@@ -1170,7 +1187,7 @@ impl ScopedRead<'_> {
         let rendered_at = wire.rendered_at;
         let lens = wire.lens.take();
         let lens_refused = wire.lens_refused.take();
-        let report = wire.into_report()?;
+        let mut report = wire.into_report()?;
         // A saved digest is served whole, however many sections and items it
         // holds (rule 5).
         if report
@@ -1282,6 +1299,9 @@ impl ScopedRead<'_> {
                 }
             }
         }
+        // Each loop row is rechecked on its own: one that no longer reads as
+        // saved is withheld alone, never the period (OF-499 A2).
+        self.recheck_saved_loop_decisions_in_txn(txn, reader_key, opener, &mut report.value);
         Ok(Some(StoredWeaveDigest {
             reader: reader_key,
             scheduled_for,
@@ -1391,7 +1411,7 @@ impl ScopedRead<'_> {
             )
             .ok_or_else(invalid)?;
         let report = self.weave_report(reader, &row.recipe)?;
-        let sources = report_sources(&report.value)?;
+        let sources = loop_decisions::indexed_sources(&report.value)?;
         let wire = WireDigest::from_report(now, &report)?;
         let bytes = serde_json::to_vec(&wire).map_err(|_| invalid())?;
         let next = serde_json::to_vec(&WireSchedule {
@@ -1423,7 +1443,7 @@ impl ScopedRead<'_> {
             }
             if let Some(raw) = self.vault.store.vault_meta.get(&*txn, &digest_key)? {
                 let previous: WireDigest = serde_json::from_slice(&raw).map_err(|_| invalid())?;
-                for source in report_sources(&previous.into_report()?.value)? {
+                for source in loop_decisions::indexed_sources(&previous.into_report()?.value)? {
                     self.vault
                         .store
                         .vault_meta

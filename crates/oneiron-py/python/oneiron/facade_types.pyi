@@ -3813,7 +3813,19 @@ class WeaveItemViewSieveAudit(TypedDict):
     confidence: int
     agrees: bool
     audited_at: int
-WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit
+class WeaveItemViewLoopDecision(TypedDict):
+    item: Literal["loop_decision"]
+    decision_ref: str
+    created_at: int
+    family: str
+    kind: str
+    outcome: str
+    reason_codes: list[str]
+    redacted: bool
+    claim_ref: NotRequired[str | None]
+    actor_ref: NotRequired[str | None]
+    evidence_refs: list[str]
+WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit | WeaveItemViewLoopDecision
 class WeaveSieveScoreView(TypedDict):
     sampled: int
     agreeing: int
