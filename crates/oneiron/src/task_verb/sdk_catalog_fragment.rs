@@ -7,7 +7,7 @@
 //! documentation and restates the revision after compaction
 //! (EIRI-ARCH-0002 §The contract).
 
-include!("catalog_fragment_revision.rs");
+include!("../verbs/generated/catalog_fragment_revision.rs");
 
 /// One revision of the code-mode catalog: its declaration text and the digest
 /// that names it.
@@ -24,7 +24,7 @@ pub struct CatalogFragment {
 #[must_use]
 pub const fn code_mode_catalog_fragment() -> CatalogFragment {
     CatalogFragment {
-        text: include_str!("catalog_fragment.d.ts"),
+        text: include_str!("../verbs/generated/catalog_fragment.d.ts"),
         revision: CATALOG_FRAGMENT_REVISION,
     }
 }

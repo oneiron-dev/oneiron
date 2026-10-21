@@ -29,6 +29,7 @@ mod admission_doors;
 mod affect_doors;
 mod agent_definition_doors;
 mod agent_grant_doors;
+#[path = "facade/generated/agent_verbs.rs"]
 mod agent_verbs;
 mod aging_doors;
 mod artifact_hosting_doors;
@@ -74,6 +75,7 @@ mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
 mod disclosure_doors;
+#[path = "facade/generated/dispatch.rs"]
 mod dispatch;
 mod embedding_space_doors;
 mod eval_doors;

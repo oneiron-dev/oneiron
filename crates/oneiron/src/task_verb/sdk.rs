@@ -579,9 +579,9 @@ pub struct InboxMarkRequest {
 mod memory_requests;
 pub use memory_requests::*;
 
-include!("verb_catalog.rs");
-include!("run_verb_catalog.rs");
-include!("sdk_generated.rs");
+include!("../verbs/generated/verb_catalog.rs");
+include!("../verbs/generated/run_verb_catalog.rs");
+include!("../verbs/generated/sdk_generated.rs");
 
 /// The verb table as code mode serves it, each row at its full path (`vault.recall`,
 /// `self.focus.refresh`, a bare `describe`): the rows a host door answers, then

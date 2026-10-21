@@ -45,6 +45,7 @@ mod dto;
 #[cfg(feature = "engine")]
 mod embedded_engine;
 mod error;
+#[path = "generated/facade_types_generated.rs"]
 mod facade_types_generated;
 // FIX 4730: the rooted-only host-root open.
 mod host_root;
@@ -303,4 +304,4 @@ pub fn pair(link: String) -> Result<Paired, OneironError> {
     })
 }
 
-include!("facade_generated.rs");
+include!("generated/facade_generated.rs");
