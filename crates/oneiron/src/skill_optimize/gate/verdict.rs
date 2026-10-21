@@ -35,6 +35,11 @@ pub enum SkillEditDisposition {
     /// fewer than k fresh labels since the last revision. The proposal stays
     /// OPEN for a later cycle.
     DeferredJudgeCadence,
+    /// A primary axis whose online interval was inconclusive (OF-495): it
+    /// stays unknown, so the full vector's non-regression is not established
+    /// and automatic admission defers. The proposal stays OPEN for a later
+    /// measurement.
+    DeferredInconclusive,
     /// Identity- or alignment-tier at accept time, on the TARGET or on the
     /// PROPOSAL itself — protected, ambiguous, or moved since the basis was
     /// taken. One arm carries every tier answer, and as a refusal it closes the
@@ -68,6 +73,7 @@ impl SkillEditDisposition {
             Self::NeedsTradeoffDecision => "needs_tradeoff_decision",
             Self::DeferredCycleCap => "deferred_cycle_cap",
             Self::DeferredJudgeCadence => "deferred_judge_cadence",
+            Self::DeferredInconclusive => "deferred_inconclusive",
             Self::RefusedProtectedTier => "refused_protected_tier",
             Self::RefusedStaleTarget => "refused_stale_target",
             Self::RefusedSourceLoss => "refused_source_loss",
@@ -85,6 +91,7 @@ impl SkillEditDisposition {
             "needs_tradeoff_decision" => Some(Self::NeedsTradeoffDecision),
             "deferred_cycle_cap" => Some(Self::DeferredCycleCap),
             "deferred_judge_cadence" => Some(Self::DeferredJudgeCadence),
+            "deferred_inconclusive" => Some(Self::DeferredInconclusive),
             // "deferred_evidence_changed" is deliberately ABSENT: the evidence
             // race is a retryable abort that commits nothing, so a row
             // spelling it is a row from a build whose contract no longer
@@ -113,8 +120,9 @@ impl SkillEditDisposition {
 
     /// Whether the proposal remains an open question a later cycle may answer.
     ///
-    /// A cap deferral says only that this wake's budget was spent; a tradeoff
-    /// waits for its A/B pick or an owner decision. Neither is a final answer.
+    /// A cap deferral says only that this wake's budget was spent; an
+    /// inconclusive primary waits for a later measurement; a tradeoff waits
+    /// for its A/B pick or an owner decision. None is a final answer.
     /// A rejection or refusal closes the proposal so the loop may try another
     /// draft rather than nag on the same rejected edit.
     ///
@@ -128,7 +136,10 @@ impl SkillEditDisposition {
     pub const fn leaves_proposal_open(self) -> bool {
         matches!(
             self,
-            Self::DeferredCycleCap | Self::DeferredJudgeCadence | Self::NeedsTradeoffDecision
+            Self::DeferredCycleCap
+                | Self::DeferredJudgeCadence
+                | Self::DeferredInconclusive
+                | Self::NeedsTradeoffDecision
         )
     }
 

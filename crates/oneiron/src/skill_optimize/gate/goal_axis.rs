@@ -63,7 +63,6 @@ fn goal_key(skill: &EntityId) -> Vec<u8> {
 
 fn validate_axes(axes: &[GoalAxisSpec]) -> Result<()> {
     if axes.is_empty()
-        || axes.len() > 32
         || !axes.iter().any(|axis| axis.kind == GoalAxisKind::Primary)
         || !axes
             .iter()
@@ -347,7 +346,6 @@ pub(super) fn score_goal_axes(
 
 pub(super) fn validate_goal_vector(axes: &BTreeMap<String, GoalAxisScore>) -> Result<()> {
     if axes.is_empty()
-        || axes.len() > 32
         || !axes.values().any(|axis| axis.kind == GoalAxisKind::Primary)
         || !axes
             .get(HONESTY_AXIS)

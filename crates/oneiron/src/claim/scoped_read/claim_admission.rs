@@ -146,7 +146,10 @@ impl<'v> ScopedRead<'v> {
                 return Ok(false);
             }
         }
-        if !self.credential_allows_row_in(rtxn, id) || !self.proof_live_in(rtxn)? {
+        if !self.credential_allows_row_in(rtxn, id)
+            || !self.proof_live_in(rtxn)?
+            || !self.guest_bound_admits_in(rtxn, id, raw)
+        {
             return Ok(false);
         }
         let causal_admitted = {

@@ -170,6 +170,11 @@ impl Vault {
             data_key,
             pad_worlds_kept_local,
             credentials_eligible,
+            // Each world's admitted machines and roots (FIX 6706): filled
+            // from L03's `world_pad_recipients_in_txn` when the head's world
+            // compartments switch on; empty, the head's pads stay
+            // host-readable as today.
+            pad_worlds: Default::default(),
         })
     }
 
@@ -231,7 +236,22 @@ impl Vault {
         self.publish_custody_claiming(folder, declared, Some(outbox), anchor)
     }
 
+    /// One publication pass, then, once its locks are released, the final
+    /// receipt row of every erase whose last custody retirement it completed
+    /// (FIX 5844): the pass never fails for that row.
     fn publish_custody_claiming(
+        &self,
+        folder: FolderTarget,
+        declared: &[TargetSpec],
+        outbox: Option<&CustodyOutbox>,
+        anchor: Option<&dyn AnchorStore>,
+    ) -> Result<CustodyStatus> {
+        let status = self.publish_custody_pass(folder, declared, outbox, anchor)?;
+        self.finish_redaction_erases_logged();
+        Ok(status)
+    }
+
+    fn publish_custody_pass(
         &self,
         folder: FolderTarget,
         declared: &[TargetSpec],
