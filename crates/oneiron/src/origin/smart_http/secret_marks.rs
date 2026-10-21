@@ -122,7 +122,7 @@ impl ReceiveSecretMarks {
         } = &mut marks;
         let mut reader = held.reader()?;
         for index in 0..*records {
-            let (observation, plan) = read_record(&mut *reader, index, reasons)?;
+            let (observation, plan) = read_record(&mut *reader, index, reasons.as_slice())?;
             each(observation, plan)?;
         }
         let mut rest = [0_u8; 1];

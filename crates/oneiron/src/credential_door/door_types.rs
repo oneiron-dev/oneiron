@@ -219,7 +219,7 @@ pub(super) enum ReceiveScanDisposition {
     /// Admit the push with each hit marked in its intent's transaction.
     #[allow(
         dead_code,
-        reason = "FIX 7608 A4 order: only the later one-line flip, after the masked readers, chooses it"
+        reason = "FIX 7608 A4 order: only the later one-line flip chooses it"
     )]
     AdmitMarked,
 }
