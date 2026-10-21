@@ -59482,7 +59482,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -59639,6 +59639,16 @@
       "enum": 16,
       "fn": 7,
       "struct": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_world_hold.rs",
+     "purpose": "The ask path's world-setting refusals, named (FIX 7463a)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -69370,7 +69380,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 204,
+     "files": 205,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69540,7 +69550,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4403,
+   "source_files": 4404,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73807,7 +73817,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 5
+      "re-export": 7
      }
     },
     {
@@ -73823,7 +73833,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 17,
+      "const": 19,
       "fn": 7,
       "struct": 5,
       "type": 1
