@@ -7,7 +7,9 @@
 //! One call over the whole Arc reads its reply through [`arc_output`]. A
 //! part of an Arc composed in parts reads it through [`child_output`],
 //! against what that one call showed ([`ArcCitationContext`]): a TURN shown
-//! only in part is cited with the slices it showed.
+//! only in part is cited with the slices it showed. Either way a TURN shown
+//! only by a sitting's line is cited as that line came from it (FIX 8289):
+//! the line's own recorded slices of it, or whole.
 
 use super::super::call_labels::{CallLabelMap, LabelKind};
 use super::output::reply_text;
@@ -74,17 +76,51 @@ pub(super) enum ArcReply {
     Lines(ArcLines),
 }
 
+/// How a call's sitting lines, or a part's observations, cite one TURN
+/// (FIX 8289): `None` whole, else by the slices they came from.
+pub(super) type Inherited = Option<Vec<SummaryLineSpan>>;
+
+/// Joins one citation of `turn` into `cited`: the slices of `spans` that
+/// are `turn`'s, or the TURN whole when `spans` hold none of it. A TURN
+/// cited whole once stays whole; slices are kept once each, in order.
+pub(super) fn inherit(
+    cited: &mut BTreeMap<EntityId, Inherited>,
+    turn: EntityId,
+    spans: &[SummaryLineSpan],
+) {
+    let handle = turn.to_hex();
+    let own: Vec<&SummaryLineSpan> = spans.iter().filter(|span| span.turn == handle).collect();
+    match cited.get_mut(&turn) {
+        None => {
+            let held = (!own.is_empty()).then(|| own.into_iter().cloned().collect());
+            cited.insert(turn, held);
+        }
+        Some(held) => {
+            if own.is_empty() {
+                *held = None;
+            } else if let Some(held) = held {
+                for span in own {
+                    if !held.contains(span) {
+                        held.push(span.clone());
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The reply, or the static reason it is none. Each turn it names to open
 /// is a `T` label its call showed; naming only turns already open asks for
 /// none. Otherwise each line is one line of words that are not blank,
 /// citing at least one TURN, each once, by a `T` label of a TURN whose
 /// words the Arc covers; the lines join with a newline, each range counted
-/// in Unicode scalars. The step's check and the landing read the reply
-/// through this one parse.
+/// in Unicode scalars, each with the slices `inherited` holds of a TURN it
+/// cites whose words the call does not show (FIX 8289). The step's check
+/// and the landing read the reply through this one parse.
 pub(super) fn arc_output(
     response: &LlmResponse,
     labels: &CallLabelMap,
-    opened: &BTreeSet<EntityId>,
+    (opened, inherited): (&BTreeSet<EntityId>, &BTreeMap<EntityId, Inherited>),
     covers: &BTreeSet<EntityId>,
 ) -> Result<ArcReply, &'static str> {
     let reply = arc_wire(response)?;
@@ -110,6 +146,7 @@ pub(super) fn arc_output(
         }
         let mut seen = BTreeSet::new();
         let mut turn_refs = Vec::with_capacity(line.turn_refs.len());
+        let mut source_spans: Vec<SummaryLineSpan> = Vec::new();
         for label in &line.turn_refs {
             let turn = labels
                 .resolve_as(LabelKind::Turn, label)
@@ -119,6 +156,15 @@ pub(super) fn arc_output(
                 return Err("an arc line cites a turn twice");
             }
             turn_refs.push(turn.to_hex());
+            if !opened.contains(&turn)
+                && let Some(Some(spans)) = inherited.get(&turn)
+            {
+                for span in spans {
+                    if !source_spans.contains(span) {
+                        source_spans.push(span.clone());
+                    }
+                }
+            }
         }
         if !text.is_empty() {
             text.push('\n');
@@ -131,7 +177,7 @@ pub(super) fn arc_output(
             output_start,
             output_end: scalars,
             turn_refs,
-            source_spans: Vec::new(),
+            source_spans,
         });
     }
     if text.is_empty() {
