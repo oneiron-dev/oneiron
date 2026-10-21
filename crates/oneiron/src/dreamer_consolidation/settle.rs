@@ -30,30 +30,31 @@
 use std::collections::BTreeSet;
 
 use rmpv::Value;
-use serde_json::json;
 
 pub(crate) mod keep_approval;
 
 use self::keep_approval::KeepAs;
+use super::call_labels::LabelledRungs;
 use super::retained_conflict::RetainedAlternative;
 use super::retained_keep::{ConflictSettleOutcome, KeptAlternative, SettlementApplied, StagedKeep};
 use super::support::invalid_consolidation;
-use super::value_projection::rmpv_to_json;
 use crate::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject, PREDICATE_CONFLICT_OPEN,
     PREDICATE_CONFLICT_RESOLVED, claim_surfaceable,
 };
 use crate::error::{Error, Result};
-use crate::llm::decision::catalogue::CONFLICT_SETTLE;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    DecisionRung, Reversibility, cut_text, fit_state,
+    DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionRung,
+    Reversibility,
 };
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
 use crate::{ClaimBody, EntityId, TimeRange, Vault};
+
+mod decision_projection;
+use decision_projection::SettleAsk;
 
 /// The marker-value keys that name a contradiction's claims: the
 /// consolidation marker's prior heads and candidates, and the older
@@ -914,8 +915,9 @@ const KEEP_PREFIX: &str = "keep:";
 /// the principal the answer is for, the dial and learned bands, the host's
 /// wording of the question, and the call's clock. A provider sees the marker
 /// and its members as evidence ids; the contested predicates and each member's
-/// predicate, value, source, approval and window are its state. Past the
-/// ladder's bound, each member rides by id with a preview of its value.
+/// predicate, value, source, approval and window are its state, each member by
+/// a call-local label (FIX 7506). Past the ladder's bound, each member rides
+/// by label with a preview of its value.
 pub struct ConflictSettleDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
@@ -927,115 +929,29 @@ pub struct ConflictSettleDecisions<'a> {
 
 impl ConflictSettleDecisions<'_> {
     /// Rules on one open conflict: `None` when the ladder abstains, escalates
-    /// or answers outside the vocabulary. Past the ladder's state bound, every
-    /// member is still asked about, by id with its value's text cut to fit; a
-    /// conflict whose ids alone pass the bound is the ladder's refusal. Only a
-    /// standing member can be kept. The question is keyed by the contested
-    /// predicates, so each learns its own bands.
+    /// or answers outside the vocabulary. The ask is
+    /// `decision_projection`'s: past the ladder's state bound, every member
+    /// is still asked about, by label with its value's text cut to fit. Only
+    /// a standing member can be kept.
     pub fn rule(
         &self,
         vault: &Vault,
         conflict: &OpenConflict,
     ) -> Result<Option<ConflictSettlement>> {
-        let txn = vault.store.env.read_txn()?;
-        let mut members = Vec::new();
-        let mut values = Vec::new();
-        let mut keepable = Vec::new();
-        for id in &conflict.members {
-            let Some(body) = vault.get_claim_in_txn(&txn, id)? else {
-                continue;
-            };
-            let standing = claim_surfaceable(&body);
-            if standing && keepable.len() < MAX_KEEP_OPTIONS {
-                keepable.push(*id);
-            }
-            let value = rmpv_to_json(&body.value);
-            values.push((id.to_hex(), value.to_string()));
-            members.push(json!({
-                "id": id.to_hex(),
-                "keep_option": standing.then(|| format!("{KEEP_PREFIX}{}", id.to_hex())),
-                "predicate": body.predicate,
-                "value": value,
-                "source": body.source.map(|source| source.as_str()),
-                "approval": body.approval.as_str(),
-                "confidence": body.confidence,
-                "valid_from": body.valid_from,
-                "valid_to": body.valid_to,
-            }));
-        }
-        drop(txn);
-        // A candidate the round dropped rides as retained, never as a stored
-        // claim; keeping it lands it (FIX 496). One whose staged Keep the
-        // owner declined is the owner's to keep again, never this ladder's
-        // (FIX 7072).
-        for alternative in conflict
-            .alternatives
-            .iter()
-            .filter(|alternative| alternative.declined.is_empty())
-        {
-            let keep_option = if keepable.len() < MAX_KEEP_OPTIONS {
-                keepable.push(alternative.id);
-                Some(format!("{KEEP_PREFIX}{}", alternative.id.to_hex()))
-            } else {
-                None
-            };
-            let value = rmpv_to_json(&alternative.value);
-            values.push((alternative.id.to_hex(), value.to_string()));
-            members.push(json!({
-                "id": alternative.id.to_hex(),
-                "keep_option": keep_option,
-                "retained": true,
-                "predicate": alternative.predicate,
-                "value": value,
-                "source": alternative.source.as_str(),
-                "confidence": alternative.confidence,
-            }));
-        }
-        // Whole, each member rides with its claim's fields; past the bound, by
-        // id with its value's canonical text cut to fit, never one left out.
-        let whole = json!({
-            "predicates": conflict.predicates,
-            "members": members,
-        });
-        let longest = values.iter().map(|(_, text)| text.len()).max().unwrap_or(0);
-        let state = fit_state(longest, |cut| {
-            if cut.is_none() {
-                return whole.clone();
-            }
-            let members: Vec<_> = values
-                .iter()
-                .map(|(id, text)| json!({"id": id, "value": cut_text(text, cut)}))
-                .collect();
-            json!({
-                "predicates": conflict.predicates,
-                "members": members,
-                "cut_at_bytes": cut,
-            })
-        });
-        let mut options: Vec<String> = [HOLD_BOTH, DISMISS, ESCALATE]
-            .iter()
-            .map(|label| (*label).to_owned())
-            .collect();
-        options.extend(
-            keepable
-                .iter()
-                .map(|id| format!("{KEEP_PREFIX}{}", id.to_hex())),
-        );
-        let key = conflict.predicates.join("\n");
-        let question = CONFLICT_SETTLE.question(
-            &[key.as_bytes()],
-            self.wording.clone(),
-            AnswerContract::Choice { options },
-        )?;
+        let ask = SettleAsk::of(vault, conflict, &self.wording)?;
         let mut evidence = vec![conflict.marker];
         evidence.extend(conflict.members.iter().copied());
+        // Each model rung reads the members by the ask's own labels; the
+        // question, its answer and the settlement stay canonical (FIX 7506).
+        let rungs = LabelledRungs::of(&self.ladder, &ask.labels);
+        let ladder = rungs.ladder(&self.ladder);
         // Keeping one closes the others, so a cut abstains rather than taking
         // a held answer.
-        let decision = self.ladder.run(
-            &question,
+        let decision = ladder.run(
+            &ask.question,
             self.principal,
             &evidence,
-            &state,
+            &ask.state,
             self.dial,
             &self.bands,
             Reversibility::OutboundEffect,
@@ -1044,16 +960,7 @@ impl ConflictSettleDecisions<'_> {
         let DecisionAnswer::Choice(answer) = &decision.answer else {
             return Ok(None);
         };
-        Ok(match answer.as_str() {
-            HOLD_BOTH => Some(ConflictSettlement::HoldBoth),
-            DISMISS => Some(ConflictSettlement::Dismiss),
-            other => other.strip_prefix(KEEP_PREFIX).and_then(|hex| {
-                keepable
-                    .iter()
-                    .find(|id| id.to_hex() == hex)
-                    .map(|id| ConflictSettlement::Keep(*id))
-            }),
-        })
+        Ok(ask.settlement(answer))
     }
 }
 

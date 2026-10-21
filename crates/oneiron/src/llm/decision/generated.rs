@@ -23,6 +23,9 @@ use crate::llm::{
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result};
 
+mod wire;
+pub use wire::DecisionWireLabels;
+
 /// A noul's labels as the generation answers them, yes first.
 const NOUL_LABELS: [&str; 2] = ["yes", "no"];
 
@@ -121,13 +124,15 @@ impl DecisionLadder<'_> {
             reversibility,
             deadline,
             &mut spent,
+            None,
         )
         .await
     }
 
     /// [`Self::run_pack_generated`], each generation that finished pushed onto `spent`
     /// (its request hash and usage) as it finishes, so a caller books what the pack spent
-    /// even when a later step traps, misses or fails.
+    /// even when a later step traps, misses or fails. With `labels`, every request shows
+    /// the table's labels and its reply reads back through the same table (FIX 7506).
     #[expect(
         clippy::too_many_arguments,
         reason = "the generated rung joins run_pack's inputs, and the spend it books"
@@ -144,6 +149,7 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
         spent: &mut Vec<([u8; 32], LlmUsage)>,
+        labels: Option<&dyn DecisionWireLabels>,
     ) -> DurableStepResult<GeneratedDecisions> {
         validate_pin(&rung.pin, dial.first)?;
         if !matches!(
@@ -193,7 +199,7 @@ impl DecisionLadder<'_> {
                 first.extend(chunk.iter().map(|_| Some(Read::NotStarted)));
                 continue;
             }
-            let answers = match read(rung, &pack, &call, spent).await? {
+            let answers = match read(rung, &pack, &call, spent, labels).await? {
                 Reply::Answers(answers) => answers,
                 Reply::Trapped => return Ok(GeneratedDecisions::Trapped),
                 Reply::Unread(miss) => return Ok(GeneratedDecisions::Unread(miss)),
@@ -220,16 +226,23 @@ impl DecisionLadder<'_> {
     }
 }
 
-/// One generation for `call`'s questions.
+/// One generation for `call`'s questions, shown and read back through `labels`.
 async fn read(
     rung: &GeneratedRung<'_>,
     pack: &OpenPack<'_>,
     call: &DecisionPack<'_>,
     steps: &mut Vec<([u8; 32], LlmUsage)>,
+    labels: Option<&dyn DecisionWireLabels>,
 ) -> DurableStepResult<Reply> {
     let asked = asked(call, pack.person);
     let paired = pack.paired.map(|paired| (paired, call.questions));
-    let request = (rung.seal)(request(rung.request.clone(), &asked, paired, call.state))?;
+    let request = (rung.seal)(request(
+        rung.request.clone(),
+        &asked,
+        paired,
+        call.state,
+        labels,
+    ))?;
     let hash = request.canonical_hash()?;
     let response = match rung.step {
         GeneratedStep::Durable { step, guard } => {
@@ -249,7 +262,7 @@ async fn read(
     };
     steps.push((hash, response.usage.clone()));
     Ok(Reply::Answers(
-        answers(&response, &asked, pack.paired)
+        answers(&response, &asked, pack.paired, labels)
             .and_then(|answers| joined(answers, call.questions.len(), pack.person)),
     ))
 }
@@ -293,37 +306,41 @@ impl Drop for Reserved<'_> {
 /// each question by id with its text and labels beside the state, and the answer format is
 /// a weight per label for each question id. With `paired`, the turn also names the paired
 /// question, and the format adds its P(yes) for each of the questions it pairs (Q2, asked
-/// in the same generation on the same state).
+/// in the same generation on the same state). With `labels`, each question goes by its
+/// label and each choice option as the table shows it, and the table binds into the
+/// request's identity (FIX 7506).
 fn request(
     mut shell: LlmRequest,
     asked: &[&DecisionQuestion],
     paired: Option<(&DecisionQuestion, &[&DecisionQuestion])>,
     state: &Value,
+    labels: Option<&dyn DecisionWireLabels>,
 ) -> LlmRequest {
     let mut properties = Map::new();
     let questions: Vec<Value> = asked
         .iter()
         .map(|question| {
-            let labels = labels_of(question);
-            let weights: Map<String, Value> = labels
+            let shown = wire::shown_labels(question, &labels_of(question), labels);
+            let weights: Map<String, Value> = shown
                 .iter()
                 .map(|label| {
                     (
-                        (*label).to_owned(),
+                        label.clone(),
                         json!({"type": "number", "minimum": 0, "maximum": 1}),
                     )
                 })
                 .collect();
+            let key = wire::question_key(question.id, labels);
             properties.insert(
-                question.id.to_hex(),
+                key.clone(),
                 json!({
                     "type": "object",
                     "properties": weights,
-                    "required": labels,
+                    "required": shown,
                     "additionalProperties": false,
                 }),
             );
-            json!({"id": question.id.to_hex(), "question": question.text, "labels": labels})
+            json!({"id": key, "question": question.text, "labels": shown})
         })
         .collect();
     let mut turn = Map::new();
@@ -333,13 +350,14 @@ fn request(
             .iter()
             .map(|question| {
                 (
-                    question.id.to_hex(),
+                    wire::question_key(question.id, labels),
                     json!({"type": "number", "minimum": 0, "maximum": 1}),
                 )
             })
             .collect();
+        let key = wire::question_key(paired.id, labels);
         properties.insert(
-            paired.id.to_hex(),
+            key.clone(),
             json!({
                 "type": "object",
                 "description": "For each question id, the probability that this paired question's answer about it is yes.",
@@ -347,10 +365,7 @@ fn request(
                 "additionalProperties": false,
             }),
         );
-        turn.insert(
-            "paired".into(),
-            json!({"id": paired.id.to_hex(), "question": paired.text}),
-        );
+        turn.insert("paired".into(), json!({"id": key, "question": paired.text}));
     }
     turn.insert("state".into(), state.clone());
     shell.envelope.response_format = ResponseFormat::Json {
@@ -374,6 +389,9 @@ fn request(
             text: Value::Object(turn).to_string(),
         }],
     });
+    if let Some(labels) = labels {
+        labels.bind(&mut shell);
+    }
     shell
 }
 
@@ -387,11 +405,15 @@ fn labels_of(question: &DecisionQuestion) -> Vec<&str> {
 /// Each asked question's answer from `response`: the label with the most weight (the first
 /// wins a tie, so a tied noul reads yes) at its share of the question's weight. A noul's
 /// probability is P(yes), whichever way it reads. `paired`'s reading for a question is the
-/// P(yes) the reply gives it there; a missing or out-of-range one is no reading.
+/// P(yes) the reply gives it there; a missing or out-of-range one is no reading. With
+/// `labels`, each entry and weight is read under the name the request showed, and a choice
+/// answers the canonical option at the index its label was shown at; a missing or unknown
+/// name is no weight, as a missing id is.
 fn answers(
     response: &LlmResponse,
     asked: &[&DecisionQuestion],
     paired: Option<&DecisionQuestion>,
+    labels: Option<&dyn DecisionWireLabels>,
 ) -> Result<Vec<ProviderDecision>> {
     let text: String = response
         .message
@@ -404,13 +426,12 @@ fn answers(
         .collect();
     let reply: Value = serde_json::from_str(text.trim())
         .map_err(|_| invalid("generated decision read is not JSON"))?;
-    let paired = paired.map(|paired| (paired, reply.get(paired.id.to_hex())));
+    let paired = paired.map(|paired| (paired, wire::entry(&reply, paired.id, labels)));
     Ok(asked
         .iter()
         .map(|question| {
             let paired = paired.and_then(|(paired, each)| {
-                each?
-                    .get(question.id.to_hex())
+                wire::entry(each?, question.id, labels)
                     .and_then(Value::as_f64)
                     .filter(|probability| (0.0..=1.0).contains(probability))
                     .map(|probability| PairedAnswer {
@@ -419,12 +440,12 @@ fn answers(
                         probability,
                     })
             });
-            let labels = labels_of(question);
-            let weights: Option<Vec<f64>> = labels
+            let shown = wire::shown_labels(question, &labels_of(question), labels);
+            let entry = wire::entry(&reply, question.id, labels);
+            let weights: Option<Vec<f64>> = shown
                 .iter()
                 .map(|label| {
-                    reply
-                        .get(question.id.to_hex())
+                    entry
                         .and_then(|weights| weights.get(label))
                         .and_then(Value::as_f64)
                         .filter(|weight| weight.is_finite() && *weight >= 0.0)

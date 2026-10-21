@@ -11,6 +11,11 @@
 //! from the listed `P1`; the engine binds each declaration to an id it
 //! derives (`extracted_people::bindings`).
 //!
+//! A decision read (FIX 7506 P2) names its questions `Q1`, `Q2`, and shows a
+//! choice's options as its call registered them, each listed claim by its
+//! `C` label; the read answers the canonical option at the same index, so
+//! questions, options, answers and receipts stay canonical.
+//!
 //! The map binds into its request's identity: a digest of its sorted
 //! `(label, id)` table, the wire version and the person-mint namespace rides
 //! in the host's own provider-options namespace, which no adapter reads. Two
@@ -23,6 +28,10 @@ use std::fmt;
 use crate::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::LlmRequest;
+use crate::llm::decision::DecisionWireLabels;
+
+mod decision_rungs;
+pub(super) use decision_rungs::LabelledRungs;
 
 /// The key a call's label binding rides under in the host's own
 /// provider-options namespace.
@@ -49,6 +58,10 @@ pub(super) enum LabelKind {
     Conversation,
     /// `S`: another source, such as the MESSAGE a sieve span indexes.
     Source,
+    /// `Q`: a decision read's question, its paired and person questions too.
+    /// Only that read names one back ([`DecisionWireLabels`]); a reply's
+    /// own label never parses as a question.
+    Question,
 }
 
 impl LabelKind {
@@ -60,6 +73,7 @@ impl LabelKind {
             Self::Note => 'N',
             Self::Conversation => 'V',
             Self::Source => 'S',
+            Self::Question => 'Q',
         }
     }
 
@@ -93,7 +107,19 @@ impl CallLabel {
 
     fn parse_exact(text: &str) -> Option<Self> {
         let (&prefix, digits) = text.as_bytes().split_first()?;
-        let kind = LabelKind::of(prefix)?;
+        Self::numbered(LabelKind::of(prefix)?, digits)
+    }
+
+    /// `text`, exactly, as a label of `kind`.
+    fn parse_kind(text: &str, kind: LabelKind) -> Option<Self> {
+        let (&prefix, digits) = text.as_bytes().split_first()?;
+        if char::from(prefix) != kind.prefix() {
+            return None;
+        }
+        Self::numbered(kind, digits)
+    }
+
+    fn numbered(kind: LabelKind, digits: &[u8]) -> Option<Self> {
         if digits.first().is_none_or(|digit| *digit == b'0')
             || !digits.iter().all(u8::is_ascii_digit)
         {
@@ -149,6 +175,8 @@ pub(super) struct CallLabelMap {
     ids: BTreeMap<LabelKind, Vec<EntityId>>,
     /// Each labelled id's number, by kind.
     numbers: BTreeMap<(LabelKind, EntityId), usize>,
+    /// Each choice question's options as its call shows them, by index.
+    choices: BTreeMap<EntityId, Vec<String>>,
 }
 
 impl CallLabelMap {
@@ -189,6 +217,12 @@ impl CallLabelMap {
         CallLabel::parse(text)
             .filter(|label| label.kind == kind)
             .and_then(|label| self.resolve(label))
+    }
+
+    /// Registers how the call shows `question`'s choice options: `shown[i]`
+    /// in place of its option at index `i`.
+    pub(super) fn show_choices(&mut self, question: EntityId, shown: Vec<String>) {
+        self.choices.insert(question, shown);
     }
 
     /// Binds this map into `request`'s identity: the wire version and a
@@ -239,7 +273,40 @@ impl CallLabelMap {
                 hasher.update(id.as_bytes());
             }
         }
+        // A map that shows no choice digests as it did before choices were
+        // shown (FIX 7506 P1's extraction, NOTE and listing calls).
+        for (question, shown) in &self.choices {
+            hasher.update(b"choices");
+            hasher.update(question.as_bytes());
+            hasher.update(&(shown.len() as u64).to_be_bytes());
+            for option in shown {
+                hasher.update(&(option.len() as u64).to_be_bytes());
+                hasher.update(option.as_bytes());
+            }
+        }
         *hasher.finalize().as_bytes()
+    }
+}
+
+/// A decision read's wire through this call's map: its questions by their
+/// `Q` labels, its choices as registered.
+impl DecisionWireLabels for CallLabelMap {
+    fn question_label(&self, question: EntityId) -> Option<String> {
+        self.label(LabelKind::Question, question)
+            .map(|label| label.to_string())
+    }
+
+    /// Exact: a reply key reads back only as the label the request wrote.
+    fn question_for_label(&self, label: &str) -> Option<EntityId> {
+        CallLabel::parse_kind(label, LabelKind::Question).and_then(|label| self.resolve(label))
+    }
+
+    fn choice_option(&self, question: EntityId, index: usize, _option: &str) -> Option<String> {
+        self.choices.get(&question)?.get(index).cloned()
+    }
+
+    fn bind(&self, request: &mut LlmRequest) {
+        self.bind_request(request, None);
     }
 }
 

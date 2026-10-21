@@ -7,13 +7,14 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use super::*;
+use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind, LabelledRungs};
 use crate::dreamer_consolidation::provenance::{KeptAsk, KeptDecision};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::llm::decision::{
     AnswerActor, AskAct, AskRole, AskTo, DecisionAnswer, DecisionAsk, DecisionBand,
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, GeneratedDecisions,
-    GeneratedRung, GeneratedStep, HeldLadder, HumanAskReason, ProviderPin, Reversibility, RoleRank,
-    TypedDecision, cut_text, fit_state,
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, DecisionWireLabels,
+    GeneratedDecisions, GeneratedRung, GeneratedStep, HeldLadder, HumanAskReason, ProviderPin,
+    Reversibility, RoleRank, TypedDecision, cut_text, fit_state,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 
@@ -83,15 +84,33 @@ struct Wording {
 }
 
 /// `ids` as a choice's option groups, each of at most [`IDS_PER_QUESTION`] ids, with
-/// [`NONE`] first when `none` holds or there is more than one group.
-pub(super) fn id_options(ids: &[EntityId], none: bool) -> Vec<Vec<String>> {
+/// [`NONE`] first when `none` holds or there is more than one group. Each group comes with
+/// the same options as its call shows them (FIX 7506): every id by its claim label in
+/// `labels`, [`NONE`] as it is. The canonical options are the question's; the shown ones
+/// go on the wire only.
+pub(super) fn id_options(
+    ids: &[EntityId],
+    none: bool,
+    labels: &mut CallLabelMap,
+) -> Vec<(Vec<String>, Vec<String>)> {
     let none = none || ids.len() > IDS_PER_QUESTION;
     ids.chunks(IDS_PER_QUESTION)
         .map(|group| {
-            none.then(|| NONE.to_owned())
+            let first = none.then(|| NONE.to_owned());
+            let options: Vec<String> = first
+                .clone()
                 .into_iter()
                 .chain(group.iter().map(EntityId::to_hex))
-                .collect()
+                .collect();
+            let shown: Vec<String> = first
+                .into_iter()
+                .chain(
+                    group
+                        .iter()
+                        .map(|id| labels.assign(LabelKind::Claim, *id).to_string()),
+                )
+                .collect();
+            (options, shown)
         })
         .collect()
 }
@@ -129,6 +148,21 @@ fn holds(ask: &DecisionAsk) -> bool {
 }
 
 impl ConsolidationExecutor<'_> {
+    /// Labels `questions` `Q1`, `Q2`, in order, then the ladder's paired and
+    /// person questions (FIX 7506), before the pack's state renders: every
+    /// request the pack splits into shows the same labels, and its state
+    /// names its questions by them.
+    pub(super) fn label_questions(
+        &self,
+        labels: &mut CallLabelMap,
+        questions: &[DecisionQuestion],
+    ) {
+        let held = &self.decisions.ladder;
+        for question in questions.iter().chain(&held.paired).chain(&held.person) {
+            labels.assign(LabelKind::Question, question.id);
+        }
+    }
+
     /// Who a verdict over `project`'s claims asks when it goes up: the
     /// project's leader as the responsible actor, then its boards and the
     /// owners; its boards when it has no leader but the Dreamer itself; the
@@ -171,6 +205,11 @@ impl ConsolidationExecutor<'_> {
     /// the work `correlation` names. Each generation that finished joins `charges`, even
     /// when a later one traps or fails. None when the step trapped: the attempt is parked.
     ///
+    /// Every read shows the pack through `labels` (FIX 7506): the generation's
+    /// questions by their labels and its choices as registered, every rung
+    /// past it the same choices, and each answer reads back canonical. The map
+    /// binds into each generation's identity.
+    ///
     /// A question already put to `to` for this work is not put again: an open ask
     /// still holds its work, and an answered one is the answer, so the read stops below
     /// the person rung. Each decision keeps its ask, and its receipt names the version
@@ -189,6 +228,7 @@ impl ConsolidationExecutor<'_> {
         questions: &[DecisionQuestion],
         evidence: &[EntityId],
         state: &serde_json::Value,
+        labels: &CallLabelMap,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let vault = step_ctx.vault;
@@ -233,9 +273,13 @@ impl ConsolidationExecutor<'_> {
         };
         let pack: Vec<&DecisionQuestion> = questions.iter().collect();
         let mut spent = Vec::new();
-        let mut ladder = self.decisions.ladder.ladder();
-        ladder.ask_to = Some(to);
-        ladder.correlation = Some(correlation);
+        let mut held = self.decisions.ladder.ladder();
+        held.ask_to = Some(to);
+        held.correlation = Some(correlation);
+        let wire: &dyn DecisionWireLabels = labels;
+        // Each rung past the generated read shows the pack's choices alike.
+        let rungs = LabelledRungs::of(&held, wire);
+        let ladder = rungs.ladder(&held);
         let decided = ladder
             .run_pack_generated_spent(
                 &rung,
@@ -251,6 +295,7 @@ impl ConsolidationExecutor<'_> {
                     Duration::from_millis(pass.remaining_ms()),
                 ),
                 &mut spent,
+                Some(wire),
             )
             .await;
         // Every generation that finished is spent, whatever the pack's outcome: a later
@@ -324,17 +369,19 @@ fn verdict_shell(call: &RoleCall<'_>, scope: &crate::llm::Scope) -> Result<LlmRe
 }
 
 /// A conflict as its pack reads it: the predicate, the prior heads and each candidate,
-/// every value as its JSON text, cut shorter (halving) until the whole fits.
+/// every value as its JSON text, cut shorter (halving) until the whole fits. Each claim
+/// goes by its label in `labels` (FIX 7506).
 pub(super) fn conflict_state(
     identity: &ConflictIdentity,
     members: &[&PromotionCandidate],
     priors: &[super::super::PriorHead],
+    labels: &mut CallLabelMap,
 ) -> Result<serde_json::Value> {
     let priors: Vec<(String, &str, Option<&str>, String)> = priors
         .iter()
         .map(|prior| {
             (
-                prior.claim_id.to_hex(),
+                labels.assign(LabelKind::Claim, prior.claim_id).to_string(),
                 prior.body.predicate.as_str(),
                 prior.body.source.map(ClaimSource::as_str),
                 rmpv_to_json(&prior.body.value).to_string(),
@@ -346,7 +393,7 @@ pub(super) fn conflict_state(
         .map(|member| {
             let facts = candidate_facts(&member.candidate)?;
             Ok((
-                member.claim_id.to_hex(),
+                labels.assign(LabelKind::Claim, member.claim_id).to_string(),
                 facts.predicate.to_string(),
                 rmpv_to_json(&facts.value).to_string(),
             ))
