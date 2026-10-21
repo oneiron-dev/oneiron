@@ -10,7 +10,7 @@ use std::{
     fs,
     path::Path,
 };
-fn median(values: &mut [f64]) -> Option<f64> {
+pub(super) fn median(values: &mut [f64]) -> Option<f64> {
     if values.is_empty() {
         return None;
     }
@@ -61,6 +61,9 @@ pub(super) fn generate(input: &Path, out: &Path) -> Result<()> {
             .ok_or("rows_parent_missing")?
             .join("campaign.json"),
     )?;
+    if campaign["phase"] == "S5" {
+        return super::drift::report(input, out);
+    }
     let plan = campaign["plan_digest"]
         .as_str()
         .ok_or("plan_digest_missing")?;
@@ -169,6 +172,6 @@ pub(super) fn generate(input: &Path, out: &Path) -> Result<()> {
             g["total_ms_observed_median"]
         ));
     }
-    markdown.push_str("\nMedians cover observed rows only, including timed-out failures. Successful-row medians and missing counts are separate in report.json. No p95. Safety violations never become accuracy points. C/C+/D use generative_reasoner diagnostic approximations (unavailable_e5). F2 provenance: unavailable_e6. TASK-before-planner: unavailable_e4. Authoring yield, N=1/5/20 amortisation, actual billing and kernel GPU seconds are unavailable. Full assigned and paired outcomes, evidence paths and stop causes are in report.json.\n");
+    markdown.push_str("\nMedians cover observed rows only, including timed-out failures. Successful-row medians and missing counts are separate in report.json. No p95. Safety violations never become accuracy points. C/C+/D pin browser_planner; the run records its configured role. Actual role receipt coverage remains separate. F2 provenance: unavailable_e6. E4 TASK-before-planner is present, but a complete whole-TASK model-edge ledger is not implied by an explicit library call. Authoring yield, N=1/5/20 amortisation, actual billing and kernel GPU seconds are unavailable. Full assigned and paired outcomes, evidence paths and stop causes are in report.json.\n");
     fs::write(out.join("report.md"), markdown).map_err(|e| e.to_string())
 }

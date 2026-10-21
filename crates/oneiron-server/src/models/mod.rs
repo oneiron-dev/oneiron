@@ -52,6 +52,7 @@ mod http;
 mod kept_on_device_tests;
 mod ladder;
 pub(crate) mod launch_price;
+mod llama_identity;
 mod media;
 mod offer;
 mod openai;
@@ -71,6 +72,7 @@ mod status;
 #[cfg(test)]
 mod tests;
 mod token_ratio;
+mod training;
 mod voice;
 mod voxcpm2_speech;
 mod walk;
@@ -149,6 +151,8 @@ pub struct ModelRuntime {
     rests: Arc<OfferCooldowns>,
     /// Counts each catalog model's tokenizer on the fixed passage (OF-577).
     token_ratios: Option<Arc<TokenRatios>>,
+    /// The trainer connectors `[models.training]` names (FIX 7263).
+    training: crate::config::models::TrainingSettings,
 }
 
 impl ModelRuntime {
@@ -167,6 +171,7 @@ impl ModelRuntime {
             media: MediaRuntime::empty(),
             rests: OfferCooldowns::unkept(),
             token_ratios: None,
+            training: Default::default(),
         }
     }
 
@@ -307,8 +312,11 @@ impl ModelRuntime {
         // context's one broker and reads its key at the context's door.
         let site = broker.map(BrokerContext::site);
         let keys = broker.map(BrokerContext::keys);
+        // One cache of house llama.cpp launch manifests, for the chat routes
+        // and the decision read alike (FIX 7895).
+        let identities = Arc::new(llama_identity::LlamaIdentityResolver::default());
         for (name, provider) in &config.providers {
-            match build_provider(name, provider, config, site, keys) {
+            match build_provider(name, provider, config, site, keys, &identities) {
                 Ok(Some(backend)) => {
                     let broker = backend.broker_isolation();
                     built.insert(name.clone(), backend);
@@ -468,7 +476,7 @@ impl ModelRuntime {
         // none has no reader.
         let decision_read = tokio::runtime::Handle::try_current()
             .map_err(anyhow::Error::from)
-            .and_then(|runtime| decision_read::bind(config, runtime))
+            .and_then(|runtime| decision_read::bind(config, runtime, &identities))
             .unwrap_or_else(|error| {
                 if config.decision_read.is_some() {
                     tracing::warn!(%error, "decision read unavailable");
@@ -493,6 +501,7 @@ impl ModelRuntime {
             media,
             rests,
             token_ratios,
+            training: config.training.clone(),
         }
     }
 
@@ -637,13 +646,15 @@ pub fn undeclared_run(
 
 /// One provider's wire backend. Each sends one request per call (its
 /// transport is `SingleSend`, or the credential broker for a `key_secret`
-/// key), so a run's gate can wrap it.
+/// key), so a run's gate can wrap it. A chat route resolves a house
+/// llama.cpp answer's launch alias through `identities`.
 fn build_provider(
     name: &str,
     provider: &ProviderConfig,
     config: &ModelsConfig,
     site: Option<&Result<broker::BrokerSite, String>>,
     keys: Option<&Arc<dyn KeyDoor>>,
+    identities: &Arc<llama_identity::LlamaIdentityResolver>,
 ) -> anyhow::Result<Option<Arc<dyn SingleRouteBackend>>> {
     let catalog = referenced_models(config, name)
         .iter()
@@ -683,6 +694,7 @@ fn build_provider(
                     http,
                     cap: output_cap(provider),
                     response_format: provider.response_format,
+                    identities: Arc::clone(identities),
                 },
             );
             // A provider that serves Responses over a socket holds one by

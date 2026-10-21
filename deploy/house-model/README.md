@@ -37,6 +37,18 @@ Put each under `/var/lib/oneiron-house/models/` (or set the paths in
 - llama.cpp target: `Qwen3.8-27B-UD-Q4_K_M.gguf`.
 - llama.cpp draft: `Qwen3.5-0.8B-Q8_0.gguf`.
 
+Then write the EXL3 target's weights manifest beside it, once per deployed
+snapshot (see "Launch identity"):
+
+```sh
+sudo python3 deploy/house-model/weights_manifest.py prepare \
+  /var/lib/oneiron-house/models/qwen3.8-27b-exl3-4bpw \
+  /var/lib/oneiron-house/models/qwen3.8-27b-exl3-4bpw.weights.json
+```
+
+The repository holds no real weights hashes: the operator, or the
+Orchestrator when it deploys, writes this manifest from the installed bytes.
+
 ## Install
 
 ```sh
@@ -44,7 +56,8 @@ sudo useradd --system --home /var/lib/oneiron-house oneiron-house
 sudo python3 -m venv /opt/oneiron-house/.venv
 # a CUDA PyTorch wheel matching the driver first, then:
 sudo /opt/oneiron-house/.venv/bin/pip install -r deploy/house-model/requirements.txt
-# llama.cpp with CUDA and request decoding, at /opt/oneiron-house/llama.cpp/build/bin/llama-server
+# llama.cpp at the pinned commit with CUDA and request decoding, at
+# /opt/oneiron-house/llama.cpp/build/bin/llama-server, with its build record
 sudo apt-get install libzstd-dev zlib1g-dev
 sudo deploy/house-model/build-llama.sh
 sudo cp deploy/house-model/house.env.example /etc/oneiron-house.env
@@ -56,6 +69,62 @@ Both units are templates: they expect the repo at `/opt/oneiron`. Each server
 listens on loopback only and loads its weights before it answers; a request
 never downloads or starts a model. Then merge `models.toml` into
 `oneiron.toml`, and `GET /v1/ai/status` lists both rungs of each seat.
+
+## Launch identity
+
+Each reply's cache evidence names what answered it (FIX 7895). Identity
+never stops a server: whatever fails below, the server starts and serves,
+with the digests it could not take left out and one warning on stderr.
+
+**llama.cpp.** The pin is llama.cpp
+`d81235049384534c167caea52b85a694f6103d14`: `build-llama.sh` checks out
+exactly that commit (a checkout with changes to tracked files is refused),
+builds it, and writes `llama-server.build.json` beside the binary: the
+commit, the CMake flags and the binary's SHA-256. Before each launch,
+`serve-llama.sh` runs `llama_identity.py prepare`, which:
+
+- mints a random 128-bit epoch for this launch;
+- hashes every GGUF part the launch loads (target and draft, each part of a
+  split GGUF), in full, at every launch, and the binary;
+- reads the target's typed tokenizer metadata and its chat templates;
+- records the launch's arguments, every `LLAMA_ARG_*` variable by name and
+  value (one that may hold a credential, by its SHA-256) and any llama.cpp
+  `config.ini` by its SHA-256 (with one present, the `model`, `tokenizer`
+  and `template` digests are left out: the file could change them);
+- writes the manifest, named by the SHA-256 of its exact bytes, into the
+  manifests-only `ONEIRON_HOUSE_LLAMA_IDENTITY_DIR`
+  (`/var/cache/oneiron-house/llama-identity`, inside the unit's cache
+  directory). Manifests are kept, so an old launch's late answers still
+  resolve.
+
+llama-server then starts with `--alias oneiron-llama/<epoch>/<digest>`, its
+only alias (`LLAMA_ARG_ALIAS` is unset), and `--path` on that directory with
+`--ui`, since llama.cpp mounts `--path` only with its web UI on. The static
+directory replaces the embedded web UI on this loopback port: the house
+server has no browser UI. llama.cpp returns the alias as the `model` of
+every chat, stream and native answer and as its `/v1/models` id, and serves
+the manifest at `GET /<digest>.json`. The engine maps the alias to the
+provider's configured model (`ONEIRON_HOUSE_LLAMA_MODEL_ID`, `qwen3.8-27b`,
+which the manifest is bound to), fetches each manifest once, checks its
+digest, epoch and configured model, and puts its digests into the record.
+A launch whose identity cannot be prepared (an unwritable directory, an
+unreadable file, a `config.ini` that sets an alias) starts as before: no
+alias, no manifest, and its records name only the reported build.
+
+**EXL3.** `weights_manifest.py prepare` lists every `*.safetensors` shard of
+the target with its size and SHA-256 (above). At each launch the server
+hashes the installed shards against it before any weights load; when they
+match, the manifest's digest is the identity's `model`. A missing manifest
+or a changed, missing or unlisted shard leaves `model` out, with a warning,
+and the server serves. The `model` it returns and its `/v1/models` id stay
+`qwen3.8-27b`.
+
+**Deploying.** The operator, or the Orchestrator, rebuilds llama.cpp with
+`build-llama.sh` (or records an existing build of the pin with
+`llama_identity.py record-build BIN COMMIT -- FLAGS...`) and writes the EXL3
+weights manifest whenever the weights change. A manifest attests a launch,
+not a call: a request's own template arguments, samplers, reasoning or cache
+options are not in it, so no record's `execution_mode` comes from it.
 
 ## The EXL3 server's wire
 
@@ -187,8 +256,9 @@ request read from the prompt cache (FIX 6567; `cache_usage.py` builds it):
     `execution_mode`, the server's settings with the request's
     `chat_template_kwargs` and solo flag. `backend_epoch` is 32 hex digits
     minted once when the Generator is built, so a restart is a new epoch.
-    No weights digest is supplied, so no `model` digest is given. Nothing
-    in it reads the `model` a request names.
+    `model` is the weights manifest's digest, given only when the installed
+    shards matched it at launch. Nothing in it reads the `model` a request
+    names.
 
 `timings` keeps its meaning: `prompt_n` is still the logical prompt.
 
@@ -196,12 +266,19 @@ request read from the prompt cache (FIX 6567; `cache_usage.py` builds it):
 `usage.prompt_tokens_details.cached_tokens` and `timings.cache_n`, what it
 computed as `timings.prompt_n`. The engine builds
 the same record from them (`backend` `llama_cpp`, one `prompt` pass), and a
-read is `unknown` when those counts disagree. Its only identity is `runtime`,
-a digest of the reply's `system_fingerprint` (a build, not an incarnation).
-llama.cpp reports no epoch, so none is recorded. `tokens_cached` is the
-slot's occupancy, which counts generated tokens, and is never read as cache
-hits. Each decision-read answer gets a `label_read` record the same way, from
-its native `tokens_evaluated` and `timings`, with no identity.
+read is `unknown` when those counts disagree. Its identity is what the
+answer's own alias names: `backend_epoch` from the alias, and from the
+launch's verified manifest `model`, `tokenizer`, `runtime` (the build),
+`template` and `cache_mode`. A manifest that did not verify leaves those
+out, and a reply without an alias has no epoch either; a chat record then
+names its `runtime` as a digest of the reply's `system_fingerprint` (a build,
+not an incarnation). `tokens_cached` is the slot's occupancy, which
+counts generated tokens, and is never read as cache hits. Each decision-read
+answer gets a `label_read` record the same way, from its native
+`tokens_evaluated`, `timings` and `model`, each answer and each retry with
+its own alias's identity; a native record never names a `template`, since
+the host's recipe renders its prompt. No llama record names an
+`execution_mode`.
 
 ## Compressed requests
 
@@ -223,3 +300,85 @@ PYTHONPATH=/opt/oneiron/deploy/house-model \
 ```
 
 Then its entry may set `request_compression = "zstd"` too.
+
+## Reasoning history probe
+
+An offer may declare `reasoning_content_history` (FIX 8307) only when its
+server reads an assistant's earlier reasoning back from the chat
+`reasoning_content` field. With it, the engine sends an assistant message's
+reasoning in that field instead of as ordinary content. No house offer
+declares it yet, so `models.toml` sends reasoning as content on both.
+
+`probe_reasoning_history.py` collects the evidence for one offer. It is an
+ops tool, not a test, and it needs only Python's standard library. It runs on
+the GPU host (Linux only) against the server already running there, on its
+loopback port. It never starts, restarts or loads anything, and it never
+retries or repairs a reply. It holds two conversations, one plain and one
+streamed, of three real turns each:
+
+1. With one tool offered, the reply must carry nonempty reasoning, a short
+   ordinary preamble and exactly one tool call with JSON-string arguments.
+2. That assistant goes back unchanged (reasoning, content and the call's id),
+   with a tool result under the same id. Its value is minted only after turn 1,
+   and the answer must be exactly `RESULT=<value>`.
+3. The answer goes back with its reasoning, and the model must repeat the
+   same line with no tool call.
+
+The operator runs it once per offer, with a new evidence path each time:
+
+```sh
+# llama.cpp: save the template the running server renders
+curl -s http://127.0.0.1:18134/props \
+  | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["chat_template"])' \
+  > /tmp/llama-template.jinja
+python3 /opt/oneiron/deploy/house-model/probe_reasoning_history.py \
+  --base-url http://127.0.0.1:18134 --backend llama \
+  --offer 'llama/qwen3.8-27b@qwen3.8-27b-q4km' \
+  --server-revision <llama.cpp commit> --weights-revision <GGUF revision> \
+  --template /tmp/llama-template.jinja \
+  --runtime-file /opt/oneiron-house/llama.cpp/build/bin/llama-server \
+  --booking-ref <fleet booking> --evidence /tmp/reasoning-history-llama-<run>.json
+
+# EXL3: the target's own template and the server's source
+python3 /opt/oneiron/deploy/house-model/probe_reasoning_history.py \
+  --base-url http://127.0.0.1:18091 --backend exl3 \
+  --offer 'exl3/qwen3.8-27b@qwen3.8-27b-exl3-4bpw-dflash2-d7' \
+  --server-revision <oneiron commit> --weights-revision <EXL3 revision> \
+  --template /var/lib/oneiron-house/models/qwen3.8-27b-exl3-4bpw/chat_template.jinja \
+  --runtime-file /opt/oneiron/deploy/house-model/exl3_server.py \
+  --booking-ref <fleet booking> --evidence /tmp/reasoning-history-exl3-<run>.json
+```
+
+`--wire-id` is the offer's configured wire model (default `qwen3.8-27b`);
+every request names it. EXL3 must advertise and answer with exactly that id.
+A llama launch advertises and answers under its launch alias instead
+(`oneiron-llama/<epoch>/<manifest digest>`, "Launch identity" above), which
+stands for the wire id. One run must see one alias: a second one means the
+server restarted mid-run, and the run fails. The evidence keeps the raw ids
+(`advertised_model_ids`, `served_model_ids`, `llama_alias`).
+
+`--offer`, `--server-revision`, `--weights-revision` and `--booking-ref` are
+the operator's own labels, kept as given. Pair the JSON with the booking's log
+and the service's launch recipe. The JSON also keeps every request and raw
+reply, each named check, and the SHA-256 of the probe, template, runtime and
+any `--tokenizer-file`. The file is created exclusively, so it is written even
+when the run fails and is never overwritten. The probe exits 0 only when its
+`declaration_ready` is `true`. Its fixed settings are temperature 0, seed 8307
+and the EXL3 solo marker. `--max-tokens` (2048), `--reasoning-budget` (512),
+`--effort` (`medium`) and `--timeout` (180 s) can be changed.
+
+Today's `exl3_server.py` passes no request tools to its template and returns
+no `tool_calls`, so the EXL3 run fails at turn 1. Keep that JSON too.
+
+**A pass is what allows the declaration.** After the lead accepts a pass for
+that exact server, weights, template and wire id, one line goes inside that
+provider's own block, with a comment pointing at the evidence:
+
+```toml
+model_capabilities."qwen3.8-27b" = ["streaming", "json_response", "reasoning", "reasoning_content_history", "tool_calling", "tool_results"]
+```
+
+The list replaces the provider's default (`streaming`, `json_response`,
+`reasoning`), so it names those three again. A pass on one backend says
+nothing about the other. The installed `oneiron.toml` needs the same line:
+this file is not deployed by itself.

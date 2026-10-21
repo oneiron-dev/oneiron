@@ -117,7 +117,15 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `audio_input`,
-`assistant_prefill`, `reasoning`; `assistant_prefill` lets Continue send the
+`assistant_prefill`, `reasoning`, `reasoning_content_history`;
+`reasoning_content_history` sends an earlier assistant turn's reasoning back
+on the OpenAI chat wire as that message's `reasoning_content` field, apart
+from its content, instead of as ordinary text. It is a declaration about the
+server and its template, not a request to reason, and it grants no tools. No
+provider has it by default; a house server's model gets it in
+`model_capabilities` only after that exact server, weights and template pass
+`deploy/house-model/probe_reasoning_history.py` (`deploy/house-model/README.md`);
+`assistant_prefill` lets Continue send the
 saved reply as an open trailing assistant message instead of an instruction to
 go on, and only counts when every rung of the ladder has it: list it only for a
 model whose endpoint and serving template continue a trailing assistant message
@@ -255,10 +263,11 @@ names the field and never its value:
   the like). An import queue with no `claude_code_root` and `codex_root` of
   its own would read the defaults under HOME, so it stops the vault too.
 
-The supervisor binds eight more settings on argv alone; a settings file that
+The supervisor binds ten more settings on argv alone; a settings file that
 names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
-`mesh_relays`, `shared_model_root`, `container_home` or
-`container_runtime_dir` is refused `SupervisorOwned`:
+`mesh_relays`, `shared_model_root`, `container_home`,
+`container_runtime_dir`, `guest_runtime_fact` or `hosted_private_origins` is
+refused `SupervisorOwned`:
 
 - `--browser-runtime <path>` and `--desktop-runtime <path>`: the browser and
   desktop guests' container CLI, an absolute path on the vault's own host or
@@ -293,6 +302,35 @@ names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
   `not_owned`, `unreadable` or `unsupported`), never a refused start. An
   engine from before these flags refuses them, so a supervisor passes them
   only to engines at or after the merge that added them.
+- `--guest-runtime-fact <fact>` (managed only): the supervisor's one
+  observation of the guest runtime it provisioned for the vault's UID. It
+  moves only the browser's readiness and never refuses the start.
+- `--hosted-private-origin <origin>` (managed only, repeatable): a private
+  origin the hosted node's web fetch may reach (FIX 7657). A managed node's
+  fetch refuses hosted infrastructure (loopback, "this host", link-local,
+  cloud metadata endpoints and the node's own addresses, typed
+  `hosted_infrastructure`) and private networks (RFC1918 `10.0.0.0/8`,
+  `172.16.0.0/12` and `192.168.0.0/16`, CGNAT `100.64.0.0/10` and IPv6 ULA
+  `fc00::/7`, typed `hosted_private_network`), both answered 403
+  `FORBIDDEN`. An IPv4 address spelled inside IPv6 (mapped, compatible,
+  NAT64) is judged as itself, and infrastructure anywhere in a name's
+  answers refuses the whole name. An origin is `http://<name>[:port]` or
+  `https://<name>[:port]`, the port the scheme's own by default; the name
+  has two or more labels of letters, digits and hyphens, and is never an
+  address in any spelling or a wildcard; a path other than `/`, a query, a
+  fragment or credentials refuse the entry, and an entry that does not parse
+  stops the start. A listed name's private addresses are fetched only at a
+  listed origin: its resolved answers pass, and a URL at that name with a
+  scheme or port no entry lists is refused. A listed origin never admits
+  infrastructure, an address-literal URL or a raw connection: a headless
+  render's relay (WebSocket, worker and other raw TCP or UDP traffic) knows
+  only addresses and refuses every private one. The host's DNS (its own
+  lookups and the guest's port-53 datagrams to the host's resolvers) stays
+  unchecked. Without the flag the list is empty and every private address is
+  refused. Plain serve and self-hosted nodes carry no guard and fetch as
+  before. A vault VM has no config-drive file for it. An engine from before
+  this flag refuses it, so a supervisor passes it only to engines at or
+  after the merge that added it (`version.rs`, hosted private origins).
 
 The container CLI gets `HOME` and `XDG_RUNTIME_DIR` from these two flags
 alone. Every call the engine makes to it for a guest (run, inspect and
@@ -2962,3 +3000,59 @@ Each call names what ran it in an `execution` receipt: `runtime` (`candle` or
 on every tagging trace the `vault.tagging.*` reads return, on the tag door's
 `tagged` result, and on a shadow trace. The receipt never enters the answer:
 parity and digests compare the spans, links and mood alone.
+
+## 15. Question-head training (`[models.training]`)
+
+An owner-authorized training run is dispatched through a trainer connector
+this host names. There is none by default: with no
+`[models.training.connectors]`, every authorized run holds with
+`training.no_connector` and nothing trains. The one trainer is the
+question-head worker, `scripts/training_pack/worker.py`, run as a local
+process on this server's own host. It trains one two-logit head for one
+exact detector question on the frozen Oneironer encoder, on this host's CUDA
+GPU, as `scripts/training_pack/README.md` describes.
+
+```toml
+[models.training.connectors.gpu-box]
+python = "/opt/oneiron/training-venv/bin/python"   # the pinned interpreter
+worker = "/opt/oneiron/checkout/scripts/training_pack/worker.py"
+jobs_root = "/var/lib/oneiron/training-jobs"       # private job directories
+revision = "<commit of that checkout>"             # immutable, never a branch
+unit_cost = 1                                      # per GPU wall second, in cost_unit
+cost_unit = "gpu_wall_second"                      # the run's budget-line unit
+service_unit = "gpu_wall_second"                   # the only unit the worker reports
+```
+
+`python`, `worker` and `jobs_root` are absolute paths. `service_unit` must be
+`gpu_wall_second`, the GPU wall seconds the worker measures, and a run's
+service quantity is the receipt's count of them. The connector's binding is
+keyless, local to this host and paid by no one per call (`payer = local`,
+`locality = own_server`, route `training-pack-worker` at `host`); `revision`
+is its catalog revision. A run pins that binding when it is prepared, so a
+changed entry refuses its dispatch (`training.refused`).
+
+Only a question run on the worker's recipe
+(`settings.recipe = "oneiron.frozen-encoder-binary-head/1"`) is sent to the
+worker. A role run, another recipe or a connector this host does not name
+holds with `training.no_connector`. The run's starting checkpoint must be an
+Oneironer bundle of exactly `oneironer.json`, `config.json`, `tokenizer.json`
+and `trunk.safetensors` from one source, and its corpus must carry the
+detector split and consent receipts; otherwise the run fails
+(`connector_failed`) before any process starts.
+
+Each run gets `jobs_root/<run hex>-<spec hex>/` (mode 0700). It holds the
+starting files read from custody, the run's training rows (no held-out row),
+`request.json`, `worker.stderr` and the worker's `output/`, whose
+`receipt.json` the engine reads. The worker runs
+`<python> -I <worker> --request <job>/request.json --output <job>/output`
+with no shell and no time limit. A directory that already holds a terminal
+receipt is read again; one without is an outstanding or unknown job, and no
+second GPU job starts for it. Job directories are kept whatever the outcome.
+
+A complete result returns both load sets and the probe measurements: the run
+is `Returned`. A finite export-parity failure returns too, with failed checks,
+so it is kept and never eligible. A failed or refused receipt, a non-finite
+one, or one that names another run, request or model fails the run
+(`connector_failed`). `Returned` is where a question run stops for now: no
+evaluator scores it and no loader serves its head, so it holds with
+`training.no_evaluator`, and a question head never binds a role.

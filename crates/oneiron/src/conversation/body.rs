@@ -1,6 +1,7 @@
 //! Forward-compatible room body codec and the all-writer membership guard.
 use super::*;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
+use crate::scan_check::{EngineScan, ScanCount};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -91,12 +92,6 @@ impl ConversationBody {
         self.history_visible.unwrap_or(self.kind.history_default())
     }
     fn validate(&self) -> Result<()> {
-        if self.member_ids.len() > 10_000 {
-            return Err(invalid("too many conversation members"));
-        }
-        if self.roles.len() > 10_000 {
-            return Err(invalid("too many conversation roles"));
-        }
         for person in self.roles.keys() {
             let id = EntityId::from_hex(person).map_err(|_| invalid("invalid role PERSON id"))?;
             if id.to_hex() != *person || !self.member_ids.contains(&id) {
@@ -202,6 +197,11 @@ pub(crate) fn validate_put_in_txn(
             }
         }
     }
+    // Rule 5: a roster of any size is kept whole. Past its threshold row the
+    // write asks whether everything is okay; it never refuses for a count.
+    let mut roster = ScanCount::start(store, txn, EngineScan::RoomRosterMembers, id.as_bytes())?;
+    roster.rows(body.member_ids.len());
+    roster.defer(store);
     Ok(())
 }
 /// A fresh room id has neither a row nor durable/stale deletion history.

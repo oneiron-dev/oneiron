@@ -2,9 +2,14 @@
 mod args;
 mod check;
 mod config;
+mod drift;
+mod drift_engine;
+mod drift_plan;
 mod fixture;
 mod measures;
+mod programs;
 mod provider_gate;
+mod repair;
 mod report;
 mod rows;
 mod run;
@@ -30,7 +35,13 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             .map_err(|e| e.to_string())?
             .block_on(run::campaign(&plan, &server, &pins, &out)),
         args::Command::Report { input, out } => report::generate(&input, &out),
-        args::Command::Drift => Err(r#"{"cause":"not_implemented","phase":"S5","pr":2}"#.into()),
+        args::Command::Drift {
+            plan,
+            programs,
+            out,
+        } => tokio::runtime::Runtime::new()
+            .map_err(|e| e.to_string())?
+            .block_on(drift::campaign(&plan, &programs, &out)),
         args::Command::Help => {
             println!("{}", args::HELP);
             Ok(())

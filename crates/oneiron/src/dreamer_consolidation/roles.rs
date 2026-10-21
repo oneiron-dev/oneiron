@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use super::sieve_ports::ExtractionPorts;
 use crate::Vault;
 use crate::error::Result;
 use crate::llm::manifest::ModelRole;
@@ -42,20 +43,38 @@ pub struct RoleBackend {
     pub binding: HostInferenceBinding,
 }
 
-/// The backends a host routes the Dreamer's roles to.
+/// The backends a host routes the Dreamer's roles to, and the ports the
+/// sieve's rungs and a child's extraction call (OF-498a); by default each
+/// port calls its role as this table routes it.
 #[derive(Clone, Default)]
-pub struct RoleBackends(BTreeMap<ModelRole, RoleBackend>);
+pub struct RoleBackends {
+    routes: BTreeMap<ModelRole, RoleBackend>,
+    ports: ExtractionPorts,
+}
 
 impl RoleBackends {
     #[must_use]
     pub fn with(mut self, role: ModelRole, backend: RoleBackend) -> Self {
-        self.0.insert(role, backend);
+        self.routes.insert(role, backend);
         self
     }
 
     #[must_use]
     pub fn get(&self, role: ModelRole) -> Option<&RoleBackend> {
-        self.0.get(&role)
+        self.routes.get(&role)
+    }
+
+    /// The host's sieve and child-extraction ports in place of the role
+    /// defaults.
+    #[must_use]
+    pub fn with_extraction_ports(mut self, ports: ExtractionPorts) -> Self {
+        self.ports = ports;
+        self
+    }
+
+    /// The ports the sieve's rungs and a child's extraction call.
+    pub(super) fn extraction_ports(&self) -> &ExtractionPorts {
+        &self.ports
     }
 }
 

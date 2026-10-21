@@ -9,7 +9,8 @@
 //! guest with it, until the run ends ([`RunSeats::end_run`]) or it sits
 //! idle past [`idle_limit`]. A seat whose guest never started goes with its
 //! last door. Ending a seat ends a takeover still asked or held with an
-//! `abandoned` receipt, clears the agent's inbox Ask and drops the guest.
+//! `abandoned` receipt, clears the agent's inbox Ask, drops the guest and
+//! hard-erases the run-bound secrets the guest found (FIX 8028).
 //!
 //! An agent's handover raises the owners' inbox Ask ("Needs you",
 //! [`RunSeats::asked`]); the owner's take or return clears it
@@ -21,6 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError, Weak};
 use std::time::{Duration, Instant};
 
+use oneiron::secret_custody::RunSecretSeat;
 use oneiron::{EntityId, Vault};
 use oneiron_browser::{AbandonedTakeover, BrowserError, DesktopSession, Takeover};
 
@@ -46,6 +48,8 @@ pub(crate) trait SeatGuest: Send + Sized + 'static {
     const NOUN: &'static str;
     /// The route an owner takes the guest over at; its inbox Ask names it.
     const TAKE_ROUTE: &'static str;
+    /// The seat whose run-bound secrets (FIX 8028) go with the guest.
+    const SECRETS: RunSecretSeat;
 
     /// The server's seats of this guest.
     fn seats(server: &SyncServer) -> &Arc<RunSeats<Self>>;
@@ -74,6 +78,7 @@ impl SeatGuest for DesktopSession {
     const GUEST: &'static str = "desktop";
     const NOUN: &'static str = "run desktop";
     const TAKE_ROUTE: &'static str = "/v1/owner/desktops/take";
+    const SECRETS: RunSecretSeat = RunSecretSeat::Desktop;
 
     fn seats(server: &SyncServer) -> &Arc<RunSeats<Self>> {
         &server.desktop_seats
@@ -363,7 +368,8 @@ fn idle_past<S: SeatGuest>(entry: &RunSeat<S>, now: Instant) -> bool {
 
 /// Ends a seat taken out of the registry: a takeover still asked or held
 /// lands its `abandoned` receipt with what it held so far, the agent's inbox
-/// Ask clears, and the guest goes with its session.
+/// Ask clears, and the guest goes with its session, the run-bound secrets it
+/// found hard-erased after it (FIX 8028).
 fn end<S: SeatGuest>(run: EntityId, entry: RunSeat<S>) {
     let session = entry
         .seat
@@ -384,6 +390,9 @@ fn end<S: SeatGuest>(run: EntityId, entry: RunSeat<S>) {
     }
     if let Some((_, rows)) = entry.ask {
         clear_ask(&entry.vault, run, &rows);
+    }
+    if let Err(error) = entry.vault.erase_run_secrets(S::SECRETS, run) {
+        tracing::warn!(%error, guest = S::GUEST, run = %run.to_hex(), "a seat's run-bound secrets stayed");
     }
 }
 

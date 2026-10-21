@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1129 facade rows, 3922 declarations.
+Census: 1129 facade rows, 3928 declarations.
 Inputs: 1064 of 1129 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1016 of 1129 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -422,7 +422,7 @@ class ConcernCardRequest(TypedDict):
 AgentHealthSignal = Literal["loop", "failed_check_repeat", "cost_spike", "long_wait", "silent", "duplicate_work", "unsupported_done", "misalignment"]
 AgentHealthTone = Literal["struggling", "off_course", "concern"]
 AgentHealthConfidence = Literal["high", "low"]
-AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs", "environment_cause"]
+AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs", "environment_cause", "other_session_active"]
 AgentHealthMove = Literal["note", "steer", "budget", "reassign", "ask_coach", "hold"]
 AgentHealthOutcome = Literal["open", "confirmed", "dismissed", "unresolved"]
 class HealthBriefPin(TypedDict):
@@ -501,6 +501,15 @@ class HealthCauseSource(TypedDict):
     share: float
     judge_revision: NotRequired[str | None]
     displaced_by: NotRequired[str | None]
+class HealthOtherSession(TypedDict):
+    attempt: EntityId
+    generation: int
+    at: int
+class HealthSilenceActivity(TypedDict):
+    own_call_at: NotRequired[int | None]
+    own_step_at: NotRequired[int | None]
+    actor_only_at: NotRequired[int | None]
+    other_session: NotRequired[HealthOtherSession | None]
 class AgentHealthCard(TypedDict):
     subject: EntityId
     signal: AgentHealthSignal
@@ -532,6 +541,7 @@ class AgentHealthCard(TypedDict):
     reviewer: str
     review_outcomes: list[HealthReviewReceipt]
     causes: list[HealthCauseSource]
+    silence: NotRequired[HealthSilenceActivity | None]
 RunTreeStatus = Literal["queued", "running", "paused", "completed", "failed", "cancelled", "abandoned"]
 class RunTreeTimestamps(TypedDict):
     created_at: int
@@ -1748,6 +1758,7 @@ class ExpectInput(TypedDict):
     role: NotRequired[str | None]
     name: NotRequired[str | None]
     value: NotRequired[str | None]
+    secret: NotRequired[str | None]
     absent: NotRequired[bool]
 class DoneMeans(TypedDict):
     question: str
@@ -14252,7 +14263,7 @@ class ModelStepSubmit(TypedDict):
     step_key: str
     request: LlmRequest
     retry: NotRequired[ModelStepRetryPolicy]
-LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input"]
+LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input", "reasoning_content_history"]
 class UnsupportedCapability(TypedDict):
     capability: LlmCapability
     model: NotRequired[ModelId | None]
@@ -19473,6 +19484,12 @@ RowGapReason = Literal["no_dom_node", "stale_node", "outside_dom_read", "read_fa
 class RowFieldGap(TypedDict):
     field: RowGapField
     reason: RowGapReason
+SecretKind = Literal["card", "cvv", "otp", "password"]
+SecretNote = Literal["concealed", "no_custody", "refused"]
+class RowSecret(TypedDict):
+    kind: SecretKind
+    handle: NotRequired[str | None]
+    note: NotRequired[SecretNote | None]
 class Row(TypedDict):
     ref: str
     locator: str
@@ -19485,6 +19502,7 @@ class Row(TypedDict):
     level: NotRequired[int | None]
     datetimes: NotRequired[list[str]]
     unavailable: NotRequired[list[RowFieldGap]]
+    secret: NotRequired[RowSecret | None]
 class Rebound(TypedDict):
     old: str
     new: str
@@ -19578,6 +19596,9 @@ class EffectReceipt(TypedDict):
     fact: NotRequired[ActionFact | None]
     engine_switch: NotRequired[EngineSwitchRecord | None]
     duration_ms: int
+class SecretParam(TypedDict):
+    name: str
+    kind: SecretKind
 RecentCounts = TypedDict("RecentCounts", {"pass": int, "miss": int, "repair": int, "of": int})
 class WorkflowSeed(TypedDict):
     pack: str
@@ -19591,6 +19612,7 @@ class LibraryCard(TypedDict):
     subgoal: str
     type_ref: str
     params: list[str]
+    secret_params: NotRequired[list[SecretParam]]
     runs: int
     failures: int
     recent: RecentCounts
@@ -19652,7 +19674,8 @@ class PointInput(TypedDict):
     base: NotRequired[ObservationBase | None]
 class TypeInput(TypedDict):
     ref: str
-    text: str
+    text: NotRequired[str | None]
+    secret: NotRequired[str | None]
     clear: NotRequired[bool]
     base: NotRequired[ObservationBase | None]
 class SelectInput(TypedDict):
@@ -19727,6 +19750,7 @@ class DecideStep(TypedDict):
     name: NotRequired[str | None]
     locate: NotRequired[bool]
     text: NotRequired[str | None]
+    secret: NotRequired[str | None]
     clear: NotRequired[bool]
     option: NotRequired[str | None]
 class BatchStepOpen(TypedDict):
@@ -19738,7 +19762,8 @@ class BatchStepClick(TypedDict):
 class BatchStepType(TypedDict):
     step: Literal["type"]
     ref: str
-    text: str
+    text: NotRequired[str | None]
+    secret: NotRequired[str | None]
     clear: NotRequired[bool]
 class BatchStepSelect(TypedDict):
     step: Literal["select"]
@@ -19756,6 +19781,7 @@ class BatchStepExpect(TypedDict):
     role: NotRequired[str | None]
     name: NotRequired[str | None]
     value: NotRequired[str | None]
+    secret: NotRequired[str | None]
     absent: NotRequired[bool]
 class BatchStepScreenshot(TypedDict):
     step: Literal["screenshot"]
@@ -19827,7 +19853,7 @@ class ProposeInput(TypedDict):
     replay_args: NotRequired[dict[str, str]]
     supersedes: NotRequired[str | None]
     seed: NotRequired[WorkflowSeed | None]
-WorkflowCheck = Literal["solved", "replay", "held_out", "fresh_guest", "supersedes"]
+WorkflowCheck = Literal["solved", "replay", "secret_replay", "held_out", "fresh_guest", "supersedes"]
 SupersedeRefusal = Literal["malformed", "not_on_site", "same_record", "not_filer"]
 class AdmissionRefusalHeldOut(TypedDict):
     cause: Literal["held_out"]
@@ -19844,7 +19870,10 @@ class AdmissionRefusalSupersedes(TypedDict):
     cause: Literal["supersedes"]
     workflow: str
     why: SupersedeRefusal
-AdmissionRefusal = AdmissionRefusalHeldOut | AdmissionRefusalFreshGuest | AdmissionRefusalSupersedes
+class AdmissionRefusalSecretReplay(TypedDict):
+    cause: Literal["secret_replay"]
+    slots: list[str]
+AdmissionRefusal = AdmissionRefusalHeldOut | AdmissionRefusalFreshGuest | AdmissionRefusalSupersedes | AdmissionRefusalSecretReplay
 class ReplayGuest(TypedDict):
     engine: BrowserEngine
     carried: list[SwitchCarried]

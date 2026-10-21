@@ -12,29 +12,29 @@ pub(super) const CHECKER_VERSION: &str = "cua-checkers-1";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Cell {
-    pub id: String,
-    pub fixture: String,
-    pub version: String,
-    pub seed: u64,
-    pub arm: String,
-    pub repetition: u32,
-    pub seconds: u64,
-    pub actions: u64,
-    pub public_task: String,
+    pub(crate) id: String,
+    pub(crate) fixture: String,
+    pub(crate) version: String,
+    pub(crate) seed: u64,
+    pub(crate) arm: String,
+    pub(crate) repetition: u32,
+    pub(crate) seconds: u64,
+    pub(crate) actions: u64,
+    pub(crate) public_task: String,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Plan {
-    pub schema: u32,
-    pub campaign_seed: u64,
-    pub manifest_digest: String,
-    pub checker_digest: String,
-    pub fixture_root: PathBuf,
-    pub fixture_digest: String,
-    pub checker_version: String,
-    pub evaluation_seeds: BTreeMap<String, Vec<u64>>,
-    pub holdout_seeds: BTreeMap<String, Vec<u64>>,
-    pub cells: Vec<Cell>,
+    pub(crate) schema: u32,
+    pub(crate) campaign_seed: u64,
+    pub(crate) manifest_digest: String,
+    pub(crate) checker_digest: String,
+    pub(crate) fixture_root: PathBuf,
+    pub(crate) fixture_digest: String,
+    pub(crate) checker_version: String,
+    pub(crate) evaluation_seeds: BTreeMap<String, Vec<u64>>,
+    pub(crate) holdout_seeds: BTreeMap<String, Vec<u64>>,
+    pub(crate) cells: Vec<Cell>,
 }
 pub(super) fn checker_digest(root: &Path) -> Result<String> {
     let mut paths: Vec<_> = fs::read_dir(root.join("checkers"))

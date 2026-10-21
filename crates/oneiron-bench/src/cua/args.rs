@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 pub(super) const HELP: &str = "oneiron-bench cua taskgen --manifest S1.json --seed N --out DIR
 oneiron-bench cua run --plan plan.json --server /absolute/oneiron --pinned-config pins.json --out DIR
 oneiron-bench cua report --in rows.jsonl --out DIR
-oneiron-bench cua drift (not_implemented: S5, PR2)";
+oneiron-bench cua drift --plan S5.json --programs submissions.json --out DIR";
 pub(super) enum Command {
     Taskgen {
         manifest: PathBuf,
@@ -21,7 +21,11 @@ pub(super) enum Command {
         input: PathBuf,
         out: PathBuf,
     },
-    Drift,
+    Drift {
+        plan: PathBuf,
+        programs: PathBuf,
+        out: PathBuf,
+    },
     Help,
 }
 pub(super) fn parse(args: &[String]) -> Result<Command> {
@@ -31,16 +35,16 @@ pub(super) fn parse(args: &[String]) -> Result<Command> {
     if sub == "--help" {
         return Ok(Command::Help);
     }
-    if sub == "drift" {
-        return Ok(Command::Drift);
-    }
-    if sub == "run" && !cfg!(target_os = "linux") {
-        return Err(r#"{"cause":"linux_execution_required","command":"run"}"#.into());
+    if matches!(sub.as_str(), "run" | "drift") && !cfg!(target_os = "linux") {
+        return Err(format!(
+            r#"{{"cause":"linux_execution_required","command":"{sub}"}}"#
+        ));
     }
     let allowed: &[&str] = match sub.as_str() {
         "taskgen" => &["--manifest", "--seed", "--out"],
         "run" => &["--plan", "--server", "--pinned-config", "--out"],
         "report" => &["--in", "--out"],
+        "drift" => &["--plan", "--programs", "--out"],
         _ => return Err(format!("unknown_cua_command:{sub}")),
     };
     let mut values = BTreeMap::new();
@@ -83,6 +87,11 @@ pub(super) fn parse(args: &[String]) -> Result<Command> {
         }
         "report" => Ok(Command::Report {
             input: value("--in")?.into(),
+            out,
+        }),
+        "drift" => Ok(Command::Drift {
+            plan: value("--plan")?.into(),
+            programs: value("--programs")?.into(),
             out,
         }),
         _ => Err("unknown_cua_command".into()),

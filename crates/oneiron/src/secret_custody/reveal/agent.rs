@@ -12,6 +12,7 @@ use crate::consent::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::secret_custody::run_bound::reveal_run_admission;
 use crate::secret_custody::{SecretCustodyFloor, read_secret_custody_admission_in_txn};
 use crate::vault::Vault;
 
@@ -34,6 +35,8 @@ impl Vault {
     /// for a handle that names no secret.
     /// [`SecretError::SecretTierDenied`](crate::error::SecretError::SecretTierDenied)
     /// for a secret no model may hold.
+    /// [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied)
+    /// for a secret a run found, asked for by another run (FIX 8028).
     pub(crate) fn reveal_secret(
         &self,
         asker: &RevealAsker,
@@ -57,6 +60,8 @@ impl Vault {
                     .ok_or_else(|| unknown(&handle))?;
                 let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
                 crate::secret_lease::reveal_tier_admission(&rec, &floor)?;
+                // A secret a run found reveals to that run (FIX 8028).
+                reveal_run_admission(&rec.name, &handle, asker.attempt.as_ref())?;
                 (handle, secret, rec.class.as_str().to_owned(), None)
             };
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
@@ -222,7 +227,10 @@ impl Vault {
                 masked_at: origin.masked_at,
             });
         let floor = SecretCustodyFloor::resolve(&self.store, &txn)?;
-        let reveal = match crate::secret_lease::reveal_tier_admission(&rec, &floor) {
+        let attempt = asker.and_then(|asker| asker.attempt.as_ref());
+        let admitted = crate::secret_lease::reveal_tier_admission(&rec, &floor)
+            .and_then(|()| reveal_run_admission(&rec.name, &handle, attempt));
+        let reveal = match admitted {
             Err(Error::Secret(refused)) => HandleReveal::Refused {
                 reason: refused.to_string(),
             },

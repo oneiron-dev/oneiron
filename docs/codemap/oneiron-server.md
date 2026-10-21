@@ -79,6 +79,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/training_offer/sources.rs` | src | s | 5 crate-vis | — | The rows a Coach brief or check is gathered from (FIX 5482), ids only |
 | `src/ai_host/training_offer/unverifiable.rs` | src | m | 5 crate-vis | — | The check's outcome when the promise cannot be read (FIX 6265, 6317, 6406, 6475, 6477) |
 | `src/ai_host/training_pack.rs` | src | s | 3 crate-vis | — | An owner-authorized training run on the host (OF-577, OF-552) |
+| `src/ai_host/training_pack/trainer.rs` | src | s | 3 crate-vis | — | The question-head trainer (FIX 7263), the one `TrainingConnector` this host ships |
+| `src/ai_host/training_pack/wire.rs` | src | m | 13 crate-vis | — | `oneiron.training-pack.job/1` and its receipt (FIX 7263): the request the question-head worker reads and the… |
 | `src/ai_host/turn_actions.rs` | src | m | 2 crate-vis | — | The turn-action worker: runs each queued Continue and Retry (`vault.conversations.turn.continue` / `.retry`)… |
 | `src/ai_host/turn_program.rs` | src | s | 1 crate-vis | — | The host's half of DOOR-141: the wakes a landed turn's own commit owed its actor's armed programs, typed… |
 | `src/ai_host/turn_program_host.rs` | src | s | 4 crate-vis | — | What this server lends one entry of a Dreamer turn program (DOOR-141 PR2): the engine-native code host's own… |
@@ -390,6 +392,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | XL | 16 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
 | `src/api/mcp_gateway/code_mode_verbs/browser_guest.rs` | src | s | 6 crate-vis | — | A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start… |
 | `src/api/mcp_gateway/code_mode_verbs/receipt_evidence.rs` | src | s | 2 crate-vis | — | A run's receipt screenshots kept for the caller its guest call came from (FIX 2150) |
+| `src/api/mcp_gateway/code_mode_verbs/secret_custody.rs` | src | s | 2 crate-vis | — | A run's secret custody for its browser and desktop (FIX 8028, OF-560; ARCH-0069): a secret field the run's… |
 | `src/api/mcp_gateway/code_mode_verbs/session_write.rs` | src | s | 1 crate-vis | — | A room write a session-bound code run stages, at this connector's door (WILL L11-01, S01-2a) |
 | `src/api/mcp_gateway/code_mode_verbs/task_workflow.rs` | src | s | 2 crate-vis | — | The strict library try a TASK-bound browser program takes before its run's planner (CUA E4; owner pick C1 =… |
 | `src/api/mcp_gateway/device_release.rs` | src | m | 10 crate-vis | — | What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a… |
@@ -700,10 +703,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/models/decisions.rs` | src | m | 8 struct · 1 enum · 2 crate-vis | BigReply, BigSettings, BookingParseSettings, ConnectorSlateSettings, DecisionsSettings, ImagePickSettings, ImportAudienceSettings, SeatPickSettings +1 | `[models.decisions]`: the host's own typed questions and the System One seat on its decision ladder |
 | `src/config/models/levels.rs` | src | s | 2 struct · 2 fn · 1 const · 7 crate-vis | ModelRef, Rung | The three config levels and their expansion into per-role ladders |
 | `src/config/models/media.rs` | src | s | 3 struct · 2 crate-vis | LiveAsrOptions, MediaSeatConfig, MediaSettings | `[models.media]`: the media seats (ODM-004: image, video and the rest are seats outside the tiers) |
-| `src/config/models/mod.rs` | src | m | 7 struct · 1 enum · 2 fn · 9 re-export · 3 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, RecallModelSettings, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
+| `src/config/models/mod.rs` | src | m | 7 struct · 1 enum · 2 fn · 10 re-export · 3 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, RecallModelSettings, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
 | `src/config/models/planner.rs` | src | s | 2 struct · 2 crate-vis | PlannerSeatSetting, PlannerSettings | `[models.planner]`: the seats a leased agent's planned spawns choose among (OF-541, OF-389) |
 | `src/config/models/provider.rs` | src | m | 3 struct · 4 enum · 7 fn · 5 crate-vis | OutputLimitField, ProviderConfig, ProviderKind, RequestCodec, RequestCompression, ResponseFormatWire, ResponsesSocket | One provider entry: how to reach a model server, as data |
 | `src/config/models/tests.rs` | test | s | — | — | — |
+| `src/config/models/training.rs` | src | s | 2 struct · 1 fn · 1 const · 2 crate-vis | TrainingConnectorSettings, TrainingSettings | `[models.training]`: the trainer connectors this host dispatches an owner-authorized training run through… |
 | `src/config/models/voice.rs` | src | s | 1 struct · 3 crate-vis | VoiceSettings | `[models.voice]`: the server's own voice loop (OF-410) |
 | `src/config/native_mail.rs` | src | s | 1 struct · 1 enum · 2 crate-vis | NativeMailConfig, NativeMailMode | `[native_mail]`: the host's own mail server, a Stalwart instance serving one domain the owner controls… |
 | `src/config/oneironer.rs` | src | m | 4 struct · 3 enum · 9 fn · 1 re-export · 2 crate-vis | OneironerArgs, OneironerBackbone, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider, OneironerTier | The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity, native runtime and label table |
@@ -724,8 +728,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/trusted_proxy.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | TrustedProxy | `trusted_proxies`: the reverse proxies whose `X-Forwarded-For` entries the server believes when it keys a… |
 | `src/connector_admission_host.rs` | src | m | 12 crate-vis | — | The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint… |
 | `src/connector_call_host.rs` | src | m | 1 struct · 1 fn · 15 crate-vis | ServedConnectorCallHost | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
-| `src/connector_call_host/live_exchange.rs` | src | m | 21 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned, and the reply… |
-| `src/connector_call_host/presenting.rs` | src | s | 7 crate-vis | — | What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646… |
+| `src/connector_call_host/live_exchange.rs` | src | m | 24 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned, and the reply… |
+| `src/connector_call_host/presenting.rs` | src | m | 11 crate-vis | — | What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646… |
 | `src/connector_call_settle.rs` | src | s | 4 crate-vis | — | The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery… |
 | `src/connector_elicitation.rs` | src | m | 11 crate-vis | — | The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510) |
 | `src/control_keys.rs` | src | s | 2 struct · 1 enum · 6 fn · 1 const · 1 mod | ControlKeys, KeyError, KeyRecord | Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every… |
@@ -859,7 +863,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/wire.rs` | src | m | 15 crate-vis | — | Version-8 app envelopes |
 | `src/logging.rs` | src | s | 1 re-export · 4 crate-vis | — | What the binaries write to their log sinks, and the panic hook |
 | `src/logging/tests.rs` | test | s | 4 crate-vis | — | — |
-| `src/machine.rs` | src | m | 23 crate-vis | — | What this machine has: cores, memory, descriptors, free disk |
+| `src/machine.rs` | src | m | 24 crate-vis | — | What this machine has: cores, memory, descriptors, free disk |
 | `src/main.rs` | src | s | — | — | — |
 | `src/managed/args.rs` | src | m | 1 struct · 2 enum · 3 fn · 1 const · 1 re-export · 3 crate-vis | ManagedArgs, ManagedError, SettingsRefusal | Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals |
 | `src/managed/args/policy.rs` | src | m | 1 crate-vis | — | The managed argv allowlist: what managed mode does with each `ServeArgs` field, and the refusal of every… |
@@ -981,7 +985,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/forward.rs` | src | s | 2 crate-vis | — | One rung's stream handed to the caller event by event, up to its terminal or its failure |
 | `src/models/gemini_media.rs` | src | s | 1 crate-vis | — | The Gemini API's media leg: one request per call over [`ProviderHttp`], the key in `x-goog-api-key` |
 | `src/models/hosted_speech.rs` | src | m | 1 struct · 4 fn · 3 crate-vis | HostedCloner | Hosted speech wires that are not OpenAI-compatible: ARCH-0061 §5's hosted realtime tier, Cartesia Sonic… |
-| `src/models/http.rs` | src | m | 21 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
+| `src/models/http.rs` | src | m | 22 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
 | `src/models/kept_on_device_tests.rs` | test | m | — | — | World privacy on a fallback ladder (owner ruling 2026-10-14, "Models": no silent fallback to a cloud model… |
 | `src/models/ladder.rs` | src | XL | 1 struct · 12 fn · 21 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
 | `src/models/ladder/cache_warmth.rs` | src | m | 6 crate-vis | — | Prompt-cache warmth (FIX 6029): this runtime's own note, in memory, of which reusable prefix each route… |
@@ -989,6 +993,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/ladder/shadow_capture.rs` | src | s | 3 crate-vis | — | The route a step replay capsule's answering rung went out on (PR-S1): noted beside the rung itself when a… |
 | `src/models/ladder/step_attempt.rs` | src | s | 1 crate-vis | — | The durable step executor owns retries; this door sends one gated attempt |
 | `src/models/launch_price.rs` | src | s | 2 crate-vis | — | The launch statement's USD quote (OF-532) |
+| `src/models/llama_identity.rs` | src | s | 6 crate-vis | — | What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch… |
 | `src/models/media.rs` | src | L | 3 struct · 17 fn · 24 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
 | `src/models/media/jobs.rs` | src | s | 8 crate-vis | — | The `ai.video` jobs a restart keeps (FIX-LIST 465) |
 | `src/models/media/jobs/custody.rs` | src | s | 2 crate-vis | — | A media job's owners and its erased answer (KS-2B2, FIX 5683 part B2) |
@@ -1010,6 +1015,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/status.rs` | src | s | 7 struct · 2 enum · 8 crate-vis | DiscoveredStatus, HealthState, LimitHold, ModelsStatus, ProviderStatus, RungHealth, RungStatus, SeatState +1 | What the model runtime built, for the owner-facing status route |
 | `src/models/tests.rs` | test | L | 4 crate-vis | — | Every provider kind against a local fake server, the ladder's fallback and receipt, and one config edit… |
 | `src/models/token_ratio.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | TokenRatios | Each catalog model's tokens per o200k token (OF-577): its tokenizer's count of one fixed passage over… |
+| `src/models/training.rs` | src | s | 1 fn | — | The trainer connectors `[models.training]` names (FIX 7263), as the runtime keeps them for the host's… |
 | `src/models/voice.rs` | src | s | 1 fn | — | The voice cascade's routes on the media seats (OF-410) |
 | `src/models/voxcpm2_speech.rs` | src | s | 1 crate-vis | — | The own-server speech rung on a VoxCPM2 worker (`deploy/voxcpm2`, OF-410): a `[models.media.speech]` rung on… |
 | `src/models/walk.rs` | src | m | 17 crate-vis | — | What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the… |
