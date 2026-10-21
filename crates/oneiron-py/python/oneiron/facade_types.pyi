@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1129 facade rows, 3928 declarations.
+Census: 1129 facade rows, 3930 declarations.
 Inputs: 1064 of 1129 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1016 of 1129 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -10748,11 +10748,19 @@ class CodeImportAnchor(TypedDict):
     receive_provenance: EntityId
     snapshot: EntityId
     snapshot_fork_hash: str
+RepoFileProjectionKind = Literal["masked", "opaque"]
+class RepoFileProjectionView(TypedDict):
+    kind: RepoFileProjectionKind
+    source_blob: str
+    copy_blake3: str
+    copy_size_bytes: int
+    way_out: str
 class CodeSnapshotFile(TypedDict):
     path: str
     content_hash_blake3: str
     size_bytes: int
     mode: int
+    projection: NotRequired[RepoFileProjectionView | None]
 class CodeImportManifestFile(TypedDict):
     git_oid: str
     file: CodeSnapshotFile
@@ -11253,6 +11261,7 @@ class CodeViewFileBytes(TypedDict):
     path: str
     bytes: list[int]
     sha256: str
+    projection: NotRequired[RepoFileProjectionView | None]
 class CodeSecretTaintRef(TypedDict):
     secret_ref: str
     rotation_generation: int
