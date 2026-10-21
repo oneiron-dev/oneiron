@@ -3479,6 +3479,8 @@ class Oneiron:
             """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries."""
         def accept(self, spec: Facade.TaskAccept) -> Facade.TaskCallReceipt:
             """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
+        def redo(self, spec: Facade.TaskRedo) -> Facade.TaskCallReceipt:
+            """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:

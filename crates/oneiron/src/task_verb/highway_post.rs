@@ -89,12 +89,12 @@ struct PostStamp {
 /// The value of one `tasks.brief` revision proposal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BriefRevision {
-    task_ref: EntityId,
-    base_rev: u32,
+pub(super) struct BriefRevision {
+    pub(super) task_ref: EntityId,
+    pub(super) base_rev: u32,
     report_key: String,
     actor_class: u8,
-    brief: QueueTaskBrief,
+    pub(super) brief: QueueTaskBrief,
 }
 
 /// What the Auto branch of one post found.

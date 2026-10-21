@@ -437,6 +437,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAccept>(),
             ),
             (
+                "tasks.redo",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskRedo>(),
+            ),
+            (
                 "vault.commit_message",
                 crate::code_run::vault_read::request_schema::<crate::memory::CommitMessageRequest>(
                 ),
@@ -10289,6 +10293,13 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "task_ref"]
         }
+        "tasks.redo" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.commit_message" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -17892,6 +17903,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.accept" => {
             let _input: crate::task_verb::TaskAccept = decode(value.clone())?;
         }
+        "tasks.redo" => {
+            let _input: crate::task_verb::TaskRedo = decode(value.clone())?;
+        }
         "vault.commit_message" => {
             let _input: crate::memory::CommitMessageRequest = decode(value.clone())?;
         }
@@ -21725,6 +21739,7 @@ pub fn invoke(
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "tasks.accept" => encode(tasks_accept(memory, decode(value)?)?),
+        "tasks.redo" => encode(tasks_redo(memory, decode(value)?)?),
         "vault.commit_message" => encode(vault_commit_message(memory, decode(value)?)?),
         "vault.begin_message_stream" => encode(vault_begin_message_stream(memory, decode(value)?)?),
         "vault.append_to_stream" => encode(vault_append_to_stream(memory, decode(value)?)?),
@@ -24649,6 +24664,12 @@ pub fn tasks_accept(
         &["/task_ref"],
     )?;
     memory.tasks_accept(input)
+}
+pub fn tasks_redo(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskRedo,
+) -> MemoryResult<crate::task_verb::TaskCallReceipt> {
+    memory.tasks_redo(input)
 }
 pub fn vault_commit_message(
     memory: &Memory<'_>,

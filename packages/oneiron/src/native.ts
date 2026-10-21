@@ -110,6 +110,7 @@ vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 tasksAccept(input: unknown): unknown
+tasksRedo(input: unknown): unknown
 vaultCommitMessage(input: unknown): unknown
 vaultBeginMessageStream(input: unknown): unknown
 vaultAppendToStream(input: unknown): unknown

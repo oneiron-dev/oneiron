@@ -388,6 +388,11 @@ export_facade! {
     let output = client.tasks_accept(&input)?;
     crate::codec::lift_record("tasks.accept", &output)
 };
+"tasks.redo" => fn tasks_redo(&self, input: TaskRedo) -> TaskCallReceipt = |client| {
+    let input: oneiron::task_verb::TaskRedo = crate::codec::lower_record("tasks.redo", input)?;
+    let output = client.tasks_redo(&input)?;
+    crate::codec::lift_record("tasks.redo", &output)
+};
 "vault.commit_message" => fn vault_commit_message(&self, input: CommitMessageRequest) -> WitnessReceipt = |client| {
     let input: oneiron::memory::CommitMessageRequest = crate::codec::lower_record("vault.commit_message", input)?;
     let output = client.vault_commit_message(&input)?;

@@ -23,12 +23,12 @@
 
 mod followup;
 mod model;
+mod open_asks;
 mod storage;
 mod wait;
 
 pub use self::followup::{
-    HumanTaskFollowupDriver, OPEN_HUMAN_ASK_FAMILIES, OpenHumanAsk, OpenHumanAskKind,
-    OpenHumanAsks, human_followup_record, human_followup_records, open_asks_for,
+    HumanTaskFollowupDriver, human_followup_record, human_followup_records,
     resolve_native_human_route,
 };
 pub(crate) use self::followup::{
@@ -40,6 +40,10 @@ pub use self::model::{
     HUMAN_TASK_FOLLOWUP_SCHEMA_VERSION, HumanFollowupDispatch, HumanFollowupStage,
     HumanResponseSignal, HumanTaskError, HumanTaskFollowupRecord, HumanTaskResult,
     HumanTaskWaitBinding, NativeHumanRoute,
+};
+pub use self::open_asks::{
+    OPEN_HUMAN_ASK_FAMILIES, OpenAskFollowup, OpenHumanAsk, OpenHumanAskKind, OpenHumanAsks,
+    UNCOVERED_HUMAN_ASK_FAMILIES, UncoveredHumanAskFamily, open_asks_for,
 };
 pub use self::wait::{
     bind_human_wait, human_wait_binding, release_human_wait, signal_human_response,

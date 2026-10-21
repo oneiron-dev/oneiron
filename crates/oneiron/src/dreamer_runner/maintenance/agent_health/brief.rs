@@ -1,10 +1,11 @@
 //! The typed brief one agent-health review observed (OF-568 L7, agent-mind
 //! §3.5: "the evidence: the brief revision, receipt ids, the time window and
 //! the numbers against the dial"). A pin is a TASK's brief revision and
-//! digest as the review read them: a witness alone. It holds no brief text,
-//! and nothing keeps an older revision's text. The reviewed agent's dispatch
-//! captures no brief stamp, so a pin is never a launch snapshot: it is what
-//! the review saw when it read the TASK.
+//! digest as the review read them: a witness alone. It holds no brief text;
+//! an older revision's text is read back from the TASK's settled
+//! `tasks.brief` history (FIX 8077). The reviewed agent's dispatch captures
+//! no brief stamp, so a pin is never a launch snapshot: it is what the review
+//! saw when it read the TASK.
 
 use serde::{Deserialize, Serialize};
 
@@ -46,16 +47,17 @@ impl HealthBriefPin {
     }
 }
 
-/// The brief an ask froze, as the Coach's model reads it: the pin and, while
-/// it is still the TASK's current brief, that brief's text. It is built for
-/// one ask and never stored.
+/// The brief an ask froze, as the Coach's model reads it: the pin and the
+/// text of the revision it names. It is built for one ask and never stored.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct HealthObservedBrief {
     /// The pin the ask froze.
     pub pin: HealthBriefPin,
-    /// The observed brief as JSON, only when the TASK's brief today carries
-    /// the pin's revision and digest. `None`: the observed text is no longer
-    /// the current brief, and no older text is kept.
+    /// The observed brief as JSON: the TASK's brief today when it carries
+    /// the pin's revision and digest, else the settled `tasks.brief`
+    /// revision that landed exactly that revision and digest. `None`: no
+    /// such revision reads, as for a posted TASK's first brief once it has
+    /// moved on, which no `tasks.brief` CLAIM landed.
     pub text: Option<String>,
 }
 
@@ -103,8 +105,9 @@ pub(super) fn pin_findings_in(
 }
 
 /// What an ask hands the Coach from its frozen `pin`, read in `txn`: the
-/// pin, with the brief's text only when today's brief is the pinned
-/// revision. `None` with no pin.
+/// pin, with the brief's text when today's brief is the pinned revision, or
+/// else when the TASK's settled `tasks.brief` history holds it (FIX 8077).
+/// `None` with no pin.
 pub(super) fn observed_brief_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -118,10 +121,27 @@ pub(super) fn observed_brief_in(
             serde_json::to_string(&stored.brief)
                 .map_err(|_| Error::InvalidConfig("a typed brief did not encode".into()))?,
         ),
-        _ => None,
+        _ => settled_text_in(vault, txn, pin),
     };
     Ok(Some(HealthObservedBrief {
         pin: pin.clone(),
         text,
     }))
+}
+
+/// The pinned revision's text from the TASK's settled `tasks.brief`
+/// history, once its brief has moved on. A history that does not read
+/// leaves the text unknown, with a warning: it never fails the ask.
+fn settled_text_in(vault: &Vault, txn: &heed::RoTxn<'_>, pin: &HealthBriefPin) -> Option<String> {
+    match crate::task_verb::settled_brief_in(vault, txn, pin.task, pin.rev, &pin.digest) {
+        Ok(brief) => brief.and_then(|brief| serde_json::to_string(&brief).ok()),
+        Err(error) => {
+            tracing::warn!(
+                task = %pin.task.to_hex(),
+                kind = ?error.kind(),
+                "agent-health brief history not read"
+            );
+            None
+        }
+    }
 }
