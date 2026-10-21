@@ -80308,6 +80308,59 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeclaredEnvelope",
+      "DeviceLedger",
+      "DeviceRow",
+      "DeviceSnapshot",
+      "ResidentReport",
+      "ResidentSource"
+     ],
+     "path": "src/supervisor/inference_device.rs",
+     "purpose": "One physical device's memory ledger (DESIGN-V2 §7, INFERENCE R2): what each worker on it declared it would…",
+     "surface": {
+      "enum": 1,
+      "fn": 7,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "InferenceWorker",
+      "LaunchFailure",
+      "RunningWorker",
+      "WorkerActivity",
+      "WorkerExit",
+      "WorkerLauncher",
+      "WorkerLease",
+      "WorkerPolicy",
+      "WorkerUnavailable"
+     ],
+     "path": "src/supervisor/inference_worker.rs",
+     "purpose": "One model worker's lifecycle (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per worker, over an…",
+     "surface": {
+      "const": 5,
+      "fn": 14,
+      "struct": 7,
+      "trait": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/inference_worker/drive.rs",
+     "purpose": "A managed worker's driver: its install, and each incarnation's launch, qualification, service, drain and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -80337,7 +80390,7 @@
      "path": "src/supervisor/mod.rs",
      "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…",
      "surface": {
-      "re-export": 7
+      "re-export": 9
      }
     },
     {
@@ -80564,7 +80617,7 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 15,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -80594,7 +80647,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 20,
+   "source_files": 23,
    "test_files": 10
   },
   "oneiron-ffi": {
@@ -93121,7 +93174,7 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 2,
-      "re-export": 10,
+      "re-export": 11,
       "struct": 7
      }
     },
@@ -93195,6 +93248,25 @@
      "surface": {
       "crate-vis": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactSource",
+      "ManagedLaunch",
+      "NativeServer",
+      "WorkerArtifact",
+      "WorkerConfig",
+      "WorkerEnvelope"
+     ],
+     "path": "src/config/models/workers.rs",
+     "purpose": "`[models.workers.<id>]`: the model workers this server supervises or probes (FIX 8315, DESIGN-V2 R2)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "struct": 5
      }
     },
     {
@@ -96460,6 +96532,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/ladder/worker_lease.rs",
+     "purpose": "A rung's managed worker (FIX 8315, DESIGN-V2 R2): the call waits for it and holds its lease from before…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/launch_price.rs",
      "purpose": "The launch statement's USD quote (OF-532)",
      "surface": {
@@ -96522,7 +96604,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 20,
       "re-export": 14,
       "struct": 2
@@ -96693,7 +96775,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DiscoveredStatus",
@@ -96776,6 +96858,76 @@
      "purpose": "What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the…",
      "surface": {
       "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host.rs",
+     "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/bundle.rs",
+     "purpose": "The worker code this binary carries (DESIGN-V2 R2): the house EXL3 server with every module it imports, the…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/install.rs",
+     "purpose": "A managed worker's install (DESIGN-V2 R2): its weights through the artifact store, its code bundle written…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/launch_manifest.rs",
+     "purpose": "The supervisor's private per-launch manifest (DESIGN-V2 R2): one file per launch binding the bytes the…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/launcher.rs",
+     "purpose": "The managed launcher for the house llama.cpp and EXL3 workers (DESIGN-V2 R2): what [`super::install`]…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/probe.rs",
+     "purpose": "The probes for the house llama.cpp and EXL3 workers (INFERENCE R1 rules, R2 qualification): one actual chat…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/process.rs",
+     "purpose": "One running worker process in its supervisor's custody: started in a process group of its own, reaped by one…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -99407,7 +99559,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 53,
+     "files": 54,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99645,7 +99797,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 52,
+     "files": 60,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -99787,7 +99939,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1088,
+   "source_files": 1097,
    "test_files": 182
   },
   "oneiron-spawn": {
