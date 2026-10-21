@@ -40,9 +40,6 @@ pub(crate) const ROOM_OFFER_IDLE_SECS: u64 = 24 * 60 * 60;
 /// room-wide cards it mentions in: an array of offer ids.
 const OFFER_REFS: &str = "room_offer_refs";
 
-/// Most cards one message or record names, as a turn's mentions.
-const MAX_OFFER_REFS: usize = 256;
-
 /// An advisory ballot on a room-wide card, from someone in its room.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -108,9 +105,6 @@ fn bad_refs() -> Error {
 /// write is refused.
 fn json_refs(value: &serde_json::Value) -> Result<BTreeSet<String>> {
     let ids = value.as_array().ok_or_else(bad_refs)?;
-    if ids.len() > MAX_OFFER_REFS {
-        return Err(bad_refs());
-    }
     ids.iter()
         .map(|id| {
             id.as_str()
@@ -124,9 +118,6 @@ fn json_refs(value: &serde_json::Value) -> Result<BTreeSet<String>> {
 /// [`json_refs`] for a MessagePack value.
 fn msgpack_refs(value: &rmpv::Value) -> Result<BTreeSet<String>> {
     let ids = value.as_array().ok_or_else(bad_refs)?;
-    if ids.len() > MAX_OFFER_REFS {
-        return Err(bad_refs());
-    }
     ids.iter()
         .map(|id| {
             id.as_str()

@@ -405,15 +405,16 @@ fn file_join_in_txn(
     principal: Option<EntityId>,
     accepts: bool,
 ) -> Result<JoinOutcome> {
+    // The key is hashed into the join's ref, so its length bounds no stored
+    // key.
     if request.intent_key.is_empty()
-        || request.intent_key.len() > 128
         || !request
             .intent_key
             .bytes()
             .all(|byte| byte.is_ascii_graphic())
     {
         return Err(Error::InvalidConfig(
-            "a join's intent_key is 1..=128 printable bytes".into(),
+            "a join's intent_key is one or more printable bytes".into(),
         ));
     }
     if history != HistoryChoice::Inherit && !first_entry_in_txn(vault, txn, request)? {
