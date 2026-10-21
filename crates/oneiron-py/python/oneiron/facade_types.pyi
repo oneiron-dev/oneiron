@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1094 facade rows, 3767 declarations.
-Inputs: 1029 of 1094 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 981 of 1094 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1096 facade rows, 3777 declarations.
+Inputs: 1031 of 1096 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 983 of 1096 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -2523,6 +2523,16 @@ class TaggingMarkerView(TypedDict):
     created_at: int
     updated_at: int
 TaggingFailureView = TypedDict("TaggingFailureView", {"class": str, "code": NotRequired[str | None], "refusal": NotRequired[str | None]})
+ExecutionRuntime = Literal["candle", "endpoint"]
+ExecutionCompute = Literal["cpu", "metal", "cuda", "opaque"]
+ExecutionPick = Literal["calibrated", "free", "shorter_queue", "fallback", "pinned"]
+class EncoderExecution(TypedDict):
+    runtime: ExecutionRuntime
+    compute: ExecutionCompute
+    engine: str
+    pick: ExecutionPick
+    queue_ms: int
+    infer_ms: int
 class TaggingOutcomeViewSaved(TypedDict):
     outcome: Literal["saved"]
     spans: int
@@ -2580,6 +2590,7 @@ class TaggingTraceView(TypedDict):
     input_hash: NotRequired[str | None]
     try_number: int
     call_micros: NotRequired[int | None]
+    execution: NotRequired[EncoderExecution | None]
     outcome: TaggingOutcomeView
 class TaggingStatusView(TypedDict):
     turn_ref: str
@@ -11006,6 +11017,32 @@ class AgentGrantRevoked(TypedDict):
     changed: bool
     agent: NotRequired[EntityId | None]
     act_ref: NotRequired[str | None]
+class GitPushRepo(TypedDict):
+    repo: EntityId
+    project: EntityId
+class GitPushGrantMintInput(TypedDict):
+    member: EntityId
+    repos: list[GitPushRepo]
+    expires_at: NotRequired[int | None]
+class GitPushGrantView(TypedDict):
+    grant_ref: EntityId
+    member: EntityId
+    repos: list[GitPushRepo]
+    delegated_by: EntityId
+    expires_at: NotRequired[int | None]
+    stands: bool
+    revoke_command: str
+class GitPushGrantMintOutput(TypedDict):
+    grant: GitPushGrantView
+    act_ref: str
+class GitPushGrantRevokeInput(TypedDict):
+    grant_ref: EntityId
+    seen: NotRequired[str | None]
+class GitPushGrantRevokeOutput(TypedDict):
+    grant_ref: EntityId
+    changed: bool
+    member: NotRequired[EntityId | None]
+    act_ref: NotRequired[str | None]
 class BaseAgentPrincipal(TypedDict):
     name: str
     id: EntityId
@@ -13269,6 +13306,7 @@ class ModelRoleOutputEmbedded(TypedDict):
 class ModelRoleOutputTagged(TypedDict):
     kind: Literal["tagged"]
     output: EncoderOutput
+    execution: NotRequired[EncoderExecution | None]
 ModelRoleOutput = ModelRoleOutputGenerated | ModelRoleOutputEmbedded | ModelRoleOutputTagged
 class ModelRoleInvocation(TypedDict):
     receipt: ModelRoleReceipt

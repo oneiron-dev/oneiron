@@ -1,11 +1,16 @@
 //! One trace per settled marker attempt. A trace names the turn, the tagger and
 //! what happened; it never carries the turn's text or the tagger's answer.
 
+use std::panic::AssertUnwindSafe;
+use std::time::Instant;
+
 use serde::{Deserialize, Serialize};
 
 use super::output::OutputRefusal;
 use crate::EntityId;
 use crate::attempt_queue::AttemptId;
+use crate::error::Result;
+use crate::memory::extraction::{EncoderAttempt, EncoderExecution, EncoderOutput};
 
 /// An attempt id as the 32 lowercase hex digits a trace carries.
 pub(super) fn attempt_hex(id: &AttemptId) -> String {
@@ -37,7 +42,29 @@ pub struct TaggingTrace {
     pub try_number: u32,
     /// Wall time of the tagger call in microseconds, when one was made.
     pub call_micros: Option<u64>,
+    /// What ran the call, when a worker was dispatched for it: its runtime,
+    /// compute and pick, and how long it waited and ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<EncoderExecution>,
     pub outcome: TaggingOutcome,
+}
+
+impl TaggingTrace {
+    /// Makes one tagger call, recording its wall time and the facts of the
+    /// worker that ran it on this trace. A panic is caught and returned as
+    /// `Err`, with no facts recorded.
+    pub(super) fn record_call(
+        &mut self,
+        call: impl FnOnce() -> EncoderAttempt,
+    ) -> std::thread::Result<Result<EncoderOutput>> {
+        let started = Instant::now();
+        let called = std::panic::catch_unwind(AssertUnwindSafe(call));
+        self.call_micros = Some(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
+        called.map(|attempt| {
+            self.execution = attempt.execution;
+            attempt.result
+        })
+    }
 }
 
 /// How an attempt settled.

@@ -10,7 +10,10 @@
 //! card's ask (OF-568) ride the same queue. Each code-fix run also replays
 //! the publisher's pinned candidates the worker started with, and after it
 //! starts the worker works through past code-fix work, a few failures a
-//! round, so a candidate pinned since is tried on those once.
+//! round, so a candidate pinned since is tried on those once. It works
+//! through it again from the start each `CATCH_UP_RESCAN` after a pass ends,
+//! so a pair kept for want of the Coach's Grant runs once that Grant is
+//! minted (FIX 7031).
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -62,6 +65,9 @@ const WORDING: &str = "Which fix does this agent need so its work can go on? \
     grant or a connector it needs is missing or broken, and person when none of \
     these fits or a person must look.";
 const TICK: Duration = Duration::from_secs(5);
+/// How long after a finished catch-up scan the next one starts from the
+/// start, so a Grant minted later re-runs its NoGrant pairs (FIX 7031).
+const CATCH_UP_RESCAN: Duration = Duration::from_secs(600);
 pub(super) const LEASE_OWNER: &str = "coach.host";
 /// The Coach's own admission counter. Its questions spend on the decision
 /// ladder's meters, so each lease reserves one unit and gives it back.
@@ -87,8 +93,11 @@ pub(crate) fn spawn(
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // The past-work catch-up's next step; `None` once it is done.
+        // The past-work catch-up's next step; `None` once a scan is done,
+        // until `CATCH_UP_RESCAN` after it ended (`finished`), when the next
+        // scan starts from the start. Ticks in between run no step.
         let mut catch_up = Some(None);
+        let mut finished: Option<tokio::time::Instant> = None;
         loop {
             tick.tick().await;
             let Some(server) = weak.upgrade() else {
@@ -97,6 +106,10 @@ pub(crate) fn spawn(
             let Some(pass) = admit() else {
                 continue;
             };
+            if finished.is_some_and(|at| at.elapsed() >= CATCH_UP_RESCAN) {
+                catch_up = Some(None);
+                finished = None;
+            }
             let publisher = Arc::clone(&publisher);
             let step = catch_up;
             match tokio::task::spawn_blocking(move || {
@@ -113,6 +126,9 @@ pub(crate) fn spawn(
                 }
                 Err(error) => tracing::warn!(%error, "the Coach's heal round stopped"),
                 Ok((step, Ok(()))) => catch_up = step,
+            }
+            if catch_up.is_none() && finished.is_none() {
+                finished = Some(tokio::time::Instant::now());
             }
         }
     })

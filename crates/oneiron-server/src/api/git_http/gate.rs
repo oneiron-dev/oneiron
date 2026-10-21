@@ -16,6 +16,10 @@ use axum::http::request::Parts;
 use axum::response::IntoResponse;
 use axum::response::Response;
 
+// Who may push past these gates is the engine's one decision (G1-PUSH).
+mod push;
+pub(super) use push::{capability_refused, preflight, push_caller};
+
 /// The bearer challenge an unauthenticated smart-HTTP request receives.
 pub(super) const GIT_HTTP_CHALLENGE: &str = "Bearer realm=\"oneiron-origin\"";
 

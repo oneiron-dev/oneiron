@@ -20,6 +20,10 @@ use super::EmbedderDevice;
 use super::lookup::lookup_parse;
 use super::models::RequestCodec;
 
+mod runtime;
+
+pub use runtime::OneironerRuntime;
+
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_BATCH_SIZE: usize = 16;
 const DEFAULT_IDLE_INTERVAL_MS: u64 = 15_000;
@@ -69,30 +73,6 @@ impl FromStr for OneironerProvider {
 impl fmt::Display for OneironerProvider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
-    }
-}
-
-/// Native inference runtime. Endpoint providers keep their own runtime.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum OneironerRuntime {
-    #[default]
-    Candle,
-}
-
-impl OneironerRuntime {
-    pub const fn as_str(self) -> &'static str {
-        "candle"
-    }
-}
-
-impl FromStr for OneironerRuntime {
-    type Err = String;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "candle" => Ok(Self::Candle),
-            _ => Err("oneironer runtime must be candle".to_owned()),
-        }
     }
 }
 

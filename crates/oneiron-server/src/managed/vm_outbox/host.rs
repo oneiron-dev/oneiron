@@ -10,13 +10,19 @@
 //! are denied and the commit in flight finishes. Proving the host copies
 //! gone (the vault disk, these roots' copies, the carrier records) is the
 //! supervisor's destroy journal's, not this.
+//!
+//! The backup label the guest names as its engine's registered one is kept
+//! in the carrier's records, for the vault the attachment is bound to, and
+//! [`read_vm_backup_label`] reads it (FIX 7046). It proves the label the
+//! expected VM's carrier reported, not a signed fact of the backups: a node
+//! still checks each held artifact's commitment against its own pins.
 
 use super::local::{Owner, make_dir_at, open_dir_path};
-use super::store::Store;
+use super::store::{self, BackupLabelBinding, Store};
 use super::transfer::Link;
-use super::{Carrier, Gate, Roots};
+use super::{Carrier, Gate, Mode, Roots};
 use crate::managed::listener::bind_unix_socket;
-use oneiron_vault_contract::backup_handoff::BACKUP_HANDOFF_DIR;
+use oneiron_vault_contract::backup_handoff::{BACKUP_HANDOFF_DIR, backup_handoff_dir};
 use oneiron_vault_contract::vm_outbox::{VmOutboxKind, VmOutboxSide};
 use serde::Deserialize;
 use std::fs::File;
@@ -152,5 +158,64 @@ impl VmOutboxAttachment {
     /// in flight finish.
     pub fn drain(&self) {
         self.gate.drain();
+    }
+}
+
+/// The backup label the VM bound to `vault` last reported its engine
+/// registered, read from `roots`' carrier records alone: no VM is started or
+/// asked, and no backup's name is read. `None` until a registration was
+/// reported (no records yet included); an error for a record that does not
+/// read, is not the store's own private file, names an invalid label, or
+/// belongs to another vault.
+pub fn read_vm_backup_label(
+    roots: &VmOutboxHostRoots,
+    vault: &str,
+) -> anyhow::Result<Option<String>> {
+    let dir = match open_dir_path(&roots.store) {
+        Ok(dir) => dir,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let Some(binding) = store::read_backup_label(&dir)? else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        valid_backup_label(&binding.label),
+        "the backup label record names an invalid label"
+    );
+    anyhow::ensure!(
+        binding.vault == vault,
+        "the backup label record belongs to another vault"
+    );
+    Ok(Some(binding.label))
+}
+
+/// Whether `label` is one the guest's endpoint registers: one plain path
+/// part, as a handoff directory names it.
+fn valid_backup_label(label: &str) -> bool {
+    backup_handoff_dir(Path::new(""), label).is_some()
+}
+
+impl Carrier {
+    /// Keeps `label`, which the guest named as its engine's registered
+    /// backup label, for `vault`, the attachment's own, before the session
+    /// goes on. A label the guest's endpoint would never register, or a
+    /// record that cannot be written, ends the session; the guest names it
+    /// again on its next. A draining end records nothing new.
+    pub(super) fn bind_backup_label(&mut self, vault: &str, label: String) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_backup_label(&label),
+            "the guest named a backup label that is not one plain path part"
+        );
+        let gate = Arc::clone(&self.gate);
+        let held = gate.hold();
+        if *held != Mode::Draining {
+            self.store.bind_backup_label(BackupLabelBinding {
+                vault: vault.to_owned(),
+                label,
+            })?;
+        }
+        drop(held);
+        Ok(())
     }
 }
