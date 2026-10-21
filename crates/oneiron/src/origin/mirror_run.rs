@@ -7,9 +7,12 @@
 //! crashed host keeps the mirror held until it exits. An interval or event
 //! run finds the hold taken and leaves the mirror for the next pass; a
 //! push-now waits for it. Under the hold the mirror's open plan settles
-//! first (`publish::mirror_plan_run`); only a mirror with none freezes a new
-//! one. A `schedule` run plans exactly the selection the scheduled mirror
-//! always pushed. A `full_auto` run plans its green selection
+//! first (`publish::mirror_plan_run`), and a run that continued one reports
+//! that plan alone: the next plan is frozen at a later cadence or event
+//! (`full_auto`: the next wake or tick). Only a mirror with no open plan
+//! reads its published refs and deletions, there, under the hold, and
+//! freezes a new one. A `schedule` run plans exactly the selection the
+//! scheduled mirror always pushed. A `full_auto` run plans its green selection
 //! (`mirror_auto`) only when it differs from the plan it settled last, or a
 //! push-now asks. An `ask_me` mirror only settles a plan left open when it
 //! was switched: its unsent batches are paused, never sent. A run that
@@ -142,16 +145,14 @@ impl Vault {
         Ok(report)
     }
 
-    /// The whole-ref run of one mirror over the published `refs` and the
-    /// `deletions` its pushed names call for (module docs). `None` when the
-    /// run had nothing to do or left the mirror for the next pass.
+    /// The whole-ref run of one mirror (module docs). `None` when the run
+    /// had nothing to do or left the mirror for the next pass.
     pub(super) fn run_mirror_whole_refs(
         &self,
         wire: &GitWire<'_>,
         handle: &GitWireRepo,
         repo_id: EntityId,
         target: &OriginMirrorTarget,
-        published: (Vec<(GitRefName, GitOid)>, Vec<GitRefName>),
         trigger: MirrorTrigger,
     ) -> Result<Option<WholeRefsRun>> {
         let hold = mirror_hold_dir(handle)?;
@@ -170,19 +171,21 @@ impl Vault {
             hold: &hold,
         };
         let automatic = target.sync_strategy.pushes_whole_refs();
-        // An open plan settles first; a mirror whose plan is still open, or
-        // that no longer pushes whole, reports that plan alone.
-        let settled = match self.continue_mirror_plan(&scope) {
-            Ok(Some(summary)) if !summary.settled || !automatic => {
-                return self.finish_mirror_run(&scope, &summary).map(Some);
-            }
-            Ok(settled) => settled,
+        // An open plan settles first, and a run that continued one reports
+        // that plan alone: the next plan waits for a later cadence or event.
+        match self.continue_mirror_plan(&scope) {
+            Ok(Some(summary)) => return self.finish_mirror_run(&scope, &summary).map(Some),
+            Ok(None) => {}
             Err(error) => return Err(self.hold_mirror_run(&scope, &error)),
-        };
+        }
         if !automatic {
             return Ok(None);
         }
-        let (refs, deletions) = published;
+        // Read here, under the hold and after the old plan, so the newest
+        // green head is what goes out.
+        let Some((refs, deletions)) = self.mirror_published_basis(wire, handle, repo_id)? else {
+            return Ok(None);
+        };
         let selection = if target.sync_strategy == OriginMirrorSyncStrategy::FullAuto {
             self.full_auto_due(&scope, refs, deletions, trigger)?
         } else {
@@ -203,8 +206,7 @@ impl Vault {
             },
             None => None,
         };
-        // The plan this run started reports; else the one it settled.
-        match started.or(settled) {
+        match started {
             Some(summary) => self.finish_mirror_run(&scope, &summary).map(Some),
             None => Ok(None),
         }

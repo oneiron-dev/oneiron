@@ -33090,6 +33090,8 @@ pub enum OriginPublishReviewItem {
         target: Option<String>,
         #[serde(rename = "name", default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
+        #[serde(rename = "size", default, skip_serializing_if = "Option::is_none")]
+        size: Option<u64>,
     },
 }
 

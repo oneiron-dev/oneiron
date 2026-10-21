@@ -272,7 +272,7 @@ impl Vault {
         };
         TARGETS.put(&self.store, txn, &repo_id, &row)?;
         if moved {
-            self.pause_mirror_work_on_change_in_txn(txn, repo_id);
+            self.pause_mirror_work_on_change_in_txn(txn, repo_id, false);
         }
         Ok(row)
     }
@@ -300,7 +300,7 @@ impl Vault {
     ) -> Result<bool> {
         let repo_id = self.served_mirror_repo_id(repo_name)?;
         self.clear_mirror_lfs_census_in_txn(txn, &repo_id)?;
-        self.pause_mirror_work_on_change_in_txn(txn, repo_id);
+        self.pause_mirror_work_on_change_in_txn(txn, repo_id, true);
         TARGETS.delete(&self.store, txn, &repo_id)
     }
 
@@ -458,8 +458,33 @@ impl Vault {
             let readiness = LfsCensus::default().readiness(target.pushed.is_empty());
             return Ok(Some((0, 0, target.pushed.clone(), readiness)));
         };
+        let Some(done) = self.run_mirror_whole_refs(&wire, &handle, repo_id, target, trigger)?
+        else {
+            return Ok(None);
+        };
+        let readiness = self.mirror_lfs_readiness(&wire, &handle, repo_id, &done.census);
+        Ok(Some((done.refs, done.deleted, done.names, readiness)))
+    }
+
+    /// What a whole-ref plan starts from, read under the mirror's push hold
+    /// (`mirror_run`): every published ref but the imported ones, and the
+    /// deletions the names the mirror row says it took call for. `None`
+    /// when the row is gone: nothing is planned for a cleared mirror.
+    pub(super) fn mirror_published_basis(
+        &self,
+        wire: &GitWire<'_>,
+        handle: &GitWireRepo,
+        repo_id: EntityId,
+    ) -> Result<Option<(Vec<(GitRefName, GitOid)>, Vec<GitRefName>)>> {
+        let target = {
+            let txn = self.store.env.read_txn()?;
+            TARGETS.get(&self.store, &txn, &repo_id)?
+        };
+        let Some(target) = target else {
+            return Ok(None);
+        };
         let refs: Vec<(GitRefName, GitOid)> = self
-            .published_origin_refs_without_waiting(&wire, repo_id, &handle)?
+            .published_origin_refs_without_waiting(wire, repo_id, handle)?
             .into_iter()
             .filter(|(name, _)| !name.as_str().starts_with(ORIGIN_MIRROR_IMPORTED_PREFIX))
             .collect();
@@ -469,14 +494,7 @@ impl Vault {
             .filter(|old| !refs.iter().any(|(name, _)| name.as_str() == old.as_str()))
             .map(|old| GitRefName::parse_full(old.clone()))
             .collect::<Result<Vec<_>>>()?;
-        let published = (refs, deletions);
-        let Some(done) =
-            self.run_mirror_whole_refs(&wire, &handle, repo_id, target, published, trigger)?
-        else {
-            return Ok(None);
-        };
-        let readiness = self.mirror_lfs_readiness(&wire, &handle, repo_id, &done.census);
-        Ok(Some((done.refs, done.deleted, done.names, readiness)))
+        Ok(Some((refs, deletions)))
     }
 
     /// A proven handle on the served repository, pinned to a commit one of

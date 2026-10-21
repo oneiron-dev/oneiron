@@ -185,6 +185,8 @@ pub(crate) struct MirrorSettledPlan {
     pub(crate) landed: bool,
     /// The plan's vector digest.
     pub(crate) vector: String,
+    /// Whether the owner's clear of the mirror settled it.
+    pub(crate) cleared: bool,
 }
 
 /// One mirror's work: its open plan, its reconcile reads that failed in a

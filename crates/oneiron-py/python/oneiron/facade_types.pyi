@@ -10592,6 +10592,7 @@ class OriginPublishReviewItemObject(TypedDict):
     object: str
     target: NotRequired[str | None]
     name: NotRequired[str | None]
+    size: NotRequired[int | None]
 OriginPublishReviewItem = OriginPublishReviewItemCommit | OriginPublishReviewItemPath | OriginPublishReviewItemObject
 class OriginPublishReviewView(TypedDict):
     request_id: EntityId

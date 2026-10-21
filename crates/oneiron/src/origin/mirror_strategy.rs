@@ -196,7 +196,7 @@ impl Vault {
             row.sync_strategy = strategy;
             row.strategy_revision = row.strategy_revision.saturating_add(1);
             TARGETS.put(&self.store, txn, &repo_id, &row)?;
-            self.pause_mirror_work_on_change_in_txn(txn, repo_id);
+            self.pause_mirror_work_on_change_in_txn(txn, repo_id, false);
         }
         Ok(row)
     }

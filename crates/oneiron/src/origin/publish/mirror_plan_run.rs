@@ -17,6 +17,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitRefName};
+use crate::origin::mirror_auto::OriginMirrorHoldCause;
 
 /// The longest failure a run summary names.
 const MIRROR_RUN_MAX_FAILURE_BYTES: usize = 512;
@@ -61,13 +62,25 @@ impl Vault {
             };
             (
                 plan_id,
-                self.mirror_plan_in_txn(&txn, scope.repo_id, plan_id)?,
+                self.mirror_plan_in_txn(&txn, scope.repo_id, plan_id),
             )
         };
-        // A plan an actor scrub dropped as undecodable can never send.
-        let Some(plan) = plan else {
-            self.forget_open_mirror_plan(scope.repo_id, plan_id)?;
-            return Ok(None);
+        // A plan an actor scrub dropped, or whose row does not decode, can
+        // never send: it is forgotten and the mirror plans afresh. One that
+        // does not decode holds this run, once (`review_unavailable`, cause
+        // decode).
+        let plan = match plan {
+            Ok(Some(plan)) => plan,
+            Ok(None) => {
+                return self
+                    .forget_open_mirror_plan(scope.repo_id, plan_id)
+                    .map(|()| None);
+            }
+            Err(error) if OriginMirrorHoldCause::of(&error) == OriginMirrorHoldCause::Decode => {
+                self.forget_open_mirror_plan(scope.repo_id, plan_id)?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
         };
         self.release_stale_mirror_claims(&plan)?;
         let reconcile = self.reconcile_mirror_plan(scope, &plan)?;
@@ -114,7 +127,7 @@ impl Vault {
         let outcomes = ref_outcomes(plan, &batches);
         let summary = summarize(plan, &outcomes, reconcile)?;
         if summary.settled {
-            self.close_mirror_plan_in_txn(&mut txn, plan, summary.landed)?;
+            self.close_mirror_plan_in_txn(&mut txn, plan, summary.landed, false)?;
             txn.commit()?;
         }
         Ok(summary)
@@ -122,8 +135,9 @@ impl Vault {
 }
 
 impl Vault {
-    /// Closes an open plan whose row is gone (an actor scrub dropped it as
-    /// undecodable): it can never send, so the mirror plans again.
+    /// Closes an open plan that can never send: its row is gone (an actor
+    /// scrub dropped it) or does not decode, and is dropped here with its
+    /// pages and batches under a key-only WARN. The mirror plans again.
     pub(super) fn forget_open_mirror_plan(
         &self,
         repo_id: EntityId,
@@ -131,9 +145,16 @@ impl Vault {
     ) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
         let mut head = self.mirror_work_head_in_txn(&txn, repo_id)?;
-        if head.open != Some(plan_id) || self.mirror_plan_in_txn(&txn, repo_id, plan_id)?.is_some()
-        {
+        if head.open != Some(plan_id) {
             return Ok(());
+        }
+        match self.mirror_plan_in_txn(&txn, repo_id, plan_id) {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => {}
+            Err(error) if OriginMirrorHoldCause::of(&error) == OriginMirrorHoldCause::Decode => {
+                self.drop_undecodable_mirror_plan_in_txn(&mut txn, repo_id, plan_id, &error)?;
+            }
+            Err(error) => return Err(error),
         }
         head.open = None;
         head.unread = 0;
@@ -145,11 +166,16 @@ impl Vault {
     /// Pauses every batch of a mirror's open plan not yet claimed, in the
     /// transaction that changed the mirror's strategy, destination or row
     /// (FIX 6866 part 2, call 1). A claimed batch is left to its child and
-    /// its reconcile. Everything is read before anything is written.
+    /// its reconcile. On a `clear` the plan also settles there, as cleared:
+    /// each ref whose dispatch is uncertain is recorded unknown, a push still
+    /// running records its result against the settled plan, and nothing is
+    /// planned or sent for the cleared mirror again. Everything is read
+    /// before anything is written.
     pub(crate) fn pause_origin_mirror_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         repo_id: EntityId,
+        clear: bool,
     ) -> Result<()> {
         let head = self.mirror_work_head_in_txn(txn, repo_id)?;
         let Some(plan_id) = head.open else {
@@ -160,16 +186,25 @@ impl Vault {
         };
         let mut batches = self.mirror_batches_in_txn(txn, &plan)?;
         for (index, progress) in (0_u32..).zip(batches.iter_mut()) {
-            if progress.claim != MirrorBatchClaim::Pending {
+            let pause = progress.claim == MirrorBatchClaim::Pending;
+            if !pause && !clear {
                 continue;
             }
-            progress.claim = MirrorBatchClaim::Paused;
+            if pause {
+                progress.claim = MirrorBatchClaim::Paused;
+            }
             for outcome in &mut progress.outcomes {
                 if *outcome == MirrorRefOutcome::Pending {
                     *outcome = MirrorRefOutcome::Paused;
+                } else if clear && outcome.unproven() {
+                    *outcome = MirrorRefOutcome::Unknown;
                 }
             }
             self.put_mirror_batch_in_txn(txn, &plan, index, progress)?;
+        }
+        if clear {
+            let landed = ref_outcomes(&plan, &batches).iter().all(|o| o.landed());
+            self.close_mirror_plan_in_txn(txn, &plan, landed, true)?;
         }
         Ok(())
     }

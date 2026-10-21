@@ -4383,7 +4383,7 @@ export type OriginPublishRequestView = { request_id: EntityId; repo: string; rep
 /** `oneiron::origin::publish::inputs::OriginPublishReviewRequest` */
 export type OriginPublishReviewRequest = { repo: string; request_id: EntityId; page: number; code_repo?: EntityId | null }
 /** `oneiron::origin::publish::types::OriginPublishReviewItem` */
-export type OriginPublishReviewItem = { kind: "commit"; commit: string; parents: string[] } | { kind: "path"; status: string; mode: string; object?: string | null; path: string } | { kind: "object"; object_type: string; object: string; target?: string | null; name?: string | null }
+export type OriginPublishReviewItem = { kind: "commit"; commit: string; parents: string[] } | { kind: "path"; status: string; mode: string; object?: string | null; path: string } | { kind: "object"; object_type: string; object: string; target?: string | null; name?: string | null; size?: number | null }
 /** `oneiron::origin::publish::inputs::OriginPublishReviewView` */
 export type OriginPublishReviewView = { request_id: EntityId; digest: string; page: number; pages: number; items: OriginPublishReviewItem[] }
 /** `oneiron::origin::publish::inputs::OriginPublishIdRequest` */

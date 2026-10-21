@@ -167,14 +167,16 @@ impl Vault {
     /// Pauses the mirror's unsent automatic work in the transaction that
     /// moves its strategy or destination, or clears it (FIX 6866 call 1): a
     /// batch not yet claimed is never sent, and a running child settles
-    /// first. A read that fails here warns, never fails the owner's write:
-    /// each batch's claim fences the same change.
+    /// first. A `clear` also settles the open plan as cleared. A read that
+    /// fails here warns, never fails the owner's write: each batch's claim
+    /// fences the same change.
     pub(super) fn pause_mirror_work_on_change_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         repo_id: EntityId,
+        clear: bool,
     ) {
-        if let Err(error) = self.pause_origin_mirror_work_in_txn(txn, repo_id) {
+        if let Err(error) = self.pause_origin_mirror_work_in_txn(txn, repo_id, clear) {
             tracing::warn!(
                 code = "origin_mirror_work_not_paused",
                 repo_id = %repo_id.to_hex(),

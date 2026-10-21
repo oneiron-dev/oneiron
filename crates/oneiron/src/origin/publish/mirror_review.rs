@@ -9,7 +9,8 @@
 //! order, and a later ref leaves out what an earlier ref's section already
 //! names, so the plan's pages hold the union once while each ref keeps its
 //! own section. A tag tip names each annotated tag on its way first, its raw
-//! bytes (message included) in the digest; a tree tip names every path it
+//! bytes (message included) in the digest, or for a tag too large to read
+//! whole its oid and size; a tree tip names every path it
 //! holds; a blob tip names itself. Every section passes the one history
 //! policy hook an exact publish's review passes.
 
@@ -80,14 +81,19 @@ impl Section {
     }
 
     fn tag(&mut self, tag: &GitRefTag) {
-        self.hasher.update(b"t");
+        self.hasher
+            .update(if tag.raw.is_some() { b"t" } else { b"T" });
         field(&mut self.hasher, tag.tag.as_str().as_bytes());
-        field(&mut self.hasher, &tag.raw);
+        match &tag.raw {
+            Some(raw) => field(&mut self.hasher, raw),
+            None => field(&mut self.hasher, &tag.size.to_le_bytes()),
+        }
         self.push(OriginPublishReviewItem::Object {
             object_type: "tag".to_owned(),
             object: tag.tag.as_str().to_owned(),
             target: Some(tag.target.as_str().to_owned()),
             name: Some(tag.name.clone()),
+            size: tag.raw.is_none().then_some(tag.size),
         });
     }
 
@@ -100,6 +106,7 @@ impl Section {
             object: object.as_str().to_owned(),
             target: None,
             name: None,
+            size: None,
         });
     }
 

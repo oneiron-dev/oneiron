@@ -595,7 +595,9 @@ not. Only the live owner sets either; `every_secs` is still
 stored and checked on an `ask_me` or `full_auto` mirror, and only `schedule` reads it. A switch
 to `ask_me` (or to the other automatic strategy, or a new destination, or clearing the mirror)
 pauses automatic work not yet sent: a push already running finishes and is settled first, and
-nothing more goes out whole.
+nothing more goes out whole. Clearing the mirror also settles its open plan at once, as cleared:
+refs whose push may already have gone out are recorded as unknown, and a push still running
+records its result against that plan.
 
 ### What every automatic push records
 
@@ -606,8 +608,8 @@ records the destination and its generation, the strategy and its revision, the e
 `(ref, commit)` updates and deletions, the tip it saw at each ref, the batches (at most 256 refs a
 push, updates before deletions), the full-ancestry review of each update (as an exact publish's,
 below: every commit the push would add, with every merge parent and each path it introduces; an
-annotated tag's own object and message; every path of a tree a ref names) and one digest over all
-of it. Each ref is pushed **leased** on the tip read for it, forced and with deletions as before,
+annotated tag's own object and message, or a tag too large to read whole by its id and size;
+every path of a tree a ref names) and one digest over all of it. Each ref is pushed **leased** on the tip read for it, forced and with deletions as before,
 and with no `+` overriding the lease: a mirror whose ref moved since refuses that ref.
 
 - **No blind retry.** A ref whose push did not prove its outcome is read again at the mirror
@@ -615,7 +617,8 @@ and with no `+` overriding the lease: a mirror whose ref moved since refuses tha
   tip leased on, it gets the same-plan resend (same ref, same commit, same lease); at neither, the
   plan names it under `remote_moved` and the next push plans it afresh. A same-plan resend the
   mirror refuses again ends that ref (`refused`). Nothing is widened: a new plan waits until the
-  open one has settled.
+  open one has settled, and the run that settled it reports that plan; the next interval or event
+  plans afresh.
 - **Unreadable mirror.** When the tip cannot be read before a push, that ref goes as the scheduled
   mirror always sent it (forced, unleased) and its review covers its whole history. When the read
   after an unproven push fails, the plan stays frozen and the status shows

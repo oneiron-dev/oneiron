@@ -244,7 +244,8 @@ pub enum OriginPublishReviewItem {
     /// An object a whole ref names on its way to what it points at (FIX
     /// 6866 part 2; an automatic mirror push only): an annotated tag, with
     /// the object it names and its tag name, or a tree or blob the ref names
-    /// directly. The digest reads a tag's raw bytes, message included.
+    /// directly. The digest reads a tag's raw bytes, message included; a tag
+    /// too large to read whole, its oid and size.
     Object {
         /// `tag`, `tree` or `blob`.
         object_type: String,
@@ -253,6 +254,8 @@ pub enum OriginPublishReviewItem {
         target: Option<String>,
         /// A tag's name; `None` for a tree or blob.
         name: Option<String>,
+        /// The stored size of a tag too large to read whole; `None` else.
+        size: Option<u64>,
     },
 }
 

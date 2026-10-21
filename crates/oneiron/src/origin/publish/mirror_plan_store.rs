@@ -185,11 +185,13 @@ impl Vault {
 
     /// Closes a settled plan on its mirror's head and keeps it, dropping the
     /// oldest kept plan, rows and all, past [`ORIGIN_MIRROR_WORK_KEPT_PLANS`].
+    /// `cleared` when the owner's clear of the mirror settled it.
     pub(super) fn close_mirror_plan_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         plan: &MirrorPushPlan,
         landed: bool,
+        cleared: bool,
     ) -> Result<()> {
         let mut head = self.mirror_work_head_in_txn(txn, plan.repo_id)?;
         if head.open != Some(plan.plan_id) {
@@ -201,6 +203,7 @@ impl Vault {
             plan_id: plan.plan_id,
             landed,
             vector: plan.vector.clone(),
+            cleared,
         });
         head.kept.push(plan.plan_id);
         while head.kept.len() > ORIGIN_MIRROR_WORK_KEPT_PLANS {
@@ -208,6 +211,26 @@ impl Vault {
             WORK.delete_from(&self.store, txn, &plan_prefix(plan.repo_id, dropped))?;
         }
         self.put_mirror_work_head_in_txn(txn, plan.repo_id, &head)
+    }
+
+    /// Drops an open plan whose row does not decode, with its pages and
+    /// batches, under a WARN naming only its keys and the error's kind.
+    pub(super) fn drop_undecodable_mirror_plan_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        repo_id: EntityId,
+        plan_id: EntityId,
+        error: &Error,
+    ) -> Result<()> {
+        WORK.delete_from(&self.store, txn, &plan_prefix(repo_id, plan_id))?;
+        tracing::warn!(
+            code = ORIGIN_MIRROR_WORK_UNDECODABLE_DROPPED,
+            repo_id = %repo_id.to_hex(),
+            plan_id = %plan_id.to_hex(),
+            kind = ?error.kind(),
+            "an open automatic mirror plan that does not decode was dropped with its review"
+        );
+        Ok(())
     }
 }
 

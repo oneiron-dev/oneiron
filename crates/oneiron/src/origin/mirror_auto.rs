@@ -237,7 +237,10 @@ impl Vault {
         self.note_mirror_automation(scope.repo_id, target.target_generation, |status| {
             status.pending_checks = pending;
         });
-        let last = self.mirror_plan_settled_last(scope.repo_id)?;
+        let last = match self.mirror_plan_settled_last(scope.repo_id) {
+            Ok(last) => last,
+            Err(error) => return Err(self.hold_mirror_run(scope, &error)),
+        };
         let unchanged = match &last {
             Some((vector, landed)) => *landed && *vector == selection.vector_digest(),
             None => selection.vector.is_empty() && selection.deletions.is_empty(),
