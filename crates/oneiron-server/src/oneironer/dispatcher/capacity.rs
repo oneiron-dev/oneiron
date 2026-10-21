@@ -51,10 +51,21 @@ impl DispatchClaim {
     /// that can run it is ready or coming for, or one a closed dispatcher
     /// would never run, is answered at once. The room is the call's from
     /// here: given back when it is answered or stranded, never by this claim.
-    pub(crate) fn submit(mut self, input: EncoderInput) -> Completion {
+    pub(crate) fn submit(self, input: EncoderInput) -> Completion {
+        let counted = self.shared.count(&input);
+        self.submit_counted(input, counted)
+    }
+
+    /// [`Self::submit`] with the window already `counted` by the caller, on
+    /// its own blocking unit: the tagging coordinator counts it there, so the
+    /// tokenizer encode never runs on its async task (FIX 7331).
+    pub(crate) fn submit_counted(
+        mut self,
+        input: EncoderInput,
+        counted: oneiron::Result<usize>,
+    ) -> Completion {
         self.holds_room = false;
         let (reply, completion) = oneshot::channel();
-        let counted = self.shared.count(&input);
         let job = Job {
             input,
             work: self.work,

@@ -79,6 +79,10 @@ impl<F: PassExecutorFactory> PassExecutorFactory for ProgramExecutorFactory<F> {
         self.inner.pass_attachment(vault, guard)
     }
 
+    fn pass_pause(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        self.inner.pass_pause()
+    }
+
     fn skill_optimizer(
         &self,
         vault: &Vault,
