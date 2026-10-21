@@ -1000,10 +1000,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/bundle/manifest.rs` | src | s | 9 crate-vis | — | The manifest's common rows: the trunk, its config and tokenizer, the label table and the optional heads |
 | `src/oneironer/bundle/mod.rs` | src | s | 11 crate-vis | — | The Oneironer bundle as every runtime reads it (FIX 6755): one manifest schema, one identity and one archive… |
 | `src/oneironer/bundle/platform.rs` | src | m | 16 crate-vis | — | The manifest's runtime rows (contract rev 3, B1-B2): the Core ML model and the MLX worker, one archive each |
-| `src/oneironer/dispatcher/capacity.rs` | src | s | 9 crate-vis | — | Room in the dispatcher's pending caps, as owned claims (FIX 6755) |
+| `src/oneironer/dispatcher/capacity.rs` | src | s | 10 crate-vis | — | Room in the dispatcher's pending caps, as owned claims (FIX 6755) |
 | `src/oneironer/dispatcher/eligibility.rs` | src | s | 8 crate-vis | — | Which worker may run which call (FIX 6755 slice 2b) |
 | `src/oneironer/dispatcher/lifecycle.rs` | src | s | 12 crate-vis | — | The life of a supervised worker (FIX 6755 slice 3, Engine call 3): a platform runtime's managed process… |
-| `src/oneironer/dispatcher/mod.rs` | src | m | 20 crate-vis | — | The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready… |
+| `src/oneironer/dispatcher/mod.rs` | src | m | 21 crate-vis | — | The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready… |
 | `src/oneironer/dispatcher/policy.rs` | src | s | 8 crate-vis | — | The dispatcher's policy (Engine 10-21, FIX 6755 rulings 3 and 4): the one definition of each hold, batch cap… |
 | `src/oneironer/dispatcher/worker.rs` | src | m | 21 crate-vis | — | One worker: a model loaded on one engine, or the one opaque endpoint, on its own thread |
 | `src/oneironer/endpoint.rs` | src | m | 12 crate-vis | — | The `endpoint` provider: a tagger server on this machine that speaks the slot's contract |
@@ -1022,7 +1022,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/mlx/mod.rs` | src | m | 4 crate-vis | — | The server-owned managed MLX worker (FIX 6755 slice 3, contract rev 3 A1-A4): a bundle's `mlx-worker`… |
 | `src/oneironer/mlx/process.rs` | src | s | 6 crate-vis | — | The MLX worker's process (FIX 6755 slice 3, contract rev 3 A1, A3b): one child and the threads that own its… |
 | `src/oneironer/mlx/protocol.rs` | src | m | 13 crate-vis | — | The MLX worker's wire, protocol `oneironer-worker-v2` (FIX 6755 slice 3, contract rev 3 A2-A3, Engine call… |
-| `src/oneironer/mod.rs` | src | m | 25 crate-vis | — | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
+| `src/oneironer/mod.rs` | src | m | 26 crate-vis | — | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
 | `src/oneironer/release.rs` | src | m | 25 crate-vis | — | The shipped Oneironer releases, and the fetch that places one on this machine (FIX 6828) |
 | `src/oneironer/release/catalogue.rs` | src | s | 2 crate-vis | — | The shipped release catalogue (FIX 6755) |
 | `src/oneironer/release/platforms.rs` | src | s | 6 crate-vis | — | The platform half of a fetch (FIX 6755): which archives a fetch places, their extraction in staging, and the… |
