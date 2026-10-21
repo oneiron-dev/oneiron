@@ -32,37 +32,37 @@ pub(super) enum Stop {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Tariff {
-    pub version: String,
-    pub input_microusd_per_million: u64,
-    pub output_microusd_per_million: u64,
-    pub cache_read_microusd_per_million: u64,
-    pub cache_write_microusd_per_million: u64,
-    pub image_microusd_each: u64,
-    pub highest_context_tier: bool,
+    pub(crate) version: String,
+    pub(crate) input_microusd_per_million: u64,
+    pub(crate) output_microusd_per_million: u64,
+    pub(crate) cache_read_microusd_per_million: u64,
+    pub(crate) cache_write_microusd_per_million: u64,
+    pub(crate) image_microusd_each: u64,
+    pub(crate) highest_context_tier: bool,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Route {
-    pub provider: String,
-    pub engine_model: String,
-    pub requested_model: String,
-    pub returned_model: String,
-    pub upstream: String,
-    pub listen_port: u16,
-    pub protocol: String,
-    pub cash: bool,
-    pub tariff: Option<Tariff>,
-    pub max_context_tokens: u64,
-    pub input_overhead_tokens: u64,
-    pub max_output_tokens: u64,
-    pub max_request_bytes: usize,
-    pub max_response_bytes: usize,
-    pub max_images: u64,
-    pub timeout_seconds: u64,
-    pub weight_digest: Option<String>,
-    pub tokenizer_digest: Option<String>,
-    pub deployment_identity: Option<String>,
-    pub attestation: Option<super::config::Evidence>,
+    pub(crate) provider: String,
+    pub(crate) engine_model: String,
+    pub(crate) requested_model: String,
+    pub(crate) returned_model: String,
+    pub(crate) upstream: String,
+    pub(crate) listen_port: u16,
+    pub(crate) protocol: String,
+    pub(crate) cash: bool,
+    pub(crate) tariff: Option<Tariff>,
+    pub(crate) max_context_tokens: u64,
+    pub(crate) input_overhead_tokens: u64,
+    pub(crate) max_output_tokens: u64,
+    pub(crate) max_request_bytes: usize,
+    pub(crate) max_response_bytes: usize,
+    pub(crate) max_images: u64,
+    pub(crate) timeout_seconds: u64,
+    pub(crate) weight_digest: Option<String>,
+    pub(crate) tokenizer_digest: Option<String>,
+    pub(crate) deployment_identity: Option<String>,
+    pub(crate) attestation: Option<super::config::Evidence>,
 }
 impl Route {
     pub(crate) fn local_url(&self) -> String {
@@ -157,7 +157,7 @@ pub(super) struct Ledger {
     pins: String,
     reserved: u64,
     sequence: u64,
-    pub stop: Option<Stop>,
+    pub(crate) stop: Option<Stop>,
 }
 impl Ledger {
     pub(crate) fn open(path: &Path, pins: &str) -> Result<Self> {
@@ -356,6 +356,16 @@ async fn forward(State(proxy): State<Proxy>, request: Request) -> Response {
     };
     exchange(proxy, parts.uri, parts.headers, bytes, true).await
 }
+
+fn house_alias(model: &str) -> Option<(&str, &str)> {
+    let rest = model.strip_prefix("oneiron-llama/")?;
+    let (epoch, manifest_digest) = rest.split_once('/')?;
+    if epoch.is_empty() || manifest_digest.is_empty() || manifest_digest.contains('/') {
+        return None;
+    }
+    Some((epoch, manifest_digest))
+}
+
 async fn exchange(
     proxy: Proxy,
     uri: Uri,
@@ -490,8 +500,19 @@ async fn exchange(
         Err(_) => return refuse(&proxy, Stop::ModelIdUnattested),
     };
     let reported = value["model"].as_str();
+    let alias = reported.and_then(house_alias);
+    // L06 FIX 7895: a house response names the deployment manifest, not the
+    // requested wire slug. Map it to this already-attested owned route's pin;
+    // retain both identities. Subscription/cash siblings remain exact matches.
+    let mapped_house = alias.is_some()
+        && proxy.route.weight_digest.is_some()
+        && proxy.route.tokenizer_digest.is_some()
+        && proxy.route.deployment_identity.is_some()
+        && proxy.route.attestation.is_some();
     let recorded = json!({"id":id,"cell":proxy.cell,"status":status.as_u16(),"requested_model":proxy.route.requested_model,
         "returned_model":reported,"deployment_identity":proxy.route.deployment_identity,"usage":value["usage"],
+        "house_alias_epoch":alias.map(|(epoch,_)| epoch),"house_alias_manifest_digest":alias.map(|(_,digest)| digest),
+        "mapped_engine_model":if mapped_house {Some(&proxy.route.engine_model)} else {None},
         "inference":!native_probe,"response_digest":super::digest(&bytes),"stage":null,"stage_unavailable":"no_public_physical_stage_join",
         "billing_actual":null});
     if rows::append(&proxy.evidence, &recorded).is_err() {
@@ -505,7 +526,7 @@ async fn exchange(
             return refuse(&proxy, Stop::ModelIdUnattested);
         }
         if let Some(model) = reported {
-            if model != proxy.route.returned_model {
+            if model != proxy.route.returned_model && !mapped_house {
                 return refuse(&proxy, Stop::ModelIdMismatch);
             }
         } else if !native_completion || proxy.route.deployment_identity.is_none() {

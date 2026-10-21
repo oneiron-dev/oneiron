@@ -62,6 +62,11 @@
 //! `crate::request`): its handler then performs every request of every
 //! engine the session runs, and a destination refusal it gives answers the
 //! navigation or act it ended, or the host's own take (`request`).
+//!
+//! The host's secret custody rides the session too (FIX 8028, OF-560,
+//! `crate::secret`): every engine it runs, an engine switch's target among
+//! them, and the fresh guest a proposal's replay runs on hand the secrets
+//! their reads find to it, and type and expect a handle through it.
 
 mod fresh;
 mod guest;
@@ -79,6 +84,7 @@ use crate::driver::CdpDriver;
 use crate::driver::pages::Base;
 use crate::request::{BrowserRequestHandler, Custody};
 use crate::retention::HandleRetention;
+use crate::secret::{Secrets, entry};
 use crate::stop::elapsed_ms;
 use crate::{
     AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserEngine, BrowserError,
@@ -89,9 +95,9 @@ use crate::{
     LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider,
     Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput,
     ProposeOutput, ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
-    ScreenshotTrigger, SelectInput, SendPolicy, StoragePhase, SwitchEngineInput,
-    SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TypeInput, ViewInput, WaitForInput,
-    WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
+    ScreenshotTrigger, SecretCustody, SecretKind, SelectInput, SendPolicy, StoragePhase,
+    SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TypeInput,
+    ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -144,6 +150,10 @@ pub struct BrowserGuest {
     pub policy: SendPolicy,
     /// A host directory served read-only on the guest's loopback, for checks.
     pub fixture: Option<PathBuf>,
+    /// The one host:port the run relay's fixture origin
+    /// (`http://127.0.0.1:8080`) forwards to, host-side; none unless the
+    /// host's config names one, and never beside `fixture` (FIX 8061).
+    pub fixture_forward: Option<std::net::SocketAddrV4>,
     /// The engine the guest starts and the driver speaks to.
     pub engine: BrowserEngine,
 }
@@ -177,6 +187,9 @@ pub struct BrowserSession {
     /// How the host starts the fresh guest a proposal's replay runs on;
     /// none where the host gave none, and a proposal is refused.
     fresh: Option<Box<dyn FreshGuest>>,
+    /// The host's secret custody, shared with each engine's driver; empty
+    /// until the host gives it.
+    secrets: Secrets,
 }
 
 impl BrowserSession {
@@ -206,12 +219,21 @@ impl BrowserSession {
             .map(|starter| OriginSnapshots::collector(starter.state_charge()));
         let sink = snapshots.as_ref().map(OriginSnapshots::sink);
         let custody = Custody::new(requests);
+        let secrets = Secrets::default();
         let (engine, wait_cap) = (config.engine, config.wait_cap);
+        let attached = EngineGuest::attach(
+            engine,
+            started,
+            wait_cap,
+            sink,
+            custody.clone(),
+            secrets.clone(),
+        );
         let EngineGuest {
             driver,
             lease,
             manifest,
-        } = EngineGuest::attach(engine, started, wait_cap, sink, custody.clone())?;
+        } = attached?;
         Ok(Self {
             driver,
             guest: lease,
@@ -229,7 +251,15 @@ impl BrowserSession {
             snapshots,
             custody,
             fresh: None,
+            secrets,
         })
+    }
+
+    /// Gives the session the host's secret custody (FIX 8028): the secrets
+    /// its reads find from now on become handles bound to its run, and a
+    /// type or expect may name them.
+    pub fn set_secret_custody(&mut self, custody: Arc<dyn SecretCustody>) {
+        self.secrets.install(custody);
     }
 
     /// Gives the session the host's replay library.
@@ -786,11 +816,10 @@ impl BrowserDriver for BrowserSession {
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
         let started = Instant::now();
+        let entry = entry(input.text.as_deref(), input.secret.as_deref())?;
         let target = self.live()?.resolve_target(&input.target)?;
         let base = Base::of(input.base);
-        let typed = self
-            .driver
-            .type_target(&target, &input.text, input.clear, &base);
+        let typed = self.driver.type_target(&target, entry, input.clear, &base);
         let mut observation = self.crossed(typed)?;
         self.receipt(
             "type",
@@ -852,6 +881,10 @@ impl BrowserDriver for BrowserSession {
 
     fn handle_info(&self, handle: &str) -> Option<HandleInfo> {
         self.driver.handle_info(handle)
+    }
+
+    fn secret_kind(&self, handle: &str) -> Option<SecretKind> {
+        self.secrets.kind_of(handle)
     }
 
     fn library_find(&mut self, input: LibraryFindInput) -> Result<LibraryFindOutput, BrowserError> {

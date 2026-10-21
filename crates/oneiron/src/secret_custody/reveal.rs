@@ -352,6 +352,10 @@ pub(crate) struct RevealAsker {
     project: Option<EntityId>,
     run: Option<String>,
     reader: Option<crate::claim::ScopedReadActorKey>,
+    /// The leased try the asker's run holds, as its host bound it: the run
+    /// a run-bound secret's record names (FIX 8028); `None` for an asker no
+    /// run binds.
+    attempt: Option<crate::AttemptId>,
 }
 
 impl RevealAsker {
@@ -362,7 +366,14 @@ impl RevealAsker {
             project,
             run,
             reader: None,
+            attempt: None,
         }
+    }
+
+    /// This asker with the leased try its run's host binding holds.
+    pub(crate) fn with_attempt(mut self, attempt: Option<crate::AttemptId>) -> Self {
+        self.attempt = attempt;
+        self
     }
 
     pub(crate) fn with_reader(mut self, reader: crate::claim::ScopedReadActorKey) -> Self {

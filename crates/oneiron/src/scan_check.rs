@@ -158,11 +158,20 @@ pub enum EngineScan {
     /// The Sieve's audit rows an audit read walks before its sampled filter,
     /// rows that fail to decode included.
     SieveAuditRows,
+    /// One room's roster, which each write of its body validates whole; its
+    /// roles are members.
+    RoomRosterMembers,
+    /// The records and edges one conversation DAG walk reads: an ancestor
+    /// chain, a scope's forks, a thread chain, an adoption pass.
+    DagWalkRecords,
+    /// One TASK's inbound `ScopedTo` edges its authority fold reads, facts
+    /// or not.
+    TaskAuthorityFactEdges,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 49] = [
+    pub const ALL: [Self; 52] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -212,6 +221,9 @@ impl EngineScan {
         Self::CallReceiptRows,
         Self::BlockedRunReports,
         Self::SieveAuditRows,
+        Self::RoomRosterMembers,
+        Self::DagWalkRecords,
+        Self::TaskAuthorityFactEdges,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -275,6 +287,9 @@ impl EngineScan {
             Self::CallReceiptRows => "call_receipt_rows",
             Self::BlockedRunReports => "blocked_run_reports",
             Self::SieveAuditRows => "sieve_audit_rows",
+            Self::RoomRosterMembers => "room_roster_members",
+            Self::DagWalkRecords => "dag_walk_records",
+            Self::TaskAuthorityFactEdges => "task_authority_fact_edges",
         }
     }
 
@@ -282,7 +297,8 @@ impl EngineScan {
     /// once cut its read short at, or the engine-wide default.
     const fn default_threshold(self) -> u64 {
         match self {
-            Self::ClaimVadIncidentEdges => 100_000,
+            Self::ClaimVadIncidentEdges | Self::TaskAuthorityFactEdges => 100_000,
+            Self::RoomRosterMembers | Self::DagWalkRecords => 10_000,
             Self::RetrievalRunRows => 1024,
             Self::CallReceiptRows => 8192,
             Self::BlockedRunReports => 128,
@@ -341,6 +357,9 @@ impl EngineScan {
             Self::CallReceiptRows => 74,
             Self::BlockedRunReports => 75,
             Self::SieveAuditRows => 76,
+            Self::RoomRosterMembers => 77,
+            Self::DagWalkRecords => 78,
+            Self::TaskAuthorityFactEdges => 79,
         }]
     }
 }

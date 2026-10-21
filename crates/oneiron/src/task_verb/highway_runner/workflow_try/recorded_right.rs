@@ -79,7 +79,10 @@ pub(super) fn standing_in(
     let standing = vault.task_standing_in(txn, task)?.ok_or_else(not_found)?;
     let party = standing.owner == binder
         || standing.assignee == Some(binder)
-        || standing.taker.is_some_and(|taker| taker.actor == binder);
+        || standing
+            .taker
+            .as_ref()
+            .is_some_and(|taker| taker.actor == binder);
     if !party {
         return Err(not_found());
     }

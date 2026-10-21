@@ -12,8 +12,8 @@ use std::{
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Evidence {
-    pub path: PathBuf,
-    pub digest: String,
+    pub(crate) path: PathBuf,
+    pub(crate) digest: String,
 }
 impl Evidence {
     pub(crate) fn load(&self) -> Result<serde_json::Value> {
@@ -28,37 +28,37 @@ impl Evidence {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Arm {
-    pub models_body: PathBuf,
-    pub models_digest: String,
-    pub routes: Vec<Route>,
-    pub role: String,
-    pub thinking_evidence: Evidence,
-    pub decision_recipe_digest: Option<String>,
-    pub deployment_evidence: Option<Evidence>,
+    pub(crate) models_body: PathBuf,
+    pub(crate) models_digest: String,
+    pub(crate) routes: Vec<Route>,
+    pub(crate) role: String,
+    pub(crate) thinking_evidence: Evidence,
+    pub(crate) decision_recipe_digest: Option<String>,
+    pub(crate) deployment_evidence: Option<Evidence>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Config {
-    pub schema: u32,
-    pub allowed: Vec<String>,
-    pub background_tier_enabled: bool,
-    pub engine: String,
-    pub engine_binary_digest: String,
-    pub engine_head: String,
-    pub driver_digest: String,
-    pub guest_image_digest: String,
-    pub prompt_package_digest: String,
-    pub browser: serde_json::Value,
-    pub navigation_evidence: Option<Evidence>,
-    pub arms: BTreeMap<String, Arm>,
-    pub startup_seconds: u64,
-    pub continuation_poll_ms: u64,
-    pub settle_seconds: u64,
-    pub action_policy: String,
-    pub cash_cap_microusd: u64,
-    pub campaign_id: String,
-    pub cash_ledger: PathBuf,
-    pub clock_tolerance_ms: u64,
+    pub(crate) schema: u32,
+    pub(crate) allowed: Vec<String>,
+    pub(crate) background_tier_enabled: bool,
+    pub(crate) engine: String,
+    pub(crate) engine_binary_digest: String,
+    pub(crate) engine_head: String,
+    pub(crate) driver_digest: String,
+    pub(crate) guest_image_digest: String,
+    pub(crate) prompt_package_digest: String,
+    pub(crate) browser: serde_json::Value,
+    pub(crate) navigation_evidence: Option<Evidence>,
+    pub(crate) arms: BTreeMap<String, Arm>,
+    pub(crate) startup_seconds: u64,
+    pub(crate) continuation_poll_ms: u64,
+    pub(crate) settle_seconds: u64,
+    pub(crate) action_policy: String,
+    pub(crate) cash_cap_microusd: u64,
+    pub(crate) campaign_id: String,
+    pub(crate) cash_ledger: PathBuf,
+    pub(crate) clock_tolerance_ms: u64,
 }
 impl Config {
     pub(crate) fn load(path: &Path, server: &Path) -> Result<Self> {
@@ -116,8 +116,8 @@ impl Config {
             return Err("arm_coverage_missing".into());
         }
         for (id, arm) in &config.arms {
-            if arm.role != "generative_reasoner" {
-                return Err("unavailable_e5_browser_planner".into());
+            if arm.role != "browser_planner" {
+                return Err("browser_planner_role_required".into());
             }
             let thinking = arm.thinking_evidence.load()?;
             if thinking["attested"] != true || (id == "D" && thinking["effort"] != "medium") {
@@ -139,10 +139,10 @@ impl Config {
                 return Err("background_models_forbidden".into());
             }
             let ladder = models
-                .ladder(ModelRole::GenerativeReasoner)
+                .ladder(ModelRole::BrowserPlanner)
                 .ok_or("planner_model_unbound")?;
             if ladder.len() != 1 {
-                return Err("diagnostic_planner_fallback_forbidden".into());
+                return Err("planner_single_pin_required".into());
             }
             let planner = &ladder[0].model;
             let planner_route = arm

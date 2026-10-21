@@ -1,6 +1,9 @@
 //! The OpenAI-compatible transport: any `/v1/chat/completions` server.
+use std::sync::Arc;
+
 use futures_util::StreamExt;
 use oneiron::BudgetLease;
+use oneiron::llm::returned_model_wire_id;
 use oneiron_llm_openai::{
     OpenAiCompatFuture, OpenAiCompatHttpRequest, OpenAiCompatHttpResponse,
     OpenAiCompatProviderStream, OpenAiCompatStreamFrame, OpenAiCompatTransport,
@@ -10,6 +13,7 @@ use serde_json::Value as JsonValue;
 
 use super::cache_usage::carry_chat_evidence;
 use super::http::{HttpFailure, ProviderHttp, SseItem};
+use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver};
 use super::output_cap::OutputCap;
 use super::served::record_served_model;
 use crate::config::models::ResponseFormatWire;
@@ -18,6 +22,22 @@ pub(super) struct OpenAiHttp {
     pub(super) http: ProviderHttp,
     pub(super) cap: OutputCap,
     pub(super) response_format: ResponseFormatWire,
+    /// Where a house llama.cpp answer's launch alias resolves to the identity
+    /// of the process that answered (FIX 7895).
+    pub(super) identities: Arc<LlamaIdentityResolver>,
+}
+
+impl OpenAiHttp {
+    /// The identity `returned`, an answer's own top-level `model`, names on
+    /// this route, whose configured wire id is `target`: `None` unless it is
+    /// a house llama.cpp launch alias.
+    async fn answering(
+        &self,
+        returned: Option<&str>,
+        target: Option<&str>,
+    ) -> Option<AnsweringIdentity> {
+        self.identities.resolve(&self.http, returned, target).await
+    }
 }
 
 /// One `.send()` per call over [`ProviderHttp`], which follows no redirect
@@ -47,13 +67,20 @@ impl OpenAiCompatTransport for OpenAiHttp {
             let mut body = request.body;
             self.cap.apply(&mut body);
             send_format(self.response_format, &mut body);
+            let target = configured_target(&body);
             let mut reply = self
                 .http
                 .post_json(&request.path, &request.headers, &body)
                 .await?;
-            carry_served_model(reply.status, &mut reply.body);
+            let answering = match reply.body.get("model").and_then(JsonValue::as_str) {
+                Some(returned) if (200..300).contains(&reply.status) => {
+                    self.answering(Some(returned), target.as_deref()).await
+                }
+                _ => None,
+            };
+            carry_served_model(reply.status, &mut reply.body, target.as_deref());
             carry_timings(&mut reply.body);
-            carry_chat_evidence(&mut reply.body);
+            carry_chat_evidence(&mut reply.body, answering.as_ref());
             Ok(OpenAiCompatHttpResponse {
                 status: reply.status,
                 headers: reply.headers,
@@ -70,9 +97,13 @@ impl OpenAiCompatTransport for OpenAiHttp {
         let mut body = request.body;
         self.cap.apply(&mut body);
         send_format(self.response_format, &mut body);
+        let target = configured_target(&body);
         let events = self.http.post_sse(&request.path, &request.headers, &body);
         let frames = futures_util::stream::unfold(
             Frames {
+                transport: self,
+                target,
+                answering: None,
                 events: Box::pin(events),
                 served: None,
                 saw_usage: false,
@@ -96,14 +127,38 @@ pub(super) fn send_format(wire: ResponseFormatWire, body: &mut JsonValue) {
     }
 }
 
-/// Stamps the model a reply names into its usage.
+/// The configured wire id a call sends as its `model`: the route's target,
+/// which a house llama.cpp launch alias in its answer stands for.
+fn configured_target(body: &JsonValue) -> Option<String> {
+    body.get("model")
+        .and_then(JsonValue::as_str)
+        .map(str::to_owned)
+}
+
+/// The model label a reply's `returned` model gives, on a call whose
+/// configured wire id is `target`: that id when it is a house llama.cpp
+/// launch alias (FIX 7895), else as it came. The alias itself stays on the
+/// reply for its cache evidence.
+fn served_label(returned: &JsonValue, target: Option<&str>) -> JsonValue {
+    match (returned.as_str(), target) {
+        (Some(returned), Some(target)) => {
+            JsonValue::String(returned_model_wire_id(returned, target).to_owned())
+        }
+        _ => returned.clone(),
+    }
+}
+
+/// Stamps the model a reply names into its usage, as a label of the call's
+/// configured wire id `target`.
 ///
 /// A proxy may answer under its own spelling of the model (a login prefix
 /// stripped, say). Record what it said; never reject on it. A 2xx reply
 /// without usage (or with a null one) gets one carrying only that name; the
 /// adapter reads its absent counts as zero, as it would anyway.
-pub(super) fn carry_served_model(status: u16, body: &mut JsonValue) {
-    let served = body.get("model").cloned();
+pub(super) fn carry_served_model(status: u16, body: &mut JsonValue, target: Option<&str>) {
+    let served = body
+        .get("model")
+        .map(|returned| served_label(returned, target));
     if (200..300).contains(&status)
         && served.is_some()
         && let Some(body) = body.as_object_mut()
@@ -138,7 +193,15 @@ fn carry_timings(body: &mut JsonValue) {
 /// carrying only that name at `[DONE]` or EOF: the adapter's own end of
 /// stream, with the counts it would read as zero anyway. A stream cut before
 /// any finish gets nothing, so it still ends as a cut.
-struct Frames<S> {
+///
+/// The cache record's identity is what this stream's own last `model` names
+/// (FIX 7895), never another stream's or a discovered one.
+struct Frames<'a, S> {
+    transport: &'a OpenAiHttp,
+    /// The configured wire id the call sent.
+    target: Option<String>,
+    /// The last top-level `model` this stream's chunks named, as it came.
+    answering: Option<String>,
     events: std::pin::Pin<Box<S>>,
     served: Option<JsonValue>,
     saw_usage: bool,
@@ -148,7 +211,7 @@ struct Frames<S> {
 
 type Frame = Result<OpenAiCompatStreamFrame, OpenAiCompatTransportError>;
 
-impl<S> Frames<S>
+impl<S> Frames<'_, S>
 where
     S: futures_util::Stream<Item = Result<SseItem, HttpFailure>>,
 {
@@ -165,11 +228,11 @@ where
             let carrier = self.carrier()?;
             return Some((Ok(carrier), self));
         };
-        let frame = self.frame(item);
+        let frame = self.frame(item).await;
         Some((frame, self))
     }
 
-    fn frame(&mut self, item: Result<SseItem, HttpFailure>) -> Frame {
+    async fn frame(&mut self, item: Result<SseItem, HttpFailure>) -> Frame {
         match item? {
             SseItem::Status(reply) => {
                 Ok(OpenAiCompatStreamFrame::Status(OpenAiCompatHttpResponse {
@@ -182,7 +245,8 @@ where
                 let mut chunk: JsonValue = serde_json::from_str(&event.data)
                     .map_err(|_| OpenAiCompatTransportError::StreamCut)?;
                 if let Some(model) = chunk.get("model") {
-                    self.served = Some(model.clone());
+                    self.answering = model.as_str().map(str::to_owned);
+                    self.served = Some(served_label(model, self.target.as_deref()));
                 }
                 self.saw_usage |= chunk.get("usage").is_some_and(JsonValue::is_object);
                 self.finished |= chunk
@@ -194,7 +258,17 @@ where
                             .any(|choice| !choice["finish_reason"].is_null())
                     });
                 carry_timings(&mut chunk);
-                carry_chat_evidence(&mut chunk);
+                // Only a chunk with timings and usage gets a cache record.
+                let answering = if chunk.get("timings").is_some()
+                    && chunk.get("usage").is_some_and(JsonValue::is_object)
+                {
+                    self.transport
+                        .answering(self.answering.as_deref(), self.target.as_deref())
+                        .await
+                } else {
+                    None
+                };
+                carry_chat_evidence(&mut chunk, answering.as_ref());
                 record_served_model(chunk.get_mut("usage"), self.served.clone());
                 Ok(OpenAiCompatStreamFrame::Chunk(chunk))
             }
