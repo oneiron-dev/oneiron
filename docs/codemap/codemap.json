@@ -21359,6 +21359,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/executor/failure.rs",
+     "purpose": "How a partition attempt's failed step parks with what it spent (FIX 414)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/executor/merge_resolution.rs",
      "purpose": "A conflict set's resolution: the typed pack (how it resolves, and which candidate's identity a merge keeps)…",
      "surface": {
@@ -21577,6 +21587,16 @@
       "re-export": 1,
       "struct": 6,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/recipe_failure.rs",
+     "purpose": "What a failed consolidation recipe step parks as (OF-193a, Engine 10-21)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -21877,7 +21897,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -67826,7 +67846,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 78,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68871,7 +68891,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4349,
+   "source_files": 4351,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81890,6 +81910,8 @@
       "CompactionState",
       "CompactionStatus",
       "IdleReason",
+      "UnservedNote",
+      "UnservedReason",
       "WorkState",
       "WorkStatus"
      ],
@@ -81897,8 +81919,8 @@
      "purpose": "Live state of the server's background AI work, shared between the workers that change it and the routes that…",
      "surface": {
       "crate-vis": 9,
-      "enum": 3,
-      "struct": 4
+      "enum": 4,
+      "struct": 5
      }
     },
     {
