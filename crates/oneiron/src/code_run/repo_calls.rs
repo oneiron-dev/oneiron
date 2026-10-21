@@ -1,4 +1,4 @@
-//! The run repo rows as typed calls (FIX 6867, L11 G1 PR2a, PR2b): one
+//! The run repo rows as typed calls (FIX 6867, L11 G1 PR2a, PR2b, PR3b): one
 //! variant a row, carrying that row's closed input exactly as the guest gave it. The
 //! actor, the lease, the TASK, the executor run and the read lane are the
 //! host's, bound at dispatch; none rides the call, its replay row or a verb
@@ -10,10 +10,11 @@ use super::SelfEffect;
 use crate::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::repo_doors::{
-    RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput, RepoProposalSubmitInput,
-    RepoSnapshotsGetInput, RepoSnapshotsIngestInput, RepoSnapshotsReadInput,
-    RepoSymbolsDeclareInput, RepoSymbolsDefinitionsInput, RepoSymbolsReleaseInput,
-    RepoSymbolsRenewInput, RepoViewsGetInput, RepoViewsReadInput, RepoWorkOpenInput,
+    RepoCheckoutBindInput, RepoExportInput, RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput,
+    RepoProposalSubmitInput, RepoSnapshotsGetInput, RepoSnapshotsIngestInput,
+    RepoSnapshotsReadInput, RepoSymbolsDeclareInput, RepoSymbolsDefinitionsInput,
+    RepoSymbolsReleaseInput, RepoSymbolsRenewInput, RepoViewsGetInput, RepoViewsReadInput,
+    RepoWorkOpenInput,
 };
 use crate::task_verb::sdk::RunVerb;
 
@@ -48,6 +49,10 @@ pub enum RepoRunCall {
     ProposalSubmit(RepoProposalSubmitInput),
     /// `self.code.merge_queue.enqueue`.
     MergeQueueEnqueue(RepoMergeQueueEnqueueInput),
+    /// `self.code.checkout.bind` (PR3b).
+    CheckoutBind(RepoCheckoutBindInput),
+    /// `self.code.export` (PR3b).
+    Export(RepoExportInput),
 }
 
 impl RepoRunCall {
@@ -68,6 +73,8 @@ impl RepoRunCall {
             Self::SymbolsRelease(_) => SelfEffect::RepoSymbolsRelease,
             Self::ProposalSubmit(_) => SelfEffect::RepoProposalSubmit,
             Self::MergeQueueEnqueue(_) => SelfEffect::RepoMergeQueueEnqueue,
+            Self::CheckoutBind(_) => SelfEffect::RepoCheckoutBind,
+            Self::Export(_) => SelfEffect::RepoExport,
         }
     }
 
@@ -94,7 +101,9 @@ impl RepoRunCall {
             | Self::SnapshotsRead(_)
             | Self::SymbolsDefinitions(_)
             | Self::SnapshotsIngest(_)
-            | Self::WorkOpen(_) => None,
+            | Self::WorkOpen(_)
+            | Self::CheckoutBind(_)
+            | Self::Export(_) => None,
         }
     }
 
@@ -115,6 +124,8 @@ impl RepoRunCall {
             RunVerb::SelfCodeSymbolsRelease => Self::SymbolsRelease(typed(input)?),
             RunVerb::SelfCodeProposalSubmit => Self::ProposalSubmit(typed(input)?),
             RunVerb::SelfCodeMergeQueueEnqueue => Self::MergeQueueEnqueue(typed(input)?),
+            RunVerb::SelfCodeCheckoutBind => Self::CheckoutBind(typed(input)?),
+            RunVerb::SelfCodeExport => Self::Export(typed(input)?),
             _ => return Ok(None),
         }))
     }
@@ -137,12 +148,14 @@ impl RepoRunCall {
             Self::SymbolsRelease(_) => Self::SymbolsRelease(retyped(args)?),
             Self::ProposalSubmit(_) => Self::ProposalSubmit(retyped(args)?),
             Self::MergeQueueEnqueue(_) => Self::MergeQueueEnqueue(retyped(args)?),
+            Self::CheckoutBind(_) => Self::CheckoutBind(retyped(args)?),
+            Self::Export(_) => Self::Export(retyped(args)?),
         })
     }
 }
 
 /// Every run repo effect, in row order.
-const REPO_EFFECTS: [SelfEffect; 13] = [
+const REPO_EFFECTS: [SelfEffect; 15] = [
     SelfEffect::RepoSnapshotsGet,
     SelfEffect::RepoSnapshotsRead,
     SelfEffect::RepoSymbolsDefinitions,
@@ -156,6 +169,8 @@ const REPO_EFFECTS: [SelfEffect; 13] = [
     SelfEffect::RepoSymbolsRelease,
     SelfEffect::RepoProposalSubmit,
     SelfEffect::RepoMergeQueueEnqueue,
+    SelfEffect::RepoCheckoutBind,
+    SelfEffect::RepoExport,
 ];
 
 impl SelfEffect {
@@ -177,11 +192,14 @@ impl SelfEffect {
                 | Self::RepoSymbolsRelease
                 | Self::RepoProposalSubmit
                 | Self::RepoMergeQueueEnqueue
+                | Self::RepoCheckoutBind
+                | Self::RepoExport
         )
     }
 
     /// Whether this is a run repo row that writes: the import, the open,
-    /// the symbol declarations, the proposal and the queue entry.
+    /// the symbol declarations, the proposal, the queue entry, the checkout
+    /// binding and the export.
     #[must_use]
     pub const fn repo_writes(self) -> bool {
         matches!(
@@ -193,6 +211,8 @@ impl SelfEffect {
                 | Self::RepoSymbolsRelease
                 | Self::RepoProposalSubmit
                 | Self::RepoMergeQueueEnqueue
+                | Self::RepoCheckoutBind
+                | Self::RepoExport
         )
     }
 

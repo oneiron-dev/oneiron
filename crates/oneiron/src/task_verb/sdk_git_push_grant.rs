@@ -143,6 +143,48 @@ pub fn revoke_git_push_grant_as(
     })
 }
 
+/// `vault.repo.anchor.bind`'s input (FIX 6867, G1 PR3b): one served repo,
+/// by its served name, and the live PROJECT it belongs to.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepoAnchorBindInput {
+    /// The served name, with no `.git` suffix, as `vault.code.origin.register`
+    /// registered it.
+    pub repo: String,
+    /// The live PROJECT (32 hex) the repo belongs to.
+    pub project: EntityId,
+}
+
+/// `vault.repo.anchor.bind`'s answer: the CODE anchor and PROJECT a
+/// `git_push` Grant, a run's repo bounds or a publish names this repo by.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepoAnchorBindOutput {
+    pub repo: String,
+    pub anchor: GitPushRepo,
+    /// False when the anchor and its PROJECT edge already stood and this
+    /// call changed nothing.
+    pub changed: bool,
+}
+
+/// `vault.repo.anchor.bind` under the owner's proof: binds the served repo
+/// to its CODE anchor in the PROJECT he names. A repeat changes nothing.
+pub fn bind_repo_anchor_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: RepoAnchorBindInput,
+) -> MemoryResult<RepoAnchorBindOutput> {
+    let bound = vault.bind_served_repo_anchor(owner, &input.repo, input.project)?;
+    Ok(RepoAnchorBindOutput {
+        repo: input.repo,
+        anchor: GitPushRepo {
+            repo: bound.repo,
+            project: bound.project,
+        },
+        changed: bound.created,
+    })
+}
+
 fn git_push_grant_view(standing: &GitPushGrantStanding, now: u64) -> GitPushGrantView {
     GitPushGrantView {
         grant_ref: standing.id,

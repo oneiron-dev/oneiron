@@ -3,6 +3,7 @@
 use std::fmt;
 
 use super::super::env_blueprint::MaterializationSpec;
+use super::attempt_binding::CheckoutAttemptBinding;
 
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
@@ -139,6 +140,9 @@ pub struct CheckoutLeaseAct {
     pub claimed_at: u64,
     pub lease_expires_at: Option<u64>,
     pub updated_at: u64,
+    /// The attempt that holds this epoch (FIX 6867, G1 PR3b), when a BYOA
+    /// dispatch reserved it; `None` for every other lease, owner's included.
+    pub bound_attempt: Option<CheckoutAttemptBinding>,
 }
 pub type CheckoutHolder = String;
 #[derive(Debug, Clone, PartialEq, Eq)]

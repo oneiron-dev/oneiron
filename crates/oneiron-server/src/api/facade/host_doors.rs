@@ -68,6 +68,9 @@ pub(crate) use super::agent_definition_doors::*;
 pub(crate) use super::agent_grant_doors::*;
 // The owner's git_push Grant doors (FIX 6867, G1-PUSH) too.
 pub(crate) use super::git_push_doors::*;
+// The public run repo doors (FIX 6867, G1 PR3b): no owner proof, so none is
+// in the owner preflight below.
+pub(crate) use super::repo_doors::*;
 pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::shared_admin_doors::*;
 // The shared-vault invitation doors (OF-531) too.
@@ -1446,6 +1449,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.agents.grants.revoke"
         | "vault.repo.git_push.mint"
         | "vault.repo.git_push.revoke"
+        | "vault.repo.anchor.bind"
         | "vault.agents.base"
         | "vault.residence.mode"
         | "vault.residence.open"

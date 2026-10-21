@@ -12,9 +12,7 @@ use crate::blob_artifact::{
     BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body,
     read_blob_artifact_head_in_txn,
 };
-use crate::checkout::{
-    CheckoutFactSink, CheckoutLeaseAct, CheckoutLeaseService, CheckoutLeaseState, CheckoutLiveness,
-};
+use crate::checkout::{CheckoutFactSink, CheckoutLeaseAct, CheckoutLeaseService, CheckoutLiveness};
 use crate::code_sandbox::SandboxBoundaryContract;
 use crate::code_sandbox::microvm::ExecutionBudget;
 use crate::entity_id::bytes_to_hex_lower;
@@ -30,8 +28,8 @@ use super::connector::{
 };
 use super::error::{
     ByoaError, ByoaResult, ERR_ARTIFACT_COLLISION, ERR_ATTEMPT_MISSING, ERR_CAPTURE_CONFLICT,
-    ERR_EXECUTION_CHECKOUT, ERR_EXECUTION_SHAPE, ERR_LEASE_EXPIRED, ERR_LEASE_HOST_DENIED,
-    ERR_LEASE_ID_ZERO, ERR_LEASE_PROFILE_MISMATCH, ERR_LEASE_TAINT, ERR_LEASE_UNBOUNDED, invalid,
+    ERR_EXECUTION_SHAPE, ERR_LEASE_EXPIRED, ERR_LEASE_HOST_DENIED, ERR_LEASE_ID_ZERO,
+    ERR_LEASE_PROFILE_MISMATCH, ERR_LEASE_TAINT, ERR_LEASE_UNBOUNDED, invalid,
 };
 use super::exhaust::{
     ByoaEgressLease, ByoaEgressPort, ByoaExhaust, ByoaExhaustEnvelope, ByoaTerminalDisposition,
@@ -45,6 +43,10 @@ use super::official_seats::{
     check_seat_placement, decide_dry_seat, validate_official_seat,
 };
 use super::provider::ProviderAdapterRegistry;
+use super::repo_binding::{
+    claim_successor_in_txn, mark_stale_capture_in_txn, pin_checkout_in_txn, reserve_in_txn,
+    start_execution, successor_checkout,
+};
 use super::seat::{
     HostedSeatBound, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeatPolicy, RunnerWork,
     SeatIdentity, SeatRoute, SeatSpent, SkippedRunnerSeat, hosted_seat_bound, runner_task,
@@ -230,12 +232,16 @@ where
                 .vault
                 .measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
         }
+        // FIX 6867: a CLI attempt's checkout is pinned before encode and
+        // reserved for the returned attempt in this same writer.
+        let pinned = pin_checkout_in_txn(self.vault, txn, &request.connector, &request.task_ref)?;
         let payload = encode_byoa_attempt_payload(&ByoaAttemptPayload {
             user_login: request.user_login,
             schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
             connector: request.connector,
             parent_attempt: request.parent_attempt,
             official_seat: request.official_seat,
+            repo_binding: pinned.clone(),
         })?;
         let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
             self.vault,
@@ -252,7 +258,7 @@ where
                 dedupe_actor_ref: None,
             },
         )?;
-
+        reserve_in_txn(self.vault, txn, pinned.as_ref(), &outcome)?;
         let status = |attempt: AttemptRecord| -> ByoaResult<ByoaDispatchStatus> {
             let connector_kind = decode_byoa_record(&attempt)?.connector.kind();
             Ok(ByoaDispatchStatus {
@@ -430,8 +436,8 @@ where
                     };
                     let parent = *receipt.attempt.id.as_bytes();
                     for (index, next) in policy.seats.iter().enumerate().skip(seat + 1) {
-                        let connector =
-                            next.connector(registry, task.to_owned(), ran.checkout_id)?;
+                        let checkout = successor_checkout(&receipt.attempt, &ran, index)?;
+                        let connector = next.connector(registry, task.to_owned(), checkout)?;
                         let connector = super::staged_input::carry_staged_input(connector, &ran);
                         let context = registry.resolve(&next.runner)?.placement_context();
                         if let Some(bound) = self.seat_bound(next.logs_in(), &connector, context)? {
@@ -442,6 +448,7 @@ where
                             });
                             continue;
                         }
+                        claim_successor_in_txn(self.vault, wtxn, &receipt.attempt, checkout, now)?;
                         let outcome = self.enqueue_in_txn(
                             wtxn,
                             ByoaEnqueue {
@@ -656,26 +663,14 @@ where
     ) -> ByoaResult<ByoaExhaust> {
         validate_execution_budget(budget)?;
         let record = self.execution_record(fence)?;
-        let ByoaConnectorSpec::CliSandbox(spec) = decode_byoa_record(&record)?.connector else {
+        let payload = decode_byoa_record(&record)?;
+        let ByoaConnectorSpec::CliSandbox(spec) = &payload.connector else {
             return Err(invalid(ERR_EXECUTION_SHAPE));
         };
-        let checkout = checkouts
-            .get(spec.checkout_id)
-            .map_err(|_| invalid(ERR_EXECUTION_CHECKOUT))?
-            .ok_or_else(|| invalid(ERR_EXECUTION_CHECKOUT))?;
-        if checkout.state != CheckoutLeaseState::Active
-            || now < checkout.updated_at
-            || checkout
-                .lease_expires_at
-                .is_some_and(|expiry| now >= expiry)
-            || record
-                .task_ref
-                .as_ref()
-                .is_some_and(|task| *task != checkout.task_ref.to_hex())
-        {
-            return Err(invalid(ERR_EXECUTION_CHECKOUT));
-        }
-        self.stage_pinned_input(&spec, &checkout)?;
+        // FIX 6867: the bound checkout, judged and its generation saved in
+        // a short writer before staging; no writer spans the child.
+        let checkout = start_execution(self.vault, fence, &record, &payload, spec, checkouts, now)?;
+        self.stage_pinned_input(spec, &checkout)?;
         let intent = bytes_to_hex_lower(fence.attempt_id.as_bytes());
         // Every secret a granted lease injected taints this run's output.
         let mut injected = Vec::new();
@@ -778,12 +773,12 @@ where
         request: CaptureByoaExhaust,
     ) -> ByoaResult<ByoaTerminalReceipt> {
         validate_exhaust(&request.exhaust)?;
-        let reason = normalize_capture_reason(request.disposition, request.reason)?;
+        let mut reason = normalize_capture_reason(request.disposition, request.reason)?;
         if request.lease_owner.is_empty() || request.lease_owner.len() > 128 {
             return Err(invalid(ERR_CAPTURE_CONFLICT));
         }
         let artifact_id = byoa_exhaust_artifact_id(request.attempt_id)?;
-        let envelope = ByoaExhaustEnvelope {
+        let mut envelope = ByoaExhaustEnvelope {
             schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
             attempt_id: *request.attempt_id.as_bytes(),
             lease_owner: request.lease_owner,
@@ -815,7 +810,8 @@ where
                     state: ERR_ATTEMPT_MISSING,
                 },
             )))?;
-        decode_byoa_record(&record)?;
+        // CALL "FIX 6867 stale capture": exhaust kept, Abandoned + repo_stale_lease.
+        mark_stale_capture_in_txn(self.vault, wtxn, &record, &mut envelope, &mut reason)?;
         if record.state.is_running() {
             AttemptQueue::check_result_lease(
                 &record,

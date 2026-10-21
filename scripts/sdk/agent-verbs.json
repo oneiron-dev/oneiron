@@ -10083,6 +10083,300 @@
       "openapi": true
     },
     {
+      "name": "vault.repo.anchor.bind",
+      "description": "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing.",
+      "input": "crate::task_verb::sdk::RepoAnchorBindInput",
+      "output": "crate::task_verb::sdk::RepoAnchorBindOutput",
+      "call": "crate::task_verb::sdk::bind_repo_anchor_as(memory.vault(), &memory.embedded_owner(\"vault.repo.anchor.bind\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.snapshots.get",
+      "description": "Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSnapshotsGetInput>",
+      "output": "crate::memory::repo_doors::RepoSnapshotsGetOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.snapshots.get\", &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.snapshots.read",
+      "description": "Reads one file of such a snapshot on a path the attached run's Grant reads.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSnapshotsReadInput>",
+      "output": "crate::memory::repo_doors::RepoSnapshotsReadOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.snapshots.read\", &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.symbols.definitions",
+      "description": "Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSymbolsDefinitionsInput>",
+      "output": "crate::memory::repo_doors::RepoSymbolsDefinitionsOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.symbols.definitions\", &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.views.get",
+      "description": "Reads the attached run's own work, as it was opened.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoViewsGetInput>",
+      "output": "crate::memory::repo_doors::RepoViewsGetOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.views.get\", &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.views.read",
+      "description": "Reads one file of the attached run's own work.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoViewsReadInput>",
+      "output": "crate::memory::repo_doors::RepoViewsReadOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.views.read\", &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.merge_queue.observe",
+      "description": "Reads the merge queue the attached run's own work is pinned under, with its own entries and what each waits behind.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoMergeQueueObserveInput>",
+      "output": "crate::memory::repo_doors::RepoMergeQueueObserveOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.merge_queue.observe\", &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.snapshots.ingest",
+      "description": "Imports the commit an admitted repo's full ref names now, readable paths only, for the attached run.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSnapshotsIngestInput>",
+      "output": "crate::memory::repo_doors::RepoSnapshotsIngestOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.snapshots.ingest\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.work.open",
+      "description": "Opens a fresh private working set of an admitted repo at its queue's green commit for the attached run, readable paths only.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoWorkOpenInput>",
+      "output": "crate::memory::repo_doors::RepoWorkOpenOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.work.open\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.symbols.declare",
+      "description": "Declares current symbols of the attached run's own work on paths its Grant edits, for its TASK; an overlap waits, never refused.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSymbolsDeclareInput>",
+      "output": "crate::memory::repo_doors::RepoSymbolsDeclareOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.symbols.declare\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.symbols.renew",
+      "description": "Extends the attached run's own symbol declaration by its declared lifetime.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSymbolsRenewInput>",
+      "output": "crate::memory::repo_doors::RepoSymbolsRenewOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.symbols.renew\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.symbols.release",
+      "description": "Removes the attached run's own symbol declaration.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSymbolsReleaseInput>",
+      "output": "crate::memory::repo_doors::RepoSymbolsReleaseOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.symbols.release\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.proposal_submit",
+      "description": "Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoProposalSubmitInput>",
+      "output": "crate::memory::repo_doors::RepoProposalSubmitOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.proposal_submit\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.merge_queue.enqueue",
+      "description": "Queues the attached run's own stored proposals of one work as one batch, under the declaration they were made under.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoMergeQueueEnqueueInput>",
+      "output": "crate::memory::repo_doors::RepoMergeQueueEnqueueOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.merge_queue.enqueue\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.checkout.bind",
+      "description": "Materializes the attached run's own live checkout lease of an admitted served repo, for its TASK, with its lease-route remote when a door base is named; no lease is minted and no host path is shown.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoCheckoutBindInput>",
+      "output": "crate::memory::repo_doors::RepoCheckoutBindOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.checkout.bind\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.export",
+      "description": "Exports one finalized, promoted revision from the attached run's own checkout when one Grant lists publish over the revision's paths; otherwise it holds with a typed code. git_push never implies an export.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoExportInput>",
+      "output": "crate::memory::repo_doors::RepoExportOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.export\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
       "name": "vault.agents.base",
       "description": "The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent.",
       "input": "EmptyRequest",
@@ -17921,6 +18215,22 @@
       "scope": "Write",
       "context": "run",
       "effect": "RepoMergeQueueEnqueue"
+    },
+    {
+      "name": "self.code.checkout.bind",
+      "input": "crate::memory::repo_doors::RepoCheckoutBindInput",
+      "output": "crate::memory::repo_doors::RepoCheckoutBindOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoCheckoutBind"
+    },
+    {
+      "name": "self.code.export",
+      "input": "crate::memory::repo_doors::RepoExportInput",
+      "output": "crate::memory::repo_doors::RepoExportOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoExport"
     },
     {
       "name": "self.leader.advice",

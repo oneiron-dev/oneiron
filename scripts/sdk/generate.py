@@ -170,13 +170,16 @@ for row in ROWS:
     # the credential's own read lane in every snapshot it reads and writes, so
     # its facade head checks the grant alone and its lane guard
     # (`lane_record_scope`) keeps refusing a channel caveat: a world-, facet-
-    # or record-scoped credential reaches it over HTTP as over MCP.
+    # or record-scoped credential reaches it over HTTP as over MCP. FIX 6867
+    # (G1 PR3b): a caller or listing host door may carry it too (the public
+    # `vault.repo.*` run doors), its host head then checking the grant alone.
     admission = row.get('admission', {})
     if admission.get('require_granted_scope') and (
             not admission.get('lane_record_scope') or row.get('scope') == 'Read'
-            or row.get('host_door') or row.get('context', 'memory') != 'memory'
+            or (row.get('host_door') and not (row.get('host_door_caller') or row.get('host_door_lists')))
+            or row.get('context', 'memory') != 'memory'
             or any(admission.get(other) for other in ('owner_grade', 'claim_record_scope', 'credential_record_scope', 'scoped_export', 'born_record_scope'))):
-        raise ValueError(f'{row["name"]}: require_granted_scope is only a non-Read lane_record_scope facade row\'s, with no other record-scope admission and no host door')
+        raise ValueError(f'{row["name"]}: require_granted_scope is only a non-Read lane_record_scope facade row\'s, with no other record-scope admission, and on a host door only a caller or listing one')
 # OF-063: `refs` lists a row's typed record-ref slots as JSON pointers into its
 # input, `*` taking every item of an array. The row's generated engine fn checks
 # that each ref there resolves under the writer's own scoped read before the
@@ -1432,6 +1435,9 @@ def facade_dispatch(facade_rows):
                 Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))''')
             scope_guard = ("auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
                            if r.get('proposes') and r.get('admission', {}).get('credential_record_scope')
+                           # FIX 6867: a lane door judges its records in its engine door.
+                           else f'auth.require_granted(CoreScope::{r["scope"]})?;'
+                           if r.get('admission', {}).get('require_granted_scope')
                            else f'auth.require(CoreScope::{r["scope"]})?;')
             dispatch += head + f'''{scope_guard}
                 {record_scope_guard(r)}

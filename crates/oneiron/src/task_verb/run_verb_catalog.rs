@@ -32,6 +32,8 @@ pub enum RunVerb {
     SelfCodeSymbolsRelease,
     SelfCodeProposalSubmit,
     SelfCodeMergeQueueEnqueue,
+    SelfCodeCheckoutBind,
+    SelfCodeExport,
     SelfLeaderAdvice,
     SelfLeaderPattern,
     SelfLeaderSplit,
@@ -73,6 +75,8 @@ impl RunVerb {
         Self::SelfCodeSymbolsRelease,
         Self::SelfCodeProposalSubmit,
         Self::SelfCodeMergeQueueEnqueue,
+        Self::SelfCodeCheckoutBind,
+        Self::SelfCodeExport,
         Self::SelfLeaderAdvice,
         Self::SelfLeaderPattern,
         Self::SelfLeaderSplit,
@@ -117,6 +121,8 @@ impl RunVerb {
             Self::SelfCodeSymbolsRelease => "self.code.symbols.release",
             Self::SelfCodeProposalSubmit => "self.code.proposal_submit",
             Self::SelfCodeMergeQueueEnqueue => "self.code.merge_queue.enqueue",
+            Self::SelfCodeCheckoutBind => "self.code.checkout.bind",
+            Self::SelfCodeExport => "self.code.export",
             Self::SelfLeaderAdvice => "self.leader.advice",
             Self::SelfLeaderPattern => "self.leader.pattern",
             Self::SelfLeaderSplit => "self.leader.split",
@@ -152,6 +158,8 @@ impl RunVerb {
                 | Self::SelfCodeSymbolsRelease
                 | Self::SelfCodeProposalSubmit
                 | Self::SelfCodeMergeQueueEnqueue
+                | Self::SelfCodeCheckoutBind
+                | Self::SelfCodeExport
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
                 | Self::SelfTeamStart
@@ -191,6 +199,8 @@ impl RunVerb {
             Self::SelfCodeSymbolsRelease => crate::code_run::SelfEffect::RepoSymbolsRelease,
             Self::SelfCodeProposalSubmit => crate::code_run::SelfEffect::RepoProposalSubmit,
             Self::SelfCodeMergeQueueEnqueue => crate::code_run::SelfEffect::RepoMergeQueueEnqueue,
+            Self::SelfCodeCheckoutBind => crate::code_run::SelfEffect::RepoCheckoutBind,
+            Self::SelfCodeExport => crate::code_run::SelfEffect::RepoExport,
             Self::SelfLeaderAdvice => crate::code_run::SelfEffect::Leader,
             Self::SelfLeaderPattern => crate::code_run::SelfEffect::Leader,
             Self::SelfLeaderSplit => crate::code_run::SelfEffect::LeaderSplit,

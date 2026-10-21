@@ -3613,6 +3613,132 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.repo.anchor.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RepoAnchorBindInput,
+                >(),
+            ),
+            (
+                "vault.repo.snapshots.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoSnapshotsGetInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.snapshots.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoSnapshotsReadInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.symbols.definitions",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoSymbolsDefinitionsInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.views.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoViewsGetInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.views.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoViewsReadInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.merge_queue.observe",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoMergeQueueObserveInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.snapshots.ingest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoSnapshotsIngestInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.work.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoWorkOpenInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.symbols.declare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoSymbolsDeclareInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.symbols.renew",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoSymbolsRenewInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.symbols.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoSymbolsReleaseInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.proposal_submit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoProposalSubmitInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.merge_queue.enqueue",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoMergeQueueEnqueueInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.checkout.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoCheckoutBindInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoExportInput,
+                    >,
+                >(),
+            ),
+            (
                 "vault.agents.base",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -6221,6 +6347,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.code.checkout.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoCheckoutBindInput,
+                >(),
+            ),
+            (
+                "self.code.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoExportInput,
+                >(),
+            ),
+            (
                 "self.leader.advice",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderAdviceInput>(),
             ),
@@ -6734,6 +6872,22 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.grants.revoke",
     "vault.repo.git_push.mint",
     "vault.repo.git_push.revoke",
+    "vault.repo.anchor.bind",
+    "vault.repo.snapshots.get",
+    "vault.repo.snapshots.read",
+    "vault.repo.symbols.definitions",
+    "vault.repo.views.get",
+    "vault.repo.views.read",
+    "vault.repo.merge_queue.observe",
+    "vault.repo.snapshots.ingest",
+    "vault.repo.work.open",
+    "vault.repo.symbols.declare",
+    "vault.repo.symbols.renew",
+    "vault.repo.symbols.release",
+    "vault.repo.proposal_submit",
+    "vault.repo.merge_queue.enqueue",
+    "vault.repo.checkout.bind",
+    "vault.repo.export",
     "vault.agents.base",
     "vault.standing_blocks.configure",
     "vault.standing_blocks.reconfigure",
@@ -8436,6 +8590,54 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.repo.git_push.revoke" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::GitPushGrantRevokeOutput,
+        >(),
+        "vault.repo.anchor.bind" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RepoAnchorBindOutput,
+        >(),
+        "vault.repo.snapshots.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoSnapshotsGetOutput,
+        >(),
+        "vault.repo.snapshots.read" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoSnapshotsReadOutput,
+        >(),
+        "vault.repo.symbols.definitions" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoSymbolsDefinitionsOutput,
+        >(),
+        "vault.repo.views.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoViewsGetOutput,
+        >(),
+        "vault.repo.views.read" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoViewsReadOutput,
+        >(),
+        "vault.repo.merge_queue.observe" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoMergeQueueObserveOutput,
+        >(),
+        "vault.repo.snapshots.ingest" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoSnapshotsIngestOutput,
+        >(),
+        "vault.repo.work.open" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoWorkOpenOutput,
+        >(),
+        "vault.repo.symbols.declare" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoSymbolsDeclareOutput,
+        >(),
+        "vault.repo.symbols.renew" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoSymbolsRenewOutput,
+        >(),
+        "vault.repo.symbols.release" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoSymbolsReleaseOutput,
+        >(),
+        "vault.repo.proposal_submit" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoProposalSubmitOutput,
+        >(),
+        "vault.repo.merge_queue.enqueue" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoMergeQueueEnqueueOutput,
+        >(),
+        "vault.repo.checkout.bind" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoCheckoutBindOutput,
+        >(),
+        "vault.repo.export" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoExportOutput,
         >(),
         "vault.agents.base" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::BaseAgentList>()
@@ -13900,6 +14102,118 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.repo.anchor.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.snapshots.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.snapshots.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.symbols.definitions" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.views.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.views.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.merge_queue.observe" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.snapshots.ingest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.work.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.symbols.declare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.symbols.renew" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.symbols.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.proposal_submit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.merge_queue.enqueue" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.checkout.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.agents.base" => &[],
         "vault.standing_blocks.configure" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -19207,6 +19521,84 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.repo.git_push.revoke" => {
             let _input: crate::task_verb::sdk::GitPushGrantRevokeInput = decode(value.clone())?;
         }
+        "vault.repo.anchor.bind" => {
+            let _input: crate::task_verb::sdk::RepoAnchorBindInput = decode(value.clone())?;
+        }
+        "vault.repo.snapshots.get" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoSnapshotsGetInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.snapshots.read" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoSnapshotsReadInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.symbols.definitions" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoSymbolsDefinitionsInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.views.get" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoViewsGetInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.views.read" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoViewsReadInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.merge_queue.observe" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoMergeQueueObserveInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.snapshots.ingest" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoSnapshotsIngestInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.work.open" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoWorkOpenInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.symbols.declare" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoSymbolsDeclareInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.symbols.renew" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoSymbolsRenewInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.symbols.release" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoSymbolsReleaseInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.proposal_submit" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoProposalSubmitInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.merge_queue.enqueue" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoMergeQueueEnqueueInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.checkout.bind" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoCheckoutBindInput,
+            > = decode(value.clone())?;
+        }
+        "vault.repo.export" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::memory::repo_doors::RepoExportInput,
+            > = decode(value.clone())?;
+        }
         "vault.agents.base" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -22114,6 +22506,30 @@ pub fn invoke(
         "vault.agents.grants.revoke" => encode(vault_agents_grants_revoke(memory, decode(value)?)?),
         "vault.repo.git_push.mint" => encode(vault_repo_git_push_mint(memory, decode(value)?)?),
         "vault.repo.git_push.revoke" => encode(vault_repo_git_push_revoke(memory, decode(value)?)?),
+        "vault.repo.anchor.bind" => encode(vault_repo_anchor_bind(memory, decode(value)?)?),
+        "vault.repo.snapshots.get" => encode(vault_repo_snapshots_get(memory, decode(value)?)?),
+        "vault.repo.snapshots.read" => encode(vault_repo_snapshots_read(memory, decode(value)?)?),
+        "vault.repo.symbols.definitions" => {
+            encode(vault_repo_symbols_definitions(memory, decode(value)?)?)
+        }
+        "vault.repo.views.get" => encode(vault_repo_views_get(memory, decode(value)?)?),
+        "vault.repo.views.read" => encode(vault_repo_views_read(memory, decode(value)?)?),
+        "vault.repo.merge_queue.observe" => {
+            encode(vault_repo_merge_queue_observe(memory, decode(value)?)?)
+        }
+        "vault.repo.snapshots.ingest" => {
+            encode(vault_repo_snapshots_ingest(memory, decode(value)?)?)
+        }
+        "vault.repo.work.open" => encode(vault_repo_work_open(memory, decode(value)?)?),
+        "vault.repo.symbols.declare" => encode(vault_repo_symbols_declare(memory, decode(value)?)?),
+        "vault.repo.symbols.renew" => encode(vault_repo_symbols_renew(memory, decode(value)?)?),
+        "vault.repo.symbols.release" => encode(vault_repo_symbols_release(memory, decode(value)?)?),
+        "vault.repo.proposal_submit" => encode(vault_repo_proposal_submit(memory, decode(value)?)?),
+        "vault.repo.merge_queue.enqueue" => {
+            encode(vault_repo_merge_queue_enqueue(memory, decode(value)?)?)
+        }
+        "vault.repo.checkout.bind" => encode(vault_repo_checkout_bind(memory, decode(value)?)?),
+        "vault.repo.export" => encode(vault_repo_export(memory, decode(value)?)?),
         "vault.agents.base" => encode(vault_agents_base(memory, decode(value)?)?),
         "vault.standing_blocks.configure" => {
             encode(vault_standing_blocks_configure(memory, decode(value)?)?)
@@ -28574,6 +28990,120 @@ pub fn vault_repo_git_push_revoke(
         crate::authority::ActSurface::ThisInstall,
         input,
     )
+}
+pub fn vault_repo_anchor_bind(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RepoAnchorBindInput,
+) -> MemoryResult<crate::task_verb::sdk::RepoAnchorBindOutput> {
+    crate::task_verb::sdk::bind_repo_anchor_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.repo.anchor.bind")?,
+        input,
+    )
+}
+pub fn vault_repo_snapshots_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSnapshotsGetInput>,
+) -> MemoryResult<crate::memory::repo_doors::RepoSnapshotsGetOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.snapshots.get", &input)
+}
+pub fn vault_repo_snapshots_read(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSnapshotsReadInput>,
+) -> MemoryResult<crate::memory::repo_doors::RepoSnapshotsReadOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.snapshots.read", &input)
+}
+pub fn vault_repo_symbols_definitions(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<
+        crate::memory::repo_doors::RepoSymbolsDefinitionsInput,
+    >,
+) -> MemoryResult<crate::memory::repo_doors::RepoSymbolsDefinitionsOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.symbols.definitions", &input)
+}
+pub fn vault_repo_views_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoViewsGetInput>,
+) -> MemoryResult<crate::memory::repo_doors::RepoViewsGetOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.views.get", &input)
+}
+pub fn vault_repo_views_read(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoViewsReadInput>,
+) -> MemoryResult<crate::memory::repo_doors::RepoViewsReadOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.views.read", &input)
+}
+pub fn vault_repo_merge_queue_observe(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<
+        crate::memory::repo_doors::RepoMergeQueueObserveInput,
+    >,
+) -> MemoryResult<crate::memory::repo_doors::RepoMergeQueueObserveOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.merge_queue.observe", &input)
+}
+pub fn vault_repo_snapshots_ingest(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<
+        crate::memory::repo_doors::RepoSnapshotsIngestInput,
+    >,
+) -> MemoryResult<crate::memory::repo_doors::RepoSnapshotsIngestOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.snapshots.ingest", &input)
+}
+pub fn vault_repo_work_open(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoWorkOpenInput>,
+) -> MemoryResult<crate::memory::repo_doors::RepoWorkOpenOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.work.open", &input)
+}
+pub fn vault_repo_symbols_declare(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<
+        crate::memory::repo_doors::RepoSymbolsDeclareInput,
+    >,
+) -> MemoryResult<crate::memory::repo_doors::RepoSymbolsDeclareOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.symbols.declare", &input)
+}
+pub fn vault_repo_symbols_renew(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSymbolsRenewInput>,
+) -> MemoryResult<crate::memory::repo_doors::RepoSymbolsRenewOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.symbols.renew", &input)
+}
+pub fn vault_repo_symbols_release(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<
+        crate::memory::repo_doors::RepoSymbolsReleaseInput,
+    >,
+) -> MemoryResult<crate::memory::repo_doors::RepoSymbolsReleaseOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.symbols.release", &input)
+}
+pub fn vault_repo_proposal_submit(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<
+        crate::memory::repo_doors::RepoProposalSubmitInput,
+    >,
+) -> MemoryResult<crate::memory::repo_doors::RepoProposalSubmitOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.proposal_submit", &input)
+}
+pub fn vault_repo_merge_queue_enqueue(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<
+        crate::memory::repo_doors::RepoMergeQueueEnqueueInput,
+    >,
+) -> MemoryResult<crate::memory::repo_doors::RepoMergeQueueEnqueueOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.merge_queue.enqueue", &input)
+}
+pub fn vault_repo_checkout_bind(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoCheckoutBindInput>,
+) -> MemoryResult<crate::memory::repo_doors::RepoCheckoutBindOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.checkout.bind", &input)
+}
+pub fn vault_repo_export(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoExportInput>,
+) -> MemoryResult<crate::memory::repo_doors::RepoExportOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.export", &input)
 }
 pub fn vault_agents_base(
     memory: &Memory<'_>,
