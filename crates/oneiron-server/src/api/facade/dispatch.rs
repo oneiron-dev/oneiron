@@ -13822,6 +13822,50 @@ async fn vault_cleanup_run(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_archive_delete_preview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.archive.delete.preview",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_archive_delete_confirm(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.archive.delete.confirm",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_usage_events_undecodable(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -34168,6 +34212,46 @@ async fn vault_identity_proposals_for_pair(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn connector_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "connector.answer")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("connector.answer", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "connector.answer", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::connector_answer(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn self_browser_open(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -36173,6 +36257,8 @@ pub(crate) async fn call_verb(
         }
         "vault.roots.requests.cancel" => vault_roots_requests_cancel(server, call, input).await,
         "vault.cleanup.run" => vault_cleanup_run(server, call, input).await,
+        "vault.archive.delete.preview" => vault_archive_delete_preview(server, call, input).await,
+        "vault.archive.delete.confirm" => vault_archive_delete_confirm(server, call, input).await,
         "vault.usage.events.undecodable" => {
             vault_usage_events_undecodable(server, call, input).await
         }
@@ -37138,6 +37224,7 @@ pub(crate) async fn call_verb(
         "vault.identity.proposals.for_pair" => {
             vault_identity_proposals_for_pair(server, call, input).await
         }
+        "connector.answer" => connector_answer(server, call, input).await,
         "self.browser.open" => self_browser_open(server, call, input).await,
         "self.browser.observe" => self_browser_observe(server, call, input).await,
         "self.browser.find" => self_browser_find(server, call, input).await,
@@ -37192,8 +37279,7 @@ pub(crate) async fn call_verb(
         | "self.desktop.windows"
         | "self.desktop.window"
         | "self.desktop.handover" => Err(context_required(verb, VerbContext::Browser)),
-        "connector.answer"
-        | "vault.worlds.privacy.set"
+        "vault.worlds.privacy.set"
         | "vault.search"
         | "vault.claims.put"
         | "vault.edges.put"

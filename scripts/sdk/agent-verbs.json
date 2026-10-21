@@ -6778,6 +6778,39 @@
       "openapi": true
     },
     {
+      "name": "vault.archive.delete.preview",
+      "description": "Previews explicit archived records under the caller's delete authority.",
+      "input": "crate::memory::ArchiveDeletePreviewRequest",
+      "output": "crate::memory::ArchiveDeletePreviewView",
+      "call": "crate::memory::preview_archive_delete_wire(memory, &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.archive.delete.confirm",
+      "description": "Deletes explicit archived records under the caller's current delete authority and returns each receipt.",
+      "input": "crate::memory::ArchiveDeleteConfirmRequest",
+      "output": "crate::memory::ArchiveDeleteBatchResult",
+      "call": "crate::memory::confirm_archive_delete_wire(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.usage.events.undecodable",
       "description": "Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb.",
       "input": "crate::memory::usage_repair::UsageRepairListRequest",
@@ -13773,7 +13806,14 @@
       "output": "crate::task_verb::sdk::ConnectorCallReply",
       "scope": "Write",
       "context": "run",
-      "effect": "ConnectorAnswer"
+      "effect": "ConnectorAnswer",
+      "host": {
+        "input": "crate::task_verb::sdk::ConnectorAnswerRequest",
+        "description": "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data.",
+        "host_door_caller": true,
+        "host_door_session": false,
+        "host_door_lists": true
+      }
     },
     {
       "name": "vault.worlds.privacy.set",

@@ -12,7 +12,8 @@
 //! no reader of a record without it kept, so a supervisor reads it only with
 //! installed engines at or after its floor. A new ctl request a vault built
 //! before it answers as unknown, and an older optional `Ping` field such a
-//! vault sends none of reads as unknown, never as support. A new argv flag
+//! vault sends none of reads as unknown, never as support; an absent
+//! `Ping.browser` says this engine offers no browser. A new argv flag
 //! goes only to an installed engine at or after its floor, since an older one
 //! refuses a flag it does not parse. Consumers pin this crate at an exact
 //! revision and run cross-repo conformance before moving the pin.
