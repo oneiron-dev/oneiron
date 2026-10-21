@@ -6,6 +6,7 @@ use crate::code_run::{
     SelfDurableWait, WaitKey,
 };
 use crate::code_sandbox::SandboxBoundaryContract;
+use crate::code_sandbox::source::PreparedSource;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline, current_legibility};
 use crate::entity_id::EntityId;
 use crate::llm::BudgetGuard;
@@ -422,6 +423,26 @@ pub trait JsCodeModeRuntime {
         let outcome = self.run_step(step, host);
         cancel.check()?;
         outcome
+    }
+
+    /// [`Self::run_step_cancellable`] for a step whose caller already
+    /// prepared its source (FIX 8276): the program is prepared once, and its
+    /// caller keeps the preparation whatever the step answers. The step runs
+    /// what `prepared` executes, the original itself unless it is
+    /// TypeScript. A runtime that maps a failed TypeScript program's
+    /// position back to its source overrides it.
+    fn run_prepared_step_cancellable(
+        &mut self,
+        step: JsCodeModeStep<'_>,
+        prepared: &PreparedSource<'_>,
+        host: &mut dyn JsCodeModeHost,
+        cancel: &StepCancellation,
+    ) -> Result<JsCodeModeStepOutcome> {
+        let step = JsCodeModeStep {
+            script: prepared.executed(),
+            ..step
+        };
+        self.run_step_cancellable(step, host, cancel)
     }
 }
 

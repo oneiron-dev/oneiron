@@ -85,11 +85,21 @@ impl WasmtimeBoundary {
 
 impl<H: 'static> WasmtimeRequest<H> {
     /// Execute the canonical step and validate every returned proposal as inert data.
-    /// Foreign proposal admission never dispatches an engine write.
+    /// Foreign proposal admission never dispatches an engine write. The
+    /// source is prepared as every source door prepares it (FIX 8276): a
+    /// TypeScript program runs as the JavaScript Oxc prints, its error naming
+    /// its TypeScript position; JavaScript runs and fails as written.
     pub fn run_step(&mut self, source: String) -> wasmtime::Result<bindings::StepResult> {
+        let prepared = super::source::prepare_source(&source);
         let (result,): (std::result::Result<bindings::StepResult, String>,) =
-            self.call("run-step", (source,))?;
-        let result = result.map_err(wasmtime::Error::msg)?;
+            self.call("run-step", (prepared.executed().to_owned(),))?;
+        let result = result.map_err(|message| {
+            let (text, at) = super::source::split_guest_error(&message);
+            wasmtime::Error::msg(match prepared.failure_position(at) {
+                Some(position) => format!("{text}{position}"),
+                None => text.to_owned(),
+            })
+        })?;
         validate_step_result(&result, self.tier)?;
         Ok(result)
     }

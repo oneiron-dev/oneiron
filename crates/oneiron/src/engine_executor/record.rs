@@ -110,6 +110,10 @@ impl StoredDurableWait {
 
 const CHECKPOINT_DOMAIN: &[u8] = b"oneiron:engine-executor-repl-step:v1";
 
+/// Marks a step that ran as the JavaScript Oxc printed for its TypeScript
+/// program (FIX 8276); a JavaScript step hashes no such part.
+const PREPARED_SOURCE_DOMAIN: &[u8] = b"oneiron:engine-executor-repl-step:prepared-source:v1";
+
 const CONFIG_HASH_DOMAIN: &[u8] = b"oneiron:engine-executor-config:v1";
 
 /// Storage-binding tags folded into the config marker (ONE-1729).
@@ -588,11 +592,45 @@ impl StepResultDigests {
     }
 }
 
+/// [`prepared_step_state_hash`] for a JavaScript step, which hashes no
+/// preparation; every caller outside the tests passes its preparation.
+#[cfg(test)]
 pub(super) fn step_state_hash(
     previous: [u8; 32],
     seq: u64,
     request_hash: &[u8; 32],
     script: &str,
+    result: &StepResultDigests,
+    implicit_speak: Option<&str>,
+    bridge_calls: &[CodeRunBridgeCall],
+) -> EngineExecutorResult<[u8; 32]> {
+    prepared_step_state_hash(
+        previous,
+        seq,
+        request_hash,
+        script,
+        None,
+        result,
+        implicit_speak,
+        bridge_calls,
+    )
+}
+
+/// The checkpoint hash of one step, for a step whose program may have run as
+/// the JavaScript Oxc printed for it (FIX 8276). `prepared` is that
+/// preparation's identity (the executed JavaScript, its map and the Oxc
+/// pin), hashed beside the original program; a JavaScript step has none,
+/// and its hash is the one it always had.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the checkpoint hashes every part of the step's state"
+)]
+pub(super) fn prepared_step_state_hash(
+    previous: [u8; 32],
+    seq: u64,
+    request_hash: &[u8; 32],
+    script: &str,
+    prepared: Option<&[u8; 32]>,
     result: &StepResultDigests,
     implicit_speak: Option<&str>,
     bridge_calls: &[CodeRunBridgeCall],
@@ -603,6 +641,10 @@ pub(super) fn step_state_hash(
     hash_u64(&mut hasher, seq);
     hash_bytes(&mut hasher, request_hash);
     hash_bytes(&mut hasher, blake3::hash(script.as_bytes()).as_bytes());
+    if let Some(identity) = prepared {
+        hash_bytes(&mut hasher, PREPARED_SOURCE_DOMAIN);
+        hash_bytes(&mut hasher, identity);
+    }
     hash_bytes(&mut hasher, &result.observation);
     hash_bytes(&mut hasher, &[u8::from(result.done)]);
     hash_bytes(&mut hasher, &[u8::from(implicit_speak.is_some())]);

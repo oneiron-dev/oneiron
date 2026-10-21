@@ -4,6 +4,7 @@ use super::types::EngineExecutorResult;
 use crate::code_run::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
 };
+use crate::code_sandbox::source::{SourceLanguage, prepare_source};
 use crate::{ContentPart, Error, FinishReason, LlmResponse};
 
 /// Line-oriented markdown fence delimiter. The LANGUAGE SUFFIX after it is
@@ -256,7 +257,7 @@ fn mandatory_structural_gate(code: &str, trailing_speak: &str) -> EngineExecutor
         )
         .into());
     }
-    if !looks_like_plain_js(code) {
+    if !looks_like_plain_js(code) && !looks_like_typescript(code) {
         return Err(
             Error::InvalidClaimBody("executor LLM response is not executable plain JS").into(),
         );
@@ -637,4 +638,33 @@ fn looks_like_plain_js(text: &str) -> bool {
     ]
     .iter()
     .any(|prefix| first_line.starts_with(prefix))
+}
+
+/// The first-line openings of a TypeScript program the JavaScript shape list
+/// does not hold (FIX 8276).
+const TYPESCRIPT_OPENINGS: &[&str] = &[
+    "type ",
+    "interface ",
+    "enum ",
+    "namespace ",
+    "declare ",
+    "abstract ",
+    "@",
+];
+
+/// A TypeScript program whose first line opens with syntax the JavaScript
+/// shape list does not hold (FIX 8276). Only one Oxc prepares as TypeScript
+/// passes, so prose that opens with one of these words fails the gate as it
+/// always did, and every reply the JavaScript list passes is unchanged.
+fn looks_like_typescript(text: &str) -> bool {
+    let first_line = text
+        .trim_start()
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim_start();
+    let opens = TYPESCRIPT_OPENINGS
+        .iter()
+        .any(|prefix| first_line.starts_with(prefix));
+    opens && prepare_source(text).language() == SourceLanguage::TypeScript
 }

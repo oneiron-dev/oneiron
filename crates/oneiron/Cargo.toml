@@ -109,6 +109,15 @@ zstd = "0.13"
 # The whole-vault archive (OF-222) is one ZIP of JSONL records, files and a manifest.
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 tracing = { version = "0.1" }
+# FIX 8276: code-mode TypeScript is stripped by Oxc in process before QuickJS
+# runs it (code_sandbox/source.rs); plain JavaScript is never reprinted.
+oxc_allocator = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_codegen = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_semantic = { workspace = true }
+oxc_span = { workspace = true }
+oxc_transformer = { workspace = true }
 whichlang = "0.1.1"
 kamadak-exif = "0.5"
 ocrs = { version = "0.10", optional = true }

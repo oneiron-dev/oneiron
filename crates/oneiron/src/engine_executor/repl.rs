@@ -9,7 +9,7 @@ use super::host::{
 use super::record::{
     LoadedReplayRecord, PromptBinding, REPLAY_METADATA_SCHEMA_VERSION, StepResultDigests,
     code_consent_evidence, completed_step_count, load_terminal_status, parked_wait, parked_wait_at,
-    previous_state_hash, record_config_marker, record_terminal_output, step_state_hash,
+    prepared_step_state_hash, previous_state_hash, record_config_marker, record_terminal_output,
     validate_executor_config_marker, verify_code_consent_park, wait_key,
 };
 use super::store::{
@@ -17,9 +17,10 @@ use super::store::{
     ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_REPLY_INLINE_BYTES, checkpoint_label,
     clean_for_context, console_output_path, fallback_speech_marker, implicit_speak_output_path,
     load_context_output, load_observation_window, load_utf8_output, message_result_attachment,
-    observation_output_path, observation_ref, publish_output, record_reply_evidence,
-    record_script_output, record_text_output, recoverable_chunk_path, resumed_output_path,
-    resumed_output_wait, script_output_path, validate_runtime_outputs, write_json,
+    observation_output_path, observation_ref, publish_output, record_prepared_source,
+    record_reply_evidence, record_script_output, record_text_output, recoverable_chunk_path,
+    resumed_output_path, resumed_output_wait, script_output_path, validate_runtime_outputs,
+    write_json,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -31,6 +32,7 @@ use crate::code_run::{
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
     SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
 };
+use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
 use crate::limit_ask::EngineLimit;
 use crate::off_record::ExecutorUtterance;
@@ -245,6 +247,11 @@ impl EngineNativeExecutor<'_> {
                 script_output_path(completed_steps),
                 &script,
             )?;
+            // One preparation per program (FIX 8276): a TypeScript program
+            // runs as the JavaScript Oxc prints for it, kept beside the
+            // program with its map and Oxc pin; JavaScript runs as written.
+            let prepared = prepare_source(&script);
+            record_prepared_source(&self.storage, &mut record, completed_steps, &prepared)?;
             let bridge_start = record.bridge_calls.len();
             // ONE-1314: the DURABLE history is the load-bearing half of the
             // lineage seam. An outbound effect parks its step, so a run that
@@ -285,7 +292,9 @@ impl EngineNativeExecutor<'_> {
                         })
                         .ok()
                 });
-                let step_outcome = self.runtime.run_step_cancellable(step, &mut host, cancel);
+                let step_outcome = self
+                    .runtime
+                    .run_prepared_step_cancellable(step, &prepared, &mut host, cancel);
                 let shadow = checking.and_then(|checking| checking.join().ok());
                 (shadow, step_outcome)
             });
@@ -303,7 +312,7 @@ impl EngineNativeExecutor<'_> {
                             expected_generation,
                             completed_steps,
                             &request_hash,
-                            &script,
+                            &prepared,
                             bridge_start,
                             bridge_calls,
                             captured,
@@ -343,7 +352,7 @@ impl EngineNativeExecutor<'_> {
                     expected_generation,
                     completed_steps,
                     &request_hash,
-                    &script,
+                    &prepared,
                     bridge_start,
                     bridge_calls,
                     captured,
@@ -382,7 +391,7 @@ impl EngineNativeExecutor<'_> {
                             expected_generation,
                             completed_steps,
                             &request_hash,
-                            &script,
+                            &prepared,
                             bridge_start,
                             bridge_calls,
                             captured,
@@ -503,11 +512,15 @@ impl EngineNativeExecutor<'_> {
             let checkpoint = CodeRunStepCheckpoint::new(
                 completed_steps,
                 checkpoint_label(completed_steps),
-                step_state_hash(
+                prepared_step_state_hash(
                     previous_state_hash(&record),
                     completed_steps,
                     &request_hash,
                     &script,
+                    prepared
+                        .transpiled()
+                        .map(TranspiledSource::identity)
+                        .as_ref(),
                     &step_result,
                     implicit_speak_bytes.as_deref(),
                     &record.bridge_calls[bridge_start..],
@@ -856,7 +869,7 @@ impl EngineNativeExecutor<'_> {
         expected_generation: Option<CodeRunReplayGeneration>,
         completed_steps: u64,
         request_hash: &[u8; 32],
-        script: &str,
+        prepared: &PreparedSource<'_>,
         bridge_start: usize,
         bridge_calls: Vec<CodeRunBridgeCall>,
         captured: Vec<CodeRunRawOutput>,
@@ -885,11 +898,15 @@ impl EngineNativeExecutor<'_> {
         let checkpoint = CodeRunStepCheckpoint::new(
             completed_steps,
             checkpoint_label(completed_steps),
-            step_state_hash(
+            prepared_step_state_hash(
                 previous_state_hash(record),
                 completed_steps,
                 request_hash,
-                script,
+                prepared.original(),
+                prepared
+                    .transpiled()
+                    .map(TranspiledSource::identity)
+                    .as_ref(),
                 &StepResultDigests::of(&observation, false),
                 None,
                 &record.bridge_calls[bridge_start..],

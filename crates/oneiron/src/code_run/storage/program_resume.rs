@@ -73,6 +73,10 @@ pub(crate) struct ProgramResumeHead {
     /// The wait the last entry parked on, when it did.
     pub(crate) wait: Option<ProgramResumeWait>,
     pub(crate) at: u64,
+    /// The identity of the JavaScript the pinned call ran as, when its
+    /// source is TypeScript (FIX 8276). The code run's record keeps its body
+    /// and map; every later entry runs that, never a new preparation.
+    pub(crate) preparation: Option<[u8; 32]>,
 }
 
 /// The wait one entry parked on: the row of the call that parked, and the
@@ -116,6 +120,7 @@ pub(crate) struct ProgramResumeCommit {
     pub(crate) injected: u64,
     pub(crate) wait: Option<ProgramResumeWait>,
     pub(crate) at: u64,
+    pub(crate) preparation: Option<[u8; 32]>,
 }
 
 /// A run's head and every call its pages list, for its restarter.
@@ -292,6 +297,7 @@ fn put_resume_in_txn(
         pages,
         wait: commit.wait,
         at: commit.at,
+        preparation: commit.preparation,
     };
     RESUME.put(vault, txn, &(run, HEAD, 0), &ResumeRow::Head(head))
 }

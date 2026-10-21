@@ -32,7 +32,8 @@ pub struct ForeignCodeOutcome {
 /// The workspace is a caller-scoped snapshot supplied by the admitting door.
 /// No host credential or network authority is lent to a foreign program.
 /// Its proposed files spool on `spool`, the host's measured disk floor
-/// (FIX 7650).
+/// (FIX 7650). A TypeScript `source` runs as the JavaScript Oxc prints for
+/// it; JavaScript runs as written (FIX 8276).
 pub fn execute_foreign_code(
     source: &str,
     mounts: SandboxMountTable,
@@ -47,8 +48,11 @@ pub fn execute_foreign_code(
     }
     let backend = select_backend_for_tier(SandboxGuestTier::Foreign)?
         .ok_or_else(|| invalid("foreign execution requires isolation"))?;
+    // Prepared once, here: the shared launch below runs what it is given,
+    // as the runtime's own isolated lane hands it an already prepared one.
+    let prepared = super::source::prepare_source(source);
     execute_foreign_code_on(
-        source,
+        prepared.executed(),
         SandboxGuestTier::Foreign,
         mounts,
         artifact.component,
