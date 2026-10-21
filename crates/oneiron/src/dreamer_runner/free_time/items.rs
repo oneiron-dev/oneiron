@@ -21,15 +21,11 @@ use super::cycle::{FreeTimeCycle, FreeTimeCycleState, FreeTimeNote, FreeTimeOwnT
 use super::receipt::{
     FreeTimeItemOutcome, FreeTimeItemReceipt, close_cycle_if_done_in_txn, record_receipt_in_txn,
 };
-use super::{CYCLE, FreeTimeKind, ITEM, RECEIPT};
+use super::{CYCLE, FreeTimeKind, ITEM, LONG_RETRY_LINEAGE, RECEIPT};
 use crate::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::{ClaimInput, ClaimSource, EdgeActorClass, EntityId, Error, Result, Vault};
 
-/// A binding lookup that walks a retry chain of more tries than this logs
-/// it once (FIX 7057). The chain is walked whole all the same: this bounds
-/// nothing.
-const LONG_RETRY_LINEAGE: usize = 64;
 /// The predicate an agent's free-time suggestion for its human lands under.
 const SUGGESTION_PREDICATE: &str = "autonomy.suggestion";
 

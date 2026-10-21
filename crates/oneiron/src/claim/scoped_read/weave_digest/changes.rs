@@ -191,8 +191,10 @@ impl Vault {
     /// it never fails the timer's own work. While a host Coach serves this
     /// vault, its model drafts each step (FIX 5609): the timer only queues
     /// its job, and the rule here never also runs. Serving means ready, not
-    /// spawned (FIX 6165): before its first round served, or after a round
-    /// erred, the rule here evaluates as with no host.
+    /// spawned (FIX 6165): before its first round served, after a round
+    /// erred, or once its readiness lapsed because no round served within
+    /// its liveness span (FIX 7211; a hung round runs on, uncancelled), the
+    /// rule here evaluates as with no host.
     pub(super) fn coach_weave_digest_settings(&self, now: u64) {
         if self.coach_weave_digest_host_ready() {
             self.queue_coach_weave_digest_settings(now);

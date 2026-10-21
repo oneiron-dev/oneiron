@@ -192,9 +192,11 @@ pub struct Vault {
     pub(crate) code_consent_host:
         std::sync::OnceLock<std::sync::Arc<dyn crate::code_run::CodeConsentEffectHost>>,
     /// A host Coach serving this vault drafts its digest settings steps (FIX
-    /// 5609, 6165; [`Vault::set_coach_weave_digest_host_ready`]). In memory
-    /// only.
-    pub(crate) coach_weave_digest_host: std::sync::atomic::AtomicBool,
+    /// 5609, 6165, 7211; [`Vault::set_coach_weave_digest_host_ready`]): when
+    /// its last round completed and its own expected round interval, `None`
+    /// while not ready. In memory only.
+    pub(crate) coach_weave_digest_host:
+        std::sync::Mutex<Option<(std::time::Instant, std::time::Duration)>>,
     /// The origin mirror pushes' wake (FIX 6866): a published-ref move or a
     /// green landing starts a full-auto pass at once. In memory only and
     /// never shared across vaults; each lifecycle tick repairs a missed one.

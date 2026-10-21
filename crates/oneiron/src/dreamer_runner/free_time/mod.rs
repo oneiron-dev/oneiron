@@ -96,6 +96,11 @@ const ITEM: SideTable<AttemptId, items::FreeTimeItemBinding, Named> =
 const RECEIPT: SideTable<(EntityId, EntityId, EntityId), receipt::FreeTimeItemReceipt, Named> =
     SideTable::new(&side_table::DREAMER_FREE_TIME_RECEIPT);
 
+/// A retry lineage of more tries than this is logged once per binding lookup
+/// that walks it (`items`, FIX 7057) and once per restore (`restore`, FIX
+/// 7006). It is walked whole all the same: this bounds nothing.
+const LONG_RETRY_LINEAGE: usize = 64;
+
 /// The two kinds of an agent's free time, by the label its calls carry.
 #[derive(
     Debug,

@@ -103,11 +103,14 @@ pub(crate) fn spawn(
 ) -> tokio::task::JoinHandle<()> {
     // The Coach's model drafts the digest settings steps once a round of
     // this worker served, so the digest timer then only queues their job
-    // (FIX 5609); until then, after a round that errs and once the worker
-    // ends, the timer's closed-form rule evaluates (FIX 6165). The guard is
-    // the task's own state from here, so an abort before its first poll
-    // drops it too.
-    let digest = DigestHostReady(Arc::downgrade(server.vault()));
+    // (FIX 5609); until then, after a round that errs, once the worker ends
+    // and once too many of its ticks pass with no round served, the timer's
+    // closed-form rule evaluates (FIX 6165, 7211). The guard is the task's
+    // own state from here, so an abort before its first poll drops it too.
+    let digest = DigestHostReady {
+        vault: Arc::downgrade(server.vault()),
+        expected_round_interval: TICK,
+    };
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
@@ -144,13 +147,19 @@ pub(crate) fn spawn(
 
 /// The worker's word on whether it serves the vault's digest settings steps
 /// (FIX 6165). Dropped with the worker's task, aborted or ended, it says not
-/// ready. It holds the vault weakly, so the worker keeps no vault open.
-struct DigestHostReady(std::sync::Weak<Vault>);
+/// ready. It holds the vault weakly, so the worker keeps no vault open. A
+/// ready word carries the worker's tick, so it lapses while no round serves
+/// (FIX 7211); the round itself is never cut short.
+struct DigestHostReady {
+    vault: std::sync::Weak<Vault>,
+    /// The worker's own tick: one round is expected per interval.
+    expected_round_interval: Duration,
+}
 
 impl DigestHostReady {
     fn set(&self, ready: bool) {
-        if let Some(vault) = self.0.upgrade() {
-            vault.set_coach_weave_digest_host_ready(ready);
+        if let Some(vault) = self.vault.upgrade() {
+            vault.set_coach_weave_digest_host_ready(ready, self.expected_round_interval);
         }
     }
 }
