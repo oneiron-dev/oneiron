@@ -71924,6 +71924,126 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/args.rs",
+     "purpose": "Explicit CLI flags and a Linux-only execution guard",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/check.rs",
+     "purpose": "One deterministic host-private checker",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/config.rs",
+     "purpose": "Deployment supplies exact pins; no marketing-name or backend substitution",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/fixture.rs",
+     "purpose": "PRIVATE S1 lifecycle",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/measures.rs",
+     "purpose": "Receipt observations, not replacements for the engine's success ledger",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/mod.rs",
+     "purpose": "Synthetic browser bench: engine outcomes are not oracle passes",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/provider_gate.rs",
+     "purpose": "Pass-through only: exact wire identities and durable campaign cash reservations",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/report.rs",
+     "purpose": "Assigned denominators, separate safety axes and descriptive medians only",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/rows.rs",
+     "purpose": "Durable terminal rows",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/run.rs",
+     "purpose": "One assigned trial, one original deadline and no failure retries",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/served.rs",
+     "purpose": "Shipped binary lifecycle and official MCP stdio",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/taskgen.rs",
+     "purpose": "Freeze paired seeds, disjoint holdouts and rotated arm assignments",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -72196,7 +72316,7 @@
      "path": "src/interface_bench/mod.rs",
      "purpose": "Campaign #5 interface bench task generation and smoke harness",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -72216,7 +72336,7 @@
      "path": "src/interface_bench/taskgen.rs",
      "purpose": "Fixture and task generation plus atomic JSON writers",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -72804,6 +72924,13 @@
      "layout": "dir",
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
+    "cua": {
+     "files": 12,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Synthetic browser bench: engine outcomes are not oracle passes"
+    },
     "eval": {
      "files": 3,
      "impl_vault": false,
@@ -72898,7 +73025,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 123,
+   "source_files": 135,
    "test_files": 18
   },
   "oneiron-broker": {
