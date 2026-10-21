@@ -728,9 +728,13 @@ impl SyncServer {
     }
 
     /// Whether boot rooted this vault and provisioned the engine's machine
-    /// writers (the Dreamer among them).
+    /// writers (the Dreamer among them): from the configured secret, or on
+    /// a managed vault from its DEK-derived issuer, which managed boot sets
+    /// once it has provisioned them (FIX 7261). Never on a blind relay.
     pub(crate) fn host_root_provisioned(&self) -> bool {
         host_root_secret(&self.vault, &self.config).is_some()
+            || (self.managed_issuer.is_some()
+                && self.vault.privacy_posture() != oneiron::HostingPrivacyPosture::Relay)
     }
 
     /// Install the host's extraction egress predicate. An absent predicate

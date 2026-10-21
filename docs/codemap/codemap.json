@@ -1243,13 +1243,16 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SourcedTypeTree"
+     ],
      "path": "src/agent_dispatch/task_type_tree.rs",
      "purpose": "The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and…",
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 4
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -12376,7 +12379,7 @@
       "WeaveLinkCorrection"
      ],
      "path": "src/claim/scoped_read/weave_correction.rs",
-     "purpose": "Authenticated wrong labels emitted by the live weave report: one on a link, and one on a claim, project or…",
+     "purpose": "Authenticated wrong labels emitted by the live weave report: one on a link, and one on a claim, project…",
      "surface": {
       "crate-vis": 3,
       "enum": 1,
@@ -12502,10 +12505,20 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_report/sieve_score.rs",
+     "purpose": "A weave report's SieveScore section reads the sampled sieve audits (OF-499, ARCH-0063 §6)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -12533,6 +12546,7 @@
       "WeaveScheduleView",
       "WeaveSectionInput",
       "WeaveSectionView",
+      "WeaveSieveScoreView",
       "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest"
      ],
@@ -12542,7 +12556,7 @@
       "crate-vis": 5,
       "enum": 2,
       "fn": 13,
-      "struct": 13
+      "struct": 14
      }
     },
     {
@@ -22935,13 +22949,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/code_fix/work.rs",
      "purpose": "A code fix's work rows (OF-380): each failure's row and its key, the `coach.code_fix` run a filed heal…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -24392,7 +24406,7 @@
      "path": "src/dreamer_wake/sieve/recipes.rs",
      "purpose": "Durable model-rung inputs, queue spending and unbiased retained-span samples",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 3,
       "struct": 2
      }
@@ -27294,7 +27308,7 @@
      "path": "src/failure_signals/code_fix/exact.rs",
      "purpose": "The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -27318,7 +27332,7 @@
      "path": "src/failure_signals/code_fix/subject.rs",
      "purpose": "What a code fix reads of the real failure behind its source: the text and every world it touched, a failure…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -27428,7 +27442,7 @@
      "path": "src/failure_signals/witness.rs",
      "purpose": "Vault-local, non-serializable producer observations",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 1
      }
@@ -35410,7 +35424,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/execute.rs",
@@ -49731,13 +49745,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/self_heal/tier1_source.rs",
      "purpose": "Producer-owned, vault-local source proofs over the existing base ledgers",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -61464,10 +61478,11 @@
      "path": "src/team/receipt.rs",
      "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 9,
-      "struct": 5
+      "fn": 11,
+      "struct": 5,
+      "type": 1
      }
     },
     {
@@ -61501,8 +61516,9 @@
      "purpose": "OF-540: what the host saw a team start do, and the team a run works in",
      "surface": {
       "crate-vis": 1,
-      "fn": 7,
-      "struct": 1
+      "fn": 9,
+      "struct": 1,
+      "type": 1
      }
     },
     {
@@ -66824,7 +66840,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 77,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68147,9 +68163,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 184,
+   "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4291,
+   "source_files": 4292,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81915,9 +81931,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/context_board/chat_emit.rs",
-     "purpose": "What a live chat answer's context leaves on record (FIX 6921): the emit receipt `ai.reply` keeps, and the…",
+     "purpose": "What a chat answer's context leaves on record (FIX 6921), a live turn's or a queued Continue or Retry's (FIX…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -89867,7 +89883,7 @@
      "path": "src/managed/vm_init/config_drive.rs",
      "purpose": "The vault VM's config drive as the root bootstrap reads it: only the typed files the contract names below…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -89918,6 +89934,16 @@
      "purpose": "The outbox companion beside the engine (FIX 5235, FIX 5467): the bootstrap starts `oneiron-vm-outbox` as its…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init/profile.rs",
+     "purpose": "The vault's managed profile as the config drive carries it into a VM (FIX 6809): five typed files, one value…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -93431,7 +93457,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 74,
+     "files": 75,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -93587,7 +93613,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1000,
+   "source_files": 1001,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -97501,6 +97527,7 @@
       "WeaveSectionInput",
       "WeaveSectionKind",
       "WeaveSectionView",
+      "WeaveSieveScoreView",
       "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest",
       "WebCrawlRequest",
@@ -97593,7 +97620,7 @@
      "purpose": "—",
      "surface": {
       "enum": 918,
-      "struct": 2886
+      "struct": 2887
      }
     },
     {
@@ -98442,7 +98469,7 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 21,
+      "const": 27,
       "enum": 2,
       "fn": 4,
       "re-export": 1
