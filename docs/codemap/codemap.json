@@ -23975,7 +23975,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AbortDreamerBudgetReservation",
@@ -24137,7 +24137,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 3,
-      "fn": 14,
+      "fn": 16,
       "struct": 2
      }
     },
@@ -24150,7 +24150,7 @@
      "path": "src/dreamer_wake/driver.rs",
      "purpose": "The wake loop: admit, warn, dispatch under panic containment, stop conditions",
      "surface": {
-      "const": 4,
+      "const": 5,
       "crate-vis": 1,
       "fn": 10,
       "struct": 1
@@ -68869,7 +68869,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 183,
+   "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 4349,
    "test_files": 902
@@ -76048,7 +76048,7 @@
      "path": "src/supervisor/pass.rs",
      "purpose": "Single wake-pass assembly and engine delegation",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -81647,7 +81647,7 @@
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -81770,7 +81770,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "fn": 22,
       "mod": 1,
       "re-export": 1,
@@ -90499,7 +90499,7 @@
      "path": "src/managed/state_serve/admission.rs",
      "purpose": "The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
