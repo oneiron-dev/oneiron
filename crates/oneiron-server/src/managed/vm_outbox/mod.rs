@@ -25,6 +25,7 @@
 mod endpoint;
 mod guest;
 mod host;
+mod link;
 mod local;
 mod scan;
 mod store;
