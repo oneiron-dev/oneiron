@@ -1,5 +1,6 @@
 //! Relationship access checks share the row read transaction with grant resolution.
 use super::ScopedRead;
+use super::agent_grants::{AskedFilter, HeldGrants};
 use crate::EntityId;
 use crate::access_grant::AccessContext;
 use crate::claim::{ClaimBody, decode_claim_body};
@@ -36,23 +37,56 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (Option<EntityId>, bool) {
 /// snapshot: loaded at the first row that needs it, then reused, so a batch
 /// read resolves the reader's grants and memberships once, not per row.
 /// The second field names the one row whose legal non-use conjunct a named
-/// read asks on its own ([`Self::asking_use_of`]).
+/// read asks on its own ([`Self::asking_use_of`]). The third holds, for the
+/// same serving txn, each reader's own live Grants once a row's own
+/// admission refuses it, and what the read asked of its rows (FIX 7462).
 #[derive(Default)]
-pub(super) struct HeldAuthority<'v>(RefCell<Option<AccessContext<'v>>>, Option<EntityId>);
+pub(super) struct HeldAuthority<'v>(
+    RefCell<Option<AccessContext<'v>>>,
+    Option<EntityId>,
+    HeldGrants,
+);
 
 impl HeldAuthority<'_> {
+    /// The row checks of one serving txn whose filter the read resolved from
+    /// `requested` over its key's own floor (`None`: the floor alone).
+    pub(super) fn for_request(requested: Option<&super::RetrievalFilter>) -> Self {
+        Self(
+            RefCell::default(),
+            None,
+            HeldGrants::fresh(AskedFilter::Known(requested.cloned())),
+        )
+    }
+
     /// The row checks of a named read of `id` that asks `id`'s legal non-use
     /// conjunct on its own, after every other gate (FIX 5226): `id` is judged
     /// by every other gate as before, and every other row, each source `id`
-    /// was written from included, keeps that conjunct.
-    pub(super) fn asking_use_of(id: EntityId) -> Self {
-        Self(RefCell::default(), Some(id))
+    /// was written from included, keeps that conjunct. It shares this read's
+    /// Grants.
+    pub(super) fn asking_use_of(&self, id: EntityId) -> Self {
+        Self(RefCell::default(), Some(id), self.2.clone())
+    }
+
+    /// A peer's row checks in this read's serving txn: its own relationship
+    /// authority and legal non-use conjunct, under its own floor alone, and
+    /// this read's Grants, where it reads its own actor's entry.
+    pub(super) fn for_peer(&self) -> Self {
+        Self(
+            RefCell::default(),
+            None,
+            self.2.shared_asking(AskedFilter::Known(None)),
+        )
     }
 
     /// Whether the read leaves `id`'s legal non-use conjunct to the named
     /// read that asks it on its own.
     pub(super) fn asks_use_of(&self, id: &EntityId) -> bool {
         self.1.as_ref() == Some(id)
+    }
+
+    /// The Grants this serving txn holds, by reader.
+    pub(super) fn grants(&self) -> &HeldGrants {
+        &self.2
     }
 }
 

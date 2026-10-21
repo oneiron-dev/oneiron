@@ -1,12 +1,15 @@
 //! A room turn's ceiling as each row's snapshot refreshes it, and the
 //! peer reads a room or audience conjoins (ARCH-0067 §8).
 
+use super::super::access_gate::HeldAuthority;
 use super::*;
 
-impl ScopedRead<'_> {
+impl<'v> ScopedRead<'v> {
     /// Whether each of `peers` reads the revision `raw` too, under this
     /// read's claim-status contract; each as a personal ceiling's peer
-    /// (`room_peer`) when `room_peer`.
+    /// (`room_peer`) when `room_peer`. Each peer's own row admission is its
+    /// own B, else its own A under its own live Grants (FIX 7462), held for
+    /// this serving txn beside `authority`'s and never another's.
     pub(super) fn peers_read_raw_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -14,6 +17,7 @@ impl ScopedRead<'_> {
         id: &EntityId,
         raw: &[u8],
         room_peer: bool,
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         for peer in peers {
             let mut peer = self
@@ -35,7 +39,8 @@ impl ScopedRead<'_> {
                 &policy.retrieval_floor_for_actor(Some(&peer.actor_key)),
                 None,
             )?;
-            if !peer.is_entity_raw_readable_with_filter_in(txn, &policy, id, raw, &filter)? {
+            let held = authority.for_peer();
+            if !peer.is_entity_raw_readable_held_in(txn, &policy, id, raw, &filter, &held)? {
                 return Ok(false);
             }
         }

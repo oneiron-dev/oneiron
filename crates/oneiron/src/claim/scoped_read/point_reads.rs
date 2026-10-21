@@ -47,8 +47,9 @@ impl ScopedRead<'_> {
         id: &EntityId,
     ) -> Result<Option<Vec<u8>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let authority = HeldAuthority::for_request(None);
         Ok(self
-            .entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?
+            .entity_raw_with_mode_held_in(txn, &policy, &filter, id, ReadMode::Live, &authority)?
             .map(|revision| revision.raw))
     }
 
@@ -63,7 +64,7 @@ impl ScopedRead<'_> {
         ids: &[EntityId],
     ) -> Result<Vec<bool>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let authority = HeldAuthority::default();
+        let authority = HeldAuthority::for_request(None);
         ids.iter()
             .map(|id| self.is_entity_readable_held_in(txn, &policy, id, &filter, &authority))
             .collect()
@@ -103,10 +104,17 @@ impl ScopedRead<'_> {
         ids: &[EntityId],
     ) -> Result<Vec<Option<EntityParts>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let authority = HeldAuthority::for_request(None);
         ids.iter()
             .map(|id| {
-                let Some(revision) =
-                    self.entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?
+                let Some(revision) = self.entity_raw_with_mode_held_in(
+                    txn,
+                    &policy,
+                    &filter,
+                    id,
+                    ReadMode::Live,
+                    &authority,
+                )?
                 else {
                     return Ok(None);
                 };
@@ -195,7 +203,7 @@ impl ReadRow {
     }
 }
 
-impl ScopedRead<'_> {
+impl<'v> ScopedRead<'v> {
     /// Compatibility projection of point rows; policy and body share the read snapshot.
     pub fn get_entity_parts_with_receipt(
         &self,
@@ -311,12 +319,16 @@ impl ScopedRead<'_> {
     ) -> std::result::Result<ScopedReadResult<T>, E> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        // One serving txn, one held authority: the reader's relationship
+        // context and its own Grants load once for every slot (FIX 7462).
+        let authority = HeldAuthority::for_request(requested);
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for read in reads {
             let (row, withheld) = match read.target {
                 ReadTarget::Id(id) => {
-                    let (row, withheld) = self.id_row_in(&txn, &policy, &filter, id, read.mode)?;
+                    let (row, withheld) =
+                        self.id_row_in(&txn, &policy, &filter, id, read.mode, &authority)?;
                     if withheld > 0 && opaque(&txn, &id)? {
                         (row, 0)
                     } else {
@@ -326,9 +338,15 @@ impl ScopedRead<'_> {
                 ReadTarget::ShortRef {
                     short_id,
                     content_hash,
-                } => {
-                    self.short_ref_in(&txn, &policy, &filter, short_id, content_hash, read.mode)?
-                }
+                } => self.short_ref_in(
+                    &txn,
+                    &policy,
+                    &filter,
+                    short_id,
+                    content_hash,
+                    read.mode,
+                    &authority,
+                )?,
             };
             suppressed += withheld;
             value.push(row);
@@ -341,7 +359,8 @@ impl ScopedRead<'_> {
     }
 
     /// One id at one frontier: the admitted row and whether an existing row
-    /// was withheld. Value and denial count come from the same snapshot.
+    /// was withheld. Value and denial count come from the same snapshot,
+    /// under the authority the read holds for it.
     pub(super) fn id_row_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -349,9 +368,10 @@ impl ScopedRead<'_> {
         filter: &crate::gate::ResolvedRetrievalFilter,
         id: EntityId,
         mode: ReadMode,
+        authority: &HeldAuthority<'v>,
     ) -> Result<(Option<ReadRow>, usize)> {
         let admitted = self.admit_in(txn, &id, || {
-            self.entity_raw_with_mode_in(txn, policy, filter, &id, mode)
+            self.entity_raw_with_mode_held_in(txn, policy, filter, &id, mode, authority)
         })?;
         let withheld = admitted.suppression();
         let row = admitted
@@ -362,6 +382,10 @@ impl ScopedRead<'_> {
     }
 
     /// One short reference: the admitted row and whether an existing row was withheld.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one short reference at its frontier, under the read's filter and held authority"
+    )]
     pub(super) fn short_ref_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -370,6 +394,7 @@ impl ScopedRead<'_> {
         short_id: &str,
         content_hash: u8,
         mode: ReadMode,
+        authority: &HeldAuthority<'v>,
     ) -> Result<(Option<ReadRow>, usize)> {
         let hydrated = match mode {
             ReadMode::Pinned(revision) => {
@@ -381,7 +406,7 @@ impl ScopedRead<'_> {
                 else {
                     return Ok((None, 0));
                 };
-                return self.id_row_in(txn, policy, filter, id, mode);
+                return self.id_row_in(txn, policy, filter, id, mode, authority);
             }
             ReadMode::Live | ReadMode::Indexed => {
                 self.vault
@@ -393,7 +418,8 @@ impl ScopedRead<'_> {
         };
         if hydrated.body.is_some() {
             // Resolve the requested frontier in this same transaction.
-            let (row, withheld) = self.id_row_in(txn, policy, filter, hydrated.id, mode)?;
+            let (row, withheld) =
+                self.id_row_in(txn, policy, filter, hydrated.id, mode, authority)?;
             let deletion = hydrated.deletion;
             return Ok((row.map(|row| ReadRow { deletion, ..row }), withheld));
         }

@@ -1,4 +1,5 @@
 //! The one scoped graph projection: exact relation + both endpoints, then limits.
+use super::access_gate::HeldAuthority;
 use super::{ScopedRead, ScopedReadResult, admission::ReadAdmission};
 use crate::edge::{EdgeInfo, EdgeKind};
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
@@ -251,12 +252,20 @@ impl ScopedRead<'_> {
     ) -> std::result::Result<ScopedReadResult<T>, E> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        // One held authority for the tree's node reads in this txn (FIX 7462).
+        let held = HeldAuthority::for_request(None);
         let anchor = self.admit_entity_in(&txn, &policy, &filter, root)?;
         let mut suppressed = anchor.suppression();
         let mut tree = None;
         if anchor.visible()
-            && let Some(row) =
-                self.entity_raw_with_mode_in(&txn, &policy, &filter, root, ReadMode::Live)?
+            && let Some(row) = self.entity_raw_with_mode_held_in(
+                &txn,
+                &policy,
+                &filter,
+                root,
+                ReadMode::Live,
+                &held,
+            )?
             && let Some(value) = node(&row.raw)?
         {
             let mut nodes = vec![ChildOfTreeNode {
@@ -293,12 +302,13 @@ impl ScopedRead<'_> {
                     .collect();
                 children.sort_unstable();
                 for child in children {
-                    let Some(row) = self.entity_raw_with_mode_in(
+                    let Some(row) = self.entity_raw_with_mode_held_in(
                         &txn,
                         &policy,
                         &filter,
                         &child,
                         ReadMode::Live,
+                        &held,
                     )?
                     else {
                         continue;

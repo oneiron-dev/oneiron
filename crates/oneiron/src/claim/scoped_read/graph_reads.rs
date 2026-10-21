@@ -1,4 +1,5 @@
 //! Receipted graph and timeline reads under the resolved actor floor.
+use super::access_gate::HeldAuthority;
 use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState};
@@ -53,15 +54,18 @@ impl ScopedRead<'_> {
         if !admitted.source.visible() {
             return Ok(None);
         }
+        // One held authority for every neighbor read in this txn (FIX 7462).
+        let held = HeldAuthority::for_request(None);
         let mut kept = Vec::new();
         for edge in admitted.edges {
             let edge = edge.info();
-            let Some(raw) = self.entity_raw_with_mode_in(
+            let Some(raw) = self.entity_raw_with_mode_held_in(
                 txn,
                 &policy,
                 &filter,
                 &edge.target,
                 crate::vault::ReadMode::Live,
+                &held,
             )?
             else {
                 continue;

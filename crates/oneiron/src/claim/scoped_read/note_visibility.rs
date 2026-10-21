@@ -13,6 +13,21 @@ impl ScopedRead<'_> {
         bytes: &[u8],
         policy: &crate::gate::PolicyManifestResolution,
     ) -> Result<bool> {
+        self.note_readable_under_in(txn, id, bytes, policy, None)
+    }
+
+    /// [`Self::note_readable_in`] under `grant`, one live Grant of the
+    /// reader's own (FIX 7462): it stands in for the linked diary's final
+    /// positive check alone; every author, consent and privacy rule binds as
+    /// before. `None` is today's.
+    pub(super) fn note_readable_under_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        bytes: &[u8],
+        policy: &crate::gate::PolicyManifestResolution,
+        grant: Option<&crate::federation::Scope>,
+    ) -> Result<bool> {
         // A migrated NOTE retains author metadata but stores markdown on its
         // document plane. Apply the same privacy rule to that logical body,
         // read where this read reads the row: a room's NOTE has its own. Its
@@ -75,11 +90,15 @@ impl ScopedRead<'_> {
         else {
             return Ok(false);
         };
-        Ok(crate::gate::scoped_read_record_allowed(
-            policy,
-            &self.actor_key,
-            &scope,
-        ))
+        Ok(match grant {
+            None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
+            Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
+                policy,
+                &self.actor_key,
+                &scope,
+                Some(grant),
+            ),
+        })
     }
 }
 

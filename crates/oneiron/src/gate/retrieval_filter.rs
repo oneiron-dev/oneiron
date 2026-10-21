@@ -93,6 +93,22 @@ impl PolicyManifestResolution {
         &self,
         actor: Option<&ScopedReadActorKey>,
     ) -> RetrievalPolicyFloor {
+        self.retrieval_floor_for_actor_with_scope(
+            actor,
+            actor.and_then(ScopedReadActorKey::authority_scope),
+        )
+    }
+
+    /// [`Self::retrieval_floor_for_actor`] for `actor` as if it held a proof
+    /// of `explicit_scope`: the floor of the scoped grants it matches met
+    /// with that Scope's, or that Scope's alone when it matches none. The
+    /// key's own proof, if any, is not read (FIX 7462: one live Grant of an
+    /// agent's own). A failed-closed manifest still reads nothing.
+    pub(crate) fn retrieval_floor_for_actor_with_scope(
+        &self,
+        actor: Option<&ScopedReadActorKey>,
+        explicit_scope: Option<&Scope>,
+    ) -> RetrievalPolicyFloor {
         match actor {
             None => RetrievalPolicyFloor::legacy(),
             Some(actor) if actor.vault_owner_ref().is_some() => RetrievalPolicyFloor::legacy(),
@@ -101,7 +117,7 @@ impl PolicyManifestResolution {
             }
             Some(actor) => {
                 let policy = RetrievalPolicyFloor::from_scoped_grants(self.scoped_grants(), actor);
-                match actor.authority_scope() {
+                match explicit_scope {
                     Some(scope) => {
                         let proof = RetrievalPolicyFloor::from_authority_scope(scope);
                         policy.map_or(proof.clone(), |policy| policy.intersect(&proof))

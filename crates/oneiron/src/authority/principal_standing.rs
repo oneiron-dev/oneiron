@@ -118,14 +118,29 @@ fn agent_grant_listing_in_txn(
     Ok(vault
         .agent_grants_in_txn(txn)?
         .into_iter()
-        .find(|standing| {
-            standing.grant.member_ref == agent
-                && standing.grant.confers_at(now)
-                && owners.contains(&standing.delegated_by)
-                && matches!(
-                    &standing.grant.authority_scope.verbs,
-                    ScopeAxis::Some(verbs) if verbs.contains(verb)
-                )
-        })
+        .find(|standing| standing.stands_for(agent, verb, now, &owners))
         .map(|standing| standing.id))
+}
+
+impl crate::federation::AgentGrantStanding {
+    /// Whether this Grant alone stands for `agent`'s work under `verb` at
+    /// `now`: it names `agent`, confers now, was given by one of `owners`
+    /// (this vault's live owners) and lists `verb` in its explicit verb set.
+    /// The one rule [`principal_standing_in_txn`] picks its Grant by; an
+    /// agent's own read takes every Grant it holds (FIX 7462).
+    pub(crate) fn stands_for(
+        &self,
+        agent: EntityId,
+        verb: &str,
+        now: u64,
+        owners: &[EntityId],
+    ) -> bool {
+        self.grant.member_ref == agent
+            && self.grant.confers_at(now)
+            && owners.contains(&self.delegated_by)
+            && matches!(
+                &self.grant.authority_scope.verbs,
+                ScopeAxis::Some(verbs) if verbs.contains(verb)
+            )
+    }
 }

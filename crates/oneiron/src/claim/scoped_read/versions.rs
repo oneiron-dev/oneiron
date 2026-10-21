@@ -239,8 +239,9 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
     ) -> Result<Option<Vec<u8>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let authority = HeldAuthority::for_request(None);
         Ok(self
-            .entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?
+            .entity_raw_with_mode_held_in(txn, &policy, &filter, id, ReadMode::Live, &authority)?
             .map(|revision| revision.raw))
     }
 
@@ -254,7 +255,21 @@ impl<'v> ScopedRead<'v> {
         mode: ReadMode,
     ) -> Result<Option<AdmittedRevision>> {
         let authority = HeldAuthority::default();
-        let Some(mut raw) = self.admitted_raw_in(txn, policy, filter, id, mode, &authority)? else {
+        self.entity_raw_with_mode_held_in(txn, policy, filter, id, mode, &authority)
+    }
+
+    /// [`Self::entity_raw_with_mode_in`] under the authority one serving txn
+    /// holds for all its rows (FIX 7462).
+    pub(super) fn entity_raw_with_mode_held_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+        mode: ReadMode,
+        authority: &HeldAuthority<'v>,
+    ) -> Result<Option<AdmittedRevision>> {
+        let Some(mut raw) = self.admitted_raw_in(txn, policy, filter, id, mode, authority)? else {
             return Ok(None);
         };
         // The short-reference hash names the stored revision, so it is taken
