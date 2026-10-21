@@ -27,6 +27,11 @@ pub enum RunVerb {
     SelfCodeMergeQueueObserve,
     SelfCodeSnapshotsIngest,
     SelfCodeWorkOpen,
+    SelfCodeSymbolsDeclare,
+    SelfCodeSymbolsRenew,
+    SelfCodeSymbolsRelease,
+    SelfCodeProposalSubmit,
+    SelfCodeMergeQueueEnqueue,
     SelfLeaderAdvice,
     SelfLeaderPattern,
     SelfLeaderSplit,
@@ -63,6 +68,11 @@ impl RunVerb {
         Self::SelfCodeMergeQueueObserve,
         Self::SelfCodeSnapshotsIngest,
         Self::SelfCodeWorkOpen,
+        Self::SelfCodeSymbolsDeclare,
+        Self::SelfCodeSymbolsRenew,
+        Self::SelfCodeSymbolsRelease,
+        Self::SelfCodeProposalSubmit,
+        Self::SelfCodeMergeQueueEnqueue,
         Self::SelfLeaderAdvice,
         Self::SelfLeaderPattern,
         Self::SelfLeaderSplit,
@@ -102,6 +112,11 @@ impl RunVerb {
             Self::SelfCodeMergeQueueObserve => "self.code.merge_queue.observe",
             Self::SelfCodeSnapshotsIngest => "self.code.snapshots.ingest",
             Self::SelfCodeWorkOpen => "self.code.work.open",
+            Self::SelfCodeSymbolsDeclare => "self.code.symbols.declare",
+            Self::SelfCodeSymbolsRenew => "self.code.symbols.renew",
+            Self::SelfCodeSymbolsRelease => "self.code.symbols.release",
+            Self::SelfCodeProposalSubmit => "self.code.proposal_submit",
+            Self::SelfCodeMergeQueueEnqueue => "self.code.merge_queue.enqueue",
             Self::SelfLeaderAdvice => "self.leader.advice",
             Self::SelfLeaderPattern => "self.leader.pattern",
             Self::SelfLeaderSplit => "self.leader.split",
@@ -132,6 +147,11 @@ impl RunVerb {
                 | Self::SelfWorkflowsDispatchBound
                 | Self::SelfCodeSnapshotsIngest
                 | Self::SelfCodeWorkOpen
+                | Self::SelfCodeSymbolsDeclare
+                | Self::SelfCodeSymbolsRenew
+                | Self::SelfCodeSymbolsRelease
+                | Self::SelfCodeProposalSubmit
+                | Self::SelfCodeMergeQueueEnqueue
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
                 | Self::SelfTeamStart
@@ -166,6 +186,11 @@ impl RunVerb {
             Self::SelfCodeMergeQueueObserve => crate::code_run::SelfEffect::RepoMergeQueueObserve,
             Self::SelfCodeSnapshotsIngest => crate::code_run::SelfEffect::RepoSnapshotsIngest,
             Self::SelfCodeWorkOpen => crate::code_run::SelfEffect::RepoWorkOpen,
+            Self::SelfCodeSymbolsDeclare => crate::code_run::SelfEffect::RepoSymbolsDeclare,
+            Self::SelfCodeSymbolsRenew => crate::code_run::SelfEffect::RepoSymbolsRenew,
+            Self::SelfCodeSymbolsRelease => crate::code_run::SelfEffect::RepoSymbolsRelease,
+            Self::SelfCodeProposalSubmit => crate::code_run::SelfEffect::RepoProposalSubmit,
+            Self::SelfCodeMergeQueueEnqueue => crate::code_run::SelfEffect::RepoMergeQueueEnqueue,
             Self::SelfLeaderAdvice => crate::code_run::SelfEffect::Leader,
             Self::SelfLeaderPattern => crate::code_run::SelfEffect::Leader,
             Self::SelfLeaderSplit => crate::code_run::SelfEffect::LeaderSplit,

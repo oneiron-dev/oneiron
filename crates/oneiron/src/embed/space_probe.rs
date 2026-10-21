@@ -27,6 +27,9 @@ use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 
+mod ledger;
+pub(super) use ledger::ProbeCohortLedger;
+
 /// Probes the authoring pass keeps per kind.
 pub const SPACE_PROBES_PER_KIND: usize = 20;
 /// Longest probe query, in bytes.
