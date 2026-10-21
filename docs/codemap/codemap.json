@@ -4914,7 +4914,7 @@
       "CampaignTournamentConfig"
      ],
      "path": "src/autoreason_campaign/config.rs",
-     "purpose": "—",
+     "purpose": "Fixed OF-366 campaign configuration; the general schema is `super::general`",
      "surface": {
       "crate-vis": 2,
       "enum": 4,
@@ -4975,7 +4975,7 @@
       "CampaignTasteWording"
      ],
      "path": "src/autoreason_campaign/judge.rs",
-     "purpose": "—",
+     "purpose": "Blind campaign judge inputs and taste decisions through the shared decision ladder",
      "surface": {
       "const": 1,
       "crate-vis": 2,
@@ -4993,7 +4993,7 @@
       "CampaignSplitReport"
      ],
      "path": "src/autoreason_campaign/report.rs",
-     "purpose": "—",
+     "purpose": "Campaign arm and split reports built from the OF-360 evaluator",
      "surface": {
       "crate-vis": 2,
       "enum": 2,
@@ -5002,7 +5002,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BranchSnapshot",
@@ -5019,7 +5019,6 @@
       "ResearchBinding",
       "ResearchConfirmationSeat",
       "ResearchExecution",
-      "ResearchGoalBasis",
       "ResearchGoalPin",
       "ResearchStep",
       "ResearchTarget",
@@ -5032,11 +5031,25 @@
      "path": "src/autoreason_campaign/research.rs",
      "purpose": "The autoresearch loop's record over the existing run tree (OF-351)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 9,
       "enum": 6,
-      "fn": 16,
-      "re-export": 5,
-      "struct": 17
+      "fn": 4,
+      "re-export": 7,
+      "struct": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResearchGoalBasis"
+     ],
+     "path": "src/autoreason_campaign/research/binding.rs",
+     "purpose": "Research campaign binding, goal pins and binding reads",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -5067,7 +5080,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ResearchContinuation",
@@ -5084,6 +5097,16 @@
       "enum": 4,
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/autoreason_campaign/research/continuation/pass.rs",
+     "purpose": "One research continuation pass over its persisted tasks",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -5129,6 +5152,17 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/autoreason_campaign/research/recording.rs",
+     "purpose": "Research fork, weave, measurement and prune recording",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "MeasuredBranch",
       "OracleSignal",
@@ -5169,7 +5203,7 @@
       "ExperimentVerdict"
      ],
      "path": "src/autoreason_campaign/verdict.rs",
-     "purpose": "—",
+     "purpose": "Held-out campaign decisions and comparison verdicts",
      "surface": {
       "enum": 2,
       "fn": 4,
@@ -56524,7 +56558,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_optimize/gate/decision.rs",
@@ -56532,6 +56566,16 @@
      "surface": {
       "crate-vis": 9,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/decision/commit.rs",
+     "purpose": "Committing skill-edit decisions and answered-proposal closure",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -56573,7 +56617,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_optimize/gate/ledger.rs",
@@ -56581,6 +56625,16 @@
      "surface": {
       "crate-vis": 7,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/ledger/codec.rs",
+     "purpose": "Stored skill-edit verdict decoding and displacement markers",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -56646,7 +56700,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "JevTradeoffVerdict",
@@ -56658,9 +56712,21 @@
      "path": "src/skill_optimize/gate/tradeoff.rs",
      "purpose": "The ARCH-0053 §10a tradeoff ladder: what happens to a [`SkillEditDisposition::NeedsTradeoffDecision`]",
      "surface": {
-      "crate-vis": 10,
-      "fn": 11,
+      "crate-vis": 6,
+      "fn": 8,
+      "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/tradeoff/ladder.rs",
+     "purpose": "Tradeoff ladder planning, application and authenticated settlement",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 3
      }
     },
     {
@@ -56743,7 +56809,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "JudgeIncumbent",
@@ -56763,36 +56829,93 @@
      "purpose": "The judge-swap shadow ladder (ARCH-0053, ARCH-0079 #model-swaps, OF-184)",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 3,
       "enum": 4,
-      "fn": 5,
+      "fn": 4,
+      "re-export": 1,
       "struct": 7,
       "trait": 1
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/judge_swap/anchors.rs",
+     "purpose": "Judge-swap disagreement construction and anchor settlement",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/judge_swap/asks.rs",
+     "purpose": "Owner picks and calibration asks for judge swaps and retest flips",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/judge_swap/shadow.rs",
+     "purpose": "Judge-swap retest, shadow and re-pin passes",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/judge_swap/state.rs",
+     "purpose": "Retained judge-swap state, noise cells and owner notifications",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "JudgeAsk",
       "JudgeAskReason",
       "JudgeLabel",
-      "JudgeLabelChecker",
-      "JudgeLabelFit",
       "JudgeLabelRecheck",
-      "JudgeLabelRecheckReport",
-      "JudgeLabelRecheckRequest",
-      "JudgeLabelRegrade",
       "JudgeRegrade",
       "JudgeRubric"
      ],
      "path": "src/skill_optimize/labels.rs",
      "purpose": "Human-calibrated judge asks and the append-only label anchor",
      "surface": {
-      "crate-vis": 10,
-      "enum": 3,
-      "fn": 8,
-      "struct": 7,
+      "crate-vis": 9,
+      "enum": 2,
+      "fn": 6,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "JudgeLabelChecker",
+      "JudgeLabelFit",
+      "JudgeLabelRecheckReport",
+      "JudgeLabelRecheckRequest",
+      "JudgeLabelRegrade"
+     ],
+     "path": "src/skill_optimize/labels/rubric.rs",
+     "purpose": "Judge rubric pins, label rechecks and human regrades",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 3,
       "trait": 1
      }
     },
@@ -71314,9 +71437,9 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 20,
+     "files": 23,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
@@ -72504,9 +72627,9 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 50,
+     "files": 58,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
@@ -72770,9 +72893,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 168,
+   "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4673,
+   "source_files": 4684,
    "test_files": 902
   },
   "oneiron-android": {
