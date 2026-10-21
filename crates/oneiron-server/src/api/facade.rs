@@ -126,6 +126,7 @@ mod project_card_doors;
 mod proxy_doors;
 mod reaction_doors;
 mod reply_doors;
+mod repo_doors;
 mod research_doors;
 mod residence_doors;
 mod result_doors;
