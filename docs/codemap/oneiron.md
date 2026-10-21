@@ -1693,8 +1693,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/confession.rs` | src | s | 2 fn | — | The confession ask and its parse (OF-544, ARCH-0079): after a DONE line, one fenced block naming each… |
 | `src/dreamer_consolidation/conflict.rs` | src | m | 9 struct · 9 fn · 10 crate-vis | CollapsedEvidence, ConflictIdentity, ConflictSet, ConsolidationBucketKey, ConsolidationBucketPlan, PriorHead, SwarmChildReturn, SwarmEvidenceRef +1 | — |
 | `src/dreamer_consolidation/evidence.rs` | src | m | 34 crate-vis | — | Parent-verified evidence is the sole scoped consolidation handoff |
-| `src/dreamer_consolidation/executor.rs` | src | L | 1 struct · 1 re-export · 5 crate-vis | ConsolidationExecutor | — |
-| `src/dreamer_consolidation/executor/decisions.rs` | src | m | 1 struct · 1 fn · 8 crate-vis | ConsolidationDecisions | The consolidation's typed questions through the host's ladder: how a conflict set resolves and which… |
+| `src/dreamer_consolidation/executor.rs` | src | L | 1 struct · 1 re-export · 6 crate-vis | ConsolidationExecutor | — |
+| `src/dreamer_consolidation/executor/decisions.rs` | src | m | 1 struct · 1 fn · 9 crate-vis | ConsolidationDecisions | The consolidation's typed questions through the host's ladder: how a conflict set resolves and which… |
+| `src/dreamer_consolidation/executor/decisions/read.rs` | src | s | 4 crate-vis | — | The scoped typed read every Dreamer pack shares (OF-498a): questions over a state through the host's ladder… |
 | `src/dreamer_consolidation/executor/extraction.rs` | src | m | 8 crate-vis | — | Extraction request/response projection for one admitted branch; the typed pack that decides which listed… |
 | `src/dreamer_consolidation/executor/extraction/cited.rs` | src | s | 3 crate-vis | — | The extraction step's citation check (FIX 7274): a citation that verification would refuse the whole… |
 | `src/dreamer_consolidation/executor/extraction/corrections.rs` | src | s | 3 crate-vis | — | The typed pack that decides which listed claim each extracted candidate corrects: one question per candidate… |
@@ -1708,7 +1709,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/gap.rs` | src | m | 2 struct · 2 enum · 4 fn · 7 crate-vis | GapQueueDelta, ReflectionGap, ReflectionGapKind, ReflectionGapScan | — |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 2 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
 | `src/dreamer_consolidation/kept_ask.rs` | src | s | 4 struct · 2 fn | KeptAnswer, KeptAsk, KeptRole, KeptRoute | The ask a kept decision went up as, kept actor-free (FIX 4591) |
-| `src/dreamer_consolidation/mod.rs` | src | s | 4 mod · 22 re-export · 26 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
+| `src/dreamer_consolidation/mod.rs` | src | s | 4 mod · 23 re-export · 26 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `src/dreamer_consolidation/neighbourhood.rs` | src | m | 14 crate-vis | — | The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to… |
 | `src/dreamer_consolidation/neighbourhood/render.rs` | src | s | 3 crate-vis | — | The listing as a call shows it (FIX 7506): each entity and claim by its call-local label, never its id |
 | `src/dreamer_consolidation/nightly_merge.rs` | src | m | 6 crate-vis | — | Nightly fan-in over child proposals |
@@ -1720,7 +1721,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/note_text.rs` | src | s | 2 crate-vis | — | The text of one NOTE as the Dreamer may read it (ARCH-0032 stage 2), in the caller's transaction: one… |
 | `src/dreamer_consolidation/note_topics.rs` | src | s | 6 crate-vis | — | The stage-2 topic summary trigger (ARCH-0032 write gate, OF-073 / FIX 907) |
 | `src/dreamer_consolidation/open_conflict.rs` | src | s | 1 crate-vis | — | A judge outage is an open question, persisted through the shared write gate |
-| `src/dreamer_consolidation/parallel.rs` | src | m | 1 crate-vis | — | Read-only neighbourhood fan-out, followed by one parent-owned merge |
+| `src/dreamer_consolidation/parallel.rs` | src | s | 1 crate-vis | — | Read-only neighbourhood fan-out, followed by one parent-owned merge |
 | `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 6 fn · 1 re-export · 10 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | — |
 | `src/dreamer_consolidation/partition/payload.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | PartitionThing | The consolidation payload codec (FIX 7524): a branch's world and facet, the thing a nightly child is cut… |
 | `src/dreamer_consolidation/persistence.rs` | src | s | 1 fn · 5 crate-vis | — | Persistent contradiction markers and prior-head context for consolidation |
@@ -1744,22 +1745,30 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/retained_keep.rs` | src | m | 1 struct · 1 enum · 8 crate-vis | ConflictSettleOutcome, StagedKeep | Keeping a conflict's retained alternative (OF-023, FIX 496): where the Keep lands it, and what a Keep of… |
 | `src/dreamer_consolidation/revert.rs` | src | m | 4 struct · 1 enum · 1 fn · 4 crate-vis | DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange | The owner's revert of any one Dreamer change (OF-023, owner ruling 10-18: "autoapply + revert rather than… |
 | `src/dreamer_consolidation/reviewed.rs` | src | s | 4 crate-vis | — | Claims the owner's review already holds or decided, which a later pass meets again: this attempt's own… |
-| `src/dreamer_consolidation/roles.rs` | src | s | 3 struct · 3 fn · 4 const · 2 crate-vis | RoleBackend, RoleBackends, RoleCall | The Dreamer's model roles, and the backend each one calls out on |
+| `src/dreamer_consolidation/roles.rs` | src | s | 3 struct · 4 fn · 4 const · 3 crate-vis | RoleBackend, RoleBackends, RoleCall | The Dreamer's model roles, and the backend each one calls out on |
 | `src/dreamer_consolidation/root_evidence.rs` | src | m | 6 crate-vis | — | Root-owned reference pins |
 | `src/dreamer_consolidation/routing.rs` | src | s | 2 struct · 5 fn · 1 type · 1 crate-vis | CandidateKeys, PredicateKeyRule | Three consolidation lanes: free keyed equality, scoped conflicts, cosine nominations |
 | `src/dreamer_consolidation/scope_summary_attempt.rs` | src | m | 1 struct · 2 fn · 4 crate-vis | ScopeSummaryExecutor | The Dreamer writes a declared scope summary's body (ARCH-0006a) |
-| `src/dreamer_consolidation/scope_summary_attempt/arc_claims.rs` | src | s | 2 crate-vis | — | The claims an Arc's call reads (FIX 7509 P8): for every subject the Arc's TURNs name (their `mentions` and… |
-| `src/dreamer_consolidation/scope_summary_attempt/arc_compose.rs` | src | m | 1 crate-vis | — | An Arc's composition (FIX 7509 P8, SUMMARY-SOURCE = A) |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_children.rs` | src | m | 3 crate-vis | — | An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): its input does not fit one call on its model… |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_chunks.rs` | src | m | 14 crate-vis | — | An Arc's sources as members and parts (FIX 7509 PR3, Rule 5): each member's words as its calls show them… |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_claims.rs` | src | s | 3 crate-vis | — | The claims an Arc's call reads (FIX 7509 P8): for every subject the Arc's TURNs name (their `mentions` and… |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_compose.rs` | src | s | 2 crate-vis | — | An Arc's composition (FIX 7509 P8, SUMMARY-SOURCE = A) |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_evidence.rs` | src | s | 3 crate-vis | — | An Arc's evidence (FIX 7509 P8, SUMMARY-SOURCE = A), read in one snapshot: its sittings' summary lines, each… |
-| `src/dreamer_consolidation/scope_summary_attempt/arc_turns.rs` | src | s | 2 crate-vis | — | The turns an Arc's reply names to open (FIX 7509 P8): when a line and the claims disagree, the model names… |
-| `src/dreamer_consolidation/scope_summary_attempt/chunks.rs` | src | m | 3 crate-vis | — | A sitting too big for one call on its model (FIX 7509 P7b, Rule 5) |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_output.rs` | src | s | 13 crate-vis | — | An Arc call's reply (FIX 7509 P8, its parts in PR3): `{lines: [{text, turn_refs}], keep, open_turns}`, each… |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_reduce.rs` | src | s | 4 crate-vis | — | The Arc assembled from its parts (FIX 7509 PR3): no model call, an ordered and lossless assembly |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_review.rs` | src | m | 18 crate-vis | — | The calls of an Arc composed in parts (FIX 7509 PR3): one input shape for all of them, so one frame counts… |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_turns.rs` | src | s | 4 crate-vis | — | The turns an Arc's reply names to open (FIX 7509 P8): when a line and the claims disagree, the model names… |
+| `src/dreamer_consolidation/scope_summary_attempt/chunks.rs` | src | m | 1 crate-vis | — | A sitting too big for one call on its model (FIX 7509 P7b, Rule 5) |
 | `src/dreamer_consolidation/scope_summary_attempt/output.rs` | src | s | 10 crate-vis | — | A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came from by the labels the engine… |
+| `src/dreamer_consolidation/scope_summary_attempt/window.rs` | src | s | 5 crate-vis | — | What one summary call may hold on its model (FIX 7509 P7b, shared with the Arc's parts in PR3): the window… |
 | `src/dreamer_consolidation/selection.rs` | src | s | 5 struct · 1 enum · 7 fn · 1 crate-vis | SelectionCandidate, SelectionConfig, SelectionHold, SelectionPlan, StrengthSignals, StrengthWeights | Mechanical candidate selection |
 | `src/dreamer_consolidation/settle.rs` | src | L | 8 struct · 2 enum · 4 fn · 1 const · 12 crate-vis | ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions, ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass, RevertedSettlement +2 | Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`) |
 | `src/dreamer_consolidation/settle/decision_projection.rs` | src | s | 3 crate-vis | — | A parked conflict's settlement ask as the ladder reads it (FIX 7506 P2): each stored member and retained… |
 | `src/dreamer_consolidation/settle/keep_approval.rs` | src | s | 10 crate-vis | — | A Keep the Gate holds (FIX 5753): the responder's approval of the exact retained alternative its Keep… |
 | `src/dreamer_consolidation/sieve_attempt.rs` | src | m | 1 crate-vis | — | The sieve's owed novelty/typing rungs and its sampled expensive-path audit |
 | `src/dreamer_consolidation/sieve_attempt/audit.rs` | src | m | 1 crate-vis | — | The sieve audit of an unflagged window (OF-498f, FIX 486): the expensive path reads a source range the cheap… |
+| `src/dreamer_consolidation/sieve_decisions.rs` | src | s | 5 crate-vis | — | The sieve's typed questions (OF-498a) |
+| `src/dreamer_consolidation/sieve_ports.rs` | src | m | 7 struct · 1 enum · 2 trait · 2 fn · 1 type · 3 crate-vis | ExtractionPorts, NeighbourhoodExtraction, NeighbourhoodExtractionPort, RoleNeighbourhoodExtractionPort, RoleSieveNoveltyPort, SieveNoveltyPort, SieveRungCall, SieveRungOutcome +2 | The sieve's and a child extraction's injected ports (OF-498a) |
 | `src/dreamer_consolidation/step_charge.rs` | src | s | 12 crate-vis | — | Attempt-local step spend due to the shared wake ledger after memo replay |
 | `src/dreamer_consolidation/strength.rs` | src | m | 2 struct · 3 fn · 3 crate-vis | ConsolidationStrengthPolicy, ConsolidationStrengthSnapshot | Consolidation strength observations and an archive-only lifecycle (OF-216) |
 | `src/dreamer_consolidation/support.rs` | src | s | 12 const · 30 crate-vis | — | — |
@@ -1982,7 +1991,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/sieve/mod.rs` | src | m | 4 struct · 4 enum · 2 fn · 1 mod · 4 re-export · 7 crate-vis | SievePass, SieveQueue, SieveRung, SieveSkipped, SieveSpan, SpanBand, SpanKind, SpanOrigin | The continuous sieve (ARCH-0026, the Continuous recipe): the cheap check that tags what is new on the local… |
 | `src/dreamer_wake/sieve/policy.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | SievePolicy | The sieve's policy row: how much one pass reads, how interesting each kind of span is, how sure each rule… |
 | `src/dreamer_wake/sieve/read.rs` | src | m | 3 crate-vis | — | One turn's read: a whole read from its rows, a read that goes on where the text bound stopped it, and the… |
-| `src/dreamer_wake/sieve/recipes.rs` | src | m | 2 struct · 1 enum · 7 fn · 22 crate-vis | SieveAudit, SieveAuditRecord, SieveConsumeReceipt | Durable model-rung inputs, queue spending and unbiased retained-span samples |
+| `src/dreamer_wake/sieve/recipes.rs` | src | m | 2 struct · 1 enum · 7 fn · 23 crate-vis | SieveAudit, SieveAuditRecord, SieveConsumeReceipt | Durable model-rung inputs, queue spending and unbiased retained-span samples |
+| `src/dreamer_wake/sieve/recipes/consumption.rs` | src | s | 2 crate-vis | — | Who carries a spent span (FIX 7498): the nightly child whose branch holds the span's TURN, never the nightly… |
 | `src/dreamer_wake/sieve/rules.rs` | src | m | 1 enum · 13 crate-vis | RuleClass | The sieve's rules: the date and name spans of one chunk of text, as byte ranges, each with the rule class… |
 | `src/dreamer_wake/sieve/tests.rs` | test | L | — | — | The sieve against the packet's checks (gate 3, ARCH-0026 Continuous): a turn chunk with a date and a name… |
 | `src/dreamer_wake/sieve/words.rs` | src | m | 8 crate-vis | — | The prose under the sieve's rules: code, sentences, words, and runs of capitalized words and of katakana… |
@@ -2756,9 +2766,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/answer_actor.rs` | src | s | 1 enum · 2 fn · 3 crate-vis | AnswerActor | Who an answer names, and the erase that forgets it (FIX 3520): an ask's answerer, and the owner whose reason… |
 | `src/llm/decision/asks.rs` | src | L | 4 struct · 26 fn · 6 crate-vis | AskAnswer, AskPrior, DecisionAsk, DecisionAsks | The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role… |
 | `src/llm/decision/asks/signal.rs` | src | s | 2 crate-vis | — | The vault's one decision-answer signal (FIX 4706) |
-| `src/llm/decision/catalogue.rs` | src | m | 1 struct · 1 fn · 40 const | QuestionFamily | The engine's registered typed-question families, in one place |
+| `src/llm/decision/catalogue.rs` | src | m | 1 struct · 1 fn · 44 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/llm/decision/codec.rs` | src | s | 12 crate-vis | — | Canonical entity references for typed-decision wire records |
 | `src/llm/decision/generated.rs` | src | m | 1 struct · 3 enum · 2 fn · 1 re-export | GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep | The generated read: a typed pack answered by one generation on the caller's own backend, for a caller… |
+| `src/llm/decision/generated/score.rs` | src | s | 3 crate-vis | — | A generated read's Score question (OF-498a, L06 ack 10-22): one number in the question's range and how sure… |
 | `src/llm/decision/generated/wire.rs` | src | s | 1 trait · 3 crate-vis | DecisionWireLabels | A generated read's wire names (FIX 7506): what the request shows in place of each question's id and each… |
 | `src/llm/decision/held.rs` | src | s | 1 struct · 4 fn | HeldLadder | What a component that outlives one call holds to ask typed questions (a worker thread, a provider a host… |
 | `src/llm/decision/ladder.rs` | src | XL | 12 struct · 4 enum · 4 trait · 20 fn · 1 const · 14 crate-vis | AskAct, AskRole, AskRoleResolver, AskTo, DecisionCall, DecisionLadder, DecisionModel, DecisionPack +12 | Host-injected, one-step decision ladder |
@@ -3945,13 +3956,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scan_check.rs` | src | m | 1 struct · 1 enum · 4 fn · 4 const · 9 crate-vis | EngineScan, ScanCheck | Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520) |
 | `src/scan_check/table_tests.rs` | test | m | — | — | The code's own list of engine scans: none refuses for how many rows it reads (rule 5) |
 | `src/scope_summary/arc.rs` | src | s | 6 crate-vis | — | A conversation's Arc (FIX 7509 P8, ARCH-0026 Dreamer row 4): one stable summary per conversation path… |
-| `src/scope_summary/arc_gate.rs` | src | m | 10 crate-vis | — | An Arc's surprise gate and owed state (FIX 7509 P8, ARCH-0026 #gate): "It compares the new material against… |
-| `src/scope_summary/arc_sources.rs` | src | s | 5 crate-vis | — | What an Arc is written from (FIX 7509 P8, SUMMARY-SOURCE = A): the current summary of each closed sitting… |
+| `src/scope_summary/arc_completion.rs` | src | s | 2 crate-vis | — | An Arc never lands in part (FIX 7509 PR3) |
+| `src/scope_summary/arc_gate.rs` | src | m | 12 crate-vis | — | An Arc's surprise gate and owed state (FIX 7509 P8, ARCH-0026 #gate): "It compares the new material against… |
+| `src/scope_summary/arc_sources.rs` | src | m | 5 crate-vis | — | What an Arc is written from (FIX 7509 P8, SUMMARY-SOURCE = A): the current summary of each closed sitting… |
 | `src/scope_summary/arc_validation.rs` | src | s | 1 crate-vis | — | An Arc's landing check (FIX 7509 P8), read in the landing writer before its body is minted: no Arc lands… |
+| `src/scope_summary/arc_work.rs` | src | m | 24 crate-vis | — | An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): an Arc whose input does not fit one call on its… |
+| `src/scope_summary/arc_work_store.rs` | src | s | 9 crate-vis | — | The rows of an Arc's work generations (FIX 7509 PR3): one typed side table, keyed by the generation's id and… |
 | `src/scope_summary/codec.rs` | src | m | 2 struct · 2 fn · 5 crate-vis | ScopeSummaryBody, SummarySourceMessage | Strict, versioned scope-summary MessagePack codec (distinct from epochs) |
 | `src/scope_summary/derivation.rs` | src | m | 5 struct · 1 fn · 11 crate-vis | ScopeSummaryMetadata, SummaryDerivation, SummaryLineSources, SummaryLineSpan, SummarySourceVersion | Scope-summary derivation envelopes and change-driven re-derivation |
 | `src/scope_summary/doors.rs` | src | L | 1 struct · 5 fn · 20 crate-vis | LandedHeader | Transactional spawn, summary mint, merge-header and drill doors |
-| `src/scope_summary/mod.rs` | src | s | 7 re-export · 7 crate-vis | — | Retained spawned sub-sessions and Dreamer-composed scope summaries |
+| `src/scope_summary/mod.rs` | src | s | 7 re-export · 8 crate-vis | — | Retained spawned sub-sessions and Dreamer-composed scope summaries |
 | `src/scope_summary/producer.rs` | src | s | 3 crate-vis | — | Private admission for locally minted scope-summary bodies |
 | `src/scope_summary/public.rs` | src | m | 9 fn | — | Credential-bound adapters |
 | `src/scope_summary/public_types.rs` | src | s | 16 struct · 2 enum | SummaryCreateRequest, SummaryEdit, SummaryEditRequest, SummaryForkView, SummaryKeepRequest, SummaryKeepResult, SummaryMutationResult, SummaryPatchRequest +10 | Typed SUMMARY doors over the retained scope-summary and entity-document APIs |

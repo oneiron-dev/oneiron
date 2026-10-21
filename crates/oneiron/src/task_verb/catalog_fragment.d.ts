@@ -2875,7 +2875,7 @@ declare namespace Sdk {
   type PositiveRetireReceipt = { retired: boolean };
   type ModelStepRetryPolicy = { max_attempts: number };
   type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy };
-  type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";
+  type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input" | "reasoning_content_history";
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
   type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
   type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased";
@@ -3640,7 +3640,7 @@ declare namespace Sdk {
   type SievePolicyRequest = Record<string, never>;
   type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: number; max_text_bytes_per_pass: number; date_interest: number; name_interest: number; absolute_date_confidence: number; relative_date_confidence: number; vague_date_confidence: number; name_confidence: number; initial_name_confidence: number; katakana_name_confidence: number; uncertain_low: number; uncertain_high: number };
   type SievePolicySetRequest = { policy: SievePolicy };
-  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; audit_window_instruction: string };
+  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; audit_window_instruction: string };
   type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy };
   type SieveLeaseRequest = { budget_id: string };
   type SieveLeaseCounter = { total_units: number; remaining_units: number; reserved_units: number; updated_at: number };

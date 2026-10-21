@@ -117,7 +117,15 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `audio_input`,
-`assistant_prefill`, `reasoning`; `assistant_prefill` lets Continue send the
+`assistant_prefill`, `reasoning`, `reasoning_content_history`;
+`reasoning_content_history` sends an earlier assistant turn's reasoning back
+on the OpenAI chat wire as that message's `reasoning_content` field, apart
+from its content, instead of as ordinary text. It is a declaration about the
+server and its template, not a request to reason, and it grants no tools. No
+provider has it by default; a house server's model gets it in
+`model_capabilities` only after that exact server, weights and template pass
+`deploy/house-model/probe_reasoning_history.py` (`deploy/house-model/README.md`);
+`assistant_prefill` lets Continue send the
 saved reply as an open trailing assistant message instead of an instruction to
 go on, and only counts when every rung of the ladder has it: list it only for a
 model whose endpoint and serving template continue a trailing assistant message

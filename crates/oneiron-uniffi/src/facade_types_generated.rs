@@ -44639,6 +44639,8 @@ pub enum LlmCapability {
     AssistantPrefill,
     #[serde(rename = "audio_input")]
     AudioInput,
+    #[serde(rename = "reasoning_content_history")]
+    ReasoningContentHistory,
 }
 
 /// `oneiron_model::llm::error::UnsupportedCapability`.
@@ -56046,6 +56048,8 @@ pub struct WakeRecipePolicy {
     pub narrative_instruction: String,
     #[serde(rename = "arc_min_new_statements")]
     pub arc_min_new_statements: u32,
+    #[serde(rename = "arc_child_calls_per_wake")]
+    pub arc_child_calls_per_wake: u32,
     #[serde(rename = "audit_window_instruction")]
     pub audit_window_instruction: String,
 }
