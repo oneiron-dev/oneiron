@@ -41,6 +41,15 @@
 mod browser_guest;
 mod receipt_evidence;
 mod session_write;
+mod task_workflow;
+
+// The strict library try a TASK-bound program's run takes before its
+// planner (CUA E4).
+#[allow(
+    unused_imports,
+    reason = "resident_pump's run_bound, its caller, lands in L09's CUA E4 TASK-side PR"
+)]
+pub(crate) use self::task_workflow::{WorkflowPreflight, preflight_task_workflow};
 
 use self::receipt_evidence::ReceiptWriter;
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
@@ -56,7 +65,7 @@ use crate::mcp::{McpEndpointTool, McpSurfaceMode, try_registered_surface};
 use crate::server::SyncServer;
 use oneiron::browser_library::{
     Filing, Retired, RetiredWorkflow, WorkflowRecord, file_workflow, record_workflow_run,
-    retire_workflow, retired_workflows, site_workflows,
+    retire_workflow, retired_workflows, site_workflows, type_filter,
 };
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
@@ -498,12 +507,16 @@ impl WorkflowLibrary for VaultLibrary {
         &mut self,
         site: &str,
         subgoal: Option<&str>,
+        type_ref: Option<&str>,
     ) -> Result<Vec<LibraryCard>, BrowserError> {
-        Ok(site_workflows(&self.server.vault, site, subgoal)
-            .map_err(library_failed)?
-            .iter()
-            .map(WorkflowRecord::card)
-            .collect())
+        // A filter that names no task type is the caller's input refused.
+        let type_ref = type_ref
+            .map(type_filter)
+            .transpose()
+            .map_err(|malformed| BrowserError::Input(malformed.to_string()))?;
+        let records = site_workflows(&self.server.vault, site, subgoal, type_ref.as_ref())
+            .map_err(library_failed)?;
+        Ok(records.iter().map(WorkflowRecord::card).collect())
     }
 
     fn program(&mut self, workflow: &str) -> Result<Option<FiledWorkflow>, BrowserError> {
