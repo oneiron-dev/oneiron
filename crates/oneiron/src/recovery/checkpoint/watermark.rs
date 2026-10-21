@@ -2,11 +2,13 @@
 //! where it stands now, so a host backs up only what changed (LC backup
 //! shipper rows, Engine 10-20; agreed with L14).
 //!
-//! A watermark is the store's backup incarnation, its last committed LMDB
-//! transaction id, and its custody log's writer epoch and sequence. Any LMDB
-//! commit and any custody move changes it: a change is never missed, and a
-//! commit that changes nothing a restore needs still reads as a change
-//! (CALLS BACKUP_CHANGED_ANY_COMMIT). Hosts compare two for equality only.
+//! A watermark is the store's backup incarnation, its last content commit's
+//! LMDB transaction id, and its custody log's writer epoch and sequence. Any
+//! content commit and any custody move changes it: a change is never missed,
+//! and a commit that changes nothing a restore needs still reads as a change
+//! (CALLS BACKUP_CHANGED_ANY_COMMIT), save the classed writes that say so: a
+//! host's telemetry, and the backup's own incarnation and chain advance
+//! (FIX 6730, `store::backup_change`). Hosts compare two for equality only.
 //!
 //! The incarnation is 16 random bytes kept in a Runtime-tier row
 //! ([`side_table::BACKUP_INCARNATION`]): minted at a store's first backup,
@@ -15,10 +17,10 @@
 //! [`Vault::backup_watermark`] is a typed error, which reads as changed.
 //!
 //! A backup's receipt says what it covered, read in its own snapshot: the
-//! snapshot's read transaction and the custody position under the same
-//! guard. The backup's own chain advance, a write of its own carrying
-//! nothing else, is excluded by the baseline rule: covered is that write's id
-//! when it directly follows the snapshot, else the snapshot's.
+//! last content commit its read transaction sees and the custody position
+//! under the same guard. Its own chain advance changes no content, so it
+//! leaves that mark where it was; content another write commits in between
+//! still reads as a change.
 //!
 //! The host records what its newest backup covered in a marker file beside
 //! it, `.<label>.backup-watermark.json`, once the artifact's rename and
@@ -35,7 +37,7 @@ use oneiron_vault_contract::backup_handoff::{PrivateFile, read_private_file, wri
 use serde::{Deserialize, Serialize};
 
 use crate::side_table::{self, Named, SideTable};
-use crate::store::{Callback, Rows};
+use crate::store::{BackupWriteClass, Callback, Rows};
 use crate::{Error, Result, Vault};
 
 /// The store's backup incarnation. Key: ().
@@ -46,8 +48,8 @@ const INCARNATION: SideTable<(), [u8; 16], Named> = SideTable::new(&side_table::
 pub type BackupArtifactEvidence = oneiron_crypto::backup::BackupEvidence;
 
 /// Where a vault stood for whether it changed since a backup. Two compare
-/// equal only when nothing was committed and custody did not move between
-/// them, within one store incarnation. Fixed-size; its fields are read-only.
+/// equal only when no content was committed and custody did not move
+/// between them, within one store incarnation. Fixed-size; its fields are read-only.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BackupWatermark {
@@ -64,7 +66,7 @@ impl BackupWatermark {
         self.incarnation
     }
 
-    /// The last committed LMDB transaction id it covers.
+    /// The LMDB transaction id of the last content commit it covers.
     pub fn db_txn(&self) -> u64 {
         self.db_txn
     }
@@ -286,23 +288,18 @@ impl SnapshotMark {
         let (custody_epoch, custody_seq) = vault.store.custody_log_mark()?;
         Ok(Self {
             incarnation,
-            snapshot_txn: txn.id() as u64,
+            snapshot_txn: crate::store::backup_content_txn_in_txn(&vault.store, txn)?,
             custody_epoch,
             custody_seq,
         })
     }
 
-    /// What the backup covered, its own chain advance committed as `own`:
-    /// that write when it directly follows the snapshot, else the snapshot.
-    pub(super) fn covered(&self, own: u64) -> BackupWatermark {
-        let db_txn = if Some(own) == self.snapshot_txn.checked_add(1) {
-            own
-        } else {
-            self.snapshot_txn
-        };
+    /// What the backup covered: the content its snapshot saw. Its own chain
+    /// advance, backup metadata, leaves that mark as it was (FIX 6730).
+    pub(super) fn covered(&self) -> BackupWatermark {
         BackupWatermark {
             incarnation: self.incarnation,
-            db_txn,
+            db_txn: self.snapshot_txn,
             custody_epoch: self.custody_epoch,
             custody_seq: self.custody_seq,
         }
@@ -318,7 +315,7 @@ fn unminted() -> Error {
 impl Vault {
     /// Where this vault stands now, for whether it changed since a backup's
     /// [`BackupSnapshotReceipt::covered`]: its backup incarnation, last
-    /// committed transaction id and custody log position, read under the
+    /// content commit's transaction id and custody log position, read under the
     /// custody guard. Cheap and independent of the vault's size: no write,
     /// no walk. A store with no incarnation yet (none backed up, or a
     /// restored one) or one that does not read is an error, never unchanged.
@@ -345,7 +342,8 @@ impl Vault {
         }
         let mut fresh = [0u8; 16];
         crate::world_keys::os_fill(&mut fresh)?;
-        self.store.group_write_as(Callback::Opaque, None, |txn| {
+        let class = BackupWriteClass::BackupMetadata;
+        self.store.group_write_classed(Callback::Opaque, class, |txn| {
             let held = match INCARNATION.get(&self.store, txn, &()) {
                 Ok(held) => held,
                 Err(error) => return Rows::Discard(Err(error)),

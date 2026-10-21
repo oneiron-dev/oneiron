@@ -119,6 +119,7 @@ pub mod ports {
 mod archive_scratch;
 #[cfg(unix)]
 mod asset_body;
+mod backup_change;
 #[cfg(unix)]
 mod body_envelope;
 #[cfg(unix)]
@@ -177,6 +178,10 @@ pub(crate) use asset_body::{
     reason = "FIX 5489 PR2 and PR3 receive bodies through these"
 )]
 pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody};
+// FIX 6730: what a commit changes for the backup watermark.
+#[cfg(feature = "sync")]
+pub(crate) use backup_change::telemetry_batch_class;
+pub(crate) use backup_change::{BackupWriteClass, backup_content_txn_in_txn};
 #[cfg(unix)]
 pub(crate) use body_envelope::{
     BODY_FILE_SHRED_SCOPE, BODY_FILE_WRAP_CONTEXT, BODY_KEYS, BodyFile, BodyKeyRow, BodyMint,
@@ -197,9 +202,9 @@ pub(crate) use body_envelope::{
 #[cfg(unix)]
 pub(crate) use body_envelope::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
-    bind_response_in_txn, carrier_row, erase_response_owner_in_txn, release_response_in_txn,
-    response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
-    settle_shared_response_in_txn,
+    ResponseRead, ResponseScan, bind_response_in_txn, carrier_row, erase_response_owner_in_txn,
+    release_response_in_txn, response_binding_in_txn, response_carrier,
+    response_owed_to_all_in_txn, settle_shared_response_in_txn,
 };
 #[cfg(unix)]
 pub(crate) use body_store::{

@@ -3,11 +3,12 @@
 //! coreference link shared into a pact, the delivery-window restrictions a
 //! send meets, a public booking page served, an e-sign principal's autonomy,
 //! what a signing ceremony lets its parties do, and whom a calendar
-//! invitation may reach.
+//! invitation may reach, by recipient and as its door resolves each send.
 use super::{Decision, held_by_both};
 use crate::blob_artifact::esign::{self, DocumentStatus, EsignState, SigningStatus};
+use crate::booking::BOOKING_SOURCE_PAGE_PREDICATE;
 use crate::booking::invite_grant::{booker_identity_in_txn, normalize_identity};
-use crate::calendar::invite::CalendarInviteConsentSnapshot;
+use crate::calendar::invite::{CalendarInviteConsentSnapshot, recovery_invite_consent_in_txn};
 use crate::channel_identity_provider::native_mail;
 use crate::claim::{COREFERENCE_PACT_ID_LEN, ClaimSubject, PREDICATE_COREFERENCE_SHARE_CONSENT};
 use crate::delivery_window::{DELIVERY_WINDOW_CLAIM_PREDICATES, DeliveryWindowPolicyClaim};
@@ -484,6 +485,131 @@ impl Decision for CalendarInviteConsent {
 
     fn refusal() -> Option<bool> {
         Some(false)
+    }
+}
+
+/// One calendar invitation as its door resolves its consent (FIX 8824): the
+/// actor that sends it, its EVENT, and its recipient.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct CalendarInviteSubject {
+    sending_actor: EntityId,
+    event_ref: EntityId,
+    recipient: String,
+}
+
+/// Whether a calendar invitation REQUEST may reach its recipient, through
+/// the invitation door's own resolver (`recovery_invite_consent_in_txn`,
+/// FIX 8824): a prior thread with the recipient, or a live standing grant
+/// the sending actor holds that covers this invite, a booking page's only
+/// for the confirmed booking its EVENT is, booked by that recipient. A
+/// booking an owner cancelled is never revived because the same recipient
+/// holds another one.
+pub(super) struct CalendarInviteSendConsent;
+
+impl Decision for CalendarInviteSendConsent {
+    type Subject = CalendarInviteSubject;
+    type Answer = bool;
+
+    /// Every invitation either vault can answer apart from the rest: each
+    /// standing grant's principal, and one actor no grant names; for an
+    /// actor holding a booking page grant in either vault, every EVENT a
+    /// booking of either vault names (confirmed, cancelled or held alike),
+    /// and one no booking names; each with every recipient
+    /// [`CalendarInviteConsent`] asks about, its unnamed one among them.
+    fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<CalendarInviteSubject>> {
+        let recipients = CalendarInviteConsent::subjects(vaults)?;
+        let mut actors = BTreeMap::<EntityId, bool>::new();
+        let mut events = BTreeSet::new();
+        for vault in vaults {
+            let txn = vault.store.env.read_txn()?;
+            for id in vault
+                .store
+                .port_entity_ids_by_type(&txn, ENTITY_TYPE_OUTBOUND_GRANT, None)?
+            {
+                let Some(grant) = standing_outbound_grant_in_txn(&vault.store, &txn, &id?)? else {
+                    continue;
+                };
+                let Ok(actor) = EntityId::from_hex(&grant.principal_ref) else {
+                    continue;
+                };
+                let pages = matches!(
+                    grant.scope,
+                    StandingOutboundGrantScope::BookingPageInvites { .. }
+                );
+                *actors.entry(actor).or_default() |= pages;
+            }
+            vault.for_each_readable_claim_with_predicate_in_txn(
+                &txn,
+                BOOKING_SOURCE_PAGE_PREDICATE,
+                |_, claim| {
+                    if let ClaimSubject::Entity(event) = claim.subject {
+                        events.insert(event);
+                    }
+                    Ok(())
+                },
+            )?;
+        }
+        let unnamed = unnamed_id(actors.keys());
+        actors.insert(unnamed, false);
+        let unbooked = unnamed_id(&events);
+        let mut subjects = BTreeSet::new();
+        for (actor, pages) in &actors {
+            let sent = std::iter::once(unbooked).chain(events.iter().copied().filter(|_| *pages));
+            for event_ref in sent {
+                subjects.extend(recipients.iter().map(|recipient| CalendarInviteSubject {
+                    sending_actor: *actor,
+                    event_ref,
+                    recipient: recipient.clone(),
+                }));
+            }
+        }
+        Ok(subjects)
+    }
+
+    /// Each subject's answer from the invitation door's own resolver, all in
+    /// one read of the vault; a read that fails refuses.
+    fn answers(
+        vault: &Vault,
+        subjects: &BTreeSet<CalendarInviteSubject>,
+    ) -> Result<Vec<Option<bool>>> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(subjects
+            .iter()
+            .map(|subject| {
+                recovery_invite_consent_in_txn(
+                    vault,
+                    &txn,
+                    subject.sending_actor,
+                    subject.event_ref,
+                    &subject.recipient,
+                )
+                .ok()
+                .map(|basis| basis.is_some())
+            })
+            .collect())
+    }
+
+    fn loosens(live: &bool, restored: &bool) -> bool {
+        !live && *restored
+    }
+
+    fn refusal() -> Option<bool> {
+        Some(false)
+    }
+}
+
+/// An id none of `named` is, for the actor or EVENT no row names.
+fn unnamed_id<'a>(named: impl IntoIterator<Item = &'a EntityId>) -> EntityId {
+    let named: BTreeSet<&EntityId> = named.into_iter().collect();
+    let mut n = 0_u64;
+    loop {
+        let mut bytes = [0xff; 16];
+        bytes[8..].copy_from_slice(&n.to_be_bytes());
+        let candidate = EntityId::from_bytes_unchecked(bytes);
+        if !named.contains(&candidate) {
+            return candidate;
+        }
+        n += 1;
     }
 }
 

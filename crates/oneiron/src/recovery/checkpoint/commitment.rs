@@ -34,7 +34,7 @@ use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 use serde::{Deserialize, Serialize};
 
 use crate::side_table::{self, Named, SideTable};
-use crate::store::{Callback, Rows};
+use crate::store::{BackupWriteClass, Callback, Rows};
 use crate::world_keys::{keystore_error, refused, slot_seed};
 use crate::{Error, Result, Vault};
 
@@ -166,37 +166,37 @@ impl Vault {
     }
 
     /// Advances the chain from `from` to the checkpoint just signed, in a
-    /// store write of its own that carries no other row, and returns that
-    /// write's transaction id: what the backup watermark excludes as the
-    /// backup's own. Refused when another checkpoint advanced it first.
+    /// store write of its own that carries no other row: backup metadata,
+    /// which moves no backup watermark (FIX 6730). Refused when another
+    /// checkpoint advanced it first.
     pub(super) fn advance_checkpoint_chain(
         &self,
         from: Option<ChainHead>,
         to: ChainHead,
-    ) -> Result<u64> {
-        self.store.group_write_as(Callback::Opaque, None, |txn| {
+    ) -> Result<()> {
+        let class = BackupWriteClass::BackupMetadata;
+        self.store.group_write_classed(Callback::Opaque, class, |txn| {
             match advance_in_txn(&self.store, txn, from, to) {
-                Ok(own) => Rows::Commit(own),
+                Ok(()) => Rows::Commit(()),
                 Err(error) => Rows::Discard(Err(error)),
             }
         })
     }
 }
 
-/// The chain's move from `from` to `to` in `txn`, and `txn`'s id.
+/// The chain's move from `from` to `to` in `txn`.
 fn advance_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     from: Option<ChainHead>,
     to: ChainHead,
-) -> Result<u64> {
+) -> Result<()> {
     if CHAIN_HEAD.get(store, txn, &())? != from {
         return Err(Error::InvalidConfig(
             "another checkpoint was taken at the same time; take this one again".into(),
         ));
     }
-    CHAIN_HEAD.put(store, txn, &(), &to)?;
-    Ok(txn.id() as u64)
+    CHAIN_HEAD.put(store, txn, &(), &to)
 }
 
 /// The link a new checkpoint takes in its vault's chain.

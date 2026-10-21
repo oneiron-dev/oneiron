@@ -58,7 +58,7 @@ pub use self::payload::{
 };
 
 pub(crate) use self::admission::admit_calendar_invite_in_txn;
-pub(crate) use self::hygiene::CalendarInviteConsentSnapshot;
+pub(crate) use self::hygiene::{CalendarInviteConsentSnapshot, recovery_invite_consent_in_txn};
 #[cfg(test)]
 pub(crate) use self::hygiene::resolve_consent_basis;
 pub(crate) use self::mime::read_calendar_invite_ics_in_txn;

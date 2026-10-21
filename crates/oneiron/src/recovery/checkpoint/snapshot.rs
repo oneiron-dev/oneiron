@@ -92,9 +92,9 @@ impl Vault {
         // Refuse a checkpoint that cannot read CURRENT exterior custody; it
         // cannot package key bytes to paper over a missing/shredded key.
         self.store.for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
-        // Only claim/summary bodies have a canonical re-embedding path today.
-        // Diagnostics are deliberately runtime-only. Other explicit vectors must
-        // not silently disappear.
+        // Claim and summary bodies and a TURN's message text (FIX 8826) have a
+        // canonical re-embedding path. Diagnostics are deliberately
+        // runtime-only. Other explicit vectors must not silently disappear.
         for row in self.store.port_vector_rows(&txn, |id, _| {
             crate::EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
         })? {
@@ -102,7 +102,7 @@ impl Vault {
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?;
             let reconstructable = match raw.as_deref() {
                 Some(raw) => {
-                    rebuild::has_embedding_source(raw)?
+                    rebuild::has_checkpoint_embedding_source(self, &txn, &id, raw)?
                         || crate::batch::EntityMetadataHeader::parse(raw).is_some_and(|header| {
                             header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
                         })
@@ -254,6 +254,7 @@ impl Vault {
             bodies,
             sealed_bodies,
             inline_bodies,
+            checkpoint_sequence: None,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
         // Every body instance the image carries is held for it, synced,
@@ -281,13 +282,10 @@ impl Vault {
             budget,
         )?;
         // A checkpoint the chain does not take is no checkpoint.
-        let own = match self.advance_checkpoint_chain(link.head, head) {
-            Ok(own) => own,
-            Err(error) => {
-                let _ = std::fs::remove_file(path);
-                return Err(error);
-            }
-        };
+        if let Err(error) = self.advance_checkpoint_chain(link.head, head) {
+            let _ = std::fs::remove_file(path);
+            return Err(error);
+        }
         // Its holder is named by its checkpoint id, which its custodian
         // knows it by; one that is not named stays kept.
         if let Some(holder) = holder
@@ -306,7 +304,7 @@ impl Vault {
             .flatten();
         Ok(Some(BackupSnapshotReceipt {
             image_digest: blake3::Hash::from(id).to_hex().to_string(),
-            covered: mark.covered(own),
+            covered: mark.covered(),
             evidence,
             checkpoint_fact,
         }))

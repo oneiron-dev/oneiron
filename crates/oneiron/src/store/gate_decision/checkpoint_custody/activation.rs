@@ -237,7 +237,7 @@ impl Store {
             let Some(family) = ResponseFamily::of_row(db, key, &value) else {
                 continue;
             };
-            if let Some(carriage) = family.carriage(key, &value) {
+            if let Some((carriage, _)) = family.scan(key, &value).carriage() {
                 family.retire_in_txn(self, wtxn, key, &carriage)?;
             }
         }

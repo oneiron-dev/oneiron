@@ -13,7 +13,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, SideTableDbs};
-use crate::store::ResponseCarriage;
+use crate::store::{ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan};
 use rmpv::Value;
 
 // ---------------------------------------------------------------------------
@@ -284,10 +284,7 @@ pub(super) fn step_state_put_in_txn(
     row: &StepStateRow,
 ) -> Result<StepStateDisposition> {
     let key = (attempt_id, *step_hash);
-    if STEP_STATE
-        .get(vault, &*wtxn, &key)?
-        .is_some_and(|prior| prior.erased)
-    {
+    if erased_in_txn(vault, &*wtxn, &key)? {
         remove_erased_sources_in_txn(vault, wtxn, attempt_id, step_hash, &row.owners)?;
         return Ok(StepStateDisposition::Erased);
     }
@@ -359,13 +356,39 @@ fn remove_erased_sources_in_txn(
     Ok(())
 }
 
+/// The step-state row of `(attempt_id, step_hash)`. The erased marker of a
+/// retired response that never decoded answers `ResponseErased` before any
+/// decode (FIX 6227): the step is over, and is never asked again.
 pub(super) fn step_state_read(
     vault: &Vault,
     attempt_id: AttemptId,
     step_hash: &[u8; 32],
 ) -> Result<Option<StepStateRow>> {
     let rtxn = vault.store.env.read_txn()?;
-    STEP_STATE.get(&vault.store, &rtxn, &(attempt_id, *step_hash))
+    let key = (attempt_id, *step_hash);
+    let Some(raw) = STEP_STATE.get_borrowed(&vault.store, &rtxn, &key)? else {
+        return Ok(None);
+    };
+    let raw = ResponseRead::of(ResponseFamily::StepState, &STEP_STATE.key_bytes(&key), &raw)
+        .present()?;
+    STEP_STATE.decode_value(raw).map(Some)
+}
+
+/// Whether the row of `key` in `txn` is erased: an erase took its response,
+/// or it holds the erased marker of a retired response that never decoded
+/// (FIX 6227).
+fn erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &(AttemptId, [u8; 32]),
+) -> Result<bool> {
+    let Some(raw) = STEP_STATE.get_borrowed(vault, txn, key)? else {
+        return Ok(false);
+    };
+    match ResponseRead::of(ResponseFamily::StepState, &STEP_STATE.key_bytes(key), &raw) {
+        ResponseRead::ErasedOpaque(_) => Ok(true),
+        ResponseRead::Present(raw) => Ok(STEP_STATE.decode_value(raw)?.erased),
+    }
 }
 
 pub(super) fn step_state_delete(
@@ -382,14 +405,21 @@ pub(super) fn step_state_delete(
 /// What a checkpoint carries of the step-state row `value` (KS-2B1): its
 /// response payload, the row without it, marked erased, as the stub its
 /// erased disposition keeps whole: the step is over and is never asked, or
-/// paid for, again. `None` for a row with no payload and for one that does
-/// not decode.
-pub(crate) fn step_state_carriage(value: &[u8]) -> Option<ResponseCarriage> {
-    let mut row = StepStateRow::from_raw(value).ok()?;
-    row.response_payload.take()?;
+/// paid for, again. No response for a row with no payload; a row that does
+/// not decode, or whose stub does not encode, is carried whole as an opaque
+/// response (FIX 6227).
+pub(crate) fn step_state_carriage(value: &[u8]) -> ResponseScan {
+    let Ok(mut row) = StepStateRow::from_raw(value) else {
+        return ResponseScan::opaque_row();
+    };
+    if row.response_payload.take().is_none() {
+        return ResponseScan::NotResponse;
+    }
     row.erased = true;
-    let stub = row.to_raw().ok()?;
-    Some(ResponseCarriage {
+    let Ok(stub) = row.to_raw() else {
+        return ResponseScan::opaque_row();
+    };
+    ResponseScan::Decoded(ResponseCarriage {
         keep: 0,
         retired: stub.len(),
         stub,
