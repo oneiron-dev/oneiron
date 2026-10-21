@@ -93,10 +93,6 @@ pub(super) const AUDIT_ROW_LABEL: &str = "amendment judge audit row";
 /// `edit_distance::escalation` and the `actor.edit_cost` row it feeds.
 pub(super) const MAX_AMENDMENT_SCOPE_LEN: usize = crate::consent::MAX_CONSENT_REF_LEN;
 
-/// Upper bound on the receipts one cost row cites, matching the `actor.*`
-/// ledger's own bound so a skill row and an actor row cite alike.
-pub(super) const MAX_CITED_RECEIPTS: usize = crate::actor_claims::ACTOR_CLAIM_MAX_CITED_EVIDENCE;
-
 pub(super) const fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
 }

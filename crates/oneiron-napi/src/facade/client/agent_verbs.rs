@@ -583,6 +583,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn tasks_redo(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.redo", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_commit_message(
         &self,
         input: serde_json::Value,
@@ -7493,6 +7499,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.voices.inspect", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_voices_lineage(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.voices.lineage", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

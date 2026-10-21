@@ -388,6 +388,11 @@ export_facade! {
     let output = client.tasks_accept(&input)?;
     crate::codec::lift_record("tasks.accept", &output)
 };
+"tasks.redo" => fn tasks_redo(&self, input: TaskRedo) -> TaskCallReceipt = |client| {
+    let input: oneiron::task_verb::TaskRedo = crate::codec::lower_record("tasks.redo", input)?;
+    let output = client.tasks_redo(&input)?;
+    crate::codec::lift_record("tasks.redo", &output)
+};
 "vault.commit_message" => fn vault_commit_message(&self, input: CommitMessageRequest) -> WitnessReceipt = |client| {
     let input: oneiron::memory::CommitMessageRequest = crate::codec::lower_record("vault.commit_message", input)?;
     let output = client.vault_commit_message(&input)?;
@@ -4260,6 +4265,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::VoiceBankInspectRequest = crate::codec::lower_record("vault.voices.inspect", input)?;
     let output = client.vault_voices_inspect(&input)?;
     crate::codec::lift_record("vault.voices.inspect", &output)
+};
+"vault.voices.lineage" => fn vault_voices_lineage(&self, input: VoiceRenderLineageRequest) -> Vec<VoiceRenderEventView> = |client| {
+    let input: oneiron::task_verb::sdk::VoiceRenderLineageRequest = crate::codec::lower_record("vault.voices.lineage", input)?;
+    let output = client.vault_voices_lineage(&input)?;
+    crate::codec::lift_record("vault.voices.lineage", &output)
 };
 "ai.transcribe" => fn ai_transcribe(&self, input: AiCallRequest) -> AiAnswer = |client| {
     let input: oneiron::task_verb::sdk::AiCallRequest = crate::codec::lower_record("ai.transcribe", input)?;

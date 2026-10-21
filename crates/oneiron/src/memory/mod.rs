@@ -105,6 +105,7 @@ mod read_selection;
 mod reads;
 mod recall;
 pub mod repo_doors;
+pub(crate) mod repo_secret_reads;
 mod report;
 mod result_attachment;
 pub mod result_doors;

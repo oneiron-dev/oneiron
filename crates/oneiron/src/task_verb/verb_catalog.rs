@@ -82,6 +82,7 @@ pub enum AgentVerb {
     VaultFanoutAck,
     TasksUpdate,
     TasksAccept,
+    TasksRedo,
     VaultCommitMessage,
     VaultBeginMessageStream,
     VaultAppendToStream,
@@ -856,6 +857,7 @@ pub enum AgentVerb {
     VaultVoicesTargetsProvision,
     VaultVoicesTargetsEvict,
     VaultVoicesInspect,
+    VaultVoicesLineage,
     AiTranscribe,
     AiEmbed,
     AiVideo,
@@ -905,6 +907,8 @@ pub enum AgentVerb {
     SelfDesktopWindows,
     SelfDesktopWindow,
     SelfDesktopHandover,
+    SelfDreamerThingExtract,
+    SelfDreamerThingDecide,
     VaultCommit,
     VaultRemember,
     VaultClaimsRetract,
@@ -1238,6 +1242,7 @@ impl AgentVerb {
         Self::VaultFanoutAck,
         Self::TasksUpdate,
         Self::TasksAccept,
+        Self::TasksRedo,
         Self::VaultCommitMessage,
         Self::VaultBeginMessageStream,
         Self::VaultAppendToStream,
@@ -2012,6 +2017,7 @@ impl AgentVerb {
         Self::VaultVoicesTargetsProvision,
         Self::VaultVoicesTargetsEvict,
         Self::VaultVoicesInspect,
+        Self::VaultVoicesLineage,
         Self::AiTranscribe,
         Self::AiEmbed,
         Self::AiVideo,
@@ -2061,6 +2067,8 @@ impl AgentVerb {
         Self::SelfDesktopWindows,
         Self::SelfDesktopWindow,
         Self::SelfDesktopHandover,
+        Self::SelfDreamerThingExtract,
+        Self::SelfDreamerThingDecide,
         Self::VaultCommit,
         Self::VaultRemember,
         Self::VaultClaimsRetract,
@@ -2397,6 +2405,7 @@ impl AgentVerb {
             Self::VaultFanoutAck => "vault.fanout.ack",
             Self::TasksUpdate => "tasks.update",
             Self::TasksAccept => "tasks.accept",
+            Self::TasksRedo => "tasks.redo",
             Self::VaultCommitMessage => "vault.commit_message",
             Self::VaultBeginMessageStream => "vault.begin_message_stream",
             Self::VaultAppendToStream => "vault.append_to_stream",
@@ -3195,6 +3204,7 @@ impl AgentVerb {
             Self::VaultVoicesTargetsProvision => "vault.voices.targets.provision",
             Self::VaultVoicesTargetsEvict => "vault.voices.targets.evict",
             Self::VaultVoicesInspect => "vault.voices.inspect",
+            Self::VaultVoicesLineage => "vault.voices.lineage",
             Self::AiTranscribe => "ai.transcribe",
             Self::AiEmbed => "ai.embed",
             Self::AiVideo => "ai.video",
@@ -3244,6 +3254,8 @@ impl AgentVerb {
             Self::SelfDesktopWindows => "self.desktop.windows",
             Self::SelfDesktopWindow => "self.desktop.window",
             Self::SelfDesktopHandover => "self.desktop.handover",
+            Self::SelfDreamerThingExtract => "self.dreamer.thing.extract",
+            Self::SelfDreamerThingDecide => "self.dreamer.thing.decide",
             Self::VaultCommit => "vault.commit",
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
@@ -3583,6 +3595,7 @@ impl AgentVerb {
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -4357,6 +4370,7 @@ impl AgentVerb {
                 | Self::VaultVoicesTargetsProvision
                 | Self::VaultVoicesTargetsEvict
                 | Self::VaultVoicesInspect
+                | Self::VaultVoicesLineage
                 | Self::AiTranscribe
                 | Self::AiEmbed
                 | Self::AiVideo
@@ -4767,6 +4781,7 @@ impl AgentVerb {
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -5541,6 +5556,7 @@ impl AgentVerb {
                 | Self::VaultVoicesTargetsProvision
                 | Self::VaultVoicesTargetsEvict
                 | Self::VaultVoicesInspect
+                | Self::VaultVoicesLineage
                 | Self::AiTranscribe
                 | Self::AiEmbed
                 | Self::AiVideo
@@ -5832,6 +5848,7 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::TasksRedo
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
@@ -5914,6 +5931,7 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultRoomsUpkeepPending
                 | Self::SelfSkillsCallables
+                | Self::VaultVoicesLineage
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::SelfDecisionsAsks
@@ -6090,6 +6108,7 @@ impl AgentVerb {
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
+                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -6820,6 +6839,7 @@ impl AgentVerb {
                 | Self::VaultVoicesTargetsProvision
                 | Self::VaultVoicesTargetsEvict
                 | Self::VaultVoicesInspect
+                | Self::VaultVoicesLineage
                 | Self::AiTranscribe
                 | Self::AiEmbed
                 | Self::AiVideo
@@ -6869,6 +6889,8 @@ impl AgentVerb {
                 | Self::SelfDesktopWindows
                 | Self::SelfDesktopWindow
                 | Self::SelfDesktopHandover
+                | Self::SelfDreamerThingExtract
+                | Self::SelfDreamerThingDecide
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
@@ -7136,6 +7158,7 @@ impl AgentVerb {
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -7626,6 +7649,8 @@ impl AgentVerb {
                 | Self::SelfDesktopHotkey
                 | Self::SelfDesktopBatch
                 | Self::SelfDesktopHandover
+                | Self::SelfDreamerThingExtract
+                | Self::SelfDreamerThingDecide
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -7769,6 +7794,7 @@ impl AgentVerb {
             Self::SelfStandingEdit
                 | Self::Cancel
                 | Self::TasksCreate
+                | Self::TasksRedo
                 | Self::VaultClaimsUpsert
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultClusterPropose
@@ -7790,7 +7816,10 @@ impl AgentVerb {
         matches!(self, Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer)
     }
     pub const fn takes_task_decisions(self) -> bool {
-        matches!(self, Self::TasksCreate | Self::TasksUpdate)
+        matches!(
+            self,
+            Self::TasksCreate | Self::TasksUpdate | Self::TasksRedo
+        )
     }
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
@@ -7892,6 +7921,7 @@ impl AgentVerb {
             Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["spec", "task_ref"],
             Self::TasksAccept => &["spec", "task_ref"],
+            Self::TasksRedo => &["spec"],
             Self::VaultCommitMessage => &["spec"],
             Self::VaultBeginMessageStream => &["spec"],
             Self::VaultAppendToStream => &["spec"],
@@ -8666,6 +8696,7 @@ impl AgentVerb {
             Self::VaultVoicesTargetsProvision => &["spec"],
             Self::VaultVoicesTargetsEvict => &["spec"],
             Self::VaultVoicesInspect => &["spec"],
+            Self::VaultVoicesLineage => &["spec"],
             Self::AiTranscribe => &["spec"],
             Self::AiEmbed => &["spec"],
             Self::AiVideo => &["spec"],
@@ -8715,6 +8746,8 @@ impl AgentVerb {
             Self::SelfDesktopWindows => &["spec"],
             Self::SelfDesktopWindow => &["spec"],
             Self::SelfDesktopHandover => &["spec"],
+            Self::SelfDreamerThingExtract => &["spec"],
+            Self::SelfDreamerThingDecide => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -9049,6 +9082,7 @@ impl AgentVerb {
             Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["spec", "task_ref"],
             Self::TasksAccept => &["spec", "task_ref"],
+            Self::TasksRedo => &["spec"],
             Self::VaultCommitMessage => &["spec"],
             Self::VaultBeginMessageStream => &["spec"],
             Self::VaultAppendToStream => &["spec"],
@@ -9823,6 +9857,7 @@ impl AgentVerb {
             Self::VaultVoicesTargetsProvision => &["spec"],
             Self::VaultVoicesTargetsEvict => &["spec"],
             Self::VaultVoicesInspect => &["spec"],
+            Self::VaultVoicesLineage => &["spec"],
             Self::AiTranscribe => &["spec"],
             Self::AiEmbed => &["spec"],
             Self::AiVideo => &["spec"],
@@ -9872,6 +9907,8 @@ impl AgentVerb {
             Self::SelfDesktopWindows => &["spec"],
             Self::SelfDesktopWindow => &["spec"],
             Self::SelfDesktopHandover => &["spec"],
+            Self::SelfDreamerThingExtract => &["spec"],
+            Self::SelfDreamerThingDecide => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -10356,6 +10393,9 @@ impl AgentVerb {
             }
             Self::TasksAccept => {
                 "Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."
+            }
+            Self::TasksRedo => {
+                "Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."
             }
             Self::VaultCommitMessage => {
                 "Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes."
@@ -12619,19 +12659,22 @@ impl AgentVerb {
             }
             Self::AiSpeech => "Speech audio out of text, from the host's speech model.",
             Self::VaultVoicesPacksPut => {
-                "The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op."
+                "A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op."
             }
             Self::VaultVoicesRenderConsent => {
-                "The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs."
+                "A person records the render decision on their own voice, or a designed voice's creator on that voice with no basis: a grant names the farthest locality its refs reach; a withdrawal drops each target clone. It joins the render history."
             }
             Self::VaultVoicesTargetsProvision => {
-                "The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call."
+                "The caller's own voice, a person's or a designed voice its creator made, cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality first."
             }
             Self::VaultVoicesTargetsEvict => {
-                "The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay."
+                "A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay."
             }
             Self::VaultVoicesInspect => {
-                "The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone."
+                "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone."
+            }
+            Self::VaultVoicesLineage => {
+                "A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."
             }
             Self::AiTranscribe => "Text out of speech audio, from the host's transcription model.",
             Self::AiEmbed => {
@@ -12743,6 +12786,12 @@ impl AgentVerb {
             }
             Self::SelfDesktopHandover => {
                 "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record."
+            }
+            Self::SelfDreamerThingExtract => {
+                "Runs one lent slice's extraction on the parent's own wake and stages its draft, answering one engine-issued proposal ref per drafted candidate."
+            }
+            Self::SelfDreamerThingDecide => {
+                "Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt."
             }
             Self::VaultCommit => {
                 "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."

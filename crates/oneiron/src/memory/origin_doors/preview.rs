@@ -35,6 +35,7 @@ use crate::origin::export_preview::{
     PinnedLeaf,
 };
 use crate::origin::publication::OriginPublicationStatus;
+use crate::origin::secret_projection::repo_mark_preview_blockers_in_txn;
 use crate::origin::smart_http::push_queue_key;
 use crate::secret_custody::{SecretSight, sighted_bytes_in_txn};
 
@@ -186,6 +187,18 @@ impl Memory<'_> {
             {
                 blockers.push(withheld_record(source.entity));
             }
+        }
+        // A Granted agent's preview of a blob a repo mark covers is held as
+        // masked, before any generic sight is read; the owner's stays exact
+        // (FIX 7608, CALL N).
+        if !owner {
+            blockers.extend(repo_mark_preview_blockers_in_txn(
+                self.vault,
+                &txn,
+                &served.store,
+                &pinned.before,
+                &pinned.after,
+            )?);
         }
         let sight = self.secret_sight_in_txn(&txn)?;
         if sight == SecretSight::Masked {

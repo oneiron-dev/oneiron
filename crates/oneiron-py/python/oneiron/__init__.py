@@ -4465,28 +4465,31 @@ class Oneiron:
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs":
             return Oneiron._VaultVoicesPacksVerbs(self._client)
         def render_consent(self, spec):
-            """The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs."""
+            """A person records the render decision on their own voice, or a designed voice's creator on that voice with no basis: a grant names the farthest locality its refs reach; a withdrawal drops each target clone. It joins the render history."""
             return json.loads(_translate(lambda: self._client.vault_voices_render_consent(json.dumps(spec))))
         @property
         def targets(self) -> "Oneiron._VaultVoicesTargetsVerbs":
             return Oneiron._VaultVoicesTargetsVerbs(self._client)
         def inspect(self, spec):
-            """The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone."""
+            """A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone."""
             return json.loads(_translate(lambda: self._client.vault_voices_inspect(json.dumps(spec))))
+        def lineage(self, spec):
+            """A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."""
+            return json.loads(_translate(lambda: self._client.vault_voices_lineage(json.dumps(spec))))
     class _VaultVoicesPacksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def put(self, spec):
-            """The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op."""
+            """A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op."""
             return json.loads(_translate(lambda: self._client.vault_voices_packs_put(json.dumps(spec))))
     class _VaultVoicesTargetsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def provision(self, spec):
-            """The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call."""
+            """The caller's own voice, a person's or a designed voice its creator made, cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality first."""
             return json.loads(_translate(lambda: self._client.vault_voices_targets_provision(json.dumps(spec))))
         def evict(self, spec):
-            """The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay."""
+            """A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay."""
             return json.loads(_translate(lambda: self._client.vault_voices_targets_evict(json.dumps(spec))))
     class _VaultGraphVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -5567,6 +5570,9 @@ class Oneiron:
         def accept(self, spec):
             """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
             return json.loads(_translate(lambda: self._client.tasks_accept(json.dumps(spec))))
+        def redo(self, spec):
+            """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
+            return json.loads(_translate(lambda: self._client.tasks_redo(json.dumps(spec))))
         def answer(self, handle, word):
             """Admits one person's word on an ask; the word is evidence, never approval."""
             return json.loads(_translate(lambda: self._client.tasks_answer(json.dumps({"handle": handle, "word": word}))))

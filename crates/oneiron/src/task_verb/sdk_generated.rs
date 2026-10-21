@@ -437,6 +437,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAccept>(),
             ),
             (
+                "tasks.redo",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskRedo>(),
+            ),
+            (
                 "vault.commit_message",
                 crate::code_run::vault_read::request_schema::<crate::memory::CommitMessageRequest>(
                 ),
@@ -4726,6 +4730,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.voices.lineage",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VoiceRenderLineageRequest,
+                >(),
+            ),
+            (
                 "ai.transcribe",
                 crate::code_run::vault_read::request_schema::<AiCallRequest>(),
             ),
@@ -4952,6 +4962,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.desktop.handover",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::HandoverInput>(),
+            ),
+            (
+                "self.dreamer.thing.extract",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_consolidation::ThingExtractInput,
+                >(),
+            ),
+            (
+                "self.dreamer.thing.decide",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_consolidation::ThingDecideInput,
+                >(),
             ),
             (
                 "vault.commit",
@@ -7104,6 +7126,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.voices.targets.provision",
     "vault.voices.targets.evict",
     "vault.voices.inspect",
+    "vault.voices.lineage",
     "vault.graph.admit",
     "vault.questions.outcomes",
     "vault.questions.outcomes.project",
@@ -9056,6 +9079,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.voices.inspect" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::VoiceBankInspection,
         >(),
+        "vault.voices.lineage" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::VoiceRenderEventView>,
+        >(),
         "vault.graph.admit" => {
             crate::code_run::vault_read::request_schema::<crate::receipt::GraphAskOutcome>()
         }
@@ -10298,6 +10324,13 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/task_ref")?.clone(),
             );
             &["spec", "task_ref"]
+        }
+        "tasks.redo" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "vault.commit_message" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -15669,6 +15702,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.voices.lineage" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.transcribe" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -17908,6 +17948,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "tasks.accept" => {
             let _input: crate::task_verb::TaskAccept = decode(value.clone())?;
+        }
+        "tasks.redo" => {
+            let _input: crate::task_verb::TaskRedo = decode(value.clone())?;
         }
         "vault.commit_message" => {
             let _input: crate::memory::CommitMessageRequest = decode(value.clone())?;
@@ -20473,6 +20516,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.voices.inspect" => {
             let _input: crate::task_verb::sdk::VoiceBankInspectRequest = decode(value.clone())?;
         }
+        "vault.voices.lineage" => {
+            let _input: crate::task_verb::sdk::VoiceRenderLineageRequest = decode(value.clone())?;
+        }
         "ai.transcribe" => {
             let _input: AiCallRequest = decode(value.clone())?;
         }
@@ -20623,6 +20669,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.desktop.handover" => {
             let _input: oneiron_browser::HandoverInput = decode(value.clone())?;
+        }
+        "self.dreamer.thing.extract" => {
+            let _input: crate::dreamer_consolidation::ThingExtractInput = decode(value.clone())?;
+        }
+        "self.dreamer.thing.decide" => {
+            let _input: crate::dreamer_consolidation::ThingDecideInput = decode(value.clone())?;
         }
         "vault.commit" => {
             let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
@@ -21745,6 +21797,7 @@ pub fn invoke(
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "tasks.accept" => encode(tasks_accept(memory, decode(value)?)?),
+        "tasks.redo" => encode(tasks_redo(memory, decode(value)?)?),
         "vault.commit_message" => encode(vault_commit_message(memory, decode(value)?)?),
         "vault.begin_message_stream" => encode(vault_begin_message_stream(memory, decode(value)?)?),
         "vault.append_to_stream" => encode(vault_append_to_stream(memory, decode(value)?)?),
@@ -23214,6 +23267,7 @@ pub fn invoke(
         }
         "vault.voices.targets.evict" => encode(vault_voices_targets_evict(memory, decode(value)?)?),
         "vault.voices.inspect" => encode(vault_voices_inspect(memory, decode(value)?)?),
+        "vault.voices.lineage" => encode(vault_voices_lineage(memory, decode(value)?)?),
         "ai.transcribe" => encode(ai_transcribe(memory, decode(value)?)?),
         "ai.embed" => encode(ai_embed(memory, decode(value)?)?),
         "ai.video" => encode(ai_video(memory, decode(value)?)?),
@@ -24674,6 +24728,12 @@ pub fn tasks_accept(
         &["/task_ref"],
     )?;
     memory.tasks_accept(input)
+}
+pub fn tasks_redo(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskRedo,
+) -> MemoryResult<crate::task_verb::TaskCallReceipt> {
+    memory.tasks_redo(input)
 }
 pub fn vault_commit_message(
     memory: &Memory<'_>,
@@ -30962,11 +31022,7 @@ pub fn vault_voices_packs_put(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::VoiceBankPackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::VoiceBankPackReceipt> {
-    crate::task_verb::sdk::put_voice_bank_pack_as(
-        memory.vault(),
-        &memory.embedded_owner("vault.voices.packs.put")?,
-        input,
-    )
+    crate::task_verb::sdk::put_voice_bank_pack(memory, input)
 }
 pub fn vault_voices_render_consent(
     memory: &Memory<'_>,
@@ -30991,6 +31047,12 @@ pub fn vault_voices_inspect(
     input: crate::task_verb::sdk::VoiceBankInspectRequest,
 ) -> MemoryResult<crate::task_verb::sdk::VoiceBankInspection> {
     crate::task_verb::sdk::host_only(memory, "vault.voices.inspect", &input)
+}
+pub fn vault_voices_lineage(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::VoiceRenderLineageRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::VoiceRenderEventView>> {
+    crate::task_verb::sdk::host_only(memory, "vault.voices.lineage", &input)
 }
 pub fn ai_transcribe(
     memory: &Memory<'_>,
@@ -31382,6 +31444,18 @@ pub fn self_desktop_handover(
     oneiron_browser::BrowserError,
 > {
     Ok(oneiron_browser::DesktopAnswer::of(driver.handover(input)?))
+}
+pub fn self_dreamer_thing_extract(
+    memory: &Memory<'_>,
+    input: crate::dreamer_consolidation::ThingExtractInput,
+) -> MemoryResult<crate::dreamer_consolidation::ThingExtractOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.dreamer.thing.extract", &input)
+}
+pub fn self_dreamer_thing_decide(
+    memory: &Memory<'_>,
+    input: crate::dreamer_consolidation::ThingDecideInput,
+) -> MemoryResult<crate::dreamer_consolidation::ThingDecideOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.dreamer.thing.decide", &input)
 }
 pub fn vault_commit(
     memory: &Memory<'_>,

@@ -34,8 +34,8 @@ use oneiron::code_run::{
     AgentVerbDoor, ClaimOutcome, DEFAULT_READER_WINDOW_TOKENS, HostSelfDispatcher, ReaderJob,
     ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderRunEnd, ReaderSpend,
     RunDeadline, SCOPED_CHILD_PARENT_LEASE_LOST, SUMMARY_READ_BYTES_PER_TOKEN, ScopedChildPorts,
-    SpawnHostSeat, SummarizeRecipe, SummaryRead, reader_task_brief, summarize_input,
-    summarize_prompt, summary_exceeds_window, summary_token_budget,
+    ScopedChildProfile, SpawnHostSeat, SummarizeRecipe, SummaryRead, reader_task_brief,
+    summarize_input, summarize_prompt, summary_exceeds_window, summary_token_budget,
 };
 use oneiron::engine_executor::{
     ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorError, EngineExecutorStatus, EngineNativeExecutor,
@@ -58,6 +58,8 @@ use crate::ai_host::scoped_child::{
     ReaderParentClock, ReaderParentHost, ScopedChildDoor, scoped_child_service,
 };
 use crate::mcp::{McpCodeExecutionHost, McpCodeModeProvider, run_seat};
+
+mod scoped;
 
 /// The window a run with no decision clock gives its children: one, fixed
 /// at its first spawn.
@@ -609,6 +611,11 @@ impl Child {
         door: Arc<dyn AgentVerbDoor>,
     ) -> ReaderRunEnd {
         let job = &self.job;
+        // A scoped child its own host profiled (FIX 7508) runs on that
+        // profile's backend and its parent's meter, never the host's.
+        if let Some(profile) = self.profile() {
+            return self.metered_on_profile(vault, session, door, &profile);
+        }
         let (guard, recorded) = match self.meter(vault) {
             Ok(meter) => meter,
             Err(end) => return end,
@@ -628,13 +635,17 @@ impl Child {
             return ReaderRunEnd::Failed("reader_meter_unbound".to_owned());
         };
         let end = match &job.kind {
-            ReaderJobKind::Read => self.run(vault, session, backend.as_ref(), &guard, door, None),
+            ReaderJobKind::Read => {
+                self.run(vault, session, backend.as_ref(), &guard, door, None, None)
+            }
             // A scoped child runs as a read child's run does, with its lent
             // ports bound; one whose authority or ports do not hold ends
             // before any call, never as a read child.
             ReaderJobKind::ScopedAgent { .. } => {
                 match scoped_child_service(vault, self.provider.as_ref(), job) {
-                    Ok(ports) => self.run(vault, session, backend.as_ref(), &guard, door, ports),
+                    Ok(ports) => {
+                        self.run(vault, session, backend.as_ref(), &guard, door, ports, None)
+                    }
                     Err(end) => end,
                 }
             }
@@ -822,6 +833,12 @@ impl Child {
     /// and door, and a scoped child's to its lent `ports`, entered again
     /// after each yielded slice until it ends or its cutoff comes. The
     /// cutoff stops the run at its next await; a running step is not cut.
+    /// A profiled child's config takes its `profile`'s model before its
+    /// seat is born (FIX 7508).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one argument per axis the runner binds a child's run to"
+    )]
     fn run(
         &self,
         vault: &Vault,
@@ -830,6 +847,7 @@ impl Child {
         guard: &BudgetGuard,
         door: Arc<dyn AgentVerbDoor>,
         ports: Option<Arc<dyn ScopedChildPorts>>,
+        profile: Option<&ScopedChildProfile>,
     ) -> ReaderRunEnd {
         let job = &self.job;
         let provider = self.provider.as_ref();
@@ -858,6 +876,9 @@ impl Child {
             Ok(config) => config,
             Err(error) => return failed("reader_config_failed", &error),
         };
+        if let Some(profile) = profile {
+            profile.bind_config(&mut config);
+        }
         let purpose = CallPurpose::Other {
             name: ENGINE_EXECUTOR_PURPOSE_NAME.into(),
         };

@@ -19,6 +19,7 @@ impl crate::vault::Vault {
             recall_authority: Mutex::new(None),
             room_peer: false,
             own_owner_authority: false,
+            records_cover: Default::default(),
         }
     }
 
@@ -59,6 +60,7 @@ impl crate::vault::Vault {
             recall_authority: Mutex::new(None),
             room_peer: false,
             own_owner_authority: false,
+            records_cover: Default::default(),
         }
     }
 }
@@ -158,16 +160,22 @@ impl<'a> ScopedRead<'a> {
     pub(super) fn credential_allows_id(&self, id: &EntityId) -> bool {
         self.actor_key.proof.as_ref().is_none_or(|proof| {
             let claims = proof.claims();
-            // Generic records have no proved channel context. Channel-bound
-            // credentials must use their typed adapter instead of losing a caveat.
-            (claims.channels.is_empty()
-                || self
-                    .actor_key
-                    .channel
-                    .as_ref()
-                    .is_some_and(|channel| claims.channels.contains(channel)))
+            self.credential_channel_allows(claims)
                 && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
         })
+    }
+
+    /// The credential's channel caveat, apart from its records caveat
+    /// (FIX 8245 judges the two apart). Generic records have no proved
+    /// channel context. Channel-bound credentials must use their typed
+    /// adapter instead of losing a caveat.
+    pub(super) fn credential_channel_allows(&self, claims: &crate::authority::SlipClaims) -> bool {
+        claims.channels.is_empty()
+            || self
+                .actor_key
+                .channel
+                .as_ref()
+                .is_some_and(|channel| claims.channels.contains(channel))
     }
 
     /// The owner key's binding, re-verified in this read's own snapshot, so a
