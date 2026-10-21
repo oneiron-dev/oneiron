@@ -212,6 +212,15 @@ pub(super) async fn generate(
         };
         if errors.is_empty() {
             response.usage = usage.clone();
+            // A reply the schema admits still answers to the step's check
+            // (FIX 7321): refused, it is paid and never memoized.
+            if let Some(Err(error)) = check.map(|check| check(&response)) {
+                return Err(DurableStepError::SpentSchemaValidation {
+                    attempts: attempt,
+                    errors: vec![error],
+                    usage: Box::new(usage),
+                });
+            }
             return Ok(response);
         }
         if attempt == max_attempts {

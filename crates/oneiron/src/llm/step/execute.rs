@@ -119,11 +119,12 @@ pub async fn call_as_step(
     .await
 }
 
-/// Durable step whose request asks for its reply without a schema and
-/// checks it here instead: a reply `check` refuses is paid and refused as a
-/// schema miss is, and never memoized, so a replay asks again. Only a reply
-/// the check passed is ever stored, so a memo or a recovered payload needs
-/// no second check. A request with a schema keeps the schema's own door.
+/// Durable step whose reply also answers to the caller's `check`: a reply
+/// `check` refuses is paid and refused as a schema miss is, and never
+/// memoized, so a replay asks again. Only a reply the check passed is ever
+/// stored, so a memo or a recovered payload needs no second check. A request
+/// with a schema passes the schema's own door first, then the check (FIX
+/// 7321).
 pub async fn call_as_step_checked(
     ctx: &DurableStepContext<'_>,
     backend: &dyn LlmBackend,
@@ -131,15 +132,6 @@ pub async fn call_as_step_checked(
     request: LlmRequest,
     check: &ReplyCheck,
 ) -> DurableStepResult<StepOutcome> {
-    if matches!(
-        request.envelope.response_format,
-        super::super::ResponseFormat::Json { .. }
-    ) {
-        return Err(Error::InvalidConfig(
-            "a checked step asks for its reply without a schema".into(),
-        )
-        .into());
-    }
     durable_step(
         ctx,
         backend,
