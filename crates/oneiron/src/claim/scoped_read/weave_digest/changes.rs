@@ -203,7 +203,10 @@ impl Vault {
         let owners = match self.owner_schedule_ids() {
             Ok(owners) => owners,
             Err(error) => {
-                tracing::warn!(?error, "the Coach's digest settings pass was skipped");
+                tracing::warn!(
+                    error_kind = ?error.kind(),
+                    "the Coach's digest settings pass was skipped"
+                );
                 return;
             }
         };
@@ -213,7 +216,7 @@ impl Vault {
                 Ok(true) => self.store.notify_proactivity_changes(),
                 Ok(false) => {}
                 Err(error) => tracing::warn!(
-                    ?error,
+                    error_kind = ?error.kind(),
                     owner = %owner.to_hex(),
                     "the Coach skipped an owner's digest settings"
                 ),
@@ -314,7 +317,10 @@ impl Vault {
         let grant = self
             .coach_weave_digest_settings_grant_in_txn(txn, coach, owner)
             .unwrap_or_else(|error| {
-                tracing::warn!(?error, "the Coach's digest settings Grant was not read");
+                tracing::warn!(
+                    error_kind = ?error.kind(),
+                    "the Coach's digest settings Grant was not read"
+                );
                 None
             });
         let id = change_id(owner, generation, step, now)?;

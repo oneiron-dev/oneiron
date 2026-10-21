@@ -475,6 +475,9 @@ fn binds(
 pub(crate) struct VerifiedCandidate {
     pub(crate) proposal: PromotionCandidate,
     pub(crate) evidence: VerifiedEvidenceSet,
+    /// The open markers an earlier try of this attempt left that this
+    /// candidate answers (FIX 7325); empty for every other candidate.
+    pub(crate) answers: Vec<ResolvedConflictOutput>,
 }
 impl std::ops::Deref for VerifiedCandidate {
     type Target = PromotionCandidate;
@@ -491,6 +494,78 @@ impl VerifiedCandidate {
         let evidence = VerifiedEvidenceSet::verify(resources, &refs, proposal.evidence_meet)?;
         proposal.evidence_turn_refs = evidence.refs();
         proposal.evidence_meet = evidence.meet();
-        Ok(Self { proposal, evidence })
+        Ok(Self {
+            proposal,
+            evidence,
+            answers: Vec::new(),
+        })
     }
+}
+
+/// A conflict a retried try answered, bound to the open marker its first
+/// try left (FIX 7325, Engine 10-21): the marker's id, minted from the
+/// original conflict, every output that answers it together, and how it
+/// resolved. Its outputs are candidate ids until the sealed write maps them
+/// to the heads they stand at.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct ResolvedConflictOutput {
+    pub(crate) marker: EntityId,
+    pub(crate) outputs: Vec<EntityId>,
+    pub(crate) resolution: String,
+}
+
+impl ResolvedConflictOutput {
+    /// The answer `outputs` give `conflict` when an earlier try of `attempt`
+    /// left its open marker; `None` when none stands at the marker's id, so
+    /// a conflict met for the first time binds nothing. A marker that does
+    /// not read binds nothing either: it stays open, as before.
+    pub(super) fn of_first_try(
+        vault: &Vault,
+        conflict: &super::ConflictSet,
+        attempt: crate::attempt_queue::AttemptId,
+        outputs: Vec<EntityId>,
+        resolution: &str,
+    ) -> Option<Self> {
+        match first_try_marker(vault, conflict, attempt) {
+            Ok((marker, Some(body)))
+                if body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN
+                    && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+                    && body.approval != crate::claim::ClaimApprovalStatus::Rejected =>
+            {
+                Some(Self {
+                    marker,
+                    outputs,
+                    resolution: resolution.to_owned(),
+                })
+            }
+            Ok(_) => None,
+            Err(error) => {
+                tracing::warn!(
+                    error_kind = ?error.kind(),
+                    "a retried conflict's first marker did not read; it stays open"
+                );
+                None
+            }
+        }
+    }
+
+    /// This answer with each output at the head the write stands it at;
+    /// `None` when the write carries one of them nowhere.
+    pub(super) fn at_heads(mut self, heads: &BTreeMap<EntityId, EntityId>) -> Option<Self> {
+        for output in &mut self.outputs {
+            *output = *heads.get(&*output)?;
+        }
+        Some(self)
+    }
+}
+
+/// The id of `conflict`'s open marker for `attempt` and the claim stored
+/// there, if any.
+fn first_try_marker(
+    vault: &Vault,
+    conflict: &super::ConflictSet,
+    attempt: crate::attempt_queue::AttemptId,
+) -> Result<(EntityId, Option<crate::ClaimBody>)> {
+    let marker = super::conflict_open_marker_id(conflict, attempt)?;
+    Ok((marker, vault.get_claim(&marker)?))
 }
