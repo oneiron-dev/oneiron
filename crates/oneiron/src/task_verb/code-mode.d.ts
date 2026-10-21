@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3936 declarations.
+// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3937 declarations.
 // Replies: 1057 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -3697,13 +3697,14 @@ declare namespace Sdk {
   type SummaryReadRequest = { summary_ref: string; spans?: SummarySpan[] };
   type SummaryPurpose = { id: string; description: string };
   type SummarySourceVersion = { id: string; entity_type?: number | null; learned_at?: number | null; revision?: number[] | null; record_hash?: number[] | null; frontier?: number[] | null; projected_text?: number[] | null };
-  type SummaryDerivation = { request: number[]; trigger: number[]; content_hash: number[]; params_hash: number[]; instruction: string; model: string; policy_frontier: number[]; sources: SummarySourceVersion[]; previous?: string | null; recorded_at: number; generated_text_hash: number[]; generated_keep_hash: number[] };
+  type SummaryLineSources = { output_start: number; output_end: number; turn_refs: string[] };
+  type SummaryDerivation = { request: number[]; trigger: number[]; content_hash: number[]; params_hash: number[]; instruction: string; model: string; policy_frontier: number[]; sources: SummarySourceVersion[]; previous?: string | null; recorded_at: number; generated_text_hash: number[]; generated_keep_hash: number[]; source_set?: number[] | null; line_sources?: SummaryLineSources[] | null };
   type ScopeSummaryMetadata = { purpose: SummaryPurpose; keep: string; derivation: SummaryDerivation };
   type TextAnchor = { entity: string; frontier: number[]; start: number[]; end: number[]; quote: string; hash: number[] };
   type DocActor = string;
   type Birth = { entity: string; actor: DocActor; at: number };
   type SummaryReadView = { summary_ref: string; document: string; frontier: number[]; text: string; metadata: ScopeSummaryMetadata; covers: string[]; read_refs: string[]; anchors: TextAnchor[]; birth: Birth };
-  type SummaryStatusRequest = { attempt: string };
+  type SummaryStatusRequest = { attempt?: string | null; session_ref?: string | null };
   type ScopeSummaryResult = { summary: string; claim?: string | null; record?: string | null };
   type ScopeSummaryStatus = { attempt: string; requester: string; current_attempt: string; state: string; result?: ScopeSummaryResult | null; failure?: string | null; retry_at?: number | null; updated_at: number };
   type SummaryKeepRequest = { summary_ref: string; frontier: number[]; keep: string };

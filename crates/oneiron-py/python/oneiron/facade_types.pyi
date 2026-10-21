@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1127 facade rows, 3883 declarations.
+Census: 1127 facade rows, 3884 declarations.
 Inputs: 1062 of 1127 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1014 of 1127 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -18484,6 +18484,10 @@ class SummarySourceVersion(TypedDict):
     record_hash: NotRequired[list[int] | None]
     frontier: NotRequired[list[int] | None]
     projected_text: NotRequired[list[int] | None]
+class SummaryLineSources(TypedDict):
+    output_start: int
+    output_end: int
+    turn_refs: list[str]
 class SummaryDerivation(TypedDict):
     request: list[int]
     trigger: list[int]
@@ -18497,6 +18501,8 @@ class SummaryDerivation(TypedDict):
     recorded_at: int
     generated_text_hash: list[int]
     generated_keep_hash: list[int]
+    source_set: NotRequired[list[int] | None]
+    line_sources: NotRequired[list[SummaryLineSources] | None]
 class ScopeSummaryMetadata(TypedDict):
     purpose: SummaryPurpose
     keep: str
@@ -18524,7 +18530,8 @@ class SummaryReadView(TypedDict):
     anchors: list[TextAnchor]
     birth: Birth
 class SummaryStatusRequest(TypedDict):
-    attempt: str
+    attempt: NotRequired[str | None]
+    session_ref: NotRequired[str | None]
 class ScopeSummaryResult(TypedDict):
     summary: str
     claim: NotRequired[str | None]

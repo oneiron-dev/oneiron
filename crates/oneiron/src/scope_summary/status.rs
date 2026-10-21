@@ -67,32 +67,61 @@ impl Vault {
     /// must bind the requester to their authenticated caller before returning it.
     pub fn scope_summary_status(&self, attempt: AttemptId) -> Result<ScopeSummaryStatus> {
         let txn = self.store.env.read_txn()?;
-        let tip = crate::attempt_queue::AttemptQueue::from_store(&self.store)
-            .retry_tip_in_txn(&txn, attempt)?;
-        let runner = DreamerRunnerStore::new(self);
-        let status = runner.status(tip.id)?.ok_or(Error::EntityNotFound)?;
-        if status.payload.attempt_type != DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE {
-            return Err(Error::EntityNotFound);
-        }
-        let request = decode_request(&status.payload.input)?;
-        let parked = runner.parked_attempt(tip.id)?;
-        let result = result_in_txn(self, &txn, tip.id)?;
-        let state = if result.is_some() {
-            "completed"
-        } else if parked.is_some() {
-            "parked"
-        } else {
-            status.attempt.state.as_str()
-        };
-        Ok(ScopeSummaryStatus {
-            attempt: crate::entity_id::bytes_to_hex_lower(attempt.as_bytes()),
-            requester: request.requester.entity_ref().to_hex(),
-            current_attempt: crate::entity_id::bytes_to_hex_lower(tip.id.as_bytes()),
-            state: state.to_owned(),
-            result,
-            failure: parked.map(|row| row.reason).or(status.attempt.last_error),
-            retry_at: status.attempt.scheduled_at,
-            updated_at: status.attempt.updated_at,
-        })
+        status_in_txn(self, &txn, attempt)
     }
+
+    /// The summary attempt `session`'s close queued (FIX 7509), as the
+    /// sitting's own `actor` polls it: `None` for any other actor, for a
+    /// sitting still open, and for one that closed with none queued. One
+    /// snapshot reads the sitting and its attempt.
+    pub fn session_summary_status(
+        &self,
+        session: &EntityId,
+        actor: EntityId,
+    ) -> Result<Option<ScopeSummaryStatus>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(record) = self.session_lifecycle_record_in_txn(&txn, session)? else {
+            return Ok(None);
+        };
+        let Some(attempt) = record.summary_attempt.filter(|_| record.key.actor == actor) else {
+            return Ok(None);
+        };
+        status_in_txn(self, &txn, AttemptId::from_bytes(&attempt)?).map(Some)
+    }
+}
+
+/// One declaration's status, read whole in `txn`: its retry tip, that try's
+/// queue row and park, and its landing result.
+fn status_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<ScopeSummaryStatus> {
+    let tip = crate::attempt_queue::AttemptQueue::from_store(&vault.store)
+        .retry_tip_in_txn(txn, attempt)?;
+    let (status, parked) = DreamerRunnerStore::new(vault)
+        .status_with_park_in_txn(txn, tip.id)?
+        .ok_or(Error::EntityNotFound)?;
+    if status.payload.attempt_type != DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE {
+        return Err(Error::EntityNotFound);
+    }
+    let request = decode_request(vault, txn, &status.payload.input)?;
+    let result = result_in_txn(vault, txn, tip.id)?;
+    let state = if result.is_some() {
+        "completed"
+    } else if parked.is_some() {
+        "parked"
+    } else {
+        status.attempt.state.as_str()
+    };
+    Ok(ScopeSummaryStatus {
+        attempt: crate::entity_id::bytes_to_hex_lower(attempt.as_bytes()),
+        requester: request.requester.entity_ref().to_hex(),
+        current_attempt: crate::entity_id::bytes_to_hex_lower(tip.id.as_bytes()),
+        state: state.to_owned(),
+        result,
+        failure: parked.map(|row| row.reason).or(status.attempt.last_error),
+        retry_at: status.attempt.scheduled_at,
+        updated_at: status.attempt.updated_at,
+    })
 }
