@@ -112,6 +112,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/healer/oversight", get(healer_oversight))
         .route("/healer/failures", get(healer_failures))
         .route("/healer/failures/drill", get(drill_failure))
+        .route("/healer/residue", get(healer_residue))
         .route("/imports/preview", post(preview_import))
         .route("/imports/approve", post(approve_import))
         .route("/imports/decline", post(decline_import))
@@ -609,6 +610,16 @@ async fn drill_failure(
     let query = query_params(query)?;
     let drill = blocking(move || healer::drill(server.vault(), &owner, query)).await?;
     Ok(Json(drill))
+}
+
+async fn healer_residue(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<healer::HealResidueRead>> {
+    owner(&auth, &server)?;
+    Ok(Json(
+        blocking(move || healer::residue(server.vault())).await?,
+    ))
 }
 
 async fn preview_import(

@@ -322,6 +322,15 @@ pub(crate) fn any_pending_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result
     Ok(false)
 }
 
+/// One model finding's issue by its id, at `txn`'s revision, filed or not.
+pub(crate) fn issue_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    issue_id: &EntityId,
+) -> Result<Option<DiagnosticIssue>> {
+    ISSUES.get(&vault.store, txn, issue_id)
+}
+
 /// One more failed decision on a waiting model issue; returns the new count.
 pub(crate) fn defer_diagnostic_issue(vault: &Vault, issue_id: &EntityId) -> Result<u8> {
     vault.with_write_txn_grouped(|txn| {

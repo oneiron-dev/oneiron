@@ -828,6 +828,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/healer/residue",
+        summary: "The Coach's proposals still waiting for the owner, one row per source they were filed for (a failure case, a blocked report or a model issue), ordered by impact (OF-418 L4): a non-success source that unfinished TASKs wait on through recorded blocked_by edges first, then more distinct unfinished TASKs waiting, then a parked or STUCK source, then the oldest source. Each row lists its proposals, attempt, TASK, dependents and the edges that prove them, ids only, and every unproved part with a marker saying why it scores nothing. The grouped counts stay at /healer/failures.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/history",
         summary: "Every history erase filed for one text.",
         row: None,

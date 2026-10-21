@@ -39,6 +39,8 @@ use crate::error::GateError;
 
 // One proposed claim settled by its id (DOOR-115), with these members' mechanics.
 mod claim_settle;
+// The Coach's proposals waiting in the tray, for the healer's residue read (OF-418 L4).
+mod pending_heal;
 
 /// Gate `content_kind` of the ONE durable receipt a bundle resolution appends.
 pub const GATE_BUNDLE_CONTENT_KIND: &str = "consent_bundle";
