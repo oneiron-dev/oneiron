@@ -9,7 +9,8 @@
 //!   anchor resolves, through its stored CODE and PROJECT records, to the
 //!   very Git object store being served. The owner who granted it is still
 //!   a live owner, the holder still exists, and on a shared vault the vault
-//!   is neither deleted nor its root conflicted.
+//!   is neither deleted nor its root conflicted, and the Grant itself is not
+//!   inactive under its pact (FIX 7548).
 //! - **Checkout**: on the lease route only, the ticket's stored checkout is
 //!   live and held by the pusher on this repository, its TASK stands, and
 //!   the run's own Grant (PR1 repo bounds) admits the pusher to this repo.
@@ -28,6 +29,7 @@
 //! rechecks the same authority, the same Grant, and the current credential.
 
 use crate::Vault;
+use crate::authority::{GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn};
 use crate::codebase::RepoRef;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -87,42 +89,54 @@ impl Vault {
         }
         // A Grant read that fails refuses only a push no other arm admits:
         // it is logged, and a checkout's own fence and Grant still decide.
-        match self.git_push_grant_admits_in_txn(txn, caller, served) {
-            Ok(Some(stamp)) => return Ok(GitPushAdmission::sealed(stamp)),
-            Ok(None) => {}
-            Err(error) => tracing::warn!(
-                kind = ?error.kind(),
-                "git push: the git_push Grants did not read; no git_push Grant admits"
-            ),
-        }
+        let no_grant = match self.git_push_grant_admits_in_txn(txn, caller, served) {
+            Ok(Ok(stamp)) => return Ok(GitPushAdmission::sealed(stamp)),
+            Ok(Err(reason)) => reason,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "git push: the git_push Grants did not read; no git_push Grant admits"
+                );
+                NO_GRANT
+            }
+        };
         let Some(ticket) = ticket else {
-            return Err(refused(&served.name, NO_GRANT));
+            return Err(refused(&served.name, no_grant));
         };
         match self.git_push_checkout_admits_in_txn(txn, caller, served, ticket)? {
             Ok(stamp) => Ok(GitPushAdmission::sealed(stamp)),
+            // A Grant passed over on its lapsed pact names that lapse here
+            // too (FIX 7548); any other miss keeps the Checkout's reason.
+            Err(_) if no_grant == GIT_PUSH_PACT_STANDING_LAPSED => {
+                Err(refused(&served.name, GIT_PUSH_PACT_STANDING_LAPSED))
+            }
             Err(reason) => Err(refused(&served.name, reason)),
         }
     }
 
     /// The Grant arm: the first live GitPush grant, in id order, that names
-    /// the pusher and a repo whose anchor is the served store.
+    /// the pusher and a repo whose anchor is the served store, and on a
+    /// shared vault is not inactive under its pact (FIX 7548: an inactive
+    /// one is passed over for a later one). Else the reason none admits:
+    /// [`GIT_PUSH_PACT_STANDING_LAPSED`] when a Grant fell on its pact alone.
     fn git_push_grant_admits_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         caller: &GitPushCaller,
         served: &ServedPushRepo,
-    ) -> Result<Option<GitPushStamp>> {
+    ) -> Result<std::result::Result<GitPushStamp, &'static str>> {
         if !self.git_push_grants_stand_here_in_txn(txn)?
             || !self.git_push_grantee_stands_in_txn(txn, caller.principal)?
         {
-            return Ok(None);
+            return Ok(Err(NO_GRANT));
         }
         let now = self.instant_in_txn(txn)?.secs();
         let Some(owners) = owners_or_logged(self, txn) else {
-            return Ok(None);
+            return Ok(Err(NO_GRANT));
         };
         let scope = self.git_push_grant_scope_in_txn(txn)?;
-        for standing in self.git_push_grants_in_txn(txn)? {
+        let mut lapsed = false;
+        'grants: for standing in self.git_push_grants_in_txn(txn)? {
             if !standing_names(&standing, caller.principal, now, &owners, scope) {
                 continue;
             }
@@ -131,17 +145,21 @@ impl Vault {
                     continue;
                 };
                 if served.is_store(self.git_push_store_identity(&anchor).as_deref()) {
-                    return Ok(Some(
-                        GitPushStamp::new(GitPushArm::Grant, caller, served).naming(
-                            standing.id,
-                            *repo,
-                            anchor,
-                        ),
-                    ));
+                    if git_push_pact_standing_lapsed_in_txn(self, txn, standing.id, &standing.grant)
+                    {
+                        lapsed = true;
+                        continue 'grants;
+                    }
+                    return Ok(Ok(GitPushStamp::new(GitPushArm::Grant, caller, served)
+                        .naming(standing.id, *repo, anchor)));
                 }
             }
         }
-        Ok(None)
+        Ok(Err(if lapsed {
+            GIT_PUSH_PACT_STANDING_LAPSED
+        } else {
+            NO_GRANT
+        }))
     }
 
     /// Whether `principal` is a live owner of this vault, co-owners
@@ -351,6 +369,9 @@ impl Vault {
 
     /// The same GitPush grant, read again: it still names the pusher and
     /// the stamped repo, stands, and its anchor still names the same store.
+    /// On a shared vault it is still not inactive under its pact, else the
+    /// typed refusal [`GIT_PUSH_PACT_STANDING_LAPSED`] (FIX 7548); no other
+    /// Grant stands in for it.
     fn git_push_grant_rechecks_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -375,11 +396,15 @@ impl Vault {
             return Ok(false);
         };
         let scope = self.git_push_grant_scope_in_txn(txn)?;
-        Ok(self.git_push_grants_stand_here_in_txn(txn)?
+        let stands = self.git_push_grants_stand_here_in_txn(txn)?
             && self.git_push_grantee_stands_in_txn(txn, principal)?
             && standing_names(&standing, principal, now, &owners, scope)
             && standing.bounds.repos.contains(&repo)
-            && self.git_push_anchor_in_txn(txn, &repo)?.as_deref() == Some(anchor))
+            && self.git_push_anchor_in_txn(txn, &repo)?.as_deref() == Some(anchor);
+        if stands && git_push_pact_standing_lapsed_in_txn(self, txn, grant, &standing.grant) {
+            return Err(refused(&stamp.served, GIT_PUSH_PACT_STANDING_LAPSED));
+        }
+        Ok(stands)
     }
 
     /// The same checkout and the run's same Grant, over every ref move and

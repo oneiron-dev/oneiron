@@ -272,7 +272,7 @@ pub use mesh_machine::{
 pub use observation_policy::*;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{
-    GrantStanding, authority_refusal_as, authority_refused, grant_standing_in_txn,
+    GrantStanding, authority_refusal_as, authority_refused, grant_omission, grant_standing_in_txn,
     owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
@@ -335,6 +335,9 @@ pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
 pub(crate) use pinned_root::{
     end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
     write_awaited_root_in_txn, write_pinned_root_in_txn,
+};
+pub(crate) use principal_standing::{
+    GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,
 };
 pub(crate) use principal_standing::{
     NoStanding, PACT_STANDING_LAPSED, StandingHome, principal_standing_in,

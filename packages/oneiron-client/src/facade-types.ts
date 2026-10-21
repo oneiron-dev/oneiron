@@ -1697,7 +1697,7 @@ export type WeaveDigestSettingChangeStatus = "pending" | "applied" | "accepted" 
 /** `oneiron::claim::scoped_read::weave_digest::settings::WeaveDigestSettings` */
 export type WeaveDigestSettings = { cadence: WeaveDigestCadence; sections: WeaveSectionKind[] }
 /** `oneiron::claim::scoped_read::weave_digest::settings::WeaveDigestSettingChange` */
-export type WeaveDigestSettingChange = { change_ref: string; status: WeaveDigestSettingChangeStatus; before: WeaveDigestSettings; after: WeaveDigestSettings; reason: string; coach_ref: string; grant_ref?: string | null; base_generation: number; after_generation?: number | null; undone_generation?: number | null; created_at: number; settled_at?: number | null }
+export type WeaveDigestSettingChange = { change_ref: string; status: WeaveDigestSettingChangeStatus; before: WeaveDigestSettings; after: WeaveDigestSettings; reason: string; coach_ref: string; grant_ref?: string | null; base_generation: number; after_generation?: number | null; undone_generation?: number | null; created_at: number; settled_at?: number | null; grant_omitted?: string | null }
 /** `oneiron::claim::scoped_read::weave_digest::settings::WeaveDigestSettingAnswer` */
 export type WeaveDigestSettingAnswer = { change_ref: string; accept: boolean }
 /** `oneiron::claim::scoped_read::weave_digest::settings::WeaveDigestSettingUndo` */

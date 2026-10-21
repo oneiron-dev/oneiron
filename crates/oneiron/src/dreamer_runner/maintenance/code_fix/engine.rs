@@ -173,9 +173,15 @@ impl CoachReplay<'_> {
             return Ok(Err(EngineNotRun::NotIsolated));
         }
         // FIX 6357 again: the Grant still reads the run's scope before any
-        // arm's body is read.
-        if coach_read_grant(self.vault, source)?.is_err() {
-            return Ok(Err(EngineNotRun::Admission(EngineAdmission::Lapsed)));
+        // arm's body is read. A pact lapse keeps its own reason (FIX 7548).
+        match coach_read_grant(self.vault, source)? {
+            Ok(_) => {}
+            Err(EngineAdmission::PactStandingLapsed) => {
+                return Ok(Err(EngineNotRun::Admission(
+                    EngineAdmission::PactStandingLapsed,
+                )));
+            }
+            Err(_) => return Ok(Err(EngineNotRun::Admission(EngineAdmission::Lapsed))),
         }
         let after = match read_evidence(shadow, EngineArm::Candidate, &candidate)? {
             Ok(after) => after,
@@ -213,10 +219,11 @@ impl CoachReplay<'_> {
 /// this vault delegated, that confers read now and is unexpired, and whose
 /// worlds include each world the run touched (its dispatch's scope and its
 /// task's, or the worlds its host scoped it to). The first such Grant, in id
-/// order, or why there is none; the run's worlds are read again at each
-/// check. The Grant's world reach is what admits the pair: its bands,
-/// sensitivity and audience are not held to each row the step's capture
-/// holds.
+/// order, whose pact membership, on a shared vault, still stands (FIX 7548:
+/// a lapsed one is passed over for a later one), or why there is none; the
+/// run's worlds are read again at each check. The Grant's world reach is
+/// what admits the pair: its bands, sensitivity and audience are not held to
+/// each row the step's capture holds.
 fn coach_read_grant(
     vault: &Vault,
     source: &CodeFixSource,
@@ -243,21 +250,29 @@ pub(super) fn coach_read_grant_in_txn(
     };
     let now = vault.instant_in_txn(txn)?.secs();
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
-    let grant = vault
-        .agent_grants_in_txn(txn)?
-        .into_iter()
-        .find(|standing| {
-            let grant = &standing.grant;
-            grant.member_ref == coach
-                && owners.contains(&standing.delegated_by)
-                && grant.confers_at(now)
-                && worlds
-                    .iter()
-                    .all(|world| grant.authority_scope.worlds.contains(&ScopeId(*world)))
-        });
-    Ok(grant
-        .map(|standing| standing.id)
-        .ok_or(EngineAdmission::NoGrant))
+    let mut lapsed = false;
+    for standing in vault.agent_grants_in_txn(txn)? {
+        let grant = &standing.grant;
+        if !(grant.member_ref == coach
+            && owners.contains(&standing.delegated_by)
+            && grant.confers_at(now)
+            && worlds
+                .iter()
+                .all(|world| grant.authority_scope.worlds.contains(&ScopeId(*world))))
+        {
+            continue;
+        }
+        if standing.pact_standing_lapsed_in_txn(vault, txn) {
+            lapsed = true;
+            continue;
+        }
+        return Ok(Ok(standing.id));
+    }
+    Ok(Err(if lapsed {
+        EngineAdmission::PactStandingLapsed
+    } else {
+        EngineAdmission::NoGrant
+    }))
 }
 
 /// Whether the Coach's Grant now admits a pair of `settled`, the failure

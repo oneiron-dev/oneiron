@@ -242,6 +242,7 @@ impl Vault {
                             holders,
                             needs,
                             yes,
+                            grant_omitted: None,
                         },
                     )?;
                     return Ok(WorldPrivacyOutcome::Asked(request));
