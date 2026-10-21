@@ -361,6 +361,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             crate::limit_ask::EngineLimit::CallableNestDepth,
             u64::from(self.callable_depth),
         );
+        // The skill's stored body and its own calls reach the run (FIX 6130).
+        let cause = crate::code_run::ReadWorldUnknown::CallableSkill;
+        self.gated_write.read_worlds_unknown(run_id, cause);
         let mut loaded = Vec::new();
         let ran = crate::skill::execute_callable_skill_cancellable(
             &lease.vault,
@@ -984,6 +987,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             return Ok(Err(result_refusal("result_withheld")));
         }
         if let Some(extra) = &found.rows {
+            // Another run's result reaches this one (FIX 6130).
+            let cause = crate::code_run::ReadWorldUnknown::RetainedResult;
+            self.gated_write.read_worlds_unknown(self.run_id, cause);
             let held = self.callable_rows.1.take();
             self.callable_rows.1 = held
                 .zip(extra.clone())
@@ -1456,6 +1462,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         outcome: SelfDispatchOutcome,
         view: Option<serde_json::Value>,
     ) -> SelfDispatchResponse {
+        // The run's read-world capture sees every answer first (FIX 6130).
+        self.gated_write
+            .read_worlds_answered(self.run_id, &outcome, view.is_some());
         SelfDispatchResponse {
             outcome,
             budget: self.budget(),

@@ -77,7 +77,9 @@ impl Vault {
     /// again files nothing new. The stored detail is measured against
     /// `limits.blocked_detail_bytes` and kept whole. The report keeps what
     /// its run's `host` knows of the run, the source its code fix replays
-    /// (FIX 2343), whole and measured, in the same commit.
+    /// (FIX 2343), whole and measured, in the same commit, with the worlds of
+    /// the rows the run was served as its complete ledger stands there (FIX
+    /// 6130).
     pub(crate) fn file_blocked_report(
         &self,
         receipt: EntityId,
@@ -128,13 +130,15 @@ impl Vault {
         let body = encode_diagnostic_event_body(&event)?;
         let diagnostic = diagnostic_event_id(&event.detector_id, &body);
         self.emit_diagnostic_event(&diagnostic, &event)?;
-        let source = source::BlockedReplaySource {
+        let read_worlds = host.read_worlds;
+        let mut source = source::BlockedReplaySource {
             worlds: run_worlds(self, host.attempt)?,
             request: host.request,
             run_ref: host.run_ref,
             code_run: run,
             reporter,
             reported_at,
+            read_worlds: None,
         };
         let _ = self.measure_limit(
             EngineLimit::MaintenanceTextBytes,
@@ -163,6 +167,11 @@ impl Vault {
             if let Some(run) = run {
                 BY_RUN.put(&self.store, txn, &by_run_key(run, receipt), &reported_at)?;
             }
+            // The worlds the run was served, frozen as its read-world ledger
+            // stands in this commit, when it is complete here (FIX 6130).
+            source.read_worlds = run.zip(read_worlds).and_then(|(run, seal)| {
+                crate::code_run::read_world_snapshot_in_txn(self, &*txn, run, seal)
+            });
             source::put_in_txn(self, txn, &receipt, &source)?;
             DreamerRunnerStore::new(self).enqueue_coach_issues_in_txn(txn, None, None, now)
         })?;

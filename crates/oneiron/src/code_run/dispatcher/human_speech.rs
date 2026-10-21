@@ -150,6 +150,7 @@ impl HostSelfDispatcher<'_> {
             self.actor,
             self.agent_parent,
             self.run_request.borrow().clone(),
+            self.read_world_seal(run_id),
         )?;
         Ok(SelfDispatchOutcome::ReportBlocked { receipt })
     }

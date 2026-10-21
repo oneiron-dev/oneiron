@@ -50,6 +50,9 @@ impl EngineNativeExecutor<'_> {
     ) -> EngineExecutorResult<EngineExecutorOutcome> {
         self.verify_storage_dispatcher_binding()?;
         config.validate()?;
+        // The entry's capture epoch of the run's read-world ledger (FIX 6130).
+        let gated = self.gated_write;
+        let _read_worlds = gated.enter_read_worlds(config.run_id);
         if let Some(seat) = self.seat {
             if &config.model != seat.model()
                 || config.model_locality != seat.locality()
@@ -586,6 +589,9 @@ impl EngineNativeExecutor<'_> {
         let Some(delivery) = self.storage.wait_delivery(key)? else {
             return Ok(None);
         };
+        // The reply reaches the run (FIX 6130).
+        let cause = crate::code_run::ReadWorldUnknown::WaitReply;
+        self.gated_write.read_worlds_unknown(record.run_id, cause);
         let seq = completed_step_count(record)?
             .checked_sub(1)
             .ok_or(Error::CorruptedIndex("executor replay wait without a step"))?;

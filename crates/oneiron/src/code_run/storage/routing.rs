@@ -529,7 +529,12 @@ impl<'a> ExecutorStorage<'a> {
     }
 
     /// `request` is the model request the run's executor bound before the
-    /// call, host-owned; the report keeps it for its code fix (FIX 2343).
+    /// call, host-owned; the report keeps it for its code fix (FIX 2343), and
+    /// its run's read worlds as `read_worlds` seals its ledger (FIX 6130).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is a host-owned axis of the report its code fix replays"
+    )]
     pub(crate) fn witness_blocked_report(
         &self,
         run_ref: &str,
@@ -538,6 +543,7 @@ impl<'a> ExecutorStorage<'a> {
         actor: WriteActor,
         attempt: Option<crate::AttemptId>,
         request: Option<crate::self_heal::blocked_reports::BlockedRunRequest>,
+        read_worlds: Option<super::ReadWorldSeal>,
     ) -> Result<EntityId> {
         let receipt = crate::code_run::blocked::BlockedReceipt::new(call.category, &call.detail)?
             .for_attempt(attempt);
@@ -562,6 +568,7 @@ impl<'a> ExecutorStorage<'a> {
                     run_ref: run_ref.to_owned(),
                     attempt,
                     request,
+                    read_worlds,
                 },
             )?;
         }

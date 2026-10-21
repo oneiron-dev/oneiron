@@ -534,6 +534,11 @@ side_tables! {
     CODE_RUN_RAW_OUTPUT_TAINT: VaultMeta b"code_run:raw_output:taint:v1:" Raw;
     /// A code run's raw output bytes, keyed by their deterministic content handle. Key: string.
     CODE_RUN_RAW_OUTPUT: VaultMeta b"code_run:raw_output:v1:" Raw;
+    /// The worlds of the rows one code run was served (FIX 6130): its header (tag 0: the capture
+    /// epochs still open and why the ledger misses rows) and one row per world a served row sat
+    /// in (tag 1 + id16(world): the bridge positions it was served at). Ids and positions only.
+    /// Key: id16(run) + u8 tag [+ id16(world)].
+    CODE_RUN_READ_WORLD: VaultMeta b"code_run:read_world:v1:" Named Engine;
     /// A code run's fold receipt (ARCH-0079 #reader-forks): the source and range a fold read,
     /// the jobs it named, the ranges read, unread and read short, its cutoff, recipe, summary
     /// tree and taint dependencies (JSON). Key: id16(owner run) + id16(folded occurrence).
