@@ -17,8 +17,7 @@ use crate::skill::SkillLifecycle;
 
 use super::door::validate_text;
 use super::types::{
-    CONVERT_HINT_MAX_BYTES, CONVERT_MAX_NEIGHBORS, CONVERT_MAX_SOURCE_MESSAGES, ConvertRequest,
-    ConvertUtterance, SkillNeighbor,
+    CONVERT_HINT_MAX_BYTES, CONVERT_MAX_NEIGHBORS, ConvertRequest, ConvertUtterance, SkillNeighbor,
 };
 use crate::error::ArtifactError;
 
@@ -31,6 +30,9 @@ const CONVERT_TOKEN_MIN_CHARS: usize = 3;
 
 /// Resolves the selection into utterances, refusing anything that must not be
 /// read: a non-conversational ref, a fenced one, or a selection with no words.
+/// Every selected source is kept, however many (FIX 8166, Rule 5): each is
+/// read on its own snapshot, one at a time, so a long selection is more reads,
+/// never a refusal.
 ///
 /// Every id whose WORDS enter the brief is fence-probed: the MESSAGE children a
 /// witnessed turn carries, AND the turn a directly-selected message belongs to.
@@ -44,11 +46,6 @@ pub(super) fn resolve_selection(
     if request.message_refs.is_empty() {
         return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "conversion needs at least one selected message",
-        )));
-    }
-    if request.message_refs.len() > CONVERT_MAX_SOURCE_MESSAGES {
-        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-            "conversion selects at most 64 messages",
         )));
     }
     let mut selected = BTreeSet::new();
