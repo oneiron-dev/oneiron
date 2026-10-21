@@ -11,6 +11,7 @@
 
 use super::settings::{StoredFeedback, WeaveDigestFeedback};
 use super::{WeaveDigestCadence, WeaveSectionKind, invalid};
+use crate::EntityId;
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
@@ -58,13 +59,15 @@ pub(super) struct CoachInput<'a> {
 /// model (FIX 5609). The engine builds the brief, the `weave-digest-settings`
 /// hub skill's input, and checks the answer; the drafter runs the skill on it.
 pub trait WeaveDigestSettingsDrafter {
-    /// The model's answer to `brief`, as text. `Ok(None)`: the drafter is
+    /// The model's answer to `brief`, `owner`'s evaluation under his settings
+    /// `generation`, as text: the evaluation is named so the drafter can
+    /// meter each owner's own (FIX 6166). `Ok(None)`: the drafter is
     /// unavailable (no Coach or chat seat, a refused model call, or no hub
     /// skill), and the closed-form rule decides instead.
     ///
     /// # Errors
     /// A state or storage error, never read as the drafter being unavailable.
-    fn draft(&self, brief: &str) -> Result<Option<String>>;
+    fn draft(&self, owner: EntityId, generation: u64, brief: &str) -> Result<Option<String>>;
 }
 
 /// What the Coach's model answered, as the engine admits it.

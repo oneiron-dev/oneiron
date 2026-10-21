@@ -12,11 +12,14 @@
 //! cannot be configured or seated) is lent nothing: that program parks, and
 //! nothing else changes. Once serve binds the server, each program held for
 //! want of this host whose waking agent it now lends to resumes as the same
-//! try (FIX 5874), and binds again at its entry.
+//! try (FIX 5874), and binds again at its entry; the bound host rechecks
+//! those holds on a tick from then on, so one held after the bind (its run
+//! not configured or seated then) resumes without a restart (FIX 6059).
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use oneiron::dreamer_wake::{
     TurnProgramHost, TurnProgramReactor, TurnProgramRequest, TurnProgramRuntime,
@@ -60,36 +63,72 @@ fn lends_programs(server: &SyncServer, vault: &Vault, actor: WriteActor) -> bool
             .is_some_and(|host| host.engine_native().is_some())
 }
 
+/// How often the bound host rechecks the programs held for want of it
+/// (FIX 6059): a run not configured or seated after the bind resumes within
+/// this once it can be, not at the next restart. A readiness retry, never a
+/// timeout: it cancels and refuses nothing.
+const HOST_PROGRAM_RECHECK: Duration = Duration::from_secs(60);
+
+/// The bound host's recheck of its held programs; dropping it stops it.
+pub(super) struct HostProgramMonitor(Option<tokio::task::JoinHandle<()>>);
+
+impl Drop for HostProgramMonitor {
+    fn drop(&mut self) {
+        if let Some(task) = &self.0 {
+            task.abort();
+        }
+    }
+}
+
 /// Resumes, each as the same try, every turn program held for want of this
 /// host whose waking agent `server` now lends to (FIX 5874), once serve binds
-/// it: off the caller's thread, best-effort and logged. Each binds its
-/// authority, its pin and this host again at its entry, and is held again
-/// for whatever still holds it. Outside a runtime nothing is resumed here;
-/// those programs keep their holds.
-pub(super) fn resume_held_for_host(server: &Arc<SyncServer>) {
+/// it, and again each [`HOST_PROGRAM_RECHECK`] while the server lives
+/// (FIX 6059): off the caller's thread, best-effort and logged. Each binds
+/// its authority, its pin and this host again at its entry, and is held
+/// again for whatever still holds it. Outside a runtime nothing is resumed
+/// here; those programs keep their holds.
+pub(super) fn monitor_held_for_host(server: &Arc<SyncServer>) -> HostProgramMonitor {
     let Ok(runtime) = tokio::runtime::Handle::try_current() else {
         tracing::warn!("no runtime resumes the turn programs held for want of this host");
-        return;
+        return HostProgramMonitor(None);
     };
     let server = Arc::downgrade(server);
-    drop(runtime.spawn_blocking(move || {
-        let Some(server) = server.upgrade() else {
-            return;
-        };
-        let vault = server.vault();
-        let lends: &dyn Fn(WriteActor) -> bool =
-            &|actor: WriteActor| lends_programs(&server, vault, actor);
-        match DreamerRunnerStore::new(vault)
-            .resume_returned_program_holds(Some(lends), vault.now_recorded_at())
-        {
-            Ok(0) => {}
-            Ok(resumed) => tracing::info!(resumed, "held turn programs resumed on this host"),
-            Err(error) => tracing::warn!(
-                kind = ?error.kind(),
-                "the turn programs held for want of this host were not resumed; they hold"
-            ),
+    HostProgramMonitor(Some(runtime.spawn(async move {
+        let mut tick = tokio::time::interval(HOST_PROGRAM_RECHECK);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            // The first tick is at once: the bind's own resume.
+            tick.tick().await;
+            let weak = server.clone();
+            match tokio::task::spawn_blocking(move || resume_held_once(&weak)).await {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(error) => tracing::warn!(%error, "a held turn programs' recheck stopped"),
+            }
         }
-    }));
+    })))
+}
+
+/// One recheck of the programs held for want of this host. `false` once the
+/// server is gone, which ends the rechecks.
+fn resume_held_once(server: &Weak<SyncServer>) -> bool {
+    let Some(server) = server.upgrade() else {
+        return false;
+    };
+    let vault = server.vault();
+    let lends: &dyn Fn(WriteActor) -> bool =
+        &|actor: WriteActor| lends_programs(&server, vault, actor);
+    match DreamerRunnerStore::new(vault)
+        .resume_returned_program_holds(Some(lends), vault.now_recorded_at())
+    {
+        Ok(0) => {}
+        Ok(resumed) => tracing::info!(resumed, "held turn programs resumed on this host"),
+        Err(error) => tracing::warn!(
+            kind = ?error.kind(),
+            "the turn programs held for want of this host were not resumed; they hold"
+        ),
+    }
+    true
 }
 
 impl TurnProgramRuntime for ServerTurnPrograms {

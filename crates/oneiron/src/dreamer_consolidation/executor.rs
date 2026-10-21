@@ -854,8 +854,14 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             }
             Ok(PartitionRun::Checkpoint) => Ok(charges.checkpoint()),
             Ok(PartitionRun::Refused { reason }) => Ok(charges.park(&reason)),
+            // A turn demoted after the model answered waits too (FIX 6060),
+            // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {
-                resources.accept_verified(resources.scope(), self.sink, candidates)?;
+                if let Err(error) =
+                    resources.accept_verified(resources.scope(), self.sink, candidates)
+                {
+                    return super::residency::spent_or_deferred(error, ctx.now_ms, charges.units);
+                }
                 Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
                 })
@@ -864,7 +870,11 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 candidates,
                 retry_at_ms,
             }) => {
-                resources.accept_verified(resources.scope(), self.sink, candidates)?;
+                if let Err(error) =
+                    resources.accept_verified(resources.scope(), self.sink, candidates)
+                {
+                    return super::residency::spent_or_deferred(error, ctx.now_ms, charges.units);
+                }
                 Ok(DreamerAttemptExecution::Deferred {
                     completed_units: charges.units,
                     retry_at: retry_at_ms.div_ceil(1_000),
@@ -887,7 +897,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                     cause: DreamerParkCause::Checkpoint,
                 })
             }
-            Err(crate::llm::DurableStepError::Engine(error)) => Err(error),
+            Err(crate::llm::DurableStepError::Engine(error)) => {
+                super::residency::spent_or_deferred(error, ctx.now_ms, charges.units)
+            }
             Err(other) => Ok(DreamerAttemptExecution::Park {
                 cause: DreamerParkCause::of_step(&other),
                 reason: other.to_string(),

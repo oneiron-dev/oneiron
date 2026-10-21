@@ -1,6 +1,6 @@
 //! Wake request and outcome vocabulary plus the executor contract.
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use crate::Vault;
 use crate::attempt_queue::{
@@ -192,6 +192,9 @@ pub struct WakeAttemptContext<'a> {
 #[derive(Debug, Default)]
 pub struct WakeAttemptMeter {
     line: OnceLock<(BudgetGuard, u64)>,
+    /// The terminal steps the executor tallied as paid on that line, each
+    /// with its units, in the order it noted them (FIX 6100).
+    terminal_steps: Mutex<Vec<([u8; 32], u64)>>,
 }
 
 impl WakeAttemptMeter {
@@ -203,6 +206,26 @@ impl WakeAttemptMeter {
             line.read().used_units.saturating_sub(*start)
         })
     }
+
+    /// The noted terminal steps a settlement of `settled` units pays for:
+    /// the leading ones whose units fit in it, so no step is pinned paid
+    /// beyond what the settlement charges (FIX 6100).
+    pub(crate) fn step_receipts_within(&self, settled: u64) -> Vec<[u8; 32]> {
+        let steps = self
+            .terminal_steps
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut left = settled;
+        let mut paid = Vec::new();
+        for &(hash, units) in &*steps {
+            let Some(rest) = left.checked_sub(units) else {
+                break;
+            };
+            left = rest;
+            paid.push(hash);
+        }
+        paid
+    }
 }
 
 impl WakeAttemptContext<'_> {
@@ -213,6 +236,23 @@ impl WakeAttemptContext<'_> {
     pub fn meter_run_line(&self, line: &BudgetGuard) {
         if let Some(meter) = self.spend_meter {
             let _ = meter.line.set((line.clone(), line.read().used_units));
+        }
+    }
+
+    /// Notes a terminal step newly paid on the registered run line, with its
+    /// `units`, so a failure or park that settles the line's charge pins
+    /// that step's paid receipt in the same settlement and a replay of its
+    /// memo is not paid again (FIX 6100). With no line registered, or no
+    /// meter, nothing is noted: nothing would settle its charge.
+    pub fn note_terminal_step_charge(&self, step_hash: [u8; 32], units: u64) {
+        if let Some(meter) = self.spend_meter
+            && meter.line.get().is_some()
+        {
+            meter
+                .terminal_steps
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push((step_hash, units));
         }
     }
 

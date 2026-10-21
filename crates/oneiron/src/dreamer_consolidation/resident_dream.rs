@@ -95,6 +95,14 @@ pub struct ResidentDreamProgress {
     /// That card's `health:` handle.
     #[serde(default)]
     pub health_after_id: String,
+    /// The time the newest health card about one of its forks that it read
+    /// was last touched (FIX 5913): a cursor of its own, so a fork's card
+    /// never moves it past a card about it unread.
+    #[serde(default)]
+    pub fork_health_after: u64,
+    /// That card's `health:` handle.
+    #[serde(default)]
+    pub fork_health_after_id: String,
     pub dreamed_at: u64,
     pub entries: u64,
 }
@@ -225,6 +233,7 @@ struct DreamCut {
     inbox_partial: Option<ResidentDreamPartial>,
     pad_partial: Option<ResidentDreamPartial>,
     health_after: Option<(u64, String)>,
+    fork_health_after: Option<(u64, String)>,
 }
 
 /// Moves a `(time, id)` read cursor forward, never back.
@@ -605,6 +614,24 @@ fn cut_for(
         cut.health_after = Some(key);
     }
     cut.sections.push(("Health cards about you", health_lines));
+
+    // Then the cards about its forks, in the room left (FIX 5913).
+    let mut fork_lines = Vec::new();
+    for (key, line) in super::resident_health::fork_health_card_lines(
+        vault,
+        resident,
+        &authors,
+        progress.fork_health_after,
+        &progress.fork_health_after_id,
+    ) {
+        if !room.take(&line) {
+            break;
+        }
+        fork_lines.push(line);
+        cut.fork_health_after = Some(key);
+    }
+    cut.sections
+        .push(("Health cards about your forks", fork_lines));
     Ok(cut)
 }
 
@@ -847,7 +874,7 @@ pub async fn run_resident_dream(
     let mut charges = StepChargeTally::default();
     let response = match call_as_step(&step_ctx, model.backend, model.guard, request).await {
         Ok(StepOutcome::Finished { response, .. }) => {
-            charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
+            charges.record_terminal_metered(ctx, attempt_id, step_hash, &response.usage)?;
             response
         }
         Ok(StepOutcome::Trapped { .. }) => {
@@ -932,6 +959,11 @@ pub async fn run_resident_dream(
             &mut progress.health_after,
             &mut progress.health_after_id,
             cut.health_after.as_ref(),
+        );
+        advance(
+            &mut progress.fork_health_after,
+            &mut progress.fork_health_after_id,
+            cut.fork_health_after.as_ref(),
         );
         // A part read moves its input's offset on; an input read to its end
         // (a pad marked read, a row the cursor passed) has none left.

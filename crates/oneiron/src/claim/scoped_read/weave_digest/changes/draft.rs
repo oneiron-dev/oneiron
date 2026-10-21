@@ -246,7 +246,8 @@ impl Vault {
                 refused: &basis.refused,
             };
             // No transaction is open across the model's call.
-            let Some(answer) = drafter.draft(&weave_digest_coach_brief(&input)?)? else {
+            let brief = weave_digest_coach_brief(&input)?;
+            let Some(answer) = drafter.draft(owner, basis.generation, &brief)? else {
                 // Unavailable: the closed-form rule decides, on a fresh read.
                 return self.coach_owner_weave_digest(owner, now);
             };

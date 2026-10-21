@@ -310,7 +310,7 @@ pub async fn run_free_time_for_human(
     let mut charges = StepChargeTally::default();
     let response = match call_as_step(&step_ctx, model.backend, model.guard, request).await {
         Ok(StepOutcome::Finished { response, .. }) => {
-            charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
+            charges.record_terminal_metered(ctx, attempt_id, step_hash, &response.usage)?;
             response
         }
         Ok(StepOutcome::Trapped { .. }) => {

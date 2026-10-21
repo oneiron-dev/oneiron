@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispatch_actor};
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry};
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
@@ -64,6 +64,10 @@ pub(super) struct ModelStep<'a> {
     pub(super) actor: WriteActor,
     pub(super) purpose: &'a str,
     pub(super) messages: Vec<LlmMessage>,
+    /// Craft rows `messages` already carry beyond the step resident's own:
+    /// a wave plan's planner's (FIX 5912), stamped on `attempt` before the
+    /// call at the revision shown.
+    pub(super) craft_exposures: Vec<ManifestEntry>,
     pub(super) response_format: ResponseFormat,
 }
 
@@ -235,6 +239,7 @@ impl StepRunner {
                 actor: agent_dispatch_actor(&step.input)?,
                 purpose: STEP_PURPOSE,
                 messages,
+                craft_exposures: Vec::new(),
                 response_format: ResponseFormat::Text,
             },
             payer_required,
@@ -276,6 +281,7 @@ impl StepRunner {
             actor,
             purpose,
             mut messages,
+            craft_exposures,
             response_format,
         } = input;
         // OF-490: the step speaks as its resident, so it is shown that
@@ -288,6 +294,16 @@ impl StepRunner {
             super::unix_now(),
         ) {
             super::resident_craft::join_craft(&mut messages, craft);
+        }
+        // What else it is shown is stamped too, under its own receipt
+        // (FIX 5912); a stamp that fails withholds nothing.
+        if !craft_exposures.is_empty() {
+            super::resident_craft::stamp_planner_craft_exposure(
+                vault,
+                attempt,
+                &actor.entity_ref(),
+                &craft_exposures,
+            );
         }
         let seat = self
             .models

@@ -8,19 +8,38 @@ use crate::attempt_queue::{
     SpendAttemptLandingReserve,
 };
 use crate::dreamer_runner::{
-    CompleteDreamerAttempt, DREAMER_MILESTONE_PREDICATE, DREAMER_MILESTONE_VALUE_SCHEMA_VERSION,
-    DreamerAdmittedAttempt, DreamerMilestoneClaim, DreamerMilestoneKind, DreamerParkCause,
-    ParkDreamerAttempt,
+    AbortDreamerBudgetReservation, CompleteDreamerAttempt, DREAMER_MILESTONE_PREDICATE,
+    DREAMER_MILESTONE_VALUE_SCHEMA_VERSION, DreamerAdmittedAttempt, DreamerMilestoneClaim,
+    DreamerMilestoneKind, DreamerParkCause, DreamerTryLease, ParkDreamerAttempt,
+    SettleDreamerBudget,
 };
 #[cfg(feature = "sync")]
 use crate::dreamer_runner::{DreamerAttemptProgressState, DreamerAttemptProgressUpdate};
 
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 
 use super::driver::DreamerWakeDriver;
-use super::types::{DreamerAttemptExecutor, LandingRequest, ProgressKind};
+use super::types::{DreamerAttemptExecutor, LandingRequest, ProgressKind, WakeAttemptMeter};
+
+/// The lease `admitted` ran under (FIX 6057): its admission's owner and
+/// lease generation, `pass_owner` when the snapshot names no owner.
+pub(super) fn admitted_lease<'a>(
+    admitted: &'a DreamerAdmittedAttempt,
+    pass_owner: &'a str,
+) -> DreamerTryLease<'a> {
+    DreamerTryLease {
+        owner: admitted
+            .status
+            .attempt
+            .lease_owner
+            .as_deref()
+            .unwrap_or(pass_owner),
+        generation: admitted.status.attempt.attempt_count,
+    }
+}
 
 impl DreamerWakeDriver<'_> {
     pub(super) fn milestone_claim(
@@ -280,28 +299,87 @@ impl DreamerWakeDriver<'_> {
         Ok(())
     }
 
+    /// Parks `admitted` under `park_owner`, fenced on the lease it ran under
+    /// (FIX 6057): a try a held program's resume queued again, or a later
+    /// pass claimed, since then is left as it is, never re-parked.
     pub(super) fn park_attempt(
         &mut self,
-        attempt_id: AttemptId,
+        admitted: &DreamerAdmittedAttempt,
         reason: String,
         cause: DreamerParkCause,
-        park_owner: String,
+        park_owner: &str,
         now: u64,
     ) -> Result<()> {
         let input = ParkDreamerAttempt {
-            attempt_id,
+            attempt_id: admitted.status.attempt.id,
             reason,
             cause,
-            park_owner,
+            park_owner: park_owner.to_owned(),
             now,
         };
+        let lease = admitted_lease(admitted, park_owner);
         #[cfg(feature = "sync")]
         if let Some(lane) = &mut self.progress {
-            self.store
-                .park_attempt_with_progress(input, &mut lane.producer, lane.ephemeral)?;
+            self.store.park_if_current_lease_with_progress(
+                input,
+                lease,
+                &mut lane.producer,
+                lane.ephemeral,
+            )?;
             return Ok(());
         }
-        self.store.park_attempt(input)?;
+        self.store.park_if_current_lease(input, lease)?;
+        Ok(())
+    }
+
+    /// Settles a failed or plainly parked attempt's reservation on `line`
+    /// with what its run line charged (SCAN C012), pinning in that writer the
+    /// paid receipts of the terminal steps the charge covers (FIX 6100). A
+    /// settlement that refuses the receipts settles without them, as before;
+    /// one the counter refuses (more than the reservation and the counter's
+    /// remaining units) falls back to the zero abort this path always made,
+    /// so the attempt still parks or fails exactly as before.
+    pub(super) fn settle_charged_or_abort(
+        &self,
+        line: &str,
+        attempt_id: AttemptId,
+        meter: &WakeAttemptMeter,
+        now: u64,
+    ) -> Result<()> {
+        let charged = meter.charged_units();
+        let settlement = SettleDreamerBudget {
+            budget_id: line.to_owned(),
+            child_attempt: attempt_id,
+            actual_units: charged,
+            now,
+        };
+        let receipts = meter.step_receipts_within(charged);
+        if !receipts.is_empty() {
+            match self
+                .store
+                .settle_budget_with_step_receipts(settlement.clone(), &receipts)
+            {
+                Ok(_) => return Ok(()),
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
+                    "the paid-step receipts were refused; the charge settles without them"
+                ),
+            }
+        }
+        if let Err(error) = self.store.settle_budget(settlement) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
+                "the charged settlement was refused; the reservation is aborted at zero"
+            );
+            self.store
+                .abort_budget_reservation(AbortDreamerBudgetReservation {
+                    budget_id: line.to_owned(),
+                    child_attempt: attempt_id,
+                    now,
+                })?;
+        }
         Ok(())
     }
 

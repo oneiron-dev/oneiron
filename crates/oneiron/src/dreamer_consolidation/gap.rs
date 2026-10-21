@@ -149,12 +149,35 @@ pub struct GapQueueDelta {
 /// `MissingFollowUp`; a user turn declaring intent ("i will"/"i'll") →
 /// `StatedIntentWithoutAction`. `ContradictionLeftStanding` gaps are fed by
 /// the reducer's escalate outcomes, not this scan.
+///
+/// A user turn whose tagged MESSAGE is away from this replica (OF-534) puts
+/// the whole scan on [`ReflectionGapScan::Deferred`], naming every such turn,
+/// rather than failing it or presenting the rest as every gap (FIX 6061);
+/// every other refusal stays an error.
 pub fn scan_reflection_gaps(
     vault: &Vault,
     working_set: &[WorkingSetTurn],
     now: u64,
-) -> Result<Vec<ReflectionGap>> {
-    Ok(scan_with_texts(vault, working_set, now)?.0)
+) -> Result<ReflectionGapScan> {
+    let mut away = Vec::new();
+    let (gaps, _) = scan_texts(vault, working_set, now, Some(&mut away))?;
+    Ok(if away.is_empty() {
+        ReflectionGapScan::Ready(gaps)
+    } else {
+        ReflectionGapScan::Deferred { turn_refs: away }
+    })
+}
+
+/// What [`scan_reflection_gaps`] found: every gap of a complete scan, or the
+/// wait for the turns away from this replica, never part of the set read as
+/// all of it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReflectionGapScan {
+    /// The scan read every turn it needed: these are all its gaps.
+    Ready(Vec<ReflectionGap>),
+    /// The scan waits for the promotion that brings these user turns'
+    /// tagged MESSAGEs back to this replica.
+    Deferred { turn_refs: Vec<EntityId> },
 }
 
 /// Text records behind text-dependent gaps, keyed by TURN. The gap write
@@ -167,6 +190,17 @@ pub(super) fn scan_with_texts(
     vault: &Vault,
     working_set: &[WorkingSetTurn],
     now: u64,
+) -> Result<(Vec<ReflectionGap>, GapTexts)> {
+    scan_texts(vault, working_set, now, None)
+}
+
+/// [`scan_with_texts`]; with `away`, a user turn whose text waits on
+/// residency is noted there and passed over instead of failing the scan.
+fn scan_texts(
+    vault: &Vault,
+    working_set: &[WorkingSetTurn],
+    now: u64,
+    mut away: Option<&mut Vec<EntityId>>,
 ) -> Result<(Vec<ReflectionGap>, GapTexts)> {
     let mut texts = GapTexts::new();
     let mut by_conversation: BTreeMap<EntityId, Vec<&WorkingSetTurn>> = BTreeMap::new();
@@ -199,7 +233,16 @@ pub(super) fn scan_with_texts(
             if turn.role != DreamerTurnRole::User {
                 continue;
             }
-            let record = super::turn_text::read_turn_text(vault, &turn.turn_id)?;
+            let record = match (
+                super::turn_text::read_turn_text(vault, &turn.turn_id),
+                away.as_deref_mut(),
+            ) {
+                (Err(error), Some(away)) if super::residency::waits_on_residency(&error) => {
+                    away.push(turn.turn_id);
+                    continue;
+                }
+                (record, _) => record?,
+            };
             let text = record.text().unwrap_or_default().to_ascii_lowercase();
             let before = gaps.len();
             let answered = turns[position + 1..]

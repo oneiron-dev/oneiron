@@ -5,7 +5,10 @@
 //! is the time it was last touched with its handle: a card touched again
 //! after a dreaming read it is read again, with what changed. A card holds
 //! refs and numbers, never a diary body, and the facts read here are only
-//! those.
+//! those. The cards about its forks are read the same way past a cursor of
+//! their own, each line naming its fork (FIX 5913).
+
+use std::collections::BTreeSet;
 
 use crate::dreamer_runner::maintenance::agent_health::AgentHealthCard;
 use crate::{EntityId, Vault};
@@ -21,10 +24,16 @@ fn touched_at(card: &AgentHealthCard) -> u64 {
         .max(card.outcome_at.unwrap_or(0))
 }
 
-/// The facts one card says about its resident, on one line.
-fn card_line(card: &AgentHealthCard, at: u64) -> String {
+/// The facts one card says about its subject, on one line, which names
+/// that subject when it is a `fork` of the resident.
+fn card_line(card: &AgentHealthCard, at: u64, fork: bool) -> String {
+    let about = if fork {
+        format!("fork {}: ", card.subject.to_hex())
+    } else {
+        String::new()
+    };
     let mut line = format!(
-        "- {at} {} {:?}: measured {} against dial {} over {}..{}, {:?} confidence, {} evidence, outcome {:?}",
+        "- {at} {about}{} {:?}: measured {} against dial {} over {}..{}, {:?} confidence, {} evidence, outcome {:?}",
         card.signal.as_str(),
         card.tone,
         card.measured,
@@ -54,6 +63,44 @@ pub(super) fn health_card_lines(
     after: u64,
     after_id: &str,
 ) -> Vec<HealthCardLine> {
+    lines_about(
+        vault,
+        resident,
+        &BTreeSet::from([resident]),
+        (after, after_id),
+    )
+}
+
+/// The health cards about `forks`, the agents forked from `resident`
+/// (FIX 5913), touched past `(after, after_id)`, oldest touch first, ties by
+/// handle, each line naming its fork. Only a card's public facts are read,
+/// never a fork's diary.
+pub(super) fn fork_health_card_lines(
+    vault: &Vault,
+    resident: EntityId,
+    forks: &[EntityId],
+    after: u64,
+    after_id: &str,
+) -> Vec<HealthCardLine> {
+    let forks: BTreeSet<EntityId> = forks
+        .iter()
+        .copied()
+        .filter(|fork| *fork != resident)
+        .collect();
+    if forks.is_empty() {
+        return Vec::new();
+    }
+    lines_about(vault, resident, &forks, (after, after_id))
+}
+
+/// The cards about one of `subjects` touched past `after`, for
+/// `resident`'s dreaming.
+fn lines_about(
+    vault: &Vault,
+    resident: EntityId,
+    subjects: &BTreeSet<EntityId>,
+    (after, after_id): (u64, &str),
+) -> Vec<HealthCardLine> {
     let cards = match vault.agent_health_cards_between(after, u64::MAX) {
         Ok(cards) => cards,
         Err(error) => {
@@ -67,10 +114,13 @@ pub(super) fn health_card_lines(
     };
     let mut lines: Vec<HealthCardLine> = cards
         .iter()
-        .filter(|card| card.subject == resident)
+        .filter(|card| subjects.contains(&card.subject))
         .map(|card| {
             let at = touched_at(card);
-            ((at, card.card_ref()), card_line(card, at))
+            (
+                (at, card.card_ref()),
+                card_line(card, at, card.subject != resident),
+            )
         })
         .filter(|((at, id), _)| (*at, id.as_str()) > (after, after_id))
         .collect();

@@ -480,6 +480,9 @@ pub struct AiHost {
     /// The watch that hands the bound Dreamer's timer work to its own
     /// sleepers should the Dreamer end before shutdown (FIX 1149).
     dreamer_fallback: OnceLock<question_timer::DreamerFallback>,
+    /// The bound host's recheck of the turn programs held for want of it
+    /// (FIX 6059), stopped with the host.
+    program_monitor: OnceLock<turn_program_host::HostProgramMonitor>,
 }
 
 /// The sieve's backlog drain and the stop it checks between passes.
@@ -578,9 +581,12 @@ impl AiHost {
         // and the first bind's watch stands.
         let _ = self.question_timer.set(Arc::downgrade(server));
         // The Dreamer's program runtime binds through the bound server from
-        // now on: a program held for want of it resumes (FIX 5874).
+        // now on: a program held for want of it resumes (FIX 5874), now and
+        // on each recheck after (FIX 6059).
         if let Some(bound) = self.question_timer.get().and_then(std::sync::Weak::upgrade) {
-            turn_program_host::resume_held_for_host(&bound);
+            let _ = self
+                .program_monitor
+                .get_or_init(|| turn_program_host::monitor_held_for_host(&bound));
         }
         let _ = self.dreamer_fallback.get_or_init(|| {
             question_timer::DreamerFallback::spawn(
@@ -671,6 +677,7 @@ impl AiHost {
             question_timer: dreamer::QuestionTimer::default(),
             pass_admission: dreamer::PassAdmission::default(),
             dreamer_fallback: OnceLock::new(),
+            program_monitor: OnceLock::new(),
         };
         let Some(models) = models else {
             served_without_dreamer(&vault, device);
@@ -737,6 +744,7 @@ impl AiHost {
         if let Some(fallback) = self.dreamer_fallback.take() {
             fallback.stop();
         }
+        drop(self.program_monitor.take());
         if let Some(wake) = self.sync_wake.take() {
             wake.stop();
         }

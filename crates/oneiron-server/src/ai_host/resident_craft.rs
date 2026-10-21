@@ -14,13 +14,17 @@
 //! A wave plan speaks with its planner's instructions for its requester: it
 //! is shown both crafts, each attributed (FIX 5777). The requester's travels
 //! as every step's does; the planner's, read on one snapshot, travels whole
-//! in its own message before it ([`planner_craft`]), and stamps nothing.
+//! in its own message before it ([`planner_craft`]), and the rows it shows
+//! are stamped on the plan's attempt at their snapshot revision, under the
+//! requester's receipt, before the call (FIX 5912).
+
+use std::collections::BTreeSet;
 
 use oneiron::actor_claims::{
     CraftNote, craft_message_entries, craft_message_text, resident_craft_pack,
     resident_craft_pack_scoped,
 };
-use oneiron::attempt_queue::{AttemptId, ManifestEntry};
+use oneiron::attempt_queue::{AttemptId, AttemptRecord, ManifestEntry};
 use oneiron::memory::Memory;
 use oneiron::{ContentPart, EntityId, LlmMessage, LlmMessageRole, LlmRequest, Vault};
 
@@ -103,55 +107,94 @@ fn snapshot_of(notes: &[CraftNote], at: u64) -> Option<SnapshotCraft> {
 /// 5777), read on one snapshot at `at`: one system message,
 /// `{"planner_craft":{"role":"planner","resident_ref":…,"craft":{"craft_notes":…},
 /// "requester":{"role":"requester","resident_ref":…}}}`, which names the
-/// requester's own craft message after it as the requester's. A planner that
+/// requester's own craft message after it as the requester's, and the rows
+/// that message shows, at their snapshot revision (FIX 5912). A planner that
 /// is the requester has one craft, the requester's, shown once: this message
-/// then only says it is both roles'. `None` for a planner with no craft, or
-/// one whose craft does not read; the plan then goes on as it ran. It stamps
-/// no attempt: the requester's craft alone is the attempt's.
+/// then only says it is both roles', and shows no rows of its own. `None`
+/// for a planner with no craft, or one whose craft does not read; the plan
+/// then goes on as it ran. Reading it stamps nothing; the plan's call
+/// stamps its rows ([`stamp_planner_craft_exposure`]).
 pub(crate) fn planner_craft(
     vault: &Vault,
     planner: &EntityId,
     requester: &EntityId,
     at: u64,
-) -> Option<LlmMessage> {
+) -> Option<SnapshotCraft> {
     let requester_role = serde_json::json!({
         "role": "requester",
         "resident_ref": requester.to_hex(),
         "shown": "the craft_notes message after this one, when there is one",
     });
-    let attributed = if planner == requester {
-        serde_json::json!({
+    let (attributed, entries) = if planner == requester {
+        let attributed = serde_json::json!({
             "planner_craft": {
                 "role": "planner",
                 "resident_ref": planner.to_hex(),
                 "craft": "the requester's craft: the planner is the requester",
                 "requester": requester_role,
             }
-        })
+        });
+        (attributed, Vec::new())
     } else {
         let craft = snapshot_craft(vault, planner, at)?;
-        let craft: serde_json::Value = serde_json::from_str(&message_text(&craft.message)).ok()?;
-        serde_json::json!({
+        let shown: serde_json::Value = serde_json::from_str(&message_text(&craft.message)).ok()?;
+        let attributed = serde_json::json!({
             "planner_craft": {
                 "role": "planner",
                 "resident_ref": planner.to_hex(),
-                "craft": craft,
+                "craft": shown,
                 "requester": requester_role,
             }
-        })
+        });
+        (attributed, craft.entries)
     };
-    Some(system(attributed.to_string()))
+    Some(SnapshotCraft {
+        message: system(attributed.to_string()),
+        entries,
+    })
 }
 
-/// The craft a captured `request` showed: the rows its craft message
-/// names, in its order, stamped at `at`. Empty for one that shows none.
+/// Stamps `entries`, the planner's craft a wave plan's call on the leased
+/// `attempt` shows ([`planner_craft`]), on that attempt's manifest at their
+/// snapshot revision, under the pack receipt bound to `requester`, the
+/// attempt's own actor: the receipt is never bound to the planner (FIX
+/// 5912). Best effort: a stamp that fails is logged, and the call still
+/// shows every note.
+pub(crate) fn stamp_planner_craft_exposure(
+    vault: &Vault,
+    attempt: &AttemptRecord,
+    requester: &EntityId,
+    entries: &[ManifestEntry],
+) {
+    if let Err(error) = vault.record_resident_craft_exposure(attempt, requester, entries) {
+        tracing::warn!(kind = ?error.kind(), agent = %requester.to_hex(), "a wave plan's planner craft was not stamped; its call goes on showing it");
+    }
+}
+
+/// The craft a captured `request` showed: the rows its craft messages
+/// name, the requester's and a wave plan's planner's alike (FIX 5912), in
+/// their order, each claim revision once, stamped at `at`. Empty for one
+/// that shows none.
 pub(crate) fn captured_craft(request: &LlmRequest, at: u64) -> Vec<ManifestEntry> {
+    let mut seen = BTreeSet::new();
     request
         .messages
         .iter()
         .filter(|message| message.role == LlmMessageRole::System)
-        .find_map(|message| craft_message_entries(&message_text(message), at))
-        .unwrap_or_default()
+        .filter_map(|message| shown_craft(&message_text(message), at))
+        .flatten()
+        .filter(|entry| seen.insert((entry.reference.clone(), entry.version.clone())))
+        .collect()
+}
+
+/// The rows one system message's `text` shows: a craft message's own, or
+/// those of the planner's craft a planner message carries.
+fn shown_craft(text: &str, at: u64) -> Option<Vec<ManifestEntry>> {
+    craft_message_entries(text, at).or_else(|| {
+        let message: serde_json::Value = serde_json::from_str(text).ok()?;
+        let craft = message.get("planner_craft")?.get("craft")?;
+        craft_message_entries(&craft.to_string(), at)
+    })
 }
 
 /// Puts `craft` after `messages`' leading system messages, its

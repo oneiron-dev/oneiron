@@ -35,6 +35,10 @@ pub struct TurnProgramAdmissionView {
     /// Where the next page's scan goes on; none once every admission was
     /// examined. A page may hold none and still name one.
     pub next_cursor: Option<String>,
+    /// Admission rows this page's scan examined that do not decode
+    /// (FIX 5839): skipped, each counted on one page alone. A diagnostic of
+    /// the scan, not a count of this turn's admissions.
+    pub undecodable_admission_rows_examined: u64,
 }
 
 /// What admitting one wake decided.
@@ -122,6 +126,9 @@ pub struct ProgramRunView {
     /// The newest try parked and not terminal (FIX 5712): work the program
     /// still owes, held, not runnable. Nothing arms a deadline for it.
     pub held: Option<ProgramHeldView>,
+    /// Every try of `tries` parked and not terminal, the newest among them,
+    /// in the same order (FIX 5840).
+    pub held_by_try: Vec<ProgramHeldView>,
     /// The program runtime's record of its code run; none before a try
     /// entered it.
     pub run: Option<ProgramRunStateView>,

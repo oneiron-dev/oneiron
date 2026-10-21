@@ -4,7 +4,11 @@
 //! value. Each call goes through the use door
 //! ([`sdk::use_secret_as_caller`]) as the step's own agent while the step
 //! still holds its lease, under an invocation derived from the step's run,
-//! the same on every replay of the try. Every round the model is asked
+//! the same on every replay of the try. It crosses the row's verb-hook
+//! boundary ([`verb_hook_boundary::row`]) as a pumped run's `self.use`
+//! does, so the owner's verb hooks fire once around it: a pre-hook's skip
+//! (or any other stop) goes back to the model as the tool's error result,
+//! its reason with it, never as the step's failure. Every round the model is asked
 //! again is admitted and metered on the step's one funded run, so the
 //! step's budget bounds the rounds; nothing else does.
 //!
@@ -23,7 +27,8 @@ use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MemoryError};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::secret_custody::SECRET_USE_OPERATIONS;
-use oneiron::task_verb::sdk::{self, SecretUseRequest};
+use oneiron::task_verb::sdk::{self, AgentVerb, SecretUseRequest};
+use oneiron::task_verb::verb_hook_boundary;
 use oneiron::{
     ContentPart, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmResult,
     LlmToolSpec, ModelId, Vault, WriteActor,
@@ -176,10 +181,10 @@ impl<'a> StepSecretUse<'a> {
     }
 
     /// One `self.use` call's result: the door's answer, or a refusal marked
-    /// as an error. `ordinal` numbers the step's uses, so its invocation is
-    /// the same on every replay of the try.
+    /// as an error, a verb hook's stop among them. `ordinal` numbers the
+    /// step's uses, so its invocation is the same on every replay of the try.
     fn use_once(&self, input: Value, ordinal: u64) -> (Value, bool) {
-        let Ok(request) = serde_json::from_value::<SecretUseRequest>(input) else {
+        if <SecretUseRequest as serde::Deserialize>::deserialize(&input).is_err() {
             return refusal(&MemoryError::bad_request_with(
                 "self_use takes a handle, an operation and the operation's arguments",
                 &[
@@ -199,15 +204,26 @@ impl<'a> StepSecretUse<'a> {
             .vault
             .memory(self.actor.entity_ref(), self.actor.actor_class())
             .with_invocation(InvocationId::of_run_step(&self.run, ordinal));
-        match sdk::use_secret_as_caller(&memory, request) {
-            Ok(answer) => match serde_json::to_value(&answer) {
-                Ok(output) => (output, false),
-                Err(_) => refusal(&MemoryError::new(
+        // The row's one verb-hook boundary, as a pumped run's `self.use`
+        // crosses it: the pre chain may rewrite the args, which pass the
+        // row's own input check again, and the post chain reads the answer.
+        let verb = AgentVerb::SelfUse.as_str();
+        let answered = verb_hook_boundary::row(&memory, verb, input, |args| {
+            sdk::validate_input(verb, &args)?;
+            let request = serde_json::from_value::<SecretUseRequest>(args).map_err(|_| {
+                MemoryError::bad_request("self_use's arguments did not read after its hooks")
+            })?;
+            let answer = sdk::use_secret_as_caller(&memory, request)?;
+            serde_json::to_value(&answer).map_err(|_| {
+                MemoryError::new(
                     MEMORY_CODE_INTERNAL,
                     "the use's answer could not be read",
                     &["Its receipt is on the vault's Gate record."],
-                )),
-            },
+                )
+            })
+        });
+        match answered {
+            Ok(output) => (output, false),
             Err(error) => refusal(&error),
         }
     }
