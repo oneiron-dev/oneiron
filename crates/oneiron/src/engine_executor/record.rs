@@ -13,7 +13,7 @@ use crate::code_run::{
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::session_overlay::RouteTarget;
-use crate::{Error, ModelLocality};
+use crate::{Error, ModelLocality, Vault};
 use serde::{Deserialize, Serialize};
 
 pub(super) struct LoadedReplayRecord {
@@ -213,6 +213,46 @@ fn load_config_marker(
     serde_json::from_str(&text)
         .map(Some)
         .map_err(|_| Error::CorruptedIndex("executor replay config marker").into())
+}
+
+/// The identity a canonical run was entered under, as its replay record's
+/// config marker holds it (FIX 2310): read once, so a host that keeps no
+/// note of a binding it chose at the run's first entry tells which of the
+/// configs it could have chosen that entry took, and never decides again.
+pub struct EnteredRun<'v> {
+    vault: &'v Vault,
+    /// `None` for a record with no marker of this schema.
+    config_hash: Option<String>,
+}
+
+impl EnteredRun<'_> {
+    /// Whether the run was entered under `config`: its marker binds this
+    /// config's identity on canonical storage, under no continuation.
+    #[must_use]
+    pub fn under(&self, config: &EngineExecutorConfig) -> bool {
+        self.config_hash.as_deref().is_some_and(|hash| {
+            hash == executor_config_hash_hex(&ExecutorStorage::Canonical(self.vault), config, None)
+        })
+    }
+}
+
+/// What canonical run `run_id` was entered under; `None` when it holds no
+/// replay record yet, so its first entry is still to come.
+///
+/// # Errors
+///
+/// Storage errors, and a config marker that does not decode.
+pub fn entered_run(
+    vault: &Vault,
+    run_id: EntityId,
+) -> EngineExecutorResult<Option<EnteredRun<'_>>> {
+    let Some(record) = vault.get_code_run_replay_record(&run_id)? else {
+        return Ok(None);
+    };
+    let config_hash = load_config_marker(&ExecutorStorage::Canonical(vault), &record)?
+        .filter(|marker| marker.schema_version == REPLAY_METADATA_SCHEMA_VERSION)
+        .map(|marker| marker.config_hash);
+    Ok(Some(EnteredRun { vault, config_hash }))
 }
 
 fn executor_config_hash_hex(

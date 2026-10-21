@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1127 facade rows, 3867 generated types.
+// UniFFI census: 1127 facade rows, 3873 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1079.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -59591,6 +59591,35 @@ pub struct EffectReceipt {
     pub engine_switch: Option<EngineSwitchRecord>,
 }
 
+/// `oneiron_browser::library::admission::RecentCounts`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RecentCounts {
+    #[serde(rename = "pass")]
+    pub pass: u32,
+    #[serde(rename = "miss")]
+    pub miss: u32,
+    #[serde(rename = "repair")]
+    pub repair: u32,
+    #[serde(rename = "of")]
+    pub of: u32,
+}
+
+/// `oneiron_browser::library::admission::WorkflowSeed`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowSeed {
+    #[serde(rename = "pack")]
+    pub pack: String,
+    #[serde(rename = "pinned_ref")]
+    pub pinned_ref: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "license")]
+    pub license: String,
+}
+
 /// `oneiron_browser::library::LibraryCard`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LibraryCard {
@@ -59606,6 +59635,26 @@ pub struct LibraryCard {
     pub runs: u32,
     #[serde(rename = "failures")]
     pub failures: u32,
+    #[serde(rename = "recent")]
+    pub recent: RecentCounts,
+    #[serde(rename = "held_out")]
+    pub held_out: bool,
+    #[serde(
+        rename = "supersedes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub supersedes: Option<String>,
+    #[serde(rename = "seed", default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<WorkflowSeed>,
+    #[serde(rename = "filed_at")]
+    pub filed_at: u64,
+    #[serde(
+        rename = "last_run_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_run_at: Option<u64>,
 }
 
 /// `oneiron_browser::PartialTree`.
@@ -60432,6 +60481,20 @@ pub struct ProposeInput {
     pub postcondition: Vec<ExpectInput>,
     #[serde(rename = "args", default, skip_serializing_if = "Option::is_none")]
     pub args: Option<std::collections::HashMap<String, String>>,
+    #[serde(
+        rename = "replay_args",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub replay_args: Option<std::collections::HashMap<String, String>>,
+    #[serde(
+        rename = "supersedes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub supersedes: Option<String>,
+    #[serde(rename = "seed", default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<WorkflowSeed>,
 }
 
 /// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ProposeInput`.
@@ -60451,6 +60514,80 @@ pub enum WorkflowCheck {
     Solved,
     #[serde(rename = "replay")]
     Replay,
+    #[serde(rename = "held_out")]
+    HeldOut,
+    #[serde(rename = "fresh_guest")]
+    FreshGuest,
+    #[serde(rename = "supersedes")]
+    Supersedes,
+}
+
+/// `oneiron_browser::library::admission::SupersedeRefusal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SupersedeRefusal {
+    #[serde(rename = "malformed")]
+    Malformed,
+    #[serde(rename = "not_on_site")]
+    NotOnSite,
+    #[serde(rename = "same_record")]
+    SameRecord,
+    #[serde(rename = "not_filer")]
+    NotFiler,
+}
+
+/// `oneiron_browser::library::admission::AdmissionRefusal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "cause")]
+pub enum AdmissionRefusal {
+    #[serde(rename = "held_out")]
+    HeldOut {
+        #[serde(rename = "used")]
+        used: Vec<String>,
+        #[serde(rename = "missing")]
+        missing: Vec<String>,
+        #[serde(rename = "unknown")]
+        unknown: Vec<String>,
+        #[serde(rename = "same")]
+        same: Vec<String>,
+    },
+    #[serde(rename = "fresh_guest")]
+    FreshGuest {
+        #[serde(rename = "stage")]
+        stage: SwitchStage,
+        #[serde(rename = "code")]
+        code: String,
+        #[serde(rename = "detail")]
+        detail: String,
+    },
+    #[serde(rename = "supersedes")]
+    Supersedes {
+        #[serde(rename = "workflow")]
+        workflow: String,
+        #[serde(rename = "why")]
+        why: SupersedeRefusal,
+    },
+}
+
+/// `oneiron_browser::library::admission::ReplayGuest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ReplayGuest {
+    #[serde(rename = "engine")]
+    pub engine: BrowserEngine,
+    #[serde(rename = "carried")]
+    pub carried: Vec<SwitchCarried>,
+    #[serde(rename = "not_carried")]
+    pub not_carried: Vec<SwitchNotCarried>,
+}
+
+/// `oneiron_browser::library::admission::SupersedeOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SupersedeOutcome {
+    #[serde(rename = "retired")]
+    Retired,
+    #[serde(rename = "linked")]
+    Linked,
+    #[serde(rename = "dropped")]
+    Dropped,
 }
 
 /// `oneiron_browser::library::ProposeOutput`.
@@ -60466,10 +60603,24 @@ pub struct ProposeOutput {
         skip_serializing_if = "Option::is_none"
     )]
     pub refused_by: Option<WorkflowCheck>,
+    #[serde(rename = "refusal", default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<AdmissionRefusal>,
     #[serde(rename = "unmet", default, skip_serializing_if = "Option::is_none")]
     pub unmet: Option<Vec<u64>>,
     #[serde(rename = "replay", default, skip_serializing_if = "Option::is_none")]
     pub replay: Option<BatchOutput>,
+    #[serde(
+        rename = "replay_guest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub replay_guest: Option<ReplayGuest>,
+    #[serde(
+        rename = "superseded",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub superseded: Option<SupersedeOutcome>,
 }
 
 /// `oneiron_browser::answer::BrowserAnswer` with `T` = `ProposeOutput`.

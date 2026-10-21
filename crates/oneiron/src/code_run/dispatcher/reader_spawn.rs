@@ -7,18 +7,22 @@
 //! [`ExecutorStorage::reader_txn`]: crate::code_run::ExecutorStorage::reader_txn
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
+use crate::code_run::scoped_child::{
+    READER_SOURCE_NAME, SCOPED_CHILD_PORT_NOT_LENT, scoped_child_call_allowed, scoped_child_input,
+};
 use crate::code_run::storage::{NewReaderJob, ReportOutcome, SpawnAdmission, WaitSetOutcome};
 use crate::code_run::types::{
-    SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
-    SelfFailedResult,
+    SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason,
+    SelfEffect, SelfFailedResult,
 };
 use crate::code_run::{
     DelegatedSource, ReaderActor, ReaderJobState, ReaderReportReceipt, ReaderRoute,
-    ReaderSpawnReceipt, SelfReaderReportCall, SelfReaderSpawnCall, SpawnHostSeat, TaskWaitPolicy,
-    TaskWaitSet, TaskWaitSetCall, reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id,
-    valid_reader_key, vault_ref,
+    ReaderSpawnReceipt, ScopedChildPorts, ScopedChildSpec, SelfReaderReportCall,
+    SelfReaderSpawnCall, SpawnHostSeat, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall,
+    reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, valid_reader_key, vault_ref,
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Error, Result};
@@ -32,11 +36,35 @@ pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
 const TASK_WAIT_SET_PROMPT: &str = "task_wait_set:";
 
 /// What binds a dispatcher to one reader child's job: its task, the
-/// generation its runner claimed it at, and the source it reads.
+/// generation its runner claimed it at, the source it reads, and what its
+/// parent lent it when it is a scoped child (FIX 7507).
 pub(crate) struct ReaderChildBinding {
     pub(crate) task: EntityId,
     pub(crate) generation: u32,
     pub(crate) source: DelegatedSource,
+    pub(crate) scoped: Option<ScopedChildSpec>,
+}
+
+impl ReaderChildBinding {
+    /// The input `reference` names for this child, by its name (`by_name`)
+    /// or by its handle, with the name it is read by: a read child's one
+    /// source as `src`; a scoped child's lent inputs only
+    /// (`scoped_child_input`). Any other reference names nothing.
+    pub(crate) fn delegated(
+        &self,
+        by_name: bool,
+        reference: &str,
+    ) -> Option<(&str, &DelegatedSource)> {
+        if let Some(spec) = &self.scoped {
+            return scoped_child_input(spec, by_name, reference);
+        }
+        let names = if by_name {
+            reference == READER_SOURCE_NAME
+        } else {
+            reference == self.source.handle
+        };
+        names.then_some((READER_SOURCE_NAME, &self.source))
+    }
 }
 
 impl HostSelfDispatcher<'_> {
@@ -72,13 +100,46 @@ impl HostSelfDispatcher<'_> {
         {
             return Err(mismatch());
         }
+        let scoped = job.scoped_spec().cloned();
         self.reader_child = Some(ReaderChildBinding {
             task,
             generation,
             source: job.binding.source,
+            scoped,
         });
         self.bound_run = Some(job.run);
         Ok(self)
+    }
+
+    /// Lends the bound scoped child the ports its host registered (FIX
+    /// 7507): its lent verbs run on them, each checked against its loan at
+    /// every call. Without them, a lent verb answers
+    /// `scoped_child_service_unbound`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when this dispatcher is bound to no scoped
+    /// child.
+    pub fn with_scoped_child_ports(mut self, ports: Arc<dyn ScopedChildPorts>) -> Result<Self> {
+        if self.scoped_child_spec().is_none() {
+            return Err(Error::InvalidConfig(
+                "scoped ports need a scoped child".to_owned(),
+            ));
+        }
+        self.scoped_ports = Some(ports);
+        Ok(self)
+    }
+
+    /// What the bound scoped child was lent, if this dispatcher is bound to
+    /// one.
+    pub(crate) fn scoped_child_spec(&self) -> Option<&ScopedChildSpec> {
+        self.reader_child.as_ref()?.scoped.as_ref()
+    }
+
+    /// The resource scope a scoped child's model calls carry: its loan's
+    /// (FIX 7507). `None` for every other run, whose calls keep theirs.
+    pub(crate) fn scoped_child_scope(&self) -> Option<&crate::llm::Scope> {
+        self.scoped_child_spec().map(|spec| &spec.scope)
     }
 
     /// The seat the host lent this run to spawn readers under, if any.
@@ -104,16 +165,35 @@ impl HostSelfDispatcher<'_> {
     }
 
     /// A bound reader child's refusal of `effect`, when it is one it may
-    /// not make.
+    /// not make. A scoped child's verb calls meet its exact port loan
+    /// instead ([`Self::scoped_child_refusal`]); it makes no other call a
+    /// read child does not.
     pub(super) fn reader_child_refusal(&self, effect: SelfEffect) -> Option<SelfDispatchOutcome> {
         let admitted = matches!(
             effect,
             SelfEffect::ReaderReport | SelfEffect::Context | SelfEffect::Think
-        );
+        ) || (effect == SelfEffect::AgentVerb && self.scoped_child_spec().is_some());
         (self.reader_child.is_some() && !admitted).then(|| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
                 effect,
                 outcome: READER_CHILD_READ_ONLY.to_owned(),
+                reason_codes: Vec::new(),
+            })
+        })
+    }
+
+    /// A bound scoped child's refusal of `call` (FIX 7507): a verb call its
+    /// loan did not lend by name (`scoped_child_call_allowed`). `None` for
+    /// every other call, and for every run that is no scoped child.
+    pub(super) fn scoped_child_refusal(&self, call: &SelfCall) -> Option<SelfDispatchOutcome> {
+        let spec = self.scoped_child_spec()?;
+        let SelfCall::AgentVerb(call) = call else {
+            return None;
+        };
+        (!scoped_child_call_allowed(spec, call.verb)).then(|| {
+            SelfDispatchOutcome::Denied(SelfDeniedResult {
+                effect: SelfEffect::AgentVerb,
+                outcome: SCOPED_CHILD_PORT_NOT_LENT.to_owned(),
                 reason_codes: Vec::new(),
             })
         })

@@ -3048,9 +3048,9 @@ export class Oneiron {
       /** Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one. */
       batch: (input: Facade.LiveRunRequest<Facade.BatchInput>): Facade.BrowserBatchOutput => this.#call(() => this.#client.selfBrowserBatch(input) as Facade.BrowserBatchOutput),
       library: {
-        /** The replay library's programs for a site, or for the attached run's open page's site. */
+        /** The replay library's programs for a site, or for the attached run's open page's site, each card with lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of` outcomes), held_out, supersedes and seed. */
         find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>): Facade.BrowserLibraryFindOutput => this.#call(() => this.#client.selfBrowserLibraryFind(input) as Facade.BrowserLibraryFindOutput),
-        /** Offers a solved run's program to the replay library of the attached run's browser session, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition. */
+        /** Offers a solved run's program to the attached run's replay library; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance. */
         propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>): Facade.BrowserLibraryProposeOutput => this.#call(() => this.#client.selfBrowserLibraryPropose(input) as Facade.BrowserLibraryProposeOutput),
         /** Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had. */
         retire: (input: Facade.LiveRunRequest<Facade.LibraryRetireInput>): Facade.BrowserLibraryRetireOutput => this.#call(() => this.#client.selfBrowserLibraryRetire(input) as Facade.BrowserLibraryRetireOutput),
