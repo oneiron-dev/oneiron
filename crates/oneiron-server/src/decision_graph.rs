@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 
 use oneiron::llm::decision::questions::{
     GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionCriteria,
-    close_due_outcome_windows, next_outcome_window_close_at, refresh_due_artifact_questions,
-    refresh_due_questions_by_role,
+    close_due_outcome_windows, next_outcome_window_close_at, refresh_due_artifact_questions_while,
+    refresh_due_questions_by_role_while,
 };
 use oneiron::llm::decision::{
     AskTo, DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
@@ -425,6 +425,19 @@ pub(crate) fn spawn(
     server: &Arc<SyncServer>,
     admit: crate::server::HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
+    spawn_with_pause(server, admit, || None)
+}
+
+/// [`spawn`] under a host's pause (FIX 7376): each admitted pass reads
+/// `epoch_source` once, after its admission and before it pumps, and starts
+/// no next stage or unit once that epoch holds the pause. The unit in
+/// flight finishes, the pass returns what it did and drops its admission,
+/// and the pump sleeps as after any pass. An epoch of `None` never pauses.
+pub(crate) fn spawn_with_pause(
+    server: &Arc<SyncServer>,
+    admit: crate::server::HousekeepingAdmission,
+    epoch_source: impl Fn() -> Option<tokio::sync::watch::Receiver<bool>> + Send + Sync + 'static,
+) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
     // Subscribed before the first read, so no change between them is lost.
     let mut changes = server.vault().subscribe_proactivity_changes();
@@ -435,9 +448,12 @@ pub(crate) fn spawn(
             };
             let next = match admit() {
                 Some(pass) => {
+                    // Read after the gate, once a pass: a freeze since then shows here.
+                    let epoch = epoch_source();
                     tokio::task::spawn_blocking(move || {
                         let _pass = pass;
-                        pump_due(&server, oneiron_vault_contract::now_ts())?;
+                        let mut may_start = || epoch.as_ref().is_none_or(|held| !*held.borrow());
+                        pump_due_while(&server, oneiron_vault_contract::now_ts(), &mut may_start)?;
                         let question = server.vault().next_question_refresh_at()?;
                         let wake = server.vault().next_answer_wake_at()?;
                         let window = next_outcome_window_close_at(server.vault())?;
@@ -483,23 +499,35 @@ pub(crate) fn spawn(
 /// has not answered; each lapsed outcome window closes; then every open ask
 /// no live actor holds climbs to the next role that has one. Off home it
 /// does nothing. The engine holds a failed question before it is due again;
-/// its error logs by kind, as its text can quote the vault.
-pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
-    if !at_home(server, now)? {
+/// its error logs by kind, as its text can quote the vault. Under a host's
+/// pause (FIX 7376) no next stage, question, artifact ask or wake starts
+/// once `may_start` says no, the home check first among them: the one in
+/// flight finishes, and the pass returns `Ok` with what it did.
+pub(crate) fn pump_due_while(
+    server: &SyncServer,
+    now: u64,
+    may_start: &mut impl FnMut() -> bool,
+) -> Result<()> {
+    if !may_start() || !at_home(server, now)? {
         return Ok(());
     }
-    let batch = refresh_due_questions_by_role(server.vault(), now, |record, runner, to| {
-        Ok(LadderGraphAnswerer::routed(
-            server,
-            record.principal,
-            runner,
-            to,
-            record.definition.dial,
-            record.definition.deadline(server.vault())?,
-        )
-        .with_criteria(record.definition.criteria.clone())
-        .with_posture(record.definition.posture))
-    })?;
+    let batch = refresh_due_questions_by_role_while(
+        server.vault(),
+        now,
+        may_start,
+        |record, runner, to| {
+            Ok(LadderGraphAnswerer::routed(
+                server,
+                record.principal,
+                runner,
+                to,
+                record.definition.dial,
+                record.definition.deadline(server.vault())?,
+            )
+            .with_criteria(record.definition.criteria.clone())
+            .with_posture(record.definition.posture))
+        },
+    )?;
     for failure in &batch.failures {
         tracing::warn!(
             question = %failure.question.to_hex(),
@@ -507,14 +535,22 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
             "a standing question was not refreshed; it is held, then runs again"
         );
     }
+    if !may_start() {
+        return Ok(());
+    }
     let host = server.decision_host();
-    let artifacts =
-        refresh_due_artifact_questions(server.vault(), now, &host.bands(), |record, actor| {
+    let artifacts = refresh_due_artifact_questions_while(
+        server.vault(),
+        now,
+        &host.bands(),
+        may_start,
+        |record, actor| {
             Ok(
                 HostUnitDecider::new(server, actor.actor_class(), "vault.artifacts.ask")
                     .with_question(&record.definition),
             )
-        })?;
+        },
+    )?;
     for failure in &artifacts.failures {
         tracing::warn!(
             question = %failure.question.to_hex(),
@@ -523,10 +559,16 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
             "a standing artifact question was not asked; it is held, then runs again"
         );
     }
+    if !may_start() {
+        return Ok(());
+    }
     // A window closes once, with no model: an observed fact, the binding's
     // silence label, or unknown.
     if let Err(error) = close_due_outcome_windows(server.vault(), now) {
         tracing::warn!(kind = ?error.kind(), "lapsed outcome windows were not closed");
+    }
+    if !may_start() {
+        return Ok(());
     }
     match server.vault().climb_unheld_decision_asks() {
         Ok(climbed) => {
@@ -538,7 +580,7 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
             tracing::warn!(kind = ?error.kind(), "unheld decision asks were not climbed");
         }
     }
-    crate::decision_artifact::pump_answer_wakes(server, now)
+    crate::decision_artifact::pump_answer_wakes_while(server, now, may_start)
 }
 
 /// Whether this server is the vault's home: the elected home names this

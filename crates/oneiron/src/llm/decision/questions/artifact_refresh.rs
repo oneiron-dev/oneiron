@@ -178,6 +178,20 @@ pub fn refresh_due_artifact_questions<D: UnitDecider>(
     vault: &Vault,
     now: u64,
     policy: &DecisionBandPolicy,
+    decider_for: impl FnMut(&QuestionRecord, WriteActor) -> Result<D>,
+) -> Result<ArtifactRefreshBatch> {
+    refresh_due_artifact_questions_while(vault, now, policy, &mut || true, decider_for)
+}
+
+/// [`refresh_due_artifact_questions`] under a host's pause (FIX 7376): no next
+/// question's decider is made and no next artifact is asked once `may_start` says no.
+/// The ask in flight finishes with its proposal and stamp, and the pass returns what it
+/// has; what it left unasked is neither failed nor held, and stays due.
+pub fn refresh_due_artifact_questions_while<D: UnitDecider>(
+    vault: &Vault,
+    now: u64,
+    policy: &DecisionBandPolicy,
+    may_start: &mut impl FnMut() -> bool,
     mut decider_for: impl FnMut(&QuestionRecord, WriteActor) -> Result<D>,
 ) -> Result<ArtifactRefreshBatch> {
     let mut batch = ArtifactRefreshBatch::default();
@@ -185,7 +199,10 @@ pub fn refresh_due_artifact_questions<D: UnitDecider>(
         let txn = vault.store.env.read_txn()?;
         crate::gate::resolve_policy_manifest(&vault.store, &txn)?.artifact_answer_quiet_seconds()
     };
-    for (question, version, record) in standing_artifact_questions(vault, now)? {
+    'questions: for (question, version, record) in standing_artifact_questions(vault, now)? {
+        if !may_start() {
+            break;
+        }
         let made = principal_actor(vault, record.principal)
             .and_then(|actor| Ok((actor, decider_for(&record, actor)?)));
         let (actor, decider) = match made {
@@ -212,6 +229,9 @@ pub fn refresh_due_artifact_questions<D: UnitDecider>(
             quiet,
         };
         for units in &record.definition.artifacts {
+            if !may_start() {
+                break 'questions;
+            }
             match asking.ask_if_due(units) {
                 Ok(Some(view)) => batch.proposed.push(view),
                 Ok(None) => {}

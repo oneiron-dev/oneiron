@@ -125,10 +125,23 @@ impl HostUnitDecider<'_> {
 /// slide is asked over the host's LibreOffice render of it. The caller
 /// runs this on the vault's home node only. A failed wake is held, then
 /// tried again; its error logs by kind, as its text can quote the vault.
-pub(crate) fn pump_answer_wakes(server: &SyncServer, now: u64) -> Result<()> {
+/// Under a host's pause (FIX 7376) neither the due wakes' collection nor a
+/// next wake starts once `may_start` says no: the wake in flight finishes
+/// with its markers, and one left unwoken gets no hold and stays due.
+pub(crate) fn pump_answer_wakes_while(
+    server: &SyncServer,
+    now: u64,
+    may_start: &mut impl FnMut() -> bool,
+) -> Result<()> {
+    if !may_start() {
+        return Ok(());
+    }
     let vault = server.vault();
     let host = server.decision_host();
     for wake in vault.due_answer_wakes(now)? {
+        if !may_start() {
+            break;
+        }
         // Only a slide wake looks for the renderer.
         let renderer = matches!(wake.shape, ReaskShape::Slides { .. })
             .then(crate::slide_render::host_renderer)

@@ -1084,6 +1084,22 @@ pub fn settle_parked_conflicts(
     limit: usize,
     now: u64,
 ) -> crate::memory::MemoryResult<ParkedConflictPass> {
+    settle_parked_conflicts_while(memory, decisions, after, limit, now, &mut || true)
+}
+
+/// [`settle_parked_conflicts`] under a host's pause (FIX 7376): no next
+/// conflict is asked once `may_start` says no. The one in flight finishes
+/// its ruling and settlement, and the pass returns as it stands. A conflict
+/// left unasked is neither counted nor left parked: `last` stays on the last
+/// one asked, and the next pass starts after it.
+pub fn settle_parked_conflicts_while(
+    memory: &crate::memory::Memory<'_>,
+    decisions: &ConflictSettleDecisions<'_>,
+    after: Option<EntityId>,
+    limit: usize,
+    now: u64,
+    may_start: &mut impl FnMut() -> bool,
+) -> crate::memory::MemoryResult<ParkedConflictPass> {
     let mut pass = ParkedConflictPass::default();
     let open = memory.open_conflicts(None, None, usize::MAX)?;
     let start = after.map_or(0, |after| {
@@ -1091,6 +1107,9 @@ pub fn settle_parked_conflicts(
     });
     let (older, newer) = open.split_at(start);
     for conflict in newer.iter().chain(older).take(limit) {
+        if !may_start() {
+            break;
+        }
         pass.asked += 1;
         pass.last = Some(conflict.marker);
         let settlement = match decisions.rule(memory.vault(), conflict) {
