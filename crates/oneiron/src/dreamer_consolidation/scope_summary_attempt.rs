@@ -121,6 +121,19 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 "an epoch summary is never a scope summary's editor text",
             ));
         }
+        // A NOTE review's topic summary the topic's group outgrew completes
+        // without composing (Engine 10-21, option A): the larger group's
+        // own declaration composes it.
+        if plan.scope.is_none()
+            && super::note_topics::note_topic_summary_outgrown(
+                ctx.vault,
+                attempt,
+                plan.requester,
+                &plan.sources,
+            )
+        {
+            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        }
         let Some(first) = evidence.covers.first().copied() else {
             return Err(invalid_consolidation("summary scope has no text"));
         };

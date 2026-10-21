@@ -425,6 +425,19 @@ pub(super) fn topic_members_in_txn(
     Ok(members)
 }
 
+/// The topic `note`'s review record keeps, read in `txn`; `None` when the
+/// record keeps none, or is gone or does not read.
+pub(super) fn topic_of_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: &EntityId,
+) -> Option<NoteTopicMembership> {
+    SEEN.get(&vault.store, txn, note)
+        .ok()
+        .flatten()
+        .and_then(|record| record.topic)
+}
+
 /// The NOTEs on `page` the review reads: live and readable by the Dreamer,
 /// Allowed by its kind or its override, or sealed and AfterSeal (a sealed pad
 /// read through its line marks), changed since their last review, and with a
