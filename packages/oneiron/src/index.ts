@@ -3045,10 +3045,10 @@ export class Oneiron {
       crop: (input: Facade.LiveRunRequest<Facade.CropInput>): Facade.BrowserImageOutput => this.#call(() => this.#client.selfBrowserCrop(input) as Facade.BrowserImageOutput),
       /** Zooms into a rectangle of a held image. */
       zoom: (input: Facade.LiveRunRequest<Facade.ZoomInput>): Facade.BrowserImageOutput => this.#call(() => this.#client.selfBrowserZoom(input) as Facade.BrowserImageOutput),
-      /** Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one. */
+      /** Runs one batched program of browser steps for a subgoal in the attached run's browser, stopping at the first failing step with its stop_cause and a failed_receipt of missed checks and the page; elapsed_ms times it, duration_ms each effect. */
       batch: (input: Facade.LiveRunRequest<Facade.BatchInput>): Facade.BrowserBatchOutput => this.#call(() => this.#client.selfBrowserBatch(input) as Facade.BrowserBatchOutput),
       library: {
-        /** The replay library's programs for a site, or for the attached run's open page's site, each card with lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of` outcomes), held_out, supersedes and seed. */
+        /** The replay library's programs for a site, or the attached run's open page's, each card with lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of`), strict_misses, held_out, supersedes and seed. */
         find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>): Facade.BrowserLibraryFindOutput => this.#call(() => this.#client.selfBrowserLibraryFind(input) as Facade.BrowserLibraryFindOutput),
         /** Offers a solved run's program to the attached run's replay library; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance. */
         propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>): Facade.BrowserLibraryProposeOutput => this.#call(() => this.#client.selfBrowserLibraryPropose(input) as Facade.BrowserLibraryProposeOutput),
@@ -3056,7 +3056,7 @@ export class Oneiron {
         retire: (input: Facade.LiveRunRequest<Facade.LibraryRetireInput>): Facade.BrowserLibraryRetireOutput => this.#call(() => this.#client.selfBrowserLibraryRetire(input) as Facade.BrowserLibraryRetireOutput),
         /** The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why. */
         retired: (input: Facade.LiveRunRequest<Facade.LibraryRetiredInput>): Facade.BrowserLibraryRetiredOutput => this.#call(() => this.#client.selfBrowserLibraryRetired(input) as Facade.BrowserLibraryRetiredOutput),
-        /** Runs a replay library program live with its arguments in the attached run's browser session, resolving locators step by step; its last observation edits the caller's base, and a missed postcondition goes back to the planner. */
+        /** Runs a replay library program live in the attached run's browser, strict (rules only; a step needing a model asks up at zero tokens) or assisted, by default as its proof allows; model_free reads receipts; 3 strict misses retire it drift. */
         run: (input: Facade.LiveRunRequest<Facade.LibraryRunInput>): Facade.BrowserLibraryRunOutput => this.#call(() => this.#client.selfBrowserLibraryRun(input) as Facade.BrowserLibraryRunOutput),
       },
       /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
