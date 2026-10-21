@@ -1894,6 +1894,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         "vault.code.imports.create" | "vault.code.imports.get" => {
             super::code_import_doors::imports_admit(server, auth, verb)
         }
+        // The exact export preview rows (FIX 6869, G4 PR3): a live Owner, or a
+        // bound principal whose one Grant the engine door admits.
+        "vault.code.export.preview" | "vault.code.export.preview.read" => {
+            super::origin_doors::preview_admits(server, auth, verb)
+        }
         // A member's own TASK-bound workflow run (FIX 5316): a live person on
         // their own slip, bound to it, as the door acts under.
         "vault.workflows.dispatch_bound" => {

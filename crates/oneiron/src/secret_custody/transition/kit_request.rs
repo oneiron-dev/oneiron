@@ -131,7 +131,7 @@ fn record_in_txn(
 
 /// Whether `transition` stands on `request`, a kit request counted in
 /// `fold` (FIX 6053): a rewrap of the transition's record at its
-/// generation, live, with no input, sealed under exactly its permits, and
+/// generation, live, with no input, its piece of exactly its permits, and
 /// signed by the anchor of the root the request names, which this vault
 /// pins.
 pub(super) fn kit_request_admits(
@@ -153,7 +153,7 @@ pub(super) fn kit_request_admits(
         && *generation == transition.generation
         && transition.input.is_none()
         && transition.status != SecretCustodyStatus::Revoked
-        && transition.permits().eq(recipients.iter())
+        && transition.piece_of(recipients)
         && fold.pinned_root.as_ref().is_some_and(|pin| {
             Some(pin.id) == request.kit_root() && pin.anchor_key == transition.signer
         })
