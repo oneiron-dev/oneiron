@@ -23,7 +23,6 @@ use crate::consent::OwnerAuthoredWrite;
 use crate::error::{Error, GateDenialOutcome, GateError, Result};
 use crate::gate::GateReasonCode;
 use crate::run_tree::GateConsentBundleAction;
-use crate::store::GateDecisionId;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -67,13 +66,13 @@ pub(crate) struct KeepApproval {
     approved: Cell<Option<ApprovedKeep>>,
 }
 
-/// The landing a [`KeepApproval`] approved.
+/// The landing a [`KeepApproval`] approved. Its door mints the receipt
+/// naming that approval: the signed Approve leaves no reference of its own,
+/// and the resolution receipt of a tray row it closed keeps the opener's
+/// actor, never the responder's.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ApprovedKeep {
     pub(crate) claim: EntityId,
-    /// The resolution receipt of the tray row the approval closed, when the
-    /// landing waited in the tray: the Approve's own Gate record.
-    pub(crate) receipt: Option<GateDecisionId>,
     /// Whether its approval consolidates VAD once the transaction commits.
     pub(crate) dreamer_run: bool,
 }
@@ -143,7 +142,6 @@ impl KeepAs<'_> {
         )?;
         approval.approved.set(Some(ApprovedKeep {
             claim,
-            receipt: settled.tray_receipt.map(|receipt| receipt.decision_id),
             dreamer_run: settled.dreamer_run,
         }));
         Ok(())

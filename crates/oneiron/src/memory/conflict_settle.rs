@@ -55,8 +55,10 @@ const KEEP_PENDING_APPROVES_EXACT: bool = true;
 /// transaction after the one before aborted whole.
 const KEEP_PENDING_APPROVAL_RETRIES: u8 = 1;
 /// The Gate receipt naming a responder's approval of the alternative its
-/// Keep landed (FIX 5753), minted only when the approval closed no tray row
-/// and so left no receipt of its own: the settled receipt's `approval_ref`.
+/// Keep landed (FIX 5753), with the responder's actor, its Grant and the
+/// landing: the settled receipt's `approval_ref`. Every approval mints one;
+/// the signed Approve leaves no reference of its own, and the receipt of a
+/// tray row it closed keeps the opener's actor.
 const APPROVAL_KIND: &str = "conflict_keep_approval";
 const APPROVAL_REASON: &str = "gate.memory.conflict_keep_approval";
 
@@ -68,6 +70,11 @@ enum KeepApprovalCheckError {
     /// the retained alternative intact.
     PreserveOriginalPath,
 }
+/// It covers only an error of a retry whose write was discarded. Once the
+/// retry has committed, an error from the writer's own post-commit work
+/// (the owed stale sweep, for one) is no refusal: the Keep answers with what
+/// the retry committed, that failure keeps its own handling, and nothing
+/// retries again.
 const KEEP_APPROVAL_CHECK_ERROR: KeepApprovalCheckError =
     KeepApprovalCheckError::PreserveOriginalPath;
 
@@ -128,8 +135,10 @@ impl Memory<'_> {
     /// again, the alternative is born Proposed and the responder approves it
     /// as its own act (an Owner, co-Owners included, or a delegate under its
     /// Grant; never the Dreamer), and the settlement commits with it. The
-    /// receipt then names that approval. A retry that fails answers with the
-    /// first refusal, the retained alternative intact.
+    /// receipt then names that approval. A retry whose write is discarded
+    /// answers with the first refusal, the retained alternative intact; one
+    /// that committed answers with what it committed, even when the writer's
+    /// post-commit work then fails.
     pub fn settle_conflict(
         &self,
         reviewer: Option<&AuthenticatedOwner>,
@@ -161,26 +170,47 @@ impl Memory<'_> {
                 {
                     return Err(refusal);
                 }
+                let mut written = None;
                 let retried = self.with_verified_actor_write_txn(|txn| {
-                    self.settle_in_txn(
+                    let outcome = self.settle_in_txn(
                         txn,
                         reviewer,
                         (marker, settlement),
                         (&held, true),
                         &mut consolidate,
                         now,
-                    )
+                    )?;
+                    written = Some(outcome.clone());
+                    Ok(outcome)
                 });
                 match (retried, KEEP_APPROVAL_CHECK_ERROR) {
                     (Ok(outcome), _) => outcome,
                     (Err(error), KeepApprovalCheckError::PreserveOriginalPath) => {
-                        tracing::warn!(
-                            target: "oneiron::memory",
-                            code = %error.code,
-                            marker = %marker.to_hex(),
-                            "a held Keep's approval did not land; the Keep answers as before"
-                        );
-                        return Err(refusal);
+                        let committed =
+                            written.map(|outcome| (self.keep_retry_committed(&outcome), outcome));
+                        match committed {
+                            Some((Ok(true), outcome)) => {
+                                tracing::warn!(
+                                    target: "oneiron::memory",
+                                    code = %error.code,
+                                    marker = %marker.to_hex(),
+                                    "a held Keep's approval committed; its post-commit work failed and keeps its own handling"
+                                );
+                                outcome
+                            }
+                            // Whether it committed is unknown: its own error,
+                            // never the first refusal.
+                            Some((Err(_), _)) => return Err(error),
+                            Some((Ok(false), _)) | None => {
+                                tracing::warn!(
+                                    target: "oneiron::memory",
+                                    code = %error.code,
+                                    marker = %marker.to_hex(),
+                                    "a held Keep's approval did not land; the Keep answers as before"
+                                );
+                                return Err(refusal);
+                            }
+                        }
                     }
                 }
             }
@@ -315,34 +345,28 @@ impl Memory<'_> {
             }
         };
         // The retry approved exactly the alternative its Keep selected, or
-        // it settles nothing. Its ref is the receipt of the tray row the
-        // approval closed; one is minted only when it closed none.
+        // it settles nothing. Its ref names the responder's own approval,
+        // never a tray row's resolution receipt.
         let approval_ref = match (&approval, settlement) {
             (None, _) => None,
             (Some(approval), ConflictSettlement::Keep(selector)) => {
                 let approved = approval.approved().ok_or_else(not_approved)?;
                 *consolidate = approved.dreamer_run.then_some(approved.claim);
-                let receipt = match approved.receipt {
-                    Some(receipt) => receipt,
-                    None => {
-                        let mut record = decision(
-                            actor,
-                            APPROVAL_KIND,
-                            "approved",
-                            APPROVAL_REASON,
-                            Some(approved.claim),
-                            [marker, selector, approved.claim]
-                                .iter()
-                                .flat_map(|id| *id.as_bytes())
-                                .collect(),
-                            now,
-                        );
-                        record.grant_ref.clone_from(&grant_ref);
-                        self.vault.store.append_gate_decision_in_txn(txn, &record)?;
-                        record.decision_id
-                    }
-                };
-                Some(format!("gate:{}", receipt.to_hex()))
+                let mut record = decision(
+                    actor,
+                    APPROVAL_KIND,
+                    "approved",
+                    APPROVAL_REASON,
+                    Some(approved.claim),
+                    [marker, selector, approved.claim]
+                        .iter()
+                        .flat_map(|id| *id.as_bytes())
+                        .collect(),
+                    now,
+                );
+                record.grant_ref.clone_from(&grant_ref);
+                self.vault.store.append_gate_decision_in_txn(txn, &record)?;
+                Some(format!("gate:{}", record.decision_id.to_hex()))
             }
             (Some(_), _) => return Err(not_approved().into()),
         };
@@ -394,6 +418,15 @@ impl Memory<'_> {
             None => None,
         };
         Ok(KeepApproval::new(actor, owner_answer))
+    }
+
+    /// Whether a held Keep's retry, whose write answered `outcome`, committed
+    /// it: the answering claim that write minted is stored.
+    fn keep_retry_committed(&self, outcome: &ConflictSettleOutcome) -> Result<bool, Error> {
+        match outcome {
+            ConflictSettleOutcome::Settled(receipt) => self.vault.entity_exists(&receipt.resolved),
+            ConflictSettleOutcome::ImportReviewPending { .. } => Ok(false),
+        }
     }
 
     /// The owner's approval of `staged`, a Keep of `conflict` still waiting
