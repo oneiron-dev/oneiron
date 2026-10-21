@@ -62,8 +62,8 @@ pub(crate) use self::revoked::{
 use super::codec::{encode_bind_input, encode_register_input};
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, CustodyChange, CustodyRecipientPermit,
-    CustodyRequestAuthority, OwnerWorkBody, OwnerWorkOutcome,
-    OwnerWorkRefusal, OwnerWorkRequest, invalid_authority,
+    CustodyRequestAuthority, OwnerWorkBody, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest,
+    invalid_authority,
 };
 use crate::error::{Error, Result, SecretError};
 use crate::secret_rotation::RotationReceipt;
