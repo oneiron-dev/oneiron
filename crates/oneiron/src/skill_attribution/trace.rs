@@ -8,6 +8,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::limit_ask::EngineLimit;
 use crate::receipt::{ReceiptRecord, attempt_pack_receipt_id};
 use crate::registry::ENTITY_TYPE_SKILL;
+use crate::skill_optimize::union_source_rows;
 use crate::{EntityId, Result, Vault};
 
 use super::manifest_entry_names_skill;
@@ -121,6 +122,25 @@ pub fn receipt_attribution_trace(
     let items = trace.steps.len() + trace.outputs.len();
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
     Ok(Some(trace))
+}
+
+/// [`receipt_attribution_trace`] beside the rows it was read from (FIX
+/// 6997): the receipt's recorded attempt-input set, the run its attempt and
+/// replay rows are keyed by, read whole, and each SKILL record it loaded.
+/// The rows are `None`, unknown, when the receipt records no complete set.
+pub fn receipt_attribution_trace_sourced(
+    vault: &Vault,
+    receipt: &ReceiptRecord,
+) -> Result<Option<(ReceiptTrace, Option<Vec<EntityId>>)>> {
+    let Some(trace) = receipt_attribution_trace(vault, receipt)? else {
+        return Ok(None);
+    };
+    let run = receipt_attempt(&receipt.receipt_id)
+        .and_then(|attempt| EntityId::from_bytes(*attempt.as_bytes()).ok())
+        .map(|run| vec![run]);
+    let skills = trace.skills.iter().map(|skill| skill.skill).collect();
+    let rows = union_source_rows([receipt.pack_source_rows(), run, Some(skills)]);
+    Ok(Some((trace, rows)))
 }
 
 /// The SKILL record each wire names, at most one per wire. A fork counts only
