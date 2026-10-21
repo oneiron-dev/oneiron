@@ -9,6 +9,14 @@ use crate::registry::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+
+/// Participants one session's presence holds past which this process says
+/// so, once, at the crossing. Not a bound: presence of any size is kept.
+const PRESENCE_NOTICE: usize = 10_000;
+/// Active sessions past which this process says so, once, at the crossing.
+/// Not a bound: every session's presence is kept.
+const ACTIVE_SESSIONS_NOTICE: usize = 1024;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionMode {
@@ -137,9 +145,6 @@ impl Vault {
         require_kind(self, &txn, session, ENTITY_TYPE_SESSION)?;
         let mut named = BTreeSet::new();
         let ids: Vec<EntityId> = ids.iter().copied().filter(|id| named.insert(*id)).collect();
-        if ids.len() > 10_000 {
-            return Err(Error::IndexOverflow("session presence"));
-        }
         for id in &ids {
             // A PERSON or an AGENT_DEF persona, never a MACHINE: room hosting
             // reads this set as who is here now.
@@ -161,12 +166,24 @@ impl Vault {
             .conversation_presence
             .lock()
             .map_err(|_| state("presence lock"))?;
-        if !presence.contains_key(&session) && presence.len() >= 1024 {
-            return Err(Error::IndexOverflow("active sessions"));
-        }
         if ids.is_empty() {
             presence.remove(&session);
             return Ok(());
+        }
+        // Rule 5: presence of any size is kept whole, and no count refuses it.
+        if !presence.contains_key(&session) && presence.len() == ACTIVE_SESSIONS_NOTICE {
+            tracing::info!(
+                sessions = presence.len() + 1,
+                "active sessions passed 1,024; every one is kept"
+            );
+        }
+        if presence.get(&session).map_or(0, Vec::len) <= PRESENCE_NOTICE
+            && ids.len() > PRESENCE_NOTICE
+        {
+            tracing::info!(
+                participants = ids.len(),
+                "a session's presence passed 10,000 participants; every one is kept"
+            );
         }
         let mut arrived: Vec<EntityId> = presence
             .get(&session)

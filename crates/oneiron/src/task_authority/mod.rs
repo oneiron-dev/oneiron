@@ -32,13 +32,13 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::habit::{TaskRole, task_role_from_body_bytes};
 use crate::registry::ENTITY_TYPE_TASK;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, SideTable};
 #[cfg(test)]
 use crate::temporal::TimeRange;
-use crate::vault::MAX_EDGE_QUERY_RESULTS;
 
 mod binding_generation;
-pub use binding_generation::{BindingGeneration, BindingId, MAX_GENERATION_BINDINGS};
+pub use binding_generation::{BindingGeneration, BindingId};
 
 /// Strict body schema for authority facts. Version 1 is the only shape ever
 /// written; a row naming any other version is refused rather than guessed at.
@@ -132,7 +132,7 @@ impl TaskAuthorityFactKind {
 }
 
 /// One immutable authority fact about one TASK.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskAuthorityFact {
     /// The subject TASK. Must equal the `ScopedTo` edge target the fact is
     /// read through, or the fact is refused.
@@ -171,7 +171,7 @@ pub struct TaskAuthorityState {
 /// are not claims about ownership, so the render tier reads them from here:
 /// a task cancelled through a door that proves ownership some other way (a
 /// connector-send task's own actor) must still stop rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct TaskAuthorityFacts {
     pub(crate) owner_ref: Option<EntityId>,
     pub(crate) cancelled: bool,
@@ -191,7 +191,7 @@ pub(crate) struct TaskAuthorityFacts {
 
 /// One taker of a TASK: who accepted it, the binding generation it held,
 /// and when.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskTaker {
     pub(crate) actor: EntityId,
     pub(crate) generation: Option<BindingGeneration>,
@@ -199,7 +199,7 @@ pub(crate) struct TaskTaker {
 }
 
 /// What one TASK's immutable facts prove about who may act on it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskStanding {
     pub(crate) owner: EntityId,
     /// The actor the TASK is assigned to: the Assigned fact's assignee, else
@@ -210,11 +210,7 @@ pub(crate) struct TaskStanding {
 }
 
 /// The parties a consult's ConsultAssignee facts name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a fold value read once per consult; boxing would cost the fold its Copy"
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) enum ConsultParties {
     /// No fact: nobody holds party standing. Only the consult's minting door
     /// writes one.
@@ -228,7 +224,7 @@ pub(crate) enum ConsultParties {
 
 /// One consult's parties and the binding generation each held when it was
 /// minted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConsultPartyFact {
     asker: EntityId,
     asker_generation: Option<BindingGeneration>,
@@ -256,7 +252,7 @@ impl ConsultPartyFact {
 
 /// An actor's standing as one of a consult's parties: the bindings it held
 /// when the consult was minted, one of which it must still hold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConsultStanding {
     pub(crate) generation: Option<BindingGeneration>,
 }
@@ -303,13 +299,13 @@ impl TaskAuthorityFacts {
             TaskAuthorityFactKind::ConsultAssignee => {
                 let minted = ConsultPartyFact {
                     asker: fact.actor_ref,
-                    asker_generation: fact.actor_generation,
+                    asker_generation: fact.actor_generation.clone(),
                     assignee: fact.assigned_ref,
-                    assignee_generation: fact.assigned_generation,
+                    assignee_generation: fact.assigned_generation.clone(),
                 };
                 // A fork fails closed for the consult's parties alone: the
                 // owner's own cancellation still reads, as a restriction must.
-                self.consult_parties = match self.consult_parties {
+                self.consult_parties = match std::mem::take(&mut self.consult_parties) {
                     ConsultParties::Unminted => ConsultParties::Minted(minted),
                     ConsultParties::Minted(held)
                         if held.asker == minted.asker && held.assignee == minted.assignee =>
@@ -334,12 +330,12 @@ impl TaskAuthorityFacts {
             TaskAuthorityFactKind::Accepted => {
                 let taker = TaskTaker {
                     actor: fact.actor_ref,
-                    generation: fact.actor_generation,
+                    generation: fact.actor_generation.clone(),
                     at: fact.occurred_at,
                 };
                 // The latest acceptance stands; the order is total over the
                 // facts themselves, so every merge order folds the same taker.
-                self.accepted = match self.accepted {
+                self.accepted = match self.accepted.take() {
                     Some(held)
                         if (held.at, *held.actor.as_bytes())
                             >= (taker.at, *taker.actor.as_bytes()) =>
@@ -358,7 +354,7 @@ impl TaskAuthorityFacts {
     /// A consult with no fact, a forked fact, or a fact whose asker is not
     /// the task's proven owner gives nobody standing.
     pub(crate) fn consult_standing(&self, actor: EntityId) -> Option<ConsultStanding> {
-        let ConsultParties::Minted(parties) = self.consult_parties else {
+        let ConsultParties::Minted(parties) = &self.consult_parties else {
             return None;
         };
         if self.owner_ref != Some(parties.asker) {
@@ -366,11 +362,11 @@ impl TaskAuthorityFacts {
         }
         if parties.asker == actor {
             Some(ConsultStanding {
-                generation: parties.asker_generation,
+                generation: parties.asker_generation.clone(),
             })
         } else if parties.assignee == Some(actor) {
             Some(ConsultStanding {
-                generation: parties.assignee_generation,
+                generation: parties.assignee_generation.clone(),
             })
         } else {
             None
@@ -449,8 +445,11 @@ pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u
         ));
     }
     for (key, generation) in [
-        (BODY_KEY_ACTOR_GENERATION, fact.actor_generation),
-        (BODY_KEY_ASSIGNED_GENERATION, fact.assigned_generation),
+        (BODY_KEY_ACTOR_GENERATION, fact.actor_generation.as_ref()),
+        (
+            BODY_KEY_ASSIGNED_GENERATION,
+            fact.assigned_generation.as_ref(),
+        ),
     ] {
         if let Some(generation) = generation {
             entries.push((Value::from(key), generation.encode()));
@@ -868,20 +867,22 @@ impl Vault {
             return Err(fact_suppressed());
         }
         let mut facts = TaskAuthorityFacts::default();
-        for (scanned, entry) in self
-            .store
-            .port_edges(
-                rtxn,
-                &task_ref,
-                crate::ports::EdgeDirection::In,
-                Some(EdgeKind::ScopedTo),
-                None,
-            )?
-            .enumerate()
-        {
-            if scanned >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("task authority facts"));
-            }
+        // Rule 5: every inbound edge is read and every fact absorbed, however
+        // many; past its threshold row the fold asks, and never refuses.
+        let mut scanned = ScanCount::start(
+            &self.store,
+            rtxn,
+            EngineScan::TaskAuthorityFactEdges,
+            task_ref.as_bytes(),
+        )?;
+        for entry in self.store.port_edges(
+            rtxn,
+            &task_ref,
+            crate::ports::EdgeDirection::In,
+            Some(EdgeKind::ScopedTo),
+            None,
+        )? {
+            scanned.row();
             let edge_row = entry?;
             let fact_ref = edge_row.target;
             let Some(raw) = self.get_raw_in(rtxn, &fact_ref)? else {
@@ -907,6 +908,7 @@ impl Vault {
             }
             facts.absorb(&fact)?;
         }
+        scanned.finish(self);
         Ok(facts)
     }
 }

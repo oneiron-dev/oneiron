@@ -258,6 +258,7 @@ pub(crate) fn admit_in_txn(
 fn busy(state: &TaskExecutionState, standing: &TaskStanding) -> String {
     let taker = standing
         .taker
+        .as_ref()
         .map_or_else(|| "nobody".to_owned(), |taker| taker.actor.to_hex());
     match state {
         TaskExecutionState::Working { .. } => format!("working, taken by {taker}"),

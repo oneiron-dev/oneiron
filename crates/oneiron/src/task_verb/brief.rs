@@ -31,8 +31,6 @@ use super::verb_kind::TaskAssignee;
 const BRIEF_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.brief.digest.v1";
 /// Domain of a pin's digest over the row it names.
 const PIN_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.brief.pin.v1";
-/// Largest encoded brief one TASK body carries.
-const MAX_BRIEF_BYTES: usize = 65_536;
 /// What a workflow handle starts with, before its record's 32 hex.
 const WORKFLOW_HANDLE_PREFIX: &str = "workflow:";
 /// The typed record slots of a brief (OF-063): each must resolve under the
@@ -550,11 +548,9 @@ impl QueueTaskBrief {
         }
         let encoded = rmp_serde::to_vec_named(self)
             .map_err(|_| MemoryError::bad_request("task brief does not encode"))?;
-        if encoded.len() > MAX_BRIEF_BYTES {
-            return Err(MemoryError::bad_request(format!(
-                "task brief must encode to at most {MAX_BRIEF_BYTES} bytes"
-            )));
-        }
+        // Rule 5: a brief of any size is carried whole; its size is measured,
+        // never refused.
+        tracing::debug!(bytes = encoded.len(), "task brief encoded");
         match &self.escalation.to {
             TaskAskTarget::Authority(_) => {}
             TaskAskTarget::Responder(assignee) => assignee.validate_in(vault, txn)?,

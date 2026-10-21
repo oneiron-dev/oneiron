@@ -273,7 +273,6 @@ pub(crate) fn prospective_parent(
     source: EntityId,
     target: EntityId,
 ) -> Result<ParentAdmission> {
-    use crate::limits::MAX_ANCESTOR_DEPTH;
     use std::collections::HashSet;
     macro_rules! need {
         ($fact:expr) => {
@@ -352,11 +351,6 @@ pub(crate) fn prospective_parent(
                 "received Parent contains a cycle",
             )));
         }
-        if seen.len() >= MAX_ANCESTOR_DEPTH {
-            return Ok(ParentAdmission::Reject(DagRejection(
-                "received Parent exceeds ancestor depth",
-            )));
-        }
         let actual = need!(owner(store, txn, id));
         if actual != conversation {
             return Ok(ParentAdmission::Reject(DagRejection(
@@ -369,6 +363,11 @@ pub(crate) fn prospective_parent(
             Err(error) => return remote_error(error),
         };
     }
+    // Rule 5: the received ancestry is walked whole, however deep, and
+    // counted; no depth refuses it.
+    let mut walk = graph::walk_count(store, txn, &conversation)?;
+    walk.rows(seen.len());
+    walk.defer(store);
     if let Some(anchor) = anchor
         && !seen.contains(&anchor)
     {

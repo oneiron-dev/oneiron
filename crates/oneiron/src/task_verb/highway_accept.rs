@@ -269,6 +269,7 @@ impl Memory<'_> {
         // still taken: after a release the next accept is a new take.
         let taken_before = standing
             .taker
+            .as_ref()
             .is_some_and(|taker| taker.actor == self.actor() && taker.generation == generation)
             && matches!(
                 body.state,
@@ -400,7 +401,7 @@ impl Memory<'_> {
                     kind: TaskAuthorityFactKind::Accepted,
                     actor_ref: self.actor(),
                     assigned_ref: None,
-                    actor_generation: generation,
+                    actor_generation: generation.clone(),
                     assigned_generation: None,
                     occurred_at: now,
                 },

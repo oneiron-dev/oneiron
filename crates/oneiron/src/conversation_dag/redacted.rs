@@ -99,17 +99,15 @@ pub(crate) fn pin_record(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: &EntityId
     PINS.put(&vault.store, txn, id, &pin)
 }
 
+/// Every erased child `parent` keeps, however many; the walk reading them
+/// counts them (rule 5).
 pub(crate) fn children(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     parent: &EntityId,
-    cap: usize,
 ) -> Result<Vec<EntityId>> {
     let mut result = Vec::new();
     for row in CHILDREN.iter_from(store, txn, parent.as_bytes())? {
-        if result.len() >= cap {
-            return Err(Error::IndexOverflow("conversation_dag_walk"));
-        }
         let ((_, child), value) = row?;
         if value != [1] {
             return Err(Error::CorruptedIndex("erased DAG child"));

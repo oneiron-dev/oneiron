@@ -4,7 +4,8 @@
 //! Parent; RepliesTo is the semantic reply target, so a thread reply may
 //! answer or quote a trunk message. HEAD and canonical marks are
 //! device-local sidecars, not replicated authority. Every topology walk
-//! fails closed at the shared ancestor cap.
+//! reads its whole path in its caller's snapshot, however long, and counts
+//! it (rule 5); a cycle fails closed.
 
 mod admission;
 mod graph;

@@ -1,11 +1,10 @@
 //! Idempotent lazy and maintenance migration of legacy conversation turns.
 
-use super::graph::{self, MIGRATED, edge_ids, require_type};
+use super::graph::{self, MIGRATED, require_type};
 use super::writes::{set_head_in_txn, value};
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, RegistryError, Result};
-use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -25,13 +24,16 @@ pub(crate) fn migrate_in_txn(
         }
         return Ok(false);
     }
-    let candidates = edge_ids(
+    // Rule 5: adoption reads the whole room, however many records, and
+    // counts it as one walk.
+    let mut walk = graph::walk_count(&vault.store, txn, conversation)?;
+    let candidates = graph::all_edge_ids(
         &vault.store,
         txn,
         conversation,
         EdgeKind::ChildOf,
         true,
-        MAX_ANCESTOR_DEPTH,
+        &mut walk,
     )?;
     // A pending received Parent does not turn its source into a trunk root.
     // Check the coordinator's exact source index in this same per-room txn;
@@ -140,9 +142,7 @@ pub(crate) fn migrate_in_txn(
             }
         }
         graph::require_member(&vault.store, txn, conversation, &parent)?;
-        if all_parents.len() >= MAX_ANCESTOR_DEPTH {
-            return Err(Error::IndexOverflow("conversation_dag_walk"));
-        }
+        walk.row();
         if graph::is_thread_record(&vault.store, txn, &parent)?
             || graph::is_sub_session_record(&vault.store, txn, &parent)?
         {
@@ -188,9 +188,8 @@ pub(crate) fn migrate_in_txn(
         // Received DAG edges predate local HEAD state. Never overwrite their
         // parentage with a legacy chain. Validate and choose a deterministic
         // local initial branch; HEAD remains local after this first adoption.
-        // This additional trunk-only pass stays linear. Rewalking every
-        // ancestor path would reject a valid 142-record chain under a 10k
-        // work budget even though the shared depth cap admits it.
+        // This additional trunk-only pass stays linear: it reads each record
+        // and Parent once, never every ancestor path.
         let live_members: HashSet<_> = turns.iter().map(|(_, id)| *id).collect();
         let mut members = live_members.clone();
         let mut pending: VecDeque<_> = live_members.iter().copied().collect();
@@ -202,7 +201,7 @@ pub(crate) fn migrate_in_txn(
                 // ChildOf index before this replica has adopted a local HEAD.
                 // Admit only pinned, deleted ancestors: never reinterpret an
                 // unrelated live turn as a missing trunk member or hydrate a
-                // deleted body. Walk each ghost once, with the shared cap.
+                // deleted body. Walk each ghost once.
                 if !members.contains(&parent) {
                     match live_entity_row_in_txn(&vault.store, txn, &parent)? {
                         LiveEntityRow::Absent | LiveEntityRow::DeletedShell
@@ -215,9 +214,7 @@ pub(crate) fn migrate_in_txn(
                     {
                         return Err(graph::invalid("trunk Parent is not a trunk record"));
                     }
-                    if members.len() >= MAX_ANCESTOR_DEPTH {
-                        return Err(Error::IndexOverflow("conversation_dag_walk"));
-                    }
+                    walk.row();
                     members.insert(parent);
                     pending.push_back(parent);
                 }
@@ -256,6 +253,7 @@ pub(crate) fn migrate_in_txn(
     if let Some((_, head)) = turns.last() {
         set_head_in_txn(vault, txn, conversation, *head)?;
     }
+    walk.defer(&vault.store);
     MIGRATED.put(&vault.store, txn, conversation, &[1])?;
     Ok(true)
 }
@@ -294,15 +292,7 @@ impl Vault {
                     let txn = self.store.env.read_txn()?;
                     live_entity_row_in_txn(&self.store, &txn, id)?.is_live()
                         && (MIGRATED.get(&self.store, &txn, id)?.is_some()
-                            || !edge_ids(
-                                &self.store,
-                                &txn,
-                                id,
-                                EdgeKind::ChildOf,
-                                true,
-                                MAX_ANCESTOR_DEPTH,
-                            )?
-                            .is_empty())
+                            || graph::has_edge(&self.store, &txn, id, EdgeKind::ChildOf, true)?)
                 };
                 if live {
                     match self.migrate_conversation_dag(id) {

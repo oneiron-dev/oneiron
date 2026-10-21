@@ -683,7 +683,7 @@ impl Memory<'_> {
                 HostFence::Missing => Fence::WrongNode,
             }),
             (Lane::Human, _) => Ok(
-                if standing.taker.is_some_and(|taker| {
+                if standing.taker.as_ref().is_some_and(|taker| {
                     taker.actor == self.actor() && taker.generation == generation
                 }) {
                     Fence::Held {
@@ -745,6 +745,7 @@ impl Memory<'_> {
                         if same_try
                             && standing
                                 .taker
+                                .as_ref()
                                 .is_some_and(|taker| taker.actor == self.actor()) =>
                     {
                         Fence::Settled

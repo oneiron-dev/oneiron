@@ -46,9 +46,8 @@ impl Vault {
     }
 
     /// The binding generation `actor` holds now: its live bindings, of any
-    /// class, or `None` when it holds none (an unrooted vault included). At
-    /// the cap the lowest binding of each class is kept first, so no class
-    /// the actor holds is left out.
+    /// class, or `None` when it holds none (an unrooted vault included). The
+    /// generation names every one of them, however many.
     pub(crate) fn actor_binding_generation_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -85,7 +84,10 @@ impl Vault {
             }))
         };
         let writer = self.observed_write_actor_in_txn(txn, writer)?;
-        if generation.is_some_and(|generation| generation.bindings().is_empty()) {
+        if generation
+            .as_ref()
+            .is_some_and(|generation| generation.bindings().is_empty())
+        {
             return refused();
         }
         let fold = self.authority_fold_readonly_in_txn(txn)?;
