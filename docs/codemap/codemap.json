@@ -8834,19 +8834,23 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "Filing",
       "LibraryActor",
+      "RecentOutcome",
+      "RecentRun",
       "Retired",
       "RetiredWorkflow",
-      "WorkflowRecord"
+      "WorkflowRecord",
+      "WorkflowResolution"
      ],
      "path": "src/browser_library.rs",
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
-      "const": 1,
+      "const": 3,
       "crate-vis": 2,
-      "enum": 2,
-      "fn": 10,
-      "struct": 2
+      "enum": 5,
+      "fn": 12,
+      "struct": 3
      }
     },
     {
@@ -72988,7 +72992,7 @@
      "path": "src/driver/storage.rs",
      "purpose": "The driver's reads of a page's storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on both…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -73111,12 +73115,32 @@
      "path": "src/library.rs",
      "purpose": "The replay library (OF-598; EIRI-ARCH-0002 \"The replay library\"): a solved browser run, kept as a…",
      "surface": {
-      "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 3,
+      "re-export": 1,
       "struct": 14,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AdmissionRefusal",
+      "Admitted",
+      "RecentCounts",
+      "ReplayGuest",
+      "SupersedeOutcome",
+      "SupersedeRefusal",
+      "WorkflowSeed"
+     ],
+     "path": "src/library/admission.rs",
+     "purpose": "What an admission checks past the two pages, and what the library keeps of it (CUA E1): the held-out values…",
+     "surface": {
+      "enum": 4,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -73227,8 +73251,22 @@
      "surface": {
       "crate-vis": 5,
       "fn": 23,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FreshGuest"
+     ],
+     "path": "src/session/fresh.rs",
+     "purpose": "The fresh guest a proposal's replay runs on (CUA E1): admission's second check runs on a browser of its own…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "trait": 1
      }
     },
     {
@@ -73274,7 +73312,7 @@
      "path": "src/session/switch.rs",
      "purpose": "The engine switch's transaction (FIX 6680, BROWSER-SPLIT PR3, PR3b), under the seat lock the call already…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 7
      }
     },
     {
@@ -73351,10 +73389,10 @@
      "purpose": "What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page…"
     },
     "library": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The replay library (OF-598; EIRI-ARCH-0002 \"The replay library\"): a solved browser run, kept as a…"
     },
     "mcp": {
@@ -73407,7 +73445,7 @@
      "purpose": "A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX…"
     },
     "session": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -73423,7 +73461,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 36,
+   "source_files": 38,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -96373,6 +96411,7 @@
       "AdmissionConsent",
       "AdmissionReceipt",
       "AdmissionReceiptsRequest",
+      "AdmissionRefusal",
       "AdmissionStatus",
       "AdmissionStatusRequest",
       "AffectAnnotationPut",
@@ -98993,6 +99032,7 @@
       "ReceiptRecord",
       "ReceiptView",
       "ReceivedFileOperation",
+      "RecentCounts",
       "RecipientRole",
       "RecipientState",
       "RecordEraseConfirmRequest",
@@ -99026,6 +99066,7 @@
       "RenderPair",
       "RenderSide",
       "RendererKind",
+      "ReplayGuest",
       "ReplyCode",
       "ReplyDisposition",
       "ReplyRouteRule",
@@ -99815,6 +99856,8 @@
       "SummarySourceVersion",
       "SummarySpan",
       "SummaryStatusRequest",
+      "SupersedeOutcome",
+      "SupersedeRefusal",
       "SupportGrantList",
       "SupportGrantListRequest",
       "SupportGrantMintAnswer",
@@ -100175,6 +100218,7 @@
       "WorkflowRunRequest",
       "WorkflowRunView",
       "WorkflowSaveRequest",
+      "WorkflowSeed",
       "WorkflowStepCapture",
       "WorkflowStepRun",
       "WorkflowUpdateRequest",
@@ -100219,8 +100263,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 930,
-      "struct": 2937
+      "enum": 933,
+      "struct": 2940
      }
     },
     {
