@@ -75,7 +75,7 @@ mod wire_health;
 mod workflows;
 mod workspace;
 
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, MemoryResult};
 use crate::task_verb::{TaskAskDefault, TaskAskHandle, TaskAskQuestion, TaskAskSpec, TaskAskTarget};
 use serde::{Deserialize, Serialize};
 
@@ -800,6 +800,23 @@ fn verb_leaves(name: &str, written: bool) -> Vec<&str> {
 #[must_use]
 pub fn code_mode_declarations() -> &'static str {
     code_mode_catalog_fragment().text
+}
+
+/// A revision as a surface shows it: 64 lower-case hex.
+fn revision_shape(seen: &str) -> MemoryResult<()> {
+    if seen.len() == 64
+        && seen
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        Ok(())
+    } else {
+        Err(MemoryError::new(
+            MEMORY_CODE_BAD_REQUEST,
+            "seen must be 64 lower-case hex",
+            &["Pass the revision the surface showed, or omit seen."],
+        ))
+    }
 }
 
 #[cfg(test)]

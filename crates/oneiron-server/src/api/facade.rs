@@ -11,7 +11,7 @@
 //! The route projection is generated from `scripts/sdk/agent-verbs.json`.
 //! Claim lifecycle, scoped reads, export, notes, artifacts, tasks and rooms
 //! all use the same inventory and engine DTOs as the native clients. Every
-//! route runs its row through the generated dispatch (`dispatch.rs`), the one
+//! route runs its row through the generated dispatch (`facade/generated/dispatch.rs`), the one
 //! the held socket's `rpc.req` runs too (OF-489), so a verb meets the same
 //! admission on both. Live subscriptions remain owned by the held socket
 //! rather than this router.
