@@ -34,6 +34,14 @@ impl Pipe {
         }
     }
 
+    /// Drops what the session's snapshots hold of page `tab`, closed and
+    /// no longer in front (FIX 6891).
+    pub(crate) fn drop_snapshots(&self, tab: &str) {
+        if let Some(sink) = self.sink.get() {
+            sink.drop_tab(tab);
+        }
+    }
+
     /// Names `origin`, shown by page `tab`, as storage no switch carries.
     pub(crate) fn exclude(&self, tab: &str, origin: String, reason: SwitchLoss) {
         if let Some(sink) = self.sink.get() {

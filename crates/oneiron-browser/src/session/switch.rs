@@ -35,6 +35,7 @@ use super::storage::{
 };
 use crate::cdp::{Visits, web_origin};
 use crate::driver::CdpDriver;
+use crate::request::Custody;
 use crate::retention::HandleRetention;
 use crate::{
     BrowserDriver, BrowserEngine, BrowserError, EffectReceipt, EngineSwitchRecord, Observation,
@@ -413,17 +414,20 @@ fn adapt(cookies: &[Value], to: BrowserEngine) -> (Vec<Value>, Vec<SwitchNotCarr
 
 /// Starts and readies the target, everything after the export up to its
 /// whole read, filling `record`'s lists; its pipe's storage reads go to
-/// `sink`, kept from its commit. A hard step that went wrong halts it, and
-/// the target drops with it.
+/// `sink`, kept from its commit. Its pipe holds the session's `custody`
+/// from its attach, before any of its pages loads: the host's request
+/// handler, if any, takes its every request as the source's (FIX 7122). A
+/// hard step that went wrong halts it, and the target drops with it.
 fn stage(
     starter: &mut dyn BrowserGuestStarter,
     wait_cap: Duration,
     state: &Exported,
     sink: Option<Sink>,
+    custody: &Custody,
     record: &mut EngineSwitchRecord,
 ) -> Result<(EngineGuest, Observation), Halt> {
     let started = switch_commit_policy(SwitchStage::Start, starter.start(record.to))?;
-    let attached = EngineGuest::attach(record.to, started, wait_cap, sink);
+    let attached = EngineGuest::attach(record.to, started, wait_cap, sink, custody.clone());
     let mut target = switch_commit_policy(SwitchStage::Attach, attached)?;
     if let Some(cookies) = &state.cookies {
         let (params, losses) = adapt(cookies, record.to);
@@ -584,7 +588,14 @@ impl BrowserSession {
         }
         let wait_cap = self.driver.wait_cap();
         let sink = self.snapshots.as_ref().map(OriginSnapshots::sink);
-        let staged = stage(starter, wait_cap, &state, sink.clone(), &mut record);
+        let staged = stage(
+            starter,
+            wait_cap,
+            &state,
+            sink.clone(),
+            &self.custody,
+            &mut record,
+        );
         drop(charge);
         match staged {
             Ok((target, observation)) => self.commit(record, &tab, sink, target, observation),
