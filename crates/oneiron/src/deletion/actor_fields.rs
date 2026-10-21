@@ -22,8 +22,26 @@ const IDENTITY_OPS: ActorScrub = Vault::scrub_identity_op_actor_in_txn;
 const ORIGIN_CLAIMS: ActorScrub = crate::origin::actor_erase::erase_publication_claim_actor_in_txn;
 
 /// Runs in the purge's transaction: the identity ops first, then origin's
-/// claims, then every declared table's scrub in catalog order.
+/// claims, then every declared table's scrub in catalog order. Behind the
+/// permanent hard-delete marker, the dispatch text the actor owns leaves the
+/// attempt payloads too (FIX 7076); a delete writes no marker and keeps it.
 pub(super) fn erase_actor_fields_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    scrub_actor_fields_in_txn(vault, wtxn, actor)?;
+    // A marker-only hard path writes the marker before this sweep and never
+    // reaches the provenance door's erase.
+    if HARD_DELETE_MARKER.contains(&vault.store, wtxn, &crate::side_table::HexId(*actor))? {
+        crate::attempt_queue::erase_attempt_payload_actor_in_txn(&vault.store, wtxn, actor)?;
+    }
+    Ok(())
+}
+
+/// The sweep's scrubs without the attempt payloads, which a restore's sweep
+/// clears for all its ids in one pass.
+fn scrub_actor_fields_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
@@ -73,8 +91,11 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     let mut erased = hard_erased_ids_in_txn(vault, wtxn)?;
     erased.extend(live);
     for actor in &erased {
-        erase_actor_fields_in_txn(vault, wtxn, actor)?;
+        scrub_actor_fields_in_txn(vault, wtxn, actor)?;
     }
+    // Their dispatch text, carried back by the image's attempt rows, goes
+    // again: one pass over the ledger for every id (FIX 7076).
+    crate::attempt_queue::erase_attempt_payload_actors_in_txn(&vault.store, wtxn, &erased)?;
     Ok(())
 }
 
