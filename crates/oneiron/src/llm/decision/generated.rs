@@ -23,6 +23,7 @@ use crate::llm::{
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result};
 
+mod score;
 mod wire;
 pub use wire::DecisionWireLabels;
 
@@ -162,10 +163,10 @@ impl DecisionLadder<'_> {
         if !questions.iter().all(|question| {
             matches!(
                 question.contract,
-                AnswerContract::Noul | AnswerContract::Choice { .. }
+                AnswerContract::Noul | AnswerContract::Choice { .. } | AnswerContract::Score { .. }
             )
         }) {
-            return Err(invalid("a generated read takes noul and choice questions").into());
+            return Err(invalid("a generated read takes noul, choice and score questions").into());
         }
         let pack = self.open(
             questions,
@@ -320,6 +321,12 @@ fn request(
     let questions: Vec<Value> = asked
         .iter()
         .map(|question| {
+            // A score question reads its own entry (`score`); the rest read as before.
+            if let AnswerContract::Score { min, max } = question.contract {
+                let key = wire::question_key(question.id, labels);
+                properties.insert(key.clone(), score::property(min, max));
+                return score::shown(key, question, min, max);
+            }
             let shown = wire::shown_labels(question, &labels_of(question), labels);
             let weights: Map<String, Value> = shown
                 .iter()
@@ -440,6 +447,9 @@ fn answers(
                         probability,
                     })
             });
+            if let AnswerContract::Score { min, max } = question.contract {
+                return score::answer(wire::entry(&reply, question.id, labels), min, max, paired);
+            }
             let shown = wire::shown_labels(question, &labels_of(question), labels);
             let entry = wire::entry(&reply, question.id, labels);
             let weights: Option<Vec<f64>> = shown

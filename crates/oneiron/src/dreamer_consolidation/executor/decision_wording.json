@@ -1,5 +1,9 @@
 {
   "resolution": "Several values were extracted for one claim identity; the state lists the prior heads the branch holds and each new candidate. How do they resolve? merge: one value replaces them all. supersede: the newest value replaces the prior head. accumulate: the predicate genuinely holds several values at once, so every candidate is kept. escalate: a real contradiction, left standing for a person to settle.",
   "identity": "If this conflict resolves by merge or supersede, which listed candidate's claim identity does the resolved claim keep? none keeps the conflict's own identity; a merge across predicates must name a candidate.",
-  "correction": "Each state candidate was just extracted from the conversation and names its own questions. Does it correct or update one of the listed claims about the same entity? Answer with that claim's id, or none when it states something new."
+  "correction": "Each state candidate was just extracted from the conversation and names its own questions. Does it correct or update one of the listed claims about the same entity? Answer with that claim's id, or none when it states something new.",
+  "sieve_novelty": "Is the span's mention new information worth retaining: something its source context and the entity candidates do not already settle? An unfamiliar spelling of something already known is not new.",
+  "sieve_kind": "Which kind of mention is the span: date, a date or time, or name, the name of a person, organisation or place?",
+  "sieve_entity": "Which listed entity candidate does the span name? Answer none when it names none of them.",
+  "sieve_confidence": "How sure is this reading of the span, its novelty, its kind and the candidate it names, as a whole number of percent from 0 to 100? A low score never discards the span."
 }
