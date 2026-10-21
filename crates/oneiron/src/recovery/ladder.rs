@@ -269,7 +269,7 @@ pub fn recover_vault_window(
     // Forward replay may quarantine semantic/authority failures. Never mark a
     // partial replay complete merely because that door reported its row count.
     let actual = super::capture_canonical_window(vault, &snapshot.window, &prepared.window)?;
-    if &actual != snapshot {
+    if &pad_equivalent(vault, actual, snapshot) != snapshot {
         return Err(invalid("recovery materialization is not equivalent"));
     }
     {
@@ -331,6 +331,28 @@ pub fn recover_vault_window(
         prepared.publish(path)?;
     }
     Ok(prepared)
+}
+
+/// `actual`, a recapture of a recovered window, with each pad row naming the
+/// same header, key and pad as `wanted`'s taken as `wanted`'s: a carrier an
+/// artifact kept where custody could not take its pad reads back as its
+/// reference once the recovery published that pad (KS-5).
+#[cfg(feature = "sync")]
+pub(super) fn pad_equivalent(
+    vault: &crate::Vault,
+    mut actual: CanonicalSnapshot,
+    wanted: &CanonicalSnapshot,
+) -> CanonicalSnapshot {
+    for (entity, want) in actual.entity_blobs.iter_mut().zip(&wanted.entity_blobs) {
+        if entity.id == want.id
+            && entity.blob != want.blob
+            && crate::world_keys::image_pad_row_of(&entity.blob).is_some()
+            && crate::world_keys::pad_echo_equal(&vault.store, &entity.blob, &want.blob)
+        {
+            entity.blob.clone_from(&want.blob);
+        }
+    }
+    actual
 }
 
 /// Fills each pad row the rebuilt `window` names by bare reference with its
