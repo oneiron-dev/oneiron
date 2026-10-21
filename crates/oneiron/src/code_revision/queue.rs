@@ -241,6 +241,10 @@ pub(crate) fn validate_queue_revision_in_txn(
     if tested.schema_version != 1
         || revision.revision_id != expected
         || revision.reverted_to_revision_id.is_some()
+        // No seal carries an import binding or a retired path before their
+        // reviewed producers land (G4 PR1): the resolver reads the root.
+        || revision.snapshot_anchor.is_some()
+        || !revision.retired_paths.is_empty()
         || revision.session_id != queue_aggregation_session(&tested.store, &tested.init_work)?
         || revision.provenance_claim_id != Some(queue_provenance_id(revision.revision_id)?)
         || tested.inventory_digest != CodeTreeInventory::digest(revision)?

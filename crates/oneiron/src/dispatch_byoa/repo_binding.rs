@@ -39,7 +39,7 @@ use super::dispatcher::ByoaExecutionFence;
 use super::error::{ByoaResult, ERR_EXECUTION_CHECKOUT, invalid};
 use super::exhaust::{ByoaExhaustEnvelope, ByoaTerminalDisposition, decode_byoa_record};
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState, EnqueueOutcome};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState, EnqueueOutcome};
 use crate::checkout::lease::attempt_binding::{
     CHECKOUT_BINDING_SHARED, attempt_holds_in_txn, reserve_attempt_in_txn, start_attempt_in_txn,
 };
@@ -312,21 +312,24 @@ pub(super) fn mark_stale_capture_in_txn<E>(
 }
 
 /// The checkout a next seat's successor of `spent` at seat `seat` runs
-/// against: a fresh id derived from the spent attempt and the seat when
-/// the spent attempt was bound, else the checkout it ran on, as before.
+/// against: a fresh id derived from the spent attempt and the seat when the
+/// work is bound to a checkout (`source`: the spent attempt's own custody,
+/// else the custody its bound work kept), else `base`, the checkout the
+/// work ran on or names, as before.
 ///
 /// # Errors
-/// A payload that does not decode.
+/// A derived id the checkout door refuses.
 pub(super) fn successor_checkout(
-    spent: &AttemptRecord,
-    ran: &CliSandboxSpec,
+    spent: AttemptId,
+    base: CheckoutId,
+    source: Option<&ByoaRepoBinding>,
     seat: usize,
 ) -> ByoaResult<CheckoutId> {
-    if decode_byoa_record(spent)?.repo_binding.is_none() {
-        return Ok(ran.checkout_id);
+    if source.is_none() {
+        return Ok(base);
     }
     let mut hasher = blake3::Hasher::new_derive_key(SUCCESSOR_CHECKOUT_DOMAIN);
-    hasher.update(spent.id.as_bytes());
+    hasher.update(spent.as_bytes());
     hasher.update(&(seat as u64).to_le_bytes());
     let digest = hasher.finalize();
     let mut bytes = [0_u8; 16];
@@ -337,11 +340,12 @@ pub(super) fn successor_checkout(
     CheckoutId::from_bytes(bytes).map_err(|_| invalid(ERR_EXECUTION_CHECKOUT))
 }
 
-/// Claims the fresh checkout `checkout` for the successor of `spent`,
-/// through the shipped claim path in the routing writer: the spent
-/// attempt's repo, TASK and holder, its lease's class and lifetime (none
-/// stays none). A replay finds it claimed and claims nothing; an unbound
-/// spent attempt runs its successor on its own checkout, as before.
+/// Claims the fresh checkout `checkout` for a next seat's successor,
+/// through the shipped claim path in the routing writer: the repo, TASK and
+/// holder of `source` (the custody [`successor_checkout`] derived it from),
+/// its lease's class and lifetime (none stays none). A replay finds it
+/// claimed and claims nothing; unbound work runs its successor on its own
+/// checkout, as before.
 ///
 /// # Errors
 /// [`ERR_EXECUTION_CHECKOUT`] for a derived id holding another lease; a
@@ -349,11 +353,11 @@ pub(super) fn successor_checkout(
 pub(super) fn claim_successor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    spent: &AttemptRecord,
+    source: Option<&ByoaRepoBinding>,
     checkout: CheckoutId,
     now: u64,
 ) -> ByoaResult<()> {
-    let Some(binding) = decode_byoa_record(spent)?.repo_binding else {
+    let Some(binding) = source else {
         return Ok(());
     };
     let task = EntityId::from_bytes(binding.task)?;
@@ -383,7 +387,7 @@ pub(super) fn claim_successor_in_txn(
             checkout_id: checkout,
             task_ref: task,
             repo_ref,
-            holder_ref: binding.holder,
+            holder_ref: binding.holder.clone(),
             task_class,
             ttl_secs,
             now,

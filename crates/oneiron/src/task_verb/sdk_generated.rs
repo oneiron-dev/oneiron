@@ -3301,6 +3301,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.import",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodeRepoImportRequest,
+                >(),
+            ),
+            (
                 "vault.code.origin.register",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::OriginRegisterRequest,
@@ -6876,6 +6882,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.results.read",
     "vault.results.slice",
     "vault.code.export",
+    "vault.code.import",
     "vault.code.origin.register",
     "vault.code.origin.mirror.get",
     "vault.code.origin.mirror.set",
@@ -8508,6 +8515,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.export" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CodeExportResult,
+        >(),
+        "vault.code.import" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::CodeRepoImportView,
         >(),
         "vault.code.origin.register" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginRegistered,
@@ -13788,6 +13798,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.import" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19449,6 +19466,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.export" => {
             let _input: crate::memory::origin_doors::CodeExportRequest = decode(value.clone())?;
         }
+        "vault.code.import" => {
+            let _input: crate::memory::origin_doors::CodeRepoImportRequest = decode(value.clone())?;
+        }
         "vault.code.origin.register" => {
             let _input: crate::memory::origin_doors::OriginRegisterRequest = decode(value.clone())?;
         }
@@ -22539,6 +22559,7 @@ pub fn invoke(
         "vault.results.slice" => encode(vault_results_slice(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
+        "vault.code.import" => encode(vault_code_import(memory, decode(value)?)?),
         "vault.code.origin.register" => encode(vault_code_origin_register(memory, decode(value)?)?),
         "vault.code.origin.mirror.get" => {
             encode(vault_code_origin_mirror_get(memory, decode(value)?)?)
@@ -28728,6 +28749,12 @@ pub fn vault_code_export(
     input: crate::memory::origin_doors::CodeExportRequest,
 ) -> MemoryResult<crate::memory::origin_doors::CodeExportResult> {
     memory.code_export_as(&memory.embedded_owner("vault.code.export")?, input)
+}
+pub fn vault_code_import(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodeRepoImportRequest,
+) -> MemoryResult<crate::memory::origin_doors::CodeRepoImportView> {
+    memory.code_repo_import_as(&memory.embedded_owner("vault.code.import")?, input)
 }
 pub fn vault_code_origin_register(
     memory: &Memory<'_>,
