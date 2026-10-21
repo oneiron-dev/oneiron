@@ -469,11 +469,12 @@ async fn facade_call_receipt(
         Some(value) => oneiron::receipt::call_json_digest(value),
         None => oneiron::receipt::call_bytes_digest(&bytes),
     };
-    // OF-568: what the call reads, captured before it runs.
+    // OF-568: what the call reads, captured before it runs. OF-568 L4: the
+    // attempt whose live run it holds, as the hold witnessed it.
     let inputs = call_receipt::action_inputs(&server, &verb, request.as_ref());
-    let mut response = next
-        .run(Request::from_parts(parts, Body::from(bytes)))
-        .await;
+    let (mut response, attempt) =
+        call_receipt::attempt_witnessed(next.run(Request::from_parts(parts, Body::from(bytes))))
+            .await;
     let mut refusal = response.extensions_mut().remove::<FacadeApiError>();
     let status = response.status();
     let mut result_digest = None;
@@ -536,6 +537,7 @@ async fn facade_call_receipt(
             request_digest,
             result_digest,
             inputs,
+            attempt,
             served: Vec::new(),
         },
     );
