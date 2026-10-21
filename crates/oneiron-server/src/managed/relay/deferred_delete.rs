@@ -372,8 +372,14 @@ fn publish(temporary: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
     std::fs::rename(temporary, path)
 }
 
+/// Syncs directory `path` through the engine's one portable flush (FIX
+/// 7060), which opens it as each platform's flush needs; its I/O error is
+/// returned as it is, and any other as an I/O error.
 fn sync_directory(path: &Path) -> io::Result<()> {
-    std::fs::File::open(path)?.sync_all()
+    oneiron::store::sync_dir(path).map_err(|error| match error {
+        oneiron::Error::Io(error) => error,
+        other => io::Error::other(other),
+    })
 }
 
 /// The 32 bytes a room's lowercase hex vault id names.
