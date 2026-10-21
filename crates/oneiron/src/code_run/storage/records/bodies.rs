@@ -3,6 +3,7 @@
 //! (moved out of the row-family module whole).
 
 use super::*;
+use crate::result_body::ResultBodyPin;
 
 mod reader;
 
@@ -38,7 +39,9 @@ impl Vault {
         complete: bool,
         owner: Option<EntityId>,
     ) -> Result<CodeRunRawOutput> {
-        let finished = finish_output(path, sink, complete, self.limit_watch())?;
+        let finished = finish_output(path, sink, complete, self.limit_watch(), |digest| {
+            self.pin_result_body(digest)
+        })?;
         let mut wtxn = self.store.env.write_txn()?;
         self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, owner)?;
         wtxn.commit()?;
@@ -47,7 +50,9 @@ impl Vault {
 
     /// Writes the row of the body `finished` holds, the secret mark of
     /// `owner`'s occurrence of it, and, with an `owner`, `occurrence` as that
-    /// owner's: the manifest of the same bytes at the owner's path.
+    /// owner's: the manifest of the same bytes at the owner's path. With no
+    /// `owner` no descriptor holds the body, so its row holds it on its own
+    /// (FIX 5399b).
     pub(crate) fn put_code_run_output_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -60,6 +65,7 @@ impl Vault {
             finished,
             occurrence,
             ResultOccurrence::of(owner, occurrence)?,
+            owner.is_none(),
         )?;
         if let Some(owner) = owner {
             crate::provenance::body::publish_body_in_txn(
@@ -72,20 +78,29 @@ impl Vault {
     }
 
     /// Writes the row of the body `finished` holds and, when the secret scan
-    /// hit it, the mark of `at`, the occurrence `output` is.
+    /// hit it, the mark of `at`, the occurrence `output` is. `standalone`:
+    /// the put publishes no descriptor, so the row holds its body on its
+    /// own; a row that held it before keeps holding it (FIX 5399b).
     fn put_code_run_output_row_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         finished: &FinishedOutput,
         output: &CodeRunRawOutput,
         at: ResultOccurrence,
+        standalone: bool,
     ) -> Result<()> {
         if output.handle != finished.output.handle {
             return Err(Error::InvariantViolation(
                 "code-run output occurrence names other bytes",
             ));
         }
-        RAW_OUTPUTS.put(&self.store, wtxn, &output.handle, &finished.body)?;
+        let held = standalone || code_run_body_held_in_txn(&self.store, wtxn, &output.raw_blake3)?;
+        RAW_OUTPUTS.put(
+            &self.store,
+            wtxn,
+            &output.handle,
+            &finished.body.holding(held),
+        )?;
         // A sealed body file's key commits with the row naming it (FIX 5348).
         if let Some(key) = &finished.key {
             crate::store::bind_body_key_in_txn(&self.store, wtxn, &self.store.body_dir()?, key)?;
@@ -116,7 +131,9 @@ impl Vault {
             };
             sink.write(&frame[..read])?;
         }
-        finish_output(path, sink, true, self.limit_watch())
+        finish_output(path, sink, true, self.limit_watch(), |digest| {
+            self.pin_result_body(digest)
+        })
     }
 
     /// [`Self::code_run_output_sink`] as `staged` holds it, prepared before
@@ -157,14 +174,9 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         digest: &[u8; 32],
     ) -> Result<bool> {
-        let handle = CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
-            hash: *digest,
-            byte_len: 0,
-        })
-        .handle;
         Ok(matches!(
-            RAW_OUTPUTS.get(&self.store, txn, &handle)?,
-            Some(StoredBody::Inline(_))
+            RAW_OUTPUTS.get(&self.store, txn, &body_handle(digest))?,
+            Some(StoredBody::Inline { .. })
         ))
     }
 
@@ -186,7 +198,8 @@ impl Vault {
 
     /// Stores a complete body ALONGSIDE the taint refs of the action that
     /// produced them (SECRET-04, ONE-1922), on the occurrence `owner` holds
-    /// (or the bytes' own, with none). No body descriptor is published.
+    /// (or the bytes' own, with none). No body descriptor is published, so
+    /// the row holds its body on its own (FIX 5399b).
     ///
     /// One write transaction carries the sidecar and the body row, so
     /// tainted exhaust can never survive a half-failed write wearing no
@@ -204,7 +217,13 @@ impl Vault {
         let at = ResultOccurrence::of(owner, output)?;
         let mut sink = self.code_run_output_sink()?;
         sink.write(raw)?;
-        let finished = finish_output(output.path.clone(), sink, true, self.limit_watch())?;
+        let finished = finish_output(
+            output.path.clone(),
+            sink,
+            true,
+            self.limit_watch(),
+            |digest| self.pin_result_body(digest),
+        )?;
         if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
@@ -217,7 +236,7 @@ impl Vault {
         } else {
             RAW_OUTPUT_TAINTS.put(&self.store, &mut wtxn, &key, &taint_refs.to_vec())?;
         }
-        self.put_code_run_output_row_in_txn(&mut wtxn, &finished, output, at)?;
+        self.put_code_run_output_row_in_txn(&mut wtxn, &finished, output, at, true)?;
         Ok(wtxn.commit()?)
     }
 
@@ -254,6 +273,9 @@ impl Vault {
                 {
                     return Err(Error::CorruptedIndex("message result body file missing"));
                 }
+                // Base held no row: the MESSAGE's descriptor alone holds the
+                // copy, so the room's own hold stays in the room (FIX 5399b).
+                let stored = stored.holding(false);
                 RAW_OUTPUTS.put(&self.store, wtxn, &output.handle, &stored)?;
                 stored
             }
@@ -393,6 +415,11 @@ pub(crate) struct FinishedOutput {
     pub(in crate::code_run::storage) secret: Option<&'static str>,
     /// A sealed file's key row, committed with the body's row (FIX 5348).
     pub(in crate::code_run::storage) key: Option<StagedBodyKey>,
+    /// The reader pin on the body's final digest, taken before its file was
+    /// published under it and held until the row naming it commits or the
+    /// write is dropped: the collector leaves the file be meanwhile (FIX
+    /// 5399b).
+    _pin: ResultBodyPin,
 }
 
 impl FinishedOutput {
@@ -411,22 +438,32 @@ impl FinishedOutput {
 /// Finishes `sink` into the output's manifest, its row and the secret
 /// scan's hit. A body that took the disk below `[limits]
 /// code_result_disk_floor_bytes` asks that row's question; it is stored
-/// whole all the same, as a body the scan marked is.
+/// whole all the same, as a body the scan marked is. `pin` pins the body's
+/// final digest, its sweep's tail written through once, before a spilled
+/// file is published under it (FIX 5399b).
 pub(in crate::code_run::storage) fn finish_output(
     path: String,
     sink: BodySink,
     complete: bool,
     watch: &LimitWatch,
+    pin: impl FnOnce([u8; 32]) -> ResultBodyPin,
 ) -> Result<FinishedOutput> {
-    let (facts, sunk) = sink.finish(crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS)?;
+    let (facts, sunk, pin) =
+        sink.finish_pinned(crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS, pin)?;
     let output = CodeRunRawOutput::from_facts(path, &facts, complete)?;
     let (body, key) = match sunk {
-        SunkBody::Inline(bytes) => (StoredBody::Inline(bytes), None),
+        SunkBody::Inline(bytes) => (StoredBody::Inline { bytes, held: false }, None),
         SunkBody::File { free_bytes, key } => {
             if let Some(free_bytes) = free_bytes {
                 watch.floor(EngineLimit::CodeResultDiskFloorBytes, free_bytes);
             }
-            (StoredBody::File { len: facts.len }, key)
+            (
+                StoredBody::File {
+                    len: facts.len,
+                    held: false,
+                },
+                key,
+            )
         }
     };
     Ok(FinishedOutput {
@@ -434,6 +471,7 @@ pub(in crate::code_run::storage) fn finish_output(
         body,
         secret: facts.secret,
         key,
+        _pin: pin,
     })
 }
 
@@ -448,7 +486,7 @@ pub(super) fn owned_body(
         blake3: output.raw_blake3,
         bytes: output.raw_len,
         location: match body {
-            StoredBody::Inline(_) => BodyLocation::Inline,
+            StoredBody::Inline { .. } => BodyLocation::Inline,
             StoredBody::File { .. } => BodyLocation::File,
         },
     };
@@ -490,8 +528,8 @@ pub(in crate::code_run::storage) fn load_whole_body(
     dirs: impl FnOnce() -> Result<Vec<BodyDir>>,
 ) -> Result<Vec<u8>> {
     let bytes = match body {
-        StoredBody::Inline(bytes) => bytes,
-        StoredBody::File { len } => {
+        StoredBody::Inline { bytes, .. } => bytes,
+        StoredBody::File { len, .. } => {
             if len != output.raw_len {
                 return Err(drifted());
             }
@@ -525,8 +563,8 @@ pub(in crate::code_run::storage) fn read_body_row_range(
     let end = offset.saturating_add(len as u64).min(output.raw_len);
     let take = usize::try_from(end - offset)
         .map_err(|_| Error::ArithmeticOverflow("code-run result range"))?;
-    match row.split_first() {
-        Some((&STORED_INLINE, body)) => {
+    match split_row(row) {
+        Some((STORED_INLINE, body)) => {
             if u64::try_from(body.len()).ok() != Some(output.raw_len) {
                 return Err(drifted());
             }
@@ -534,7 +572,7 @@ pub(in crate::code_run::storage) fn read_body_row_range(
                 .map_err(|_| Error::ArithmeticOverflow("code-run result range"))?;
             Ok(body[start..start + take].to_vec())
         }
-        Some((&STORED_FILE, _)) => open_body_file(output, key, dirs()?)?.read_range(offset, take),
+        Some((STORED_FILE, _)) => open_body_file(output, key, dirs()?)?.read_range(offset, take),
         _ => Err(Error::CorruptedIndex("code-run raw output row")),
     }
 }
@@ -544,7 +582,7 @@ pub(in crate::code_run::storage) fn read_body_row_range(
 /// its rows raw, so this is how it finds the files beside them.
 pub(crate) fn code_run_body_file_of_row(key: &[u8], value: &[u8]) -> Option<([u8; 32], u64)> {
     let digest = handle_digest(key)?;
-    let StoredBody::File { len } = StoredBody::from_raw(value).ok()? else {
+    let StoredBody::File { len, .. } = StoredBody::from_raw(value).ok()? else {
         return None;
     };
     Some((digest, len))
@@ -559,21 +597,69 @@ pub(crate) fn code_run_inline_body_of_row<'v>(
     value: &'v [u8],
 ) -> Option<([u8; 32], &'v [u8])> {
     let digest = handle_digest(key)?;
-    match value.split_first() {
-        Some((&STORED_INLINE, body)) => Some((digest, body)),
+    match split_row(value) {
+        Some((STORED_INLINE, body)) => Some((digest, body)),
         _ => None,
     }
 }
 
+/// Whether a raw result body row holds its body inline, whoever holds the
+/// body.
+pub(crate) fn code_run_row_inline(value: &[u8]) -> bool {
+    matches!(split_row(value), Some((STORED_INLINE, _)))
+}
+
+/// Whether the result body row of `digest` holds its body on its own: a raw
+/// output no descriptor holds (FIX 5399b). Another holder's release of the
+/// same bytes neither queues nor collects it. `false` with no row.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn code_run_body_held_in_txn(
+    dbs: &impl side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    digest: &[u8; 32],
+) -> Result<bool> {
+    Ok(RAW_OUTPUTS
+        .get_borrowed(dbs, txn, &body_handle(digest))?
+        .is_some_and(|row| row_held(&row)))
+}
+
+/// An erase's lift of the hold the result body row of `digest` keeps on
+/// its file, in the erase's transaction: no hold of its own outlasts an
+/// erase, so the file is queued for the collector, which takes it with its
+/// row and key row (FIX 5399b). An unheld row, and an inline one, which
+/// goes with the erase whole as before, are left as they are.
+///
+/// # Errors
+///
+/// Storage errors, and a row that does not decode.
+pub(crate) fn lift_code_run_file_hold_in_txn(
+    dbs: &impl crate::store::ManifestDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    digest: &[u8; 32],
+) -> Result<()> {
+    let handle = body_handle(digest);
+    let Some(StoredBody::File { len, held: true }) = RAW_OUTPUTS.get(dbs, wtxn, &handle)? else {
+        return Ok(());
+    };
+    RAW_OUTPUTS.put(dbs, wtxn, &handle, &StoredBody::File { len, held: false })?;
+    crate::provenance::body::queue_pruned_file_in_txn(dbs, wtxn, digest)
+}
+
 /// The raw `vault_meta` key of the result body row of `digest`.
 pub(crate) fn code_run_body_row_key(digest: &[u8; 32]) -> Vec<u8> {
-    RAW_OUTPUTS.key_bytes(
-        &CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
-            hash: *digest,
-            byte_len: 0,
-        })
-        .handle,
-    )
+    RAW_OUTPUTS.key_bytes(&body_handle(digest))
+}
+
+/// The content handle the result body row of `digest` is keyed by.
+fn body_handle(digest: &[u8; 32]) -> String {
+    CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
+        hash: *digest,
+        byte_len: 0,
+    })
+    .handle
 }
 
 /// The digest a raw result body row's key names by its handle.

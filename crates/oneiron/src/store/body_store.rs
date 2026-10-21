@@ -34,6 +34,7 @@ use super::Store;
 use crate::secret_custody::{KnownSource, KnownSweep, KnownValues};
 use crate::{Error, Result};
 
+mod finish_pinned;
 mod spool;
 
 const BODIES_DIR: &str = "bodies";
@@ -662,9 +663,7 @@ impl BodySink {
 
     /// Finishes the body: a spilled one is published under its digest.
     pub(crate) fn finish(mut self, preview_chars: usize) -> Result<(BodyFacts, SunkBody)> {
-        if let Some(sweep) = self.sweep.take() {
-            self.write_through(&sweep.tail()?)?;
-        }
+        self.finalize_sweep()?;
         let facts = self
             .meter
             .take()

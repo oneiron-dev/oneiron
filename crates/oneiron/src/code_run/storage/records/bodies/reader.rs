@@ -26,13 +26,13 @@ impl Vault {
             return Ok(None);
         };
         let pin = self.pin_result_body(output.raw_blake3);
-        let source = if row.first() == Some(&STORED_INLINE) {
+        let source = if code_run_row_inline(&row) {
             if u64::try_from(row.len() - 1).ok() != Some(output.raw_len) {
                 return Err(drifted());
             }
             Source::Inline(row)
         } else {
-            let StoredBody::File { len } = RAW_OUTPUTS.decode_value(&row)? else {
+            let StoredBody::File { len, .. } = RAW_OUTPUTS.decode_value(&row)? else {
                 return Err(Error::CorruptedIndex("code-run raw output row"));
             };
             if len != output.raw_len {

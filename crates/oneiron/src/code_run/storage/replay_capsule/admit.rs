@@ -89,7 +89,9 @@ impl Spill {
     ) -> Result<OutputRef> {
         let mut sink = BodySink::new(vault.store.body_dir()?, self.bound, Some(self.mint.clone()));
         sink.write(bytes)?;
-        let finished = finish_output(path.to_owned(), sink, true, vault.limit_watch())?;
+        let finished = finish_output(path.to_owned(), sink, true, vault.limit_watch(), |digest| {
+            vault.pin_result_body(digest)
+        })?;
         vault.put_code_run_output_in_txn(wtxn, &finished, &finished.output, Some(owner))?;
         tracing::debug!(bytes = bytes.len(), "a replay capsule body is published");
         Ok(finished.output.output_ref())

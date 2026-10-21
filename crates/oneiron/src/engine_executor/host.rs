@@ -747,10 +747,13 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     fn bind_stored_with(
         &mut self,
         storage: &ExecutorStorage<'_>,
-        sink: BodySink,
+        mut sink: BodySink,
         name: Option<String>,
         inherit: &[(EntityId, CodeRunRawOutput)],
     ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
+        // The sweep's tail goes through first, so the path names the digest
+        // the body is published under (FIX 5399b).
+        sink.finalize_sweep()?;
         let path = store_result_output_path(&sink.digest()?);
         let output = storage.publish_code_run_output(path, sink, true, self.run_id)?;
         if !inherit.is_empty() {
