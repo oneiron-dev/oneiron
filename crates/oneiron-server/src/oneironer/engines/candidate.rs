@@ -108,8 +108,8 @@ pub(super) fn discover<'a>(dir: &Path, manifest: &'a Manifest) -> Result<Candida
         return Err(Absent::Protocol);
     }
     let tar = dir.join(&row.worker().file);
-    let extracted = archive::extraction_dir(dir, row.worker())
-        .map_err(|_| Absent::InstallInvalid)?;
+    let extracted =
+        archive::extraction_dir(dir, row.worker()).map_err(|_| Absent::InstallInvalid)?;
     match (
         tar.symlink_metadata().is_ok(),
         extracted.symlink_metadata().is_ok(),

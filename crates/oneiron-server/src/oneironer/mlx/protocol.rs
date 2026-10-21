@@ -298,10 +298,16 @@ pub(super) fn validate_handshake(
         ("worker_name", worker.name == WORKER_NAME),
         ("worker_version", worker.version == expected.version),
         ("worker_lock", worker.lock_sha256 == expected.lock_sha256),
-        ("checkpoint", model.checkpoint_sha16 == expected.checkpoint_sha16),
+        (
+            "checkpoint",
+            model.checkpoint_sha16 == expected.checkpoint_sha16,
+        ),
         ("stack", model.stack_sha16 == expected.stack_sha16),
         ("label_count", model.label_count == expected.label_count),
-        ("tokenizer", model.tokenizer_sha256 == expected.tokenizer_sha256),
+        (
+            "tokenizer",
+            model.tokenizer_sha256 == expected.tokenizer_sha256,
+        ),
         (
             "decode",
             decode.revision == ONEIRONER_DECODE_REVISION

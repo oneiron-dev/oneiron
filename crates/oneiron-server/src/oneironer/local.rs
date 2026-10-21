@@ -108,8 +108,7 @@ impl WindowCounter {
         &self,
         input: &'a EncoderInput,
     ) -> oneiron::Result<Window<'a>> {
-        Window::new(input, &self.tokenizer, self.cap, self.live)
-            .map_err(|_| extraction_failed())
+        Window::new(input, &self.tokenizer, self.cap, self.live).map_err(|_| extraction_failed())
     }
 }
 

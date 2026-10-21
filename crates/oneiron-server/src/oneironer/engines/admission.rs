@@ -158,7 +158,15 @@ impl Admission {
         // Both contestants are timed on the cases the row's window holds.
         let cohort = descriptor.max_window_tokens();
         let key = |worker: &WorkerDescriptor| {
-            RowKey::new(stack, &reference.sha16, worker, build, &os_build, window, cohort)
+            RowKey::new(
+                stack,
+                &reference.sha16,
+                worker,
+                build,
+                &os_build,
+                window,
+                cohort,
+            )
         };
         let max_input_tokens = self.config.max_input_tokens;
         let candle = WorkerDescriptor::candle(self.baseline.engine, stack, max_input_tokens);
