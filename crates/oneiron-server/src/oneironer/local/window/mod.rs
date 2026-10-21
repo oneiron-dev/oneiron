@@ -196,6 +196,13 @@ impl<'a> Window<'a> {
         })
     }
 
+    /// Its length in tokens, special tokens included: what a call's window
+    /// is counted in, for a calibrated case's hold and for which workers
+    /// may run the call (FIX 6755).
+    pub(super) fn tokens(&self) -> usize {
+        self.encoding.len()
+    }
+
     pub(super) fn segment(&self, start: usize, end: usize) -> Option<(usize, &Segment<'a>)> {
         self.segments.iter().enumerate().find(|(_, segment)| {
             segment.base <= start

@@ -17,7 +17,7 @@ use oneiron::memory::extraction::{EncoderAttempt, EncoderInput, ExtractionWork};
 use tokio::sync::{Notify, oneshot};
 
 use super::policy::{BULK_PENDING_CAP, LIVE_PENDING_CAP};
-use super::{DISPATCH_TOOL, Job, Shared, failure, unrun};
+use super::{DISPATCH_TOOL, Job, NO_WORKER, Shared, answer, failure};
 
 /// The pending cap of `work`'s class: the policy's, the only one.
 pub(crate) fn pending_cap(work: ExtractionWork) -> usize {
@@ -45,35 +45,37 @@ impl DispatchClaim {
         }
     }
 
-    /// Queues the call under this claim; it never waits. A call no worker is
-    /// ready or coming to run, or one a closed dispatcher would never run, is
-    /// answered at once. The room is the call's from here: given back when it
-    /// is answered or stranded, never by this claim.
+    /// Queues the call under this claim; it never waits. Its window is
+    /// counted first, once, with no lock held (FIX 6755): a call whose
+    /// window cannot be built fails as its infer would. A call no worker
+    /// that can run it is ready or coming for, or one a closed dispatcher
+    /// would never run, is answered at once. The room is the call's from
+    /// here: given back when it is answered or stranded, never by this claim.
     pub(crate) fn submit(mut self, input: EncoderInput) -> Completion {
         self.holds_room = false;
-        let (reply, answer) = oneshot::channel();
+        let (reply, completion) = oneshot::channel();
+        let counted = self.shared.count(&input);
         let job = Job {
             input,
             work: self.work,
+            window: counted.as_ref().copied().unwrap_or(0),
             queued_at: Instant::now(),
             reply,
         };
-        let unqueued = {
-            let mut scheduler = self.shared.lock();
-            match scheduler.queue(job) {
-                Ok(()) => None,
-                Err(job) => {
-                    *scheduler.pending(job.work) -= 1;
-                    Some(job)
-                }
+        let unqueued = match counted {
+            Ok(_) => {
+                let queued = self.shared.lock().queue(job);
+                queued.err().map(|job| (job, failure(DISPATCH_TOOL, NO_WORKER)))
             }
+            Err(error) => Some((job, error)),
         };
         self.shared.work.notify_all();
-        if let Some(job) = unqueued {
+        if let Some((job, error)) = unqueued {
+            *self.shared.lock().pending(job.work) -= 1;
             self.shared.room_freed([job.work]);
-            unrun(vec![job], "no oneironer worker is ready");
+            answer(job, error);
         }
-        Completion { answer }
+        Completion { answer: completion }
     }
 }
 
