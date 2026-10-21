@@ -19,13 +19,15 @@ use super::brief::{HealthBriefPin, HealthObservedBrief, observed_brief_in};
 use super::loaded::{
     AgentHealthLoadedSkill, AgentHealthSkillTarget, bind_target, run_skills_sourced,
 };
-use super::{AgentHealthCard, AgentHealthMove, CARDS, card_ref, may_read, parse_card_ref};
+use super::{
+    AgentHealthCard, AgentHealthMove, CARDS, ConcernMoveOutcome, card_ref, parse_card_ref,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{
     COACH_HEAL_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore,
     EnqueueDreamerAttemptOutcome,
 };
-use crate::memory::{DiaryEntry, DiaryReadOutcome, Memory, MemoryError, MemoryResult};
+use crate::memory::{DiaryEntry, DiaryReadOutcome};
 use crate::skill_optimize::union_source_rows;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -140,32 +142,6 @@ pub trait CoachHealthHost {
     fn draft(&self, brief: &CoachHealthBrief) -> Result<Option<AgentHealthCoachDraft>>;
 }
 
-/// A move a card's reader takes through `self.inbox.concern.move`. The other
-/// moves have their own verbs: a note is `self.message`, a steer `self.steer`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ConcernMove {
-    AskCoach,
-}
-
-/// `self.inbox.concern.move`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConcernMoveRequest {
-    /// The card's `health:` handle: the concern row's `payload_ref`.
-    pub card: String,
-    pub r#move: ConcernMove,
-}
-
-/// The card's ask after the move: a new one, or the one already standing
-/// for the same evidence.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConcernMoveOutcome {
-    /// The card's `health:` handle.
-    pub card: String,
-    pub ask: AgentHealthCoachAsk,
-}
-
 fn hex(id: crate::attempt_queue::AttemptId) -> String {
     crate::entity_id::bytes_to_hex_lower(id.as_bytes())
 }
@@ -175,7 +151,7 @@ fn hex(id: crate::attempt_queue::AttemptId) -> String {
 /// An answer with no draft (no seat served the Coach) may be asked again. An
 /// ask whose approved edit waits on the gate stands whatever the evidence, so
 /// the approval keeps its candidate.
-fn ask_coach_in_txn(
+pub(super) fn ask_coach_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     key: &([u8; 16], [u8; 1], [u8; 16]),
@@ -196,7 +172,7 @@ fn ask_coach_in_txn(
                 Some(answer) => answer.draft.is_some() && ask.diagnostic == newest,
             }
     }) {
-        return Ok(ConcernMoveOutcome {
+        return Ok(ConcernMoveOutcome::AskCoach {
             card: handle,
             ask: ask.clone(),
         });
@@ -235,7 +211,7 @@ fn ask_coach_in_txn(
     CARDS.put(&vault.store, txn, key, &card)?;
     // A touched card can arm the digest on its own (FIX 1979).
     crate::batch::queue_proactivity_change(vault, txn);
-    Ok(ConcernMoveOutcome { card: handle, ask })
+    Ok(ConcernMoveOutcome::AskCoach { card: handle, ask })
 }
 
 impl Vault {
@@ -395,43 +371,5 @@ impl Vault {
             Ok(())
         })?;
         drafted.map(|_| ())
-    }
-}
-
-impl Memory<'_> {
-    /// `self.inbox.concern.move`: a card's recipient (its leader or spawner)
-    /// or a vault owner takes one of its moves. `ask_coach` queues the
-    /// Coach's answer, which lands on the card; asking again on the same
-    /// evidence returns the standing ask.
-    pub fn concern_move(&self, input: &ConcernMoveRequest) -> MemoryResult<ConcernMoveOutcome> {
-        let key = parse_card_ref(&input.card).ok_or_else(|| {
-            MemoryError::bad_request("card is a health: handle from a concern row")
-        })?;
-        let at = self.vault().store.clock.now_recorded_at();
-        self.with_verified_actor_write_txn(|txn| {
-            let card = CARDS
-                .get(&self.vault().store, txn, &key)?
-                .ok_or_else(|| MemoryError::not_found("no such concern card"))?;
-            if !may_read(self.vault(), txn, &card, self.actor())? {
-                return Err(super::forbidden());
-            }
-            match input.r#move {
-                ConcernMove::AskCoach => {
-                    if !card.moves.contains(&AgentHealthMove::AskCoach) {
-                        return Err(MemoryError::bad_request(
-                            "this concern card proposes no ask_coach move",
-                        ));
-                    }
-                    Ok(ask_coach_in_txn(
-                        self.vault(),
-                        txn,
-                        &key,
-                        card,
-                        self.actor(),
-                        at,
-                    )?)
-                }
-            }
-        })
     }
 }

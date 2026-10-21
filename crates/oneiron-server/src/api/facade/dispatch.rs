@@ -927,6 +927,7 @@ async fn self_inbox_concern_move(
         value,
         &producers,
     )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(FacadeCallOutput::listed(output, &producers))
 }
 async fn vault_diagnostics_list(

@@ -12,8 +12,10 @@
 //! arm (`Vault::is_signed_tripwire`). It reads no diary. A card's recipient
 //! settles it (`self.inbox.concern.outcome`), as the owner does through
 //! `/v1/owner/inbox/concern/outcome`, and may ask the Coach for a proposal
-//! (`self.inbox.concern.move`, `ask`). The owner alone applies the Coach's
-//! skill edit (`/v1/owner/inbox/concern/apply`, `apply`).
+//! (`self.inbox.concern.move`, `ask`), or say a note or steer through the
+//! doors that carry them, each receipt kept on the card (`moves`). The owner
+//! alone applies the Coach's skill edit (`/v1/owner/inbox/concern/apply`,
+//! `apply`).
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -58,6 +60,7 @@ mod check_repeat;
 mod duplicate;
 mod environment;
 mod loaded;
+mod moves;
 mod outcomes;
 mod rollups;
 mod run_loop;
@@ -73,11 +76,14 @@ pub use apply::{
 pub use ask::{
     AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft, AgentHealthCoachRoute,
     AgentHealthPadRead, COACH_AGENT_HEALTH_ASK_FACET, CoachHealthBrief, CoachHealthHost,
-    ConcernMove, ConcernMoveOutcome, ConcernMoveRequest,
 };
 pub use brief::{HealthBriefPin, HealthObservedBrief};
 pub use environment::HealthCauseSource;
 pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
+pub use moves::{
+    ConcernMove, ConcernMoveBasis, ConcernMoveLink, ConcernMoveOutcome, ConcernMoveReceipt,
+    ConcernMoveRequest,
+};
 pub use outcomes::HealthReviewReceipt;
 pub use rollups::{
     HealthTrendRollup, HealthTrendRollups, TrendMargin, TrendRatio, TrendSignalTally, TrendSource,
@@ -435,6 +441,10 @@ pub struct AgentHealthCard {
     /// newest call. `None` on every other signal. Neither `evidence` nor the
     /// watermark counts it, so it never reopens a settled card.
     pub silence: Option<HealthSilenceActivity>,
+    /// Every note and steer taken through the card (`moves`), oldest first,
+    /// kept across merges and reopens. Neither `evidence` nor the watermark
+    /// counts them, so a move never reopens a settled card.
+    pub moves_taken: Vec<ConcernMoveReceipt>,
 }
 
 impl AgentHealthCard {
@@ -1713,6 +1723,7 @@ fn merge(
         review_outcomes: Vec::new(),
         causes: Vec::new(),
         silence: None,
+        moves_taken: Vec::new(),
     });
     add_ids(&mut card.evidence, &finding.evidence);
     add_ids(&mut card.diagnostics, &[diagnostic]);
@@ -1961,6 +1972,9 @@ pub struct AgentHealthCardView {
     /// once one is applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_inject: Option<AgentHealthPromptInject>,
+    /// The card's evidence basis: a note or a steer echoes it, and its
+    /// receipt records whether the evidence moved since.
+    pub basis: ConcernMoveBasis,
 }
 
 /// The owner's applied prompt continuation of a card's failed attempt
@@ -2046,12 +2060,14 @@ fn card_view(
         }
     }
     let skills = loaded::run_skills(vault, &card)?;
+    let basis = moves::basis(&card);
     Ok(AgentHealthCardView {
         card: card_ref(key),
         body: card,
         run_tree,
         skills,
         prompt_inject,
+        basis,
     })
 }
 
