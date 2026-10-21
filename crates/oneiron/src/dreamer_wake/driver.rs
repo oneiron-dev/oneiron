@@ -1,8 +1,11 @@
 //! The wake loop: admit, warn, dispatch under panic containment, stop conditions.
 
+mod attribution;
 mod concurrent;
+mod executor_error;
 mod hooks;
 mod observe;
+mod park_cause;
 
 use std::future::poll_fn;
 use std::panic::AssertUnwindSafe;
@@ -270,7 +273,8 @@ impl<'a> DreamerWakeDriver<'a> {
         // (here, or by a peer through sync) resumes its parked attempt as
         // the same try, admissible in this very pass.
         crate::llm::resume_signalled_steps(self.vault, now.saturating_mul(1_000))?;
-        // An ended pass's Checkpoint parks resume as the same tries (DOOR-144).
+        // An ended pass's Checkpoint parks, and its Retry parks whose delay
+        // passed, resume as the same tries (DOOR-144).
         self.resume_checkpoints(input);
         crate::human_task::run_human_followups_on_wake(self.vault, now)?;
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
@@ -318,6 +322,9 @@ impl<'a> DreamerWakeDriver<'a> {
         let mut task_admission_refused = false;
         // The same for turn programs (DOOR-141 PR2).
         let mut program_admission_refused = false;
+        // The first executor error parked as a Retry (FIX 7272): the pass
+        // goes on past it and returns it at its end.
+        let mut held_error: Option<crate::Error> = None;
 
         loop {
             // Attempt-boundary yield (ONE-1683): one Pending poll with a
@@ -660,23 +667,29 @@ impl<'a> DreamerWakeDriver<'a> {
             // Purely a request — nothing is terminated, the executor still
             // runs, and a worker that ignores it keeps its lease. Once per
             // admitted generation: the queue door is idempotent per
-            // outstanding ask, so a re-admitted attempt records one row.
+            // outstanding ask, so a re-admitted attempt records one row. A
+            // warning that fails flows through the executor-error arm below,
+            // as a Running-progress publish failure does (FIX 7273).
+            let mut pressure = Ok(());
             if self.budget_pressure_now() {
                 match AttemptQueue::new(self.vault).warn_budget_pressure(
                     WarnAttemptBudgetPressure {
                         id: attempt_id,
                         now: input.now,
                     },
-                )? {
-                    LandingWarningOutcome::LandingRequested(record) => {
+                ) {
+                    Ok(LandingWarningOutcome::LandingRequested(record)) => {
                         // The executor reads its attempt from the admitted
                         // snapshot, so the warning has to be IN it — otherwise
                         // a cooperative worker would have to guess that the
                         // runtime asked.
                         admitted.status.attempt = record;
                     }
-                    LandingWarningOutcome::AlreadyRequested(_)
-                    | LandingWarningOutcome::NotRunning(_) => {}
+                    Ok(
+                        LandingWarningOutcome::AlreadyRequested(_)
+                        | LandingWarningOutcome::NotRunning(_),
+                    ) => {}
+                    Err(error) => pressure = Err(error),
                 }
             }
 
@@ -692,7 +705,15 @@ impl<'a> DreamerWakeDriver<'a> {
             // executor's future (SCAN C012): an attempt that never
             // dispatched registers nothing and settles zero.
             let spend_meter = WakeAttemptMeter::default();
-            let executed = if cancel_requested {
+            // Where a non-executor outcome came from, for its outcome line
+            // (FIX 7271); `None` is the executor's own.
+            let mut stage = None;
+            let mut hard_cut_error = None;
+            let executed = if let Err(pressure_error) = pressure {
+                stage = Some("budget_pressure");
+                Err(pressure_error)
+            } else if cancel_requested {
+                stage = Some("cancelled");
                 Ok(DreamerAttemptExecution::Park {
                     reason: DREAMER_CANCELLED_PARK_REASON.to_owned(),
                     cause: DreamerParkCause::Cancelled,
@@ -704,6 +725,7 @@ impl<'a> DreamerWakeDriver<'a> {
                 // through the same release arm as an executor error —
                 // propagating it directly would leave the admitted attempt
                 // leased and its reservation held.
+                stage = Some("progress_publish");
                 Err(publish_error)
             } else if admitted.status.attempt.kind == input.scope.attempt_kind()
                 && !prepared_wake.contains_attempt(attempt_id)
@@ -712,6 +734,7 @@ impl<'a> DreamerWakeDriver<'a> {
                 // a backlog larger than one wake prepares: never admit it to
                 // this snapshot or fall back to a newer per-attempt read. Past
                 // the head, the pass ends here and the next prepares the rest.
+                stage = Some("backlog_deferred");
                 backlog_left = prepared_wake.left_for_later(attempt_id);
                 Ok(DreamerAttemptExecution::Deferred {
                     completed_units: 0,
@@ -722,9 +745,12 @@ impl<'a> DreamerWakeDriver<'a> {
                 ..
             }) = prepared_wake.preparation(attempt_id)
             {
+                // A refused preparation is prepared again after its retry
+                // delay (FIX 7272); none waits on an owner act.
+                stage = Some("prepared_refused");
                 Ok(DreamerAttemptExecution::Park {
                     reason: (*reason).to_owned(),
-                    cause: DreamerParkCause::Other,
+                    cause: DreamerParkCause::Retry,
                 })
             } else if matches!(
                 prepared_wake.preparation(attempt_id),
@@ -732,6 +758,7 @@ impl<'a> DreamerWakeDriver<'a> {
             ) {
                 // A source away from this replica (OF-534) is a wait, never
                 // a park: the attempt stays queued and runs on promotion.
+                stage = Some("residency_deferred");
                 Ok(DreamerAttemptExecution::Deferred {
                     completed_units: 0,
                     retry_at: input
@@ -762,10 +789,9 @@ impl<'a> DreamerWakeDriver<'a> {
                 // panicking executor unwinding past the driver would skip
                 // the park/refund bookkeeping below, leaving the attempt leased
                 // and the reservation held until external lease cleanup.
-                // Catch it and route it through the executor-error arm; the
-                // executor is abandoned when the error propagates (a
-                // supervisor builds a fresh one per pass), so the
-                // AssertUnwindSafe is never observable.
+                // Catch it and route it through the executor-error arm, whose
+                // park cause decides whether the pass goes on past it with
+                // the same executor (FIX 7272).
                 let mut execute = pin!(async {
                     if admitted.status.attempt.kind
                         == crate::dreamer_runner::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
@@ -821,6 +847,7 @@ impl<'a> DreamerWakeDriver<'a> {
                             kind = "executor_panic",
                             "dreamer attempt executor panicked; parking the admitted attempt"
                         );
+                        stage = Some("executor_panic");
                         Err(crate::Error::InvariantViolation(
                             "dreamer attempt executor panicked",
                         ))
@@ -839,46 +866,31 @@ impl<'a> DreamerWakeDriver<'a> {
                         .is_some_and(|row| row.reason == DREAMER_HARD_CUT_PARK_REASON);
                     if !step_layer_parked && !self.deadline.expired() {
                         // H-S5/R2 (ONE-1683): a non-deadline executor error
-                        // must release what admission acquired BEFORE the
-                        // error propagates — settle the budget reservation
-                        // and park the admitted attempt, mirroring the Park arm
-                        // below. Returning the error first used to leak the
-                        // admitted attempt (stuck leased) AND its reservation.
-                        // What its run line charged stays spent; the rest is
-                        // refunded (SCAN C012).
-                        self.settle_charged_or_abort(&line, attempt_id, &spend_meter, input.now)?;
-                        // The durable reason keeps the whole error
-                        // Display; the full error propagates below
-                        // untouched.
-                        let reason = format!("{DREAMER_EXECUTOR_ERROR_PARK_REASON}: {error}");
-                        if self.store.parked_attempt(attempt_id)?.is_some() {
-                            // One park-owner: the step layer already parked
-                            // this attempt (under a non-hard-cut reason) inside
-                            // its own wtxn — publish only, never re-park. A
-                            // publish failure must not mask the executor
-                            // error: the attempt is parked either way.
-                            if let Err(publish_error) = self.publish(
-                                attempt_id,
-                                ProgressKind::Parked,
-                                Some(reason),
-                                input.now,
-                            ) {
-                                tracing::warn!(
-                                    ?publish_error,
-                                    "parked-progress publish failed after executor error"
-                                );
-                            }
-                        } else {
-                            self.park_attempt(
-                                &admitted,
-                                reason,
-                                DreamerParkCause::ExecutorError,
-                                &input.lease_owner,
-                                input.now,
-                            )?;
+                        // releases what admission acquired before the error
+                        // leaves the pass.
+                        let stage = stage.unwrap_or("executor_err");
+                        if self.park_executor_error(
+                            &admitted,
+                            &line,
+                            &spend_meter,
+                            &error,
+                            stage,
+                            &input,
+                        )? {
+                            return Err(error);
                         }
-                        return Err(error);
+                        // FIX 7272: parked as a Retry a later pass resumes
+                        // after its delay, so this pass goes on and fails at
+                        // its end.
+                        report.parked += 1;
+                        held_error.get_or_insert(error);
+                        if cancel_requested {
+                            report.stop = WakePassStop::Cancelled;
+                            break;
+                        }
+                        continue;
                     }
+                    hard_cut_error = Some(error.kind());
                     DreamerAttemptExecution::Park {
                         reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
                         cause: DreamerParkCause::Checkpoint,
@@ -912,6 +924,8 @@ impl<'a> DreamerWakeDriver<'a> {
                         },
                         retry_at,
                     )?;
+                    let stage = stage.unwrap_or("deferred");
+                    self.log_attempt_outcome(&admitted, stage, None, None, "settled", "none");
                     self.write_attempt_milestone(
                         &admitted,
                         DreamerMilestoneKind::CheckpointReached,
@@ -946,6 +960,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         actual_units: completed_units.saturating_add(spent_reserve_units),
                         now: input.now,
                     })?;
+                    self.log_attempt_outcome(&admitted, "landed", None, None, "settled", "none");
                     // A designed landing leaves a durable resume point, exactly
                     // like a deadline-cut park — never a `Done` milestone,
                     // which would claim the job delivered.
@@ -982,6 +997,16 @@ impl<'a> DreamerWakeDriver<'a> {
                         },
                         admitted_lease(&admitted, &input.lease_owner),
                     )?;
+                    let stage = stage.unwrap_or("park_with_spend");
+                    let settled = "checkpoint_settled";
+                    self.log_attempt_outcome(
+                        &admitted,
+                        stage,
+                        None,
+                        Some(cause),
+                        settled,
+                        "committed",
+                    );
                     self.publish(attempt_id, ProgressKind::Parked, Some(reason), input.now)?;
                     self.write_attempt_milestone(
                         &admitted,
@@ -995,16 +1020,32 @@ impl<'a> DreamerWakeDriver<'a> {
                     // charged stays spent (SCAN C012), the rest of the
                     // reservation is refunded, all of it for an attempt that
                     // never dispatched.
-                    self.settle_charged_or_abort(&line, attempt_id, &spend_meter, input.now)?;
+                    let settled =
+                        self.settle_charged_or_abort(&line, attempt_id, &spend_meter, input.now)?;
                     let hard_cut =
                         reason == DREAMER_HARD_CUT_PARK_REASON || self.deadline.expired();
-                    if self.store.parked_attempt(attempt_id)?.is_some() {
+                    let (cause, park) = if let Some(row) = self.store.parked_attempt(attempt_id)? {
                         // One park-owner: the step layer already parked this
                         // attempt inside its trap wtxn — publish only.
                         self.publish(attempt_id, ProgressKind::Parked, Some(reason), input.now)?;
+                        (row.cause, "step_layer_parked")
                     } else {
                         self.park_attempt(&admitted, reason, cause, &input.lease_owner, input.now)?;
-                    }
+                        (cause, "committed")
+                    };
+                    let stage = match stage {
+                        Some(stage) => stage,
+                        None if hard_cut => "hard_cut",
+                        None => "park",
+                    };
+                    self.log_attempt_outcome(
+                        &admitted,
+                        stage,
+                        hard_cut_error,
+                        Some(cause),
+                        settled,
+                        park,
+                    );
                     if hard_cut {
                         // A deadline-cut park leaves a durable resume point.
                         self.write_attempt_milestone(
@@ -1030,7 +1071,9 @@ impl<'a> DreamerWakeDriver<'a> {
             }
         }
 
-        Ok(report)
+        // A pass that went on past a Retry-parked executor error still
+        // fails, on the first one (FIX 7272).
+        held_error.map_or(Ok(report), Err)
     }
 
     /// Fires the ONE 80% wrap-up notice: `max(counter_percent,

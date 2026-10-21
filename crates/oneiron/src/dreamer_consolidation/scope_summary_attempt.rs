@@ -254,6 +254,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 });
             }
             Err(DurableStepError::Engine(error)) => return Err(error),
+            // A reply the schema door refused was never memoized: it is asked
+            // again after its retry delay (FIX 7272, Engine 10-21).
+            Err(other @ DurableStepError::SpentSchemaValidation { .. }) => {
+                return Ok(DreamerAttemptExecution::Park {
+                    reason: other.to_string(),
+                    cause: DreamerParkCause::Retry,
+                });
+            }
             Err(other) => {
                 return Ok(DreamerAttemptExecution::Park {
                     reason: other.to_string(),

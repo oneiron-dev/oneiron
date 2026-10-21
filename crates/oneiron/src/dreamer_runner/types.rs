@@ -650,6 +650,11 @@ pub struct DreamerRunTreeRecord {
     pub created_at: u64,
 }
 
+/// How long a [`DreamerParkCause::Retry`] park waits before a later pass
+/// resumes it, in store-clock seconds (Engine 10-21 ruling). Pacing, not a
+/// cap: the work always resumes, as the same try, once the delay passed.
+pub const DREAMER_RETRY_PARK_SECS: u64 = 900;
+
 /// Why a Dreamer attempt parked. The reason text is for people; this is
 /// what code reads. Only a [`Self::ProviderUnavailable`] park resumes when a
 /// model offer recovers (OF-305).
@@ -662,6 +667,9 @@ pub enum DreamerParkCause {
     ExecutorError,
     /// The wake pass hit its deadline and the attempt kept its progress.
     Checkpoint,
+    /// A refusal or error park: resumed as the same try, like Checkpoint,
+    /// once its retry delay has passed.
+    Retry,
     /// The pass was cancelled.
     Cancelled,
     /// It waits on a signal: a budget approval, a seat login, a peer.
@@ -678,9 +686,22 @@ impl DreamerParkCause {
             Self::ProviderUnavailable => "provider_unavailable",
             Self::ExecutorError => "executor_error",
             Self::Checkpoint => "checkpoint",
+            Self::Retry => "retry",
             Self::Cancelled => "cancelled",
             Self::Signal => "signal",
             Self::Other => "other",
+        }
+    }
+
+    /// Whether a later wake pass resumes a park of this cause as the same
+    /// try (DOOR-144), and how long after it parked: a Checkpoint at once,
+    /// a Retry after [`DREAMER_RETRY_PARK_SECS`].
+    #[must_use]
+    pub const fn later_pass_resume_delay(self) -> Option<u64> {
+        match self {
+            Self::Checkpoint => Some(0),
+            Self::Retry => Some(DREAMER_RETRY_PARK_SECS),
+            _ => None,
         }
     }
 
@@ -689,6 +710,7 @@ impl DreamerParkCause {
             "provider_unavailable" => Some(Self::ProviderUnavailable),
             "executor_error" => Some(Self::ExecutorError),
             "checkpoint" => Some(Self::Checkpoint),
+            "retry" => Some(Self::Retry),
             "cancelled" => Some(Self::Cancelled),
             "signal" => Some(Self::Signal),
             "other" => Some(Self::Other),

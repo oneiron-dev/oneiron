@@ -4,9 +4,13 @@
 use super::decisions::{id_options, named_id};
 use super::*;
 use crate::dreamer_consolidation::provenance::KeptDecision;
+use crate::dreamer_consolidation::resources::BranchPins;
 use crate::llm::FinishReason;
 use crate::llm::decision::AnswerContract;
 use crate::llm::decision::catalogue::CORRECTION;
+
+mod cited;
+pub(in crate::dreamer_consolidation) use cited::CitationCheck;
 
 impl ConsolidationExecutor<'_> {
     pub(in crate::dreamer_consolidation) fn extraction_request(
@@ -152,8 +156,9 @@ impl ConsolidationExecutor<'_> {
         }
         let mut parsed = Vec::new();
         let mut skipped = 0_usize;
+        let pins = resources.pins();
         for item in items {
-            match parse_candidate(item, resources, scope) {
+            match parse_candidate(item, pins, scope) {
                 Ok(candidate) => parsed.push(candidate),
                 Err(reason) => {
                     skipped += 1;
@@ -186,17 +191,10 @@ impl ConsolidationExecutor<'_> {
         // Each candidate's question indexes, and every listed claim asked about.
         let mut asks: Vec<Vec<usize>> = vec![Vec::new(); parsed.len()];
         let mut listed: Vec<(EntityId, EntityId, &str, &str)> = Vec::new();
+        let pins = resources.pins();
         for (position, candidate) in parsed.iter().enumerate() {
-            let shown: Vec<_> = resources
-                .known()
-                .shown_about(candidate.subject)
-                .filter(|(claim, ..)| {
-                    resources.prior(*claim).is_ok()
-                        && resources.source_version(claim).is_ok_and(|version| {
-                            candidate.scope.allows_read(&version)
-                                && candidate.scope.allows_write(&version)
-                        })
-                })
+            let shown: Vec<_> = pins
+                .correctable(candidate.subject, candidate.scope)
                 .collect();
             let ids: Vec<EntityId> = shown.iter().map(|(claim, ..)| *claim).collect();
             for (group, options) in id_options(&ids, true).into_iter().enumerate() {
@@ -366,7 +364,7 @@ pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
 /// resources, or why it is not written; an error is this candidate's alone.
 fn parse_candidate<'s>(
     item: &serde_json::Value,
-    resources: &BranchResources<'_>,
+    pins: BranchPins<'_>,
     scope: &'s crate::llm::Scope,
 ) -> Result<ParsedCandidate<'s>> {
     // A candidate that names no value carries no claim.
@@ -402,7 +400,7 @@ fn parse_candidate<'s>(
     evidence_turn_refs.sort_unstable();
     evidence_turn_refs.dedup();
     for id in &evidence_turn_refs {
-        if !scope.allows_read(&resources.source_version(id)?) {
+        if !scope.allows_read(&pins.source_version(id)?) {
             return Err(invalid_consolidation(
                 "extracted evidence crossed its child slice",
             ));
@@ -410,11 +408,9 @@ fn parse_candidate<'s>(
     }
     // A claim drawn from two projects' turns has no one audience, and a
     // project-bound branch writes only its own project's.
-    let project = resources
-        .evidence_project(&evidence_turn_refs)?
-        .ok_or_else(|| {
-            invalid_consolidation("extracted candidate's sources share no one branch project")
-        })?;
+    let project = pins.evidence_project(&evidence_turn_refs)?.ok_or_else(|| {
+        invalid_consolidation("extracted candidate's sources share no one branch project")
+    })?;
     Ok(ParsedCandidate {
         scope,
         subject,
@@ -499,11 +495,31 @@ fn build_candidate(
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
 ) -> Result<super::super::evidence::ExtractedCandidate> {
-    let scope = parsed.scope;
     let corrects = correction
         .corrects
         .map(|claim| resources.prior(claim))
         .transpose()?;
+    build_resolved(
+        parsed,
+        corrects,
+        &correction.decisions,
+        partition,
+        attempt_id,
+        now_ms,
+    )
+}
+
+/// [`build_candidate`] once the head it corrects, if any, is read: what the
+/// extraction step's citation check (FIX 7274) builds with no correction.
+fn build_resolved(
+    parsed: ParsedCandidate<'_>,
+    corrects: Option<&crate::dreamer_consolidation::PriorHead>,
+    decisions: &[KeptDecision],
+    partition: &ConsolidationPartitionKey,
+    attempt_id: crate::attempt_queue::AttemptId,
+    now_ms: u64,
+) -> Result<super::super::evidence::ExtractedCandidate> {
+    let scope = parsed.scope;
     let (subject, predicate) = match corrects {
         Some(prior) => {
             let ClaimSubject::Entity(subject) = prior.body.subject else {
@@ -605,7 +621,7 @@ fn build_candidate(
                 end: now_ms,
             },
             learned_at: now_ms,
-            decisions: correction.decisions.clone(),
+            decisions: decisions.to_vec(),
         },
         parsed.locators,
     )?;

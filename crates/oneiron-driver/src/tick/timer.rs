@@ -18,7 +18,8 @@ use super::{CommitmentDeadline, DeadlineSource, NowMillis, system_now_ms};
 /// with no retry backoff is due at its enqueue stamp; a backoff-delayed attempt
 /// is due when the backoff clears, and a scheduled retry at its scheduled
 /// instant. A Checkpoint park whose cutting pass ended, which this node's
-/// next pass resumes, is due at once (DOOR-144). Attempt stamps are stored
+/// next pass resumes, is due at once (DOOR-144); a Retry park is due its
+/// retry delay after it parked. Attempt stamps are stored
 /// in seconds and surfaced here in milliseconds.
 ///
 /// MACRO attempts are gated at admission by the full local-admissibility
@@ -203,9 +204,10 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                 next = Some(CommitmentDeadline { due_at_ms, scope });
             }
         }
-        // A Checkpoint park whose cutting pass ended is due at once: the next
-        // pass of its scope resumes it as the same try (DOOR-144). Read-only
-        // and best-effort: an unreadable projection arms and silences nothing.
+        // A Checkpoint park whose cutting pass ended is due at once, a Retry
+        // park its retry delay later (Engine 10-21): the next pass of its
+        // scope resumes it as the same try (DOOR-144). Read-only and
+        // best-effort: an unreadable projection arms and silences nothing.
         match DreamerRunnerStore::new(self.vault).checkpoint_resumes_due() {
             Ok(due) => {
                 for park in due {
@@ -242,7 +244,7 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                             continue;
                         }
                     }
-                    let due_at_ms = park.parked_at.saturating_mul(1_000);
+                    let due_at_ms = park.due_at.saturating_mul(1_000);
                     if next.is_none_or(|current| due_at_ms < current.due_at_ms) {
                         next = Some(CommitmentDeadline { due_at_ms, scope });
                     }
