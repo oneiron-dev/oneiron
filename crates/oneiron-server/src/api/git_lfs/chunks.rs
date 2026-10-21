@@ -1,7 +1,7 @@
 //! Grant-scoped binary have/want endpoint over the standing bearer identity.
 
 use super::gate::{LfsAccess, authorize_request};
-use super::support::{declared_size, lfs_piece_hold, lfs_waited_out, read_whole};
+use super::support::{LfsMarkedRead, declared_size, lfs_piece_hold, lfs_waited_out, read_whole};
 use crate::api::Transfers;
 use crate::api::transfer::ReadHold;
 use crate::error::{ApiError, EnvelopedApiError};
@@ -58,10 +58,25 @@ pub(super) async fn exchange(
     let body = read_whole(body, limit).await?;
     let vault = Arc::clone(&server.vault);
     let scope = crate::handler::selector_grant_scope();
-    let (object, bytes, permit) = crate::api::transfer::spawn_worker(move || {
+    let caller = auth.clone();
+    let (object, bytes, read, permit) = crate::api::transfer::spawn_worker(move || {
         let object = oneiron::sync::chunks::chunk_request_object(&body)?;
-        oneiron::sync::chunks::serve_chunk_request_for(&vault, principal, scope, &body, peer)
-            .map(|bytes| (object, bytes, permit))
+        // A lift-marked object's real bytes go to the owner and to an agent
+        // whose read is granted, each as this request authenticated it (FIX
+        // 2897); the read rides with the reply.
+        let mut read = None;
+        let bytes = oneiron::sync::chunks::serve_chunk_request_reading(
+            &vault,
+            principal,
+            scope,
+            &body,
+            peer,
+            &mut |oid, asked| {
+                read = LfsMarkedRead::of(&vault, &caller, oid, asked);
+                Ok(read.as_ref().map(LfsMarkedRead::authority))
+            },
+        )?;
+        Ok::<_, oneiron::Error>((object, bytes, read, permit))
     })
     .await
     .map_err(|_| ApiError::internal_server_error("lfs chunk worker failed"))?
@@ -69,9 +84,15 @@ pub(super) async fn exchange(
     .map_err(|_| ApiError::forbidden_scope("lfs chunk selector"))?;
     #[cfg(test)]
     release_hook::run(&server);
-    // A device-only flag may land while the worker builds the reply: the
-    // object is judged again as its bytes are released.
-    if oneiron::sync::chunks::lfs_object_withheld_for(&server.vault, object, peer).unwrap_or(true) {
+    // A device-only flag may land while the worker builds the reply, or a
+    // marked object's read stop standing: the object is judged again as its
+    // bytes are released.
+    let reads_marked = read
+        .as_ref()
+        .is_some_and(|read| read.stands(&server.vault, object));
+    if oneiron::sync::chunks::lfs_object_withheld_as(&server.vault, object, peer, reads_marked)
+        .unwrap_or(true)
+    {
         return Err(ApiError::forbidden_scope("lfs chunk selector").into());
     }
     // The declared length makes a reply cut short at the idle limit a broken
@@ -85,7 +106,7 @@ pub(super) async fn exchange(
         ],
         reply(
             Arc::clone(&server.vault),
-            (object, peer),
+            (object, peer, read),
             bytes,
             permit,
             server.transfers.idle,
@@ -98,10 +119,10 @@ pub(super) async fn exchange(
 /// room and the transfer permit until the last piece is taken, or until the
 /// client has taken none for `idle`. Only the pieces already handed out
 /// outlive it. Each piece is judged for `peer`, the machine the request
-/// proved.
+/// proved, and a marked object's for its read.
 fn reply(
     vault: Arc<Vault>,
-    (object, peer): (LfsOid, PeerMachine),
+    (object, peer, read): (LfsOid, PeerMachine, Option<LfsMarkedRead>),
     bytes: Vec<u8>,
     permit: ReadHold,
     idle: Duration,
@@ -121,9 +142,10 @@ fn reply(
     // says why (FIX 4939).
     Body::from_stream(stream::unfold(receiver, move |mut receiver| {
         let vault = Arc::clone(&vault);
+        let read = read.clone();
         async move {
             let piece = receiver.recv().await?;
-            if let Some(kept) = lfs_piece_hold(&vault, object, peer) {
+            if let Some(kept) = lfs_piece_hold(&vault, object, peer, read.as_ref()) {
                 receiver.close();
                 return Some((Err(kept), receiver));
             }

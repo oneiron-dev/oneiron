@@ -2831,19 +2831,21 @@ class Oneiron:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...
         def render_consent(self, spec: Facade.VoiceRenderConsentRequest) -> Facade.VoiceRenderConsentReceipt:
-            """The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs."""
+            """A person records the render decision on their own voice, or a designed voice's creator on that voice with no basis: a grant names the farthest locality its refs reach; a withdrawal drops each target clone. It joins the render history."""
         @property
         def targets(self) -> "Oneiron._VaultVoicesTargetsVerbs": ...
         def inspect(self, spec: Facade.VoiceBankInspectRequest) -> Facade.VoiceBankInspection:
-            """The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone."""
+            """A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone."""
+        def lineage(self, spec: Facade.VoiceRenderLineageRequest) -> list[Facade.VoiceRenderEventView]:
+            """A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."""
     class _VaultVoicesPacksVerbs:
         def put(self, spec: Facade.VoiceBankPackPutRequest) -> Facade.VoiceBankPackReceipt:
-            """The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op."""
+            """A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op."""
     class _VaultVoicesTargetsVerbs:
         def provision(self, spec: Facade.VoiceTargetProvisionRequest) -> Facade.VoiceTargetReceipt:
-            """The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call."""
+            """The caller's own voice, a person's or a designed voice its creator made, cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality first."""
         def evict(self, spec: Facade.VoiceTargetEvictRequest) -> Facade.VoiceTargetEvictReceipt:
-            """The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay."""
+            """A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay."""
     class _VaultGraphVerbs:
         def ask(self, spec: Facade.GraphAskRequest) -> Facade.GraphAskOutcome: ...
         def admit(self, spec: Facade.GraphAdmitRequest) -> Facade.GraphAskOutcome:
@@ -3477,6 +3479,8 @@ class Oneiron:
             """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries."""
         def accept(self, spec: Facade.TaskAccept) -> Facade.TaskCallReceipt:
             """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
+        def redo(self, spec: Facade.TaskRedo) -> Facade.TaskCallReceipt:
+            """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:

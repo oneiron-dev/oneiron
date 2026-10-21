@@ -28,7 +28,7 @@ use oneiron::{
 };
 use oneiron_code_check::{
     BackendKind, CheckFailure, CheckMode, CodeCheck, Fallback, MicrosoftTsc, ShadowCheck,
-    TscRsBudget, TscRsWasm,
+    TscRsBudget, TscRsWasm, TsrsWasm,
 };
 
 use super::CHAT_ROLE;
@@ -292,9 +292,9 @@ async fn shadow_check(settings: &CodeCheckSettings) -> Option<Arc<ShadowCheck>> 
     }
 }
 
-/// The configured backend. tsc-rs falls back to Microsoft's `tsc` when it is
-/// set: for a check tsc-rs cannot finish, or for every check when tsc-rs
-/// does not load.
+/// The configured backend. tsc-rs, and tsrs alike, falls back to
+/// Microsoft's `tsc` when it is set: for a check it cannot finish, or for
+/// every check when it does not load.
 fn code_checker(settings: &CodeCheckSettings) -> Result<Arc<dyn CodeCheck>, CheckFailure> {
     let microsoft = settings
         .microsoft_tsc
@@ -315,6 +315,16 @@ fn code_checker(settings: &CodeCheckSettings) -> Result<Arc<dyn CodeCheck>, Chec
                     Arc::new(Fallback::new(Box::new(tsc_rs), Box::new(microsoft)))
                 }
                 (Ok(tsc_rs), None) => Arc::new(tsc_rs),
+                (Err(_), Some(microsoft)) => Arc::new(microsoft),
+                (Err(failure), None) => return Err(failure),
+            }
+        }
+        (BackendKind::Tsrs, microsoft) => {
+            match (TsrsWasm::load(TscRsBudget::default()), microsoft) {
+                (Ok(tsrs), Some(microsoft)) => {
+                    Arc::new(Fallback::new(Box::new(tsrs), Box::new(microsoft)))
+                }
+                (Ok(tsrs), None) => Arc::new(tsrs),
                 (Err(_), Some(microsoft)) => Arc::new(microsoft),
                 (Err(failure), None) => return Err(failure),
             }

@@ -1127,7 +1127,7 @@ ES2022, no DOM or Node globals). It is off by default:
 ```toml
 [models.code_mode.check]
 mode = "shadow"              # "off" (default) or "shadow"; "enforce" is reserved and refused
-backend = "tsc-rs"           # "tsc-rs" in process (default) or "microsoft"
+backend = "tsc-rs"           # "tsc-rs" in process (default), "tsrs" in process (on trial, FIX 8255) or "microsoft"
 microsoft_tsc = "/opt/typescript-7.1.0-dev.20261010.1/package/lib/tsc"  # optional
 ```
 

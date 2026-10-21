@@ -10,6 +10,7 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::provenance::birth::{RowBirth, stamp_row_birth_in_txn};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION,
     ENTITY_TYPE_TURN,
@@ -25,7 +26,9 @@ use super::invalid;
 use super::rows::{
     ACTOR_CLAIM_LINEAGE_KEY, ActorClaimRow, LAPSE_FAILURE_MODE, PREDICATE_ACTOR_SKILL_FIT,
 };
-use super::validate::{actor_claim_lineage, edit_cost_scope_name, skill_fit_scope_skill};
+use super::validate::{
+    actor_claim_lineage, edit_cost_scope_name, native_actor_source, skill_fit_scope_skill,
+};
 
 // ---------------------------------------------------------------------------
 // The write chokepoint
@@ -129,6 +132,19 @@ pub(crate) fn write_actor_claim_in_txn(
     row: &ActorClaimRow,
     evidence: &ActorClaimEvidence,
 ) -> Result<EntityId> {
+    write_born_actor_claim_in_txn(vault, wtxn, row, evidence, None)
+}
+/// [`write_actor_claim_in_txn`] for a writer that names the row's birth (FIX
+/// 329): a claim this write mints is stamped with `birth` through the generic
+/// row-birth door, in the same transaction. A write that re-returns a standing
+/// head mints nothing and stamps nothing.
+pub(super) fn write_born_actor_claim_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    row: &ActorClaimRow,
+    evidence: &ActorClaimEvidence,
+    birth: Option<&RowBirth>,
+) -> Result<EntityId> {
     let predicate = row.predicate();
     let actor = row.actor();
     let (value, pair_scope) = row.value_and_scope()?;
@@ -189,7 +205,7 @@ pub(crate) fn write_actor_claim_in_txn(
     body.evidence = Some(evidence.to_value());
     body.scope = Some(scope_with_lineage(pair_scope, meet));
     body.valid_from = Some(at);
-    body.source = Some(ClaimSource::Observed);
+    body.source = Some(evidence.source());
     vault.put_reserved_claim_in_txn(
         wtxn,
         &claim_id,
@@ -197,6 +213,9 @@ pub(crate) fn write_actor_claim_in_txn(
         TimeRange { start: at, end: at },
         at,
     )?;
+    if let Some(birth) = birth {
+        stamp_row_birth_in_txn(&vault.store, wtxn, &claim_id, birth)?;
+    }
 
     for (head_id, _, head_start) in &supersedable {
         // `at.max(head_start)` mirrors the scan-verdict clamp: the supersession
@@ -289,8 +308,8 @@ pub(super) fn scope_with_lineage(pair_scope: Option<Value>, meet: ClaimSource) -
     Value::Map(entries)
 }
 /// The active `(actor, predicate)` heads with their occurred-start stamps:
-/// Auto rows, and on a lesson or failure mode the owner's Approved verdict
-/// on a craft candidate.
+/// native Auto rows, observed or generated (FIX 8641), and on a lesson or
+/// failure mode the owner's Approved verdict on a craft candidate.
 fn active_heads_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -304,7 +323,7 @@ fn active_heads_in_txn(
         };
         if body.predicate != predicate
             || body.lifecycle != ClaimLifecycleStatus::Active
-            || body.source != Some(ClaimSource::Observed)
+            || !native_actor_source(body.source)
             || (body.approval != ClaimApprovalStatus::Auto && !is_approved_craft_verdict(&body))
         {
             continue;
