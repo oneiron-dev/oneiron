@@ -16,6 +16,7 @@ pub mod bindings {
     wasmtime::component::bindgen!({ path: "wit", world: "guest" });
 }
 
+use super::source::{PreparedSource, prepare_source, split_guest_error};
 use super::{SandboxBoundaryAdapter, SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
     CANCEL_POLL_SLICE, JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep,
@@ -150,17 +151,24 @@ impl WasmtimeComponentRuntime {
         step: JsCodeModeStep<'_>,
         host: &mut dyn JsCodeModeHost,
     ) -> Result<JsCodeModeStepOutcome> {
-        self.execute_cancellable(step, host, &StepCancellation::never())
+        let prepared = prepare_source(step.script);
+        let step = JsCodeModeStep {
+            script: prepared.executed(),
+            ..step
+        };
+        self.execute_cancellable(step, &prepared, host, &StepCancellation::never())
     }
 
     /// Runs one first-party step in process, until it finishes, fails, meets
     /// its deadline or is cancelled (FIX 600). A cancel stops the guest
     /// between host operations: the host loop returns at its next slice, and
     /// the store's epoch callback traps the guest on its own token. The
-    /// worker is joined before this returns.
+    /// worker is joined before this returns. `step.script` is what
+    /// `prepared` executes; a guest failure names its TypeScript position.
     fn execute_cancellable(
         &mut self,
         step: JsCodeModeStep<'_>,
+        prepared: &PreparedSource<'_>,
         host: &mut dyn JsCodeModeHost,
         cancel: &StepCancellation,
     ) -> Result<JsCodeModeStepOutcome> {
@@ -203,6 +211,7 @@ impl WasmtimeComponentRuntime {
                     &component,
                     budget,
                     step.script,
+                    prepared,
                     step.boundary,
                     events.clone(),
                     deadline,
@@ -284,6 +293,7 @@ fn execute_component(
     component: &Component,
     budget: ComponentBudget,
     script: &str,
+    prepared: &PreparedSource<'_>,
     boundary: SandboxBoundaryContract,
     events: mpsc::SyncSender<HostEvent>,
     deadline: Instant,
@@ -355,7 +365,7 @@ fn execute_component(
         Err(_) if spent.load(Ordering::Relaxed) => return Ok(Stepped::Deadline(Vec::new())),
         Err(_) => return Err(failure("component execution trapped")),
     };
-    let output = output.map_err(|message| guest_failure(&message))?;
+    let output = output.map_err(|message| guest_failure(&message, prepared))?;
     // This runtime is the first-party lane. Proposal-only execution belongs to
     // the microVM guest; never silently turn a returned proposal into a write.
     if !output.proposals.is_empty() {
@@ -460,9 +470,28 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
     ) -> Result<JsCodeModeStepOutcome> {
         // A step cancelled before it starts stages no guest at all.
         cancel.check()?;
+        // Every source that reaches this runtime is prepared once, here,
+        // before its backend is chosen (FIX 8276).
+        let prepared = prepare_source(step.script);
+        self.run_prepared_step_cancellable(step, &prepared, host, cancel)
+    }
+
+    fn run_prepared_step_cancellable(
+        &mut self,
+        step: JsCodeModeStep<'_>,
+        prepared: &PreparedSource<'_>,
+        host: &mut dyn JsCodeModeHost,
+        cancel: &StepCancellation,
+    ) -> Result<JsCodeModeStepOutcome> {
+        // A step cancelled before it starts stages no guest at all.
+        cancel.check()?;
+        let step = JsCodeModeStep {
+            script: prepared.executed(),
+            ..step
+        };
         let outcome = match super::microvm::select_backend_for_tier(step.boundary.tier())? {
             Some(backend) => isolated::run(self, step, backend, cancel),
-            None => self.execute_cancellable(step, host, cancel),
+            None => self.execute_cancellable(step, prepared, host, cancel),
         };
         cancel.check()?;
         outcome
@@ -605,11 +634,17 @@ enum HostEvent {
 const GUEST_ERROR_CHARS: usize = 2048;
 
 /// The guest's own error text for a failed step, so the model learns why its
-/// program stopped.
-fn guest_failure(message: &str) -> Error {
+/// program stopped. The guest's position header never reaches it; a
+/// TypeScript program's error ends with where it threw in the TypeScript
+/// source, past the text's cut, and a JavaScript program's is as it was.
+fn guest_failure(message: &str, prepared: &PreparedSource<'_>) -> Error {
+    let (message, at) = split_guest_error(message);
     let mut text: String = message.chars().take(GUEST_ERROR_CHARS).collect();
     if text.len() < message.len() {
         text.push_str(&format!(" … ({} bytes in all)", message.len()));
+    }
+    if let Some(position) = prepared.failure_position(at) {
+        text.push_str(&position);
     }
     Error::InvalidConfig(format!("guest reported step failure: {text}"))
 }
