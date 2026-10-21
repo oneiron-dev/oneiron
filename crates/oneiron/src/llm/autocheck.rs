@@ -230,11 +230,7 @@ impl AutoCheckDecisions {
             .unwrap_or(AutoCheckOutcome::Unavailable)
     }
 
-    fn decide(
-        &self,
-        candidate: &AutoCheckCandidate<'_>,
-        due: Instant,
-    ) -> Result<AutoCheckOutcome> {
+    fn decide(&self, candidate: &AutoCheckCandidate<'_>, due: Instant) -> Result<AutoCheckOutcome> {
         let question = AUTO_CHECK.question(
             &[],
             self.wording.clone(),

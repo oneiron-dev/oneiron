@@ -77,8 +77,8 @@ pub(crate) fn validate_record_references(
     read: &Memory<'_>,
     refs: &[NamedRecordRef],
 ) -> Result<(), ReferenceRefusal> {
-    let unresolved = validate_record_references_with(refs, |reference| {
-        match read.get_entity(reference) {
+    let unresolved =
+        validate_record_references_with(refs, |reference| match read.get_entity(reference) {
             Ok(result) => Ok(result.value.is_some()),
             Err(error)
                 if error.code == MEMORY_CODE_NOT_FOUND || error.code == MEMORY_CODE_BAD_REQUEST =>
@@ -86,9 +86,8 @@ pub(crate) fn validate_record_references(
                 Ok(false)
             }
             Err(error) => Err(error),
-        }
-    })
-    .map_err(ReferenceRefusal::Read)?;
+        })
+        .map_err(ReferenceRefusal::Read)?;
     match unresolved {
         None => Ok(()),
         Some(pointer) => Err(ReferenceRefusal::Unresolved {

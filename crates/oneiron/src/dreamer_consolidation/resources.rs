@@ -612,8 +612,8 @@ impl<'a> BranchResources<'a> {
         candidates: Vec<super::evidence::VerifiedCandidate>,
         deadline: &crate::WakePassDeadline,
     ) -> Result<()> {
-        let due = std::time::Instant::now()
-            + std::time::Duration::from_millis(deadline.remaining_ms());
+        let due =
+            std::time::Instant::now() + std::time::Duration::from_millis(deadline.remaining_ms());
         let write = self.prepare_write_verified(scope, candidates)?;
         sink.accept_scoped(write.with_checker_deadline(due))
     }
