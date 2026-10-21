@@ -20018,6 +20018,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/quote_birth.rs",
+     "purpose": "A quote of an atomic MESSAGE anchors to the document its first quote births (FIX 7743, Engine B1…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -20033,6 +20043,16 @@
       "enum": 1,
       "fn": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/record_admission.rs",
+     "purpose": "Who reads a conversation's DAG records (FIX 8153, ARCH-0006a rule 2, Engine 10-22)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -28266,7 +28286,7 @@
      "path": "src/entity_doc/message_stream.rs",
      "purpose": "MESSAGE terminal commits join the common EntityDoc storage transaction",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -38432,6 +38452,7 @@
      "path": "src/memory/conversation_list.rs",
      "purpose": "The conversation list, read as the bound actor (ARCH-0006a, DEC-0005)",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 3
      }
@@ -61419,7 +61440,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 12,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -61949,7 +61970,7 @@
      "surface": {
       "crate-vis": 44,
       "fn": 1,
-      "mod": 5,
+      "mod": 6,
       "re-export": 28
      }
     },
@@ -62184,6 +62205,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunCancelOutcome"
+     ],
+     "path": "src/task_verb/run_cancel.rs",
+     "purpose": "Run-tree cancel of one branch through a caller-bound door (FIX 8219, ARCH-0067: cancel covers own tasks and…",
+     "surface": {
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -62195,6 +62229,7 @@
      "path": "src/task_verb/run_control.rs",
      "purpose": "Pause and resume of one run branch (DOOR-100, FIX 4501, Engine 10-20 on the C002 pattern)…",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 4,
       "struct": 2
@@ -70197,7 +70232,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 23,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71149,7 +71184,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 207,
+     "files": 208,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71319,7 +71354,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4545,
+   "source_files": 4548,
    "test_files": 902
   },
   "oneiron-android": {
@@ -89462,6 +89497,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/run_tree/cancel.rs",
+     "purpose": "Run-tree cancel through the caller-bound cancel door (FIX 8219)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/saved_query.rs",
      "purpose": "CA-07 saved-query HTTP routes",
      "surface": {
@@ -96658,7 +96703,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/resident_pump/browser_workflow.rs",
@@ -97657,7 +97702,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 500,
+     "files": 501,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -98107,7 +98152,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1068,
+   "source_files": 1069,
    "test_files": 182
   },
   "oneiron-spawn": {
