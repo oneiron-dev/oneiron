@@ -149,9 +149,14 @@ impl TryFrom<String> for KernelVersion {
             }
             part.parse::<u32>().ok()
         };
-        text.split_once('.')
-            .and_then(|(major, minor)| Some(Self::new(number(major)?, number(minor)?)))
-            .ok_or(ManifestError::Field("host.kernel_floor"))
+        let malformed = ManifestError::Field("host.kernel_floor");
+        let Some((major, minor)) = text.split_once('.') else {
+            return Err(malformed);
+        };
+        match (number(major), number(minor)) {
+            (Some(major), Some(minor)) => Ok(Self::new(major, minor)),
+            _ => Err(malformed),
+        }
     }
 }
 

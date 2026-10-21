@@ -175,7 +175,7 @@ pub fn verify_release(
             (artifacts, checks)
         }
         Err(_) => {
-            facts.insert(ImageReleaseFact::ImageReleaseManifestMalformed);
+            facts.insert(ImageReleaseFact::ReleaseManifestMalformed);
             (Vec::new(), Vec::new())
         }
     };
@@ -183,13 +183,13 @@ pub fn verify_release(
     match &signature {
         SignatureOutcome::Verified { .. } => {}
         SignatureOutcome::Unavailable => {
-            facts.insert(ImageReleaseFact::ImageSignatureUnavailable);
+            facts.insert(ImageReleaseFact::SignatureUnavailable);
         }
         SignatureOutcome::Unverifiable { .. } => {
-            facts.insert(ImageReleaseFact::ImageSignatureUnverifiable);
+            facts.insert(ImageReleaseFact::SignatureUnverifiable);
         }
         SignatureOutcome::Invalid { .. } => {
-            facts.insert(ImageReleaseFact::ImageSignatureInvalid);
+            facts.insert(ImageReleaseFact::SignatureInvalid);
         }
     }
     ReleaseVerification {
@@ -334,9 +334,9 @@ fn binding_facts(
     for check in artifacts {
         if check.outcome == CheckOutcome::Mismatched {
             facts.insert(if identity(check.role) {
-                ImageReleaseFact::ImageIdentityMismatch
+                ImageReleaseFact::IdentityMismatch
             } else {
-                ImageReleaseFact::ImageArtifactMismatch
+                ImageReleaseFact::ArtifactMismatch
             });
         }
     }
@@ -344,23 +344,23 @@ fn binding_facts(
         .iter()
         .any(|c| !identity(c.role) && c.outcome == CheckOutcome::Matched)
     {
-        facts.insert(ImageReleaseFact::ImageArtifactsUnbound);
+        facts.insert(ImageReleaseFact::ArtifactsUnbound);
     }
     for check in host {
         match (check.requirement, check.outcome) {
             (_, HostOutcome::Met) => {}
             (HostRequirement::StorageAbi, HostOutcome::Missing) => {
-                facts.insert(ImageReleaseFact::ImageStorageAbiOlderThanHost);
+                facts.insert(ImageReleaseFact::StorageAbiOlderThanHost);
             }
             (_, HostOutcome::Missing) => {
-                facts.insert(ImageReleaseFact::ImageHostCapabilityMissing);
+                facts.insert(ImageReleaseFact::HostCapabilityMissing);
             }
             (_, HostOutcome::Unobserved) => {
-                facts.insert(ImageReleaseFact::ImageHostCapabilityUnobserved);
+                facts.insert(ImageReleaseFact::HostCapabilityUnobserved);
             }
         }
     }
     if manifest.facts.contains(&ManifestFact::Blake3Unmeasured) {
-        facts.insert(ImageReleaseFact::ImageBlake3Unmeasured);
+        facts.insert(ImageReleaseFact::Blake3Unmeasured);
     }
 }

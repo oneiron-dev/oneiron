@@ -65,40 +65,52 @@ pub const IMAGE_SIGNATURE_UNVERIFIABLE: &str = "image_signature_unverifiable";
 /// An envelope is present and did not verify.
 pub const IMAGE_SIGNATURE_INVALID: &str = "image_signature_invalid";
 
-/// One typed fact about an image release, on the wire as its code.
+/// One typed fact about an image release, on the wire as its code (the
+/// `IMAGE_*` constants above).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ImageReleaseFact {
-    ImageReleaseManifestAbsent,
-    ImageReleaseManifestMalformed,
-    ImageIdentityMismatch,
-    ImageArtifactMismatch,
-    ImageArtifactsUnbound,
-    ImageBlake3Unmeasured,
-    ImageHostCapabilityMissing,
-    ImageHostCapabilityUnobserved,
-    ImageStorageAbiOlderThanHost,
-    ImageSignatureUnavailable,
-    ImageSignatureUnverifiable,
-    ImageSignatureInvalid,
+    #[serde(rename = "image_release_manifest_absent")]
+    ReleaseManifestAbsent,
+    #[serde(rename = "image_release_manifest_malformed")]
+    ReleaseManifestMalformed,
+    #[serde(rename = "image_identity_mismatch")]
+    IdentityMismatch,
+    #[serde(rename = "image_artifact_mismatch")]
+    ArtifactMismatch,
+    #[serde(rename = "image_artifacts_unbound")]
+    ArtifactsUnbound,
+    #[serde(rename = "image_blake3_unmeasured")]
+    Blake3Unmeasured,
+    #[serde(rename = "image_host_capability_missing")]
+    HostCapabilityMissing,
+    #[serde(rename = "image_host_capability_unobserved")]
+    HostCapabilityUnobserved,
+    #[serde(rename = "image_storage_abi_older_than_host")]
+    StorageAbiOlderThanHost,
+    #[serde(rename = "image_signature_unavailable")]
+    SignatureUnavailable,
+    #[serde(rename = "image_signature_unverifiable")]
+    SignatureUnverifiable,
+    #[serde(rename = "image_signature_invalid")]
+    SignatureInvalid,
 }
 
 impl ImageReleaseFact {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::ImageReleaseManifestAbsent => IMAGE_RELEASE_MANIFEST_ABSENT,
-            Self::ImageReleaseManifestMalformed => IMAGE_RELEASE_MANIFEST_MALFORMED,
-            Self::ImageIdentityMismatch => IMAGE_IDENTITY_MISMATCH,
-            Self::ImageArtifactMismatch => IMAGE_ARTIFACT_MISMATCH,
-            Self::ImageArtifactsUnbound => IMAGE_ARTIFACTS_UNBOUND,
-            Self::ImageBlake3Unmeasured => IMAGE_BLAKE3_UNMEASURED,
-            Self::ImageHostCapabilityMissing => IMAGE_HOST_CAPABILITY_MISSING,
-            Self::ImageHostCapabilityUnobserved => IMAGE_HOST_CAPABILITY_UNOBSERVED,
-            Self::ImageStorageAbiOlderThanHost => IMAGE_STORAGE_ABI_OLDER_THAN_HOST,
-            Self::ImageSignatureUnavailable => IMAGE_SIGNATURE_UNAVAILABLE,
-            Self::ImageSignatureUnverifiable => IMAGE_SIGNATURE_UNVERIFIABLE,
-            Self::ImageSignatureInvalid => IMAGE_SIGNATURE_INVALID,
+            Self::ReleaseManifestAbsent => IMAGE_RELEASE_MANIFEST_ABSENT,
+            Self::ReleaseManifestMalformed => IMAGE_RELEASE_MANIFEST_MALFORMED,
+            Self::IdentityMismatch => IMAGE_IDENTITY_MISMATCH,
+            Self::ArtifactMismatch => IMAGE_ARTIFACT_MISMATCH,
+            Self::ArtifactsUnbound => IMAGE_ARTIFACTS_UNBOUND,
+            Self::Blake3Unmeasured => IMAGE_BLAKE3_UNMEASURED,
+            Self::HostCapabilityMissing => IMAGE_HOST_CAPABILITY_MISSING,
+            Self::HostCapabilityUnobserved => IMAGE_HOST_CAPABILITY_UNOBSERVED,
+            Self::StorageAbiOlderThanHost => IMAGE_STORAGE_ABI_OLDER_THAN_HOST,
+            Self::SignatureUnavailable => IMAGE_SIGNATURE_UNAVAILABLE,
+            Self::SignatureUnverifiable => IMAGE_SIGNATURE_UNVERIFIABLE,
+            Self::SignatureInvalid => IMAGE_SIGNATURE_INVALID,
         }
     }
 }
@@ -209,8 +221,8 @@ impl ImageReleaseObservation {
             manifest: ManifestObservation::Absent,
             signature: SignatureOutcome::Unavailable,
             facts: vec![
-                ImageReleaseFact::ImageReleaseManifestAbsent,
-                ImageReleaseFact::ImageSignatureUnavailable,
+                ImageReleaseFact::ReleaseManifestAbsent,
+                ImageReleaseFact::SignatureUnavailable,
             ],
             policy,
             admitted: policy == ImageSignaturePolicy::ObserveOnly,
