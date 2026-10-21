@@ -8549,6 +8549,7 @@ dependencies = [
  "oneiron-llm-systemone",
  "oneiron-mesh-transport",
  "oneiron-organ-host",
+ "oneiron-organ-protocol",
  "oneiron-remote",
  "oneiron-spawn",
  "oneiron-vault-contract",
