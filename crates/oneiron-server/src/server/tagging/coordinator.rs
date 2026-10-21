@@ -421,10 +421,16 @@ impl Coordinator {
     }
 
     /// A commit woke the loop; a lagged wake missed some, so the store is
-    /// read afresh either way.
+    /// read afresh either way. A wake into an idle loop starts a round, so the
+    /// tagger is probed before its first claim, as it was before every pass.
     fn on_wake(&mut self, woke: Result<(), broadcast::error::RecvError>) {
         match woke {
-            Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => self.dirty = true,
+            Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                if self.resident == [0; 2] {
+                    self.end_round();
+                }
+                self.dirty = true;
+            }
             Err(broadcast::error::RecvError::Closed) => self.wake_open = false,
         }
     }
