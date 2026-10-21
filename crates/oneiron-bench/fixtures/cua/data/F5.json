@@ -1,0 +1,58 @@
+{
+  "cells": {
+    "A2": "Weminuxa Zavubexo",
+    "A3": "Zavuzavu Rivunuxa",
+    "A4": "",
+    "A5": "",
+    "A6": "",
+    "A7": "Jovutazu Daxijovu",
+    "B2": "Zavujovu Vorojovu Works",
+    "B3": "Vorotazu Jovuvoro Works",
+    "B4": "",
+    "B5": "",
+    "B6": "",
+    "B7": "Lumilumi Tazubexo Works",
+    "C2": "5",
+    "C3": "5",
+    "C4": "",
+    "C5": "",
+    "C6": "",
+    "C7": "9",
+    "D2": "42",
+    "D3": "39",
+    "D4": "",
+    "D5": "",
+    "D6": "",
+    "D7": "66",
+    "E2": "=C2*D2",
+    "E3": "=C3*D3",
+    "E4": "=C4*D4",
+    "E5": "=C5*D5",
+    "E6": "=C6*D6",
+    "E7": "=C7*D7"
+  },
+  "leads": [
+    {
+      "contact": "Tazupelu Pelujovu",
+      "firm": "Rivutazu Qemizavu Works",
+      "quantity": "8",
+      "unit_value": "60"
+    },
+    {
+      "contact": "Nuxavoro Qemidaxi",
+      "firm": "Tazubexo Tazunuxa Works",
+      "quantity": "6",
+      "unit_value": "25"
+    },
+    {
+      "contact": "Vorobexo Bexovoro",
+      "firm": "Rivuzavu Rivutazu Works",
+      "quantity": "2",
+      "unit_value": "69"
+    }
+  ],
+  "named_range": {
+    "name": "Leads",
+    "range": "A4:D6"
+  }
+}
