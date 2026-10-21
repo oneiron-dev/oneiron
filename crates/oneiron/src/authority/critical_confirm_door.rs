@@ -18,8 +18,13 @@ impl Vault {
         now: u64,
     ) -> Result<CriticalWriteConfirmState> {
         owner.owner_authored_write_in_txn(self, txn)?;
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Host(issuer);
+        let fold = self
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .unwrap_or(fold);
         let entry = next_entry(
             issuer,
             &fold,

@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1179 code-mode rows (1139 host rows, 40 run rows), 3981 declarations.
-// Replies: 1059 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1181 code-mode rows (1141 host rows, 40 run rows), 3995 declarations.
+// Replies: 1061 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -127,7 +127,11 @@ declare namespace Sdk {
   type HealthCauseSource = { source: EntityId; receipt: string; skill?: EntityId | null; label: string; share: number; judge_revision?: string | null; displaced_by?: string | null };
   type HealthOtherSession = { attempt: EntityId; generation: number; at: number };
   type HealthSilenceActivity = { own_call_at?: number | null; own_step_at?: number | null; actor_only_at?: number | null; stream_at?: number | null; tool_finished_at?: number | null; other_session?: HealthOtherSession | null };
-  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null };
+  type ConcernMoveBasis = { digest: string };
+  type RunSignalState = "Pending" | "Settled" | "RefusedCancelUnavailable";
+  type ConcernMoveLink = { kind: "note"; room: string; turn?: string | null; messages: string[] } | { kind: "steer"; task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState; run_differs_from_card_attempt: boolean };
+  type ConcernMoveReceipt = { actor: EntityId; actor_class: string; at: number; key: string; payload: string; observed?: ConcernMoveBasis | null; current: ConcernMoveBasis; evidence_changed: boolean; task?: EntityId | null; subject: EntityId; attempt?: EntityId | null; link: ConcernMoveLink };
+  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null; moves_taken: ConcernMoveReceipt[] };
   type RunTreeStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned";
   type RunTreeTimestamps = { created_at: number; updated_at: number };
   type RunTreeFailure = { reason: string };
@@ -139,13 +143,13 @@ declare namespace Sdk {
   type AgentHealthRunTree = { run_id: string; tree: RunTree; marked: string };
   type AgentHealthLoadedSkill = { skill: string; name: string; version: string; active: boolean; instructions: string };
   type AgentHealthPromptInject = { approval: string; successor: string; ask: string; by: EntityId; at: number; edited: boolean };
-  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null; skills?: AgentHealthLoadedSkill[]; prompt_inject?: AgentHealthPromptInject | null };
+  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null; skills?: AgentHealthLoadedSkill[]; prompt_inject?: AgentHealthPromptInject | null; basis: ConcernMoveBasis };
   type ConcernOutcome = "confirmed" | "dismissed" | "unresolved";
   type ConcernOutcomeRequest = { card: string; outcome: ConcernOutcome };
   type ConcernCardSummary = { card: string; agent: string; signal: string; tone: string; outcome: string; evidence: number };
-  type ConcernMove = "ask_coach";
-  type ConcernMoveRequest = { card: string; move: ConcernMove };
-  type ConcernMoveOutcome = { card: string; ask: AgentHealthCoachAsk };
+  type ConcernMove = "ask_coach" | { note: { key: string; text: string; from_project?: string | null; to_project?: string | null } } | { steer: { key: string; instruction: string } };
+  type ConcernMoveRequest = { card: string; move: ConcernMove; basis?: ConcernMoveBasis | null };
+  type ConcernMoveOutcome = { kind: "ask_coach"; card: string; ask: AgentHealthCoachAsk } | { kind: "applied"; card: string; receipt: ConcernMoveReceipt };
   type DiagnosticsListRequest = { event_class?: string | null; actor_ref?: string | null; evidence_ref?: string | null; limit: number };
   type ReadScope = { entity_types?: number[] | null; max_sensitivity_band: number; include_stale: boolean; min_confidence: number; min_salience: number; deny_all: boolean };
   type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] };
@@ -254,7 +258,6 @@ declare namespace Sdk {
   type ClaimApprovalStatus = "auto" | "proposed" | "approved" | "rejected";
   type TaskCancelReceipt = { approval: ClaimApprovalStatus; effected: boolean; proposal_ref?: EntityId | null; gate_decision_ref?: string | null; status?: RunTreeStatus | null; cancel_requested: boolean; forced: boolean };
   type SteerRequest = { task_ref: string; instruction: string; key: string };
-  type RunSignalState = "Pending" | "Settled" | "RefusedCancelUnavailable";
   type SteerReceipt = { task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState };
   type AttemptHandle = { task_ref: EntityId; attempt_ref: string; attempt_count: number; node_ref?: EntityId | null };
   type TaskHandle = { kind: "proposed"; proposal_ref: EntityId } | { kind: "task"; task_ref: EntityId } | (AttemptHandle & { kind: "attempt" }) | { kind: "ask"; group_ref: EntityId };
@@ -316,10 +319,12 @@ declare namespace Sdk {
   type WorldPrivacyWaitStatus = { state: "pending" } | { state: "applied"; receipt_id: string } | { state: "declined" };
   type WorldPrivacyWaitResult = { request_id: string; world: string; status: WorldPrivacyWaitStatus };
   type TaskAskStatus = { Pending: { hold?: TaskAskHoldReason | null } } | { Changed: { voided: EntityId[]; generation: number } } | { Settled: TaskAskResult } | { WorldPrivacy: WorldPrivacyWaitResult };
-  type StrictDenial = "rule_abstained" | "no_rule" | "image";
-  type AskUpReason = { why: "asked"; ladder?: string | null } | { why: "looks" } | { why: "no_answer" } | { why: "wrong_answer" } | { why: "strict"; denied: StrictDenial };
+  type StrictDenial = "rule_abstained" | "no_rule" | "image" | "field_generation_requires_model";
+  type AskUpReason = { why: "asked"; ladder?: string | null } | { why: "looks" } | { why: "no_answer" } | { why: "wrong_answer" } | { why: "strict"; denied: StrictDenial } | { why: "reobserve" };
   type ClockScope = "wait" | "navigation" | "decision";
-  type BatchStopCause = { cause: "postcondition_unmet" } | { cause: "locator_missing" } | { cause: "incomplete_observation" } | { cause: "decider_asked_up"; reason: AskUpReason } | { cause: "clock"; scope: ClockScope } | { cause: "press_needed" } | { cause: "taken_over" } | { cause: "field_text" } | { cause: "no_progress" } | { cause: "browser"; code: string };
+  type TextSource = "supplied" | "reference" | "template" | "generated";
+  type FieldTextReason = { why: "no_text" } | { why: "missing_slot"; slot: string } | { why: "unclosed_slot" } | { why: "not_an_option"; source: TextSource } | { why: "secret_field" } | { why: "writer_unavailable" } | { why: "writer_refused" } | { why: "writer_failed" } | { why: "checked_no" } | { why: "check_abstained" } | { why: "check_failed" } | { why: "page_rejected" };
+  type BatchStopCause = { cause: "postcondition_unmet" } | { cause: "locator_missing" } | { cause: "incomplete_observation" } | { cause: "decider_asked_up"; reason: AskUpReason } | { cause: "clock"; scope: ClockScope } | { cause: "press_needed" } | { cause: "taken_over" } | { cause: "field_text"; reason: FieldTextReason } | { cause: "no_progress" } | { cause: "browser"; code: string };
   type TaskWorkflowHandoff = { program: { stop_cause: BatchStopCause } } | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } };
   type TaskWorkflowOutcome = "pending" | { done: { receipt_ref: EntityId } } | { handoff: { cause: TaskWorkflowHandoff; receipt_ref: EntityId } };
   type TaskWorkflowStatus = { attempt_ref: string; requested: EntityId; resolved?: EntityId | null; brief: BriefStamp; outcome: TaskWorkflowOutcome };
@@ -2120,7 +2125,7 @@ declare namespace Sdk {
   type CodeOpProvenance = { turn?: EntityId | null; activity?: EntityId | null; intent?: EntityId | null; substrate_ref?: EntityId | null; reasoning_effort?: string | null };
   type CriticLens = { id: string; prompt_contract: string; output_schema: string; hard_check: boolean; domain: string };
   type LensCatalog = { schema_version: number; lenses: CriticLens[] };
-  type CodeProposalSubmitRequest = { repo: EntityId; session: EntityId; provenance_claim: EntityId; path: string; content: number[]; message: string; op_provenance: CodeOpProvenance; catalog: LensCatalog };
+  type CodeProposalSubmitRequest = { repo: EntityId; session: EntityId; provenance_claim: EntityId; path: string; content: number[]; message: string; op_provenance: CodeOpProvenance; catalog?: LensCatalog | null };
   type CodeProposalSubmitted = { proposal: EntityId; repo: EntityId; actor: EntityId; session: EntityId; provenance_claim: EntityId; base: string; status: RepoProposalStatus };
   type CodeConflictRecordRequest = { repo: EntityId; branch_subject: EntityId; branch: string; left_proposal: EntityId; right_proposal: EntityId };
   type CodeConflictView = { open: boolean; conflict: EntityId; branch_subject: EntityId; repo_ref: string; branch: string; base_tree: string; left_tree: string; right_tree: string; paths: string[]; proposals: EntityId[]; task: EntityId };
@@ -2366,6 +2371,13 @@ declare namespace Sdk {
   type CodeCheckCommandResult = { index: number; exit_code?: number | null; signal?: number | null; stdout_blake3: string; stderr_blake3: string };
   type CodeCheckAttemptView = { generation: number; phase: QueueCheckPhase; commit: string; tree: string; plan_digest: string; inputs_digest: string; attempt_id: string; attempt_count: number; stable_inputs?: boolean | null; completed: boolean; tests_passed?: boolean | null; commands: CodeCheckCommandResult[]; hold?: QueueCheckHoldReason | null; configuration_keys: string[]; verdict_ref?: string | null; passes?: boolean | null; reused_from?: string | null };
   type CodeCheckReceiptView = { repo: EntityId; work_ref: string; receipt_ref: string; receipts: CodeCheckAttemptView[] };
+  type QueueReviewPolicyState = "absent" | "set" | "unreadable";
+  type QueueReviewMode = "land_on_green" | "review" | "held";
+  type QueueReviewThresholds = { critics?: number; votes?: number };
+  type QueueReviewPolicy = { catalog: LensCatalog; thresholds: QueueReviewThresholds; set_by: EntityId; set_at: number };
+  type QueueReviewPolicyView = { state: QueueReviewPolicyState; mode: QueueReviewMode; policy?: QueueReviewPolicy | null; hold?: string | null };
+  type QueueReviewPolicyInput = { catalog: LensCatalog; thresholds?: QueueReviewThresholds };
+  type QueueReviewPolicySetRequest = { policy?: QueueReviewPolicyInput | null };
   type MergeQueueGreenExportRequest = { repo: EntityId; served_repo: string; checkout: string; epoch: number; ref_name: string; expected_old_oid?: string | null; endpoint: string };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
@@ -3111,7 +3123,7 @@ declare namespace Sdk {
   type SwitchStage = "start" | "attach" | "cookies" | "navigate";
   type SwitchOutcome = { state: "switched" } | { state: "unchanged" } | { state: "failed"; stage: SwitchStage; code: string; detail: string };
   type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reason: string; url: string; carried?: SwitchCarried[]; not_carried?: SwitchNotCarried[]; outcome: SwitchOutcome };
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; duration_ms: number };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; duration_ms: number };
   type SecretParam = { name: string; kind: SecretKind };
   type RecentCounts = { pass: number; miss: number; repair: number; of: number };
   type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
@@ -3142,7 +3154,9 @@ declare namespace Sdk {
   type CropInput = { image: string; x: number; y: number; width: number; height: number };
   type ZoomInput = { image: string; x: number; y: number; width: number; height: number; scale?: number | null };
   type DecideStep = { question: string; targets?: string[]; role?: string | null; name?: string | null; locate?: boolean; text?: string | null; secret?: string | null; clear?: boolean; option?: string | null };
-  type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text?: string | null; secret?: string | null; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
+  type TextReference = { id: string; text: string };
+  type FieldSpec = { supplied?: string | null; references?: TextReference[]; template?: string | null; generate?: boolean; instruction?: string | null; enum_values?: string[] | null };
+  type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text?: string | null; secret?: string | null; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" }) | { step: "fill"; ref: string; field: FieldSpec };
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
   type CheckReceipt = { expect: ExpectInput; observed: ExpectOutput };
@@ -4198,7 +4212,7 @@ declare namespace self {
     spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.AgentSpawnOutput | StoredResult>;
   };
   const browser: {
-    /** Runs one batched browser program for a subgoal, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a stop_cause and failed_receipt; elapsed_ms times it. */
+    /** Runs one batched browser program for a subgoal; type and expect take a secret by handle, fill types supplied, reference, template or checked written text (text_source, text_ref); a failing or no_progress stop names its stop_cause. */
     batch(input: Sdk.BatchInput): Promise<Sdk.BrowserBatchOutput | StoredResult>;
     /** Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next. */
     click(input: Sdk.ClickInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
@@ -4215,13 +4229,13 @@ declare namespace self {
     library: {
       /** The replay library's programs for a site, or the open page's; type_ref (node_id@tree_version) keeps that exact task type. Each card: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
       find(input: Sdk.LibraryFindInput): Promise<Sdk.BrowserLibraryFindOutput | StoredResult>;
-      /** Offers a solved run's program to the replay library, refs as locators, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires what it repairs. */
+      /** Offers a solved run's program, fill steps too, to the replay library, refs as locators, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires. */
       propose(input: Sdk.ProposeInput): Promise<Sdk.BrowserLibraryProposeOutput | StoredResult>;
       /** Takes a program out of the replay library for every later run, and returns the card it had. */
       retire(input: Sdk.LibraryRetireInput): Promise<Sdk.BrowserLibraryRetireOutput | StoredResult>;
       /** The programs retires took out of the replay library for a site, or for the open page's site, the newest first, each with when and why. */
       retired(input: Sdk.LibraryRetiredInput): Promise<Sdk.BrowserLibraryRetiredOutput | StoredResult>;
-      /** Runs a replay library program live, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; a miss or no_progress returns a failed_receipt; 3 strict misses retire it drift. */
+      /** Runs a replay library program live, strict (rules only; model steps and fill generation ask up at zero tokens) or assisted; secret slots take handles; receipts name fill text_source; misses return a failed_receipt; 3 strict misses: drift. */
       run(input: Sdk.LibraryRunInput): Promise<Sdk.BrowserLibraryRunOutput | StoredResult>;
     };
     /** Observes the run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its run-bound handle. */
@@ -5030,7 +5044,7 @@ declare const vault: Sdk.VaultHost & {
       export_green(input: Sdk.MergeQueueGreenExportRequest): Promise<Sdk.CodeExportResult | StoredResult>;
       /** Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue. */
       init(input: Sdk.MergeQueueInitializeRequest): Promise<Sdk.MergeQueueCheckWorkView | StoredResult>;
-      /** Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing. */
+      /** Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs the review it is held to and exact bytes and base; the owner proof approves nothing. */
       land_reviewed(input: Sdk.MergeQueueBatchRequest): Promise<Sdk.MergeQueueBatchView | StoredResult>;
       /** Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt. */
       observe(input: Sdk.MergeQueueObserveRequest): Promise<Sdk.MergeQueueObservation | StoredResult>;
@@ -5038,6 +5052,12 @@ declare const vault: Sdk.VaultHost & {
       recover(input: Sdk.MergeQueueRepoRequest): Promise<Sdk.MergeQueuePointersView | StoredResult>;
       /** Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written. */
       requeue_survivors(input: Sdk.MergeQueueBatchRequest): Promise<Sdk.MergeQueueRequeueView | StoredResult>;
+      review_policy: {
+        /** Read the vault's opt-in review policy for merge queue work and the mode inherited work is in: none set lands on green through the same checks; an unreadable row holds. A live Owner, or one covering Grant. */
+        get(input: Sdk.EmptyRequest): Promise<Sdk.QueueReviewPolicyView | StoredResult>;
+        /** Set the vault's opt-in review policy for merge queue work, a lens catalog with overridable limits, or clear it with null. While set, work naming no catalog waits for critics or Approve. Owner, or one covering Grant. */
+        set(input: Sdk.QueueReviewPolicySetRequest): Promise<Sdk.QueueReviewPolicyView | StoredResult>;
+      };
       /** Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result. */
       settle_slow(input: Sdk.MergeQueueRepoRequest): Promise<Sdk.MergeQueuePointersView | StoredResult>;
       /** Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move. */
@@ -5089,11 +5109,11 @@ declare const vault: Sdk.VaultHost & {
     proposal_resolve(input: Sdk.CodeProposalResolveRequest): Promise<Sdk.CodeProposalSubmitted | StoredResult>;
     /** Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt. */
     proposal_review(input: Sdk.CodeProposalReviewRequest): Promise<Sdk.CodeProposalSettlementView | StoredResult>;
-    /** Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it. */
+    /** Approve or reject one code proposal as an independent owner, keeping a receipt. Its own catalog still needs unanimous critics; Approve satisfies the vault's review policy. Only the tested merge queue lands it. */
     proposal_settle(input: Sdk.CodeProposalSettleRequest): Promise<Sdk.CodeProposalSettlementView | StoredResult>;
     /** Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only. */
     proposal_settlement(input: Sdk.CodeProposalSettlementRequest): Promise<Sdk.CodeProposalSettlementView | StoredResult>;
-    /** Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed. */
+    /** Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed. */
     proposal_submit(input: Sdk.CodeProposalSubmitRequest): Promise<Sdk.CodeProposalSubmitted | StoredResult>;
     /** One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied. */
     proposal_view(input: Sdk.CodeProposalViewRequest): Promise<Sdk.CodeProposalView | null | StoredResult>;
@@ -6145,7 +6165,7 @@ declare const vault: Sdk.VaultHost & {
       /** Reads the merge queue the attached run's own work is pinned under, with its own entries and what each waits behind. */
       observe(input: Sdk.LiveRunRequest<Sdk.RepoMergeQueueObserveInput>): Promise<Sdk.RepoMergeQueueObserveOutput | StoredResult>;
     };
-    /** Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept. */
+    /** Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept. */
     proposal_submit(input: Sdk.LiveRunRequest<Sdk.RepoProposalSubmitInput>): Promise<Sdk.RepoProposalSubmitOutput | StoredResult>;
     snapshots: {
       /** Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease. */

@@ -81,11 +81,11 @@ use crate::stop::elapsed_ms;
 use crate::{
     BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, DesktopWindow,
     EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HandoverInput,
-    HandoverOutput, HotkeyInput, ImageOutput, KeyInput, NoDecider, Observation, ObservationPage,
-    ObserveInput, OpenInput, PartialTree, PointInput, PressMode, ReceiptEvidenceSink,
-    RoutineDecider, Row, RowSecret, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger,
-    ScrollInput, SecretCustody, SecretKind, SecretNote, SelectInput, SendPolicy, TakeoverRecord,
-    TypeInput, ViewInput, WaitForInput, WaitForOutput, WindowInput, WindowSwitch,
+    HandoverOutput, HotkeyInput, ImageOutput, KeyInput, NoDecider, NoWriter, Observation,
+    ObservationPage, ObserveInput, OpenInput, PartialTree, PointInput, PressMode,
+    ReceiptEvidenceSink, RoutineDecider, Row, RowSecret, ScreenshotInput, ScreenshotOutput,
+    ScreenshotTrigger, ScrollInput, SecretCustody, SecretKind, SecretNote, SelectInput, SendPolicy,
+    TakeoverRecord, TypeInput, ViewInput, WaitForInput, WaitForOutput, WindowInput, WindowSwitch,
     WindowSwitchCause, WindowsInput, WindowsOutput, ZoomInput,
 };
 use oneiron_container::{GuestLimits, SessionLease, SessionManifest, SessionTransport};
@@ -1238,6 +1238,8 @@ impl DesktopSession {
             engine: None,
             fact: None,
             engine_switch: None,
+            text_source: None,
+            text_ref: None,
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(started),
         };
@@ -2512,8 +2514,10 @@ impl BrowserDriver for DesktopSession {
     fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {
         let mut decider = self.decider.take();
         let output = match decider.as_deref_mut() {
-            Some(decider) => self.batch_with(input, decider),
-            None => self.batch_with(input, &mut NoDecider),
+            // A desktop has no field writer: a Fill's generation stops
+            // `writer_unavailable`.
+            Some(decider) => self.batch_with(input, decider, &NoWriter),
+            None => self.batch_with(input, &mut NoDecider, &NoWriter),
         };
         self.decider = decider;
         let mut output = output?;
