@@ -62,18 +62,18 @@ impl EngineNativeExecutor<'_> {
                     Error::InvalidConfig("executor seat and run config disagree".into()).into(),
                 );
             }
-            if let crate::code_run::ExecutorStorage::Canonical(vault) = &self.storage {
-                let recorded = vault.model_seat_receipt(config.run_id)?;
-                if !recorded.is_some_and(|receipt| {
-                    receipt.model == *seat.model()
-                        && receipt.effort == seat.effort()
-                        && receipt.why == seat.receipt().why
-                }) {
-                    return Err(Error::InvalidConfig(
-                        "executor seat is not durably bound to run".into(),
-                    )
-                    .into());
-                }
+            // The seat's receipt is read where the run's rows are: base for a
+            // canonical run, its room's route for a session-bound one.
+            let recorded = self.storage.model_seat_receipt(config.run_id)?;
+            if !recorded.is_some_and(|receipt| {
+                receipt.model == *seat.model()
+                    && receipt.effort == seat.effort()
+                    && receipt.why == seat.receipt().why
+            }) {
+                return Err(Error::InvalidConfig(
+                    "executor seat is not durably bound to run".into(),
+                )
+                .into());
             }
         } else {
             if config.seat_effort.is_some() {

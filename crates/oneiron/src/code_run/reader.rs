@@ -454,12 +454,13 @@ pub struct TaskWaitSet {
 }
 
 /// A parent run's reader row: its clock, fixed at its first spawn, what its
-/// children spend on, what each holds at its claim, and its counts.
+/// children spend on, what each holds at its claim, their model list and its counts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReaderParent {
     pub deadline: RunDeadline,
     pub spend: ReaderSpend,
     pub hold_units: u64,
+    pub listed: Vec<AgentModel>,
     pub next_ordinal: u64,
     pub queued: u64,
     pub active: u64,

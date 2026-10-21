@@ -4,6 +4,7 @@ mod compaction;
 mod continuation;
 mod folds;
 mod lift;
+mod model_seat;
 mod program_resume;
 mod read_worlds;
 mod reader_folds;

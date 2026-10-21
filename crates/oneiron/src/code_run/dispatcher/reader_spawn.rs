@@ -51,7 +51,8 @@ impl HostSelfDispatcher<'_> {
 
     /// Binds this dispatcher to reader child `task`, as its runner claimed
     /// it at `generation`: the run reads its parent's source as `src`, and
-    /// makes no call but its report, `self.context` and `self.think`.
+    /// makes no call but its report, `self.context` and `self.think`. The
+    /// job's run is the run it is bound to.
     ///
     /// # Errors
     ///
@@ -76,6 +77,7 @@ impl HostSelfDispatcher<'_> {
             generation,
             source: job.binding.source,
         });
+        self.bound_run = Some(job.run);
         Ok(self)
     }
 

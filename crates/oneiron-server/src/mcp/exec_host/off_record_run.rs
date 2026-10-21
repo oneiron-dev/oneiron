@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use oneiron::agent_def::AgentModel;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
     AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, GatedActorWrite,
@@ -13,11 +14,12 @@ use oneiron::memory::HostWriteOrigin;
 use oneiron::off_record::OffRecordCreator;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::AgentVerb;
-use oneiron::{EntityId, Vault, WriteActor};
+use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 
 use super::{ActiveRun, McpCodeExecutionError, McpCodeModeProvider, McpEngineNativeCodeHost};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
+use crate::server::ReaderSeats;
 
 /// The durable run id `run_ref` names in the off-record session
 /// `session_ref` for `actor` (DOOR-127): the same handle in the same live
@@ -182,9 +184,10 @@ impl McpEngineNativeCodeHost {
     /// record, scripts, observations and raw outputs) and its spilled
     /// outputs land in the session's own body directory, so close drops them
     /// all. It waits its turn with `execute_code`'s runs, under `actor`'s
-    /// own key, and never enters one run twice at once. It takes no seat (a
-    /// seat row is the base vault's) and runs its configured model, as a
-    /// session's reader child does.
+    /// own key, and never enters one run twice at once. It takes no model
+    /// seat and runs its configured model. Its `self.spawn` queues reader
+    /// children in the room, under the seat this host's reader seats lend
+    /// it, as an `execute_code` run's does (FIX 7507).
     pub(crate) async fn execute_in_off_record_session(
         &self,
         vault: Arc<Vault>,
@@ -195,6 +198,7 @@ impl McpEngineNativeCodeHost {
         run_id: EntityId,
     ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
         let provider = Arc::clone(&self.provider);
+        let reader_seats = self.reader_seats.clone();
         let guard = ActiveRun::acquire(Arc::clone(&self.active), run_id)?;
         let permit = self
             .runs
@@ -210,6 +214,7 @@ impl McpEngineNativeCodeHost {
                 let outcome = run_in_off_record_session(
                     &vault,
                     provider.as_ref(),
+                    reader_seats.as_deref(),
                     &session,
                     actor,
                     &run_ref,
@@ -233,10 +238,20 @@ impl McpEngineNativeCodeHost {
 /// [`McpEngineNativeCodeHost::execute_in_off_record_session`]'s worker: the
 /// session bound for `actor` (for its creator, when `target` names one),
 /// then the paired session constructors, the gated write and the executor,
-/// as a session's reader child pairs them.
+/// as a session's reader child pairs them. The gated write is bound to the
+/// run before its config is read, so the config reads the run's first start
+/// from the room's record. With `reader_seats`, the run's `self.spawn`
+/// queues reader children in the room under a seat lent under its own id:
+/// no attempt and no scope, its children on the host's meter, held to its
+/// agent's list when `actor` is an agent (`parent_model_list`).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the session run's host binding"
+)]
 fn run_in_off_record_session(
     vault: &Arc<Vault>,
     provider: &dyn McpCodeModeProvider,
+    reader_seats: Option<&ReaderSeats>,
     target: &OffRecordRunSession,
     actor: WriteActor,
     run_ref: &str,
@@ -250,26 +265,44 @@ fn run_in_off_record_session(
         None => rooms.bind_for(&target.session_ref, actor.entity_ref()),
     }
     .map_err(binding)?;
+    let door = Arc::new(OffRecordRunDoor {
+        vault: Arc::clone(vault),
+        caller: target.caller.clone(),
+        actor,
+    });
+    let mut gated_write = GatedActorWrite::for_off_record_session(
+        &session,
+        actor,
+        format!("off_record.execute:{run_ref}"),
+    )
+    .map_err(binding)?
+    .with_agent_verb_door(door)
+    .with_bound_run(run_id);
+    if let Some(seats) = reader_seats {
+        match parent_model_list(vault, actor) {
+            Ok(listed) => {
+                let mut seat = seats.seat(
+                    run_id,
+                    None,
+                    target.caller.destination(),
+                    provider.reader_window_tokens(),
+                );
+                seat.listed = listed;
+                gated_write = gated_write.with_reader_spawn(seat);
+            }
+            Err(error) => {
+                tracing::warn!(%error, run = %run_id.to_hex(), "a session run's agent definition did not read; its self.spawn stays unbound");
+            }
+        }
+    }
     let config = provider
-        .executor_config(vault, run_id, task)
+        .executor_config_on(vault, &gated_write, run_id, task)
         .map_err(binding)?;
     if config.run_id != run_id {
         return Err(McpCodeExecutionError::RunBinding(
             "provider changed the session run's identity".into(),
         ));
     }
-    let door = Arc::new(OffRecordRunDoor {
-        vault: Arc::clone(vault),
-        caller: target.caller.clone(),
-        actor,
-    });
-    let gated_write = GatedActorWrite::for_off_record_session(
-        &session,
-        actor,
-        format!("off_record.execute:{run_ref}"),
-    )
-    .map_err(binding)?
-    .with_agent_verb_door(door);
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -287,4 +320,19 @@ fn run_in_off_record_session(
     reactor
         .block_on(executor.run(&config))
         .map_err(|error| McpCodeExecutionError::Run(error.to_string()))
+}
+
+/// The model list a session run's reader children are held to (FIX 4539):
+/// its agent's own, read from its stored definition now, when the run's
+/// authenticated actor is an agent; none for the owner or any other actor,
+/// or for an agent with no stored definition. The children's parent row
+/// freezes it at the run's first spawn. `Err` when an agent's definition
+/// does not read: its run then lends no spawn seat, as before.
+fn parent_model_list(vault: &Vault, actor: WriteActor) -> oneiron::Result<Vec<AgentModel>> {
+    if actor.actor_class() != EdgeActorClass::Agent {
+        return Ok(Vec::new());
+    }
+    Ok(vault
+        .get_agent_definition(&actor.entity_ref())?
+        .map_or_else(Vec::new, |definition| definition.models))
 }

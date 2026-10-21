@@ -27,7 +27,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
 use std::time::Duration;
 
-use oneiron::agent_def::birth_under_inherited_list;
+use oneiron::agent_def::{birth_under_inherited_list, ensure_inherited_model_list};
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
@@ -48,7 +48,7 @@ use oneiron::off_record::OffRecordSession;
 use oneiron::settings::ReadDestination;
 use oneiron::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, LlmBackend, LlmError,
-    LlmMessage, LlmMessageRole, LlmRequest, ModelLocality, ModelTierRef, ResponseFormat,
+    LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
     TierPrecedence, Vault,
 };
 
@@ -125,7 +125,7 @@ impl ReaderSeats {
             window_tokens: window_tokens.unwrap_or(DEFAULT_READER_WINDOW_TOKENS),
             memory_bytes: self.child_memory_bytes,
             // Any eligible model: an agent's run lends its own list
-            // (`run_bound`).
+            // (`run_bound`, and a session run's `parent_model_list`).
             listed: Vec::new(),
         }
     }
@@ -559,41 +559,63 @@ impl Child {
         }
     }
 
-    /// The seat a job's model calls are bound to, born under its own run as
-    /// a run's is (`run_seat`): a manifest-backed vault refuses a seatless
-    /// executor. A job in an off-record session takes none (the seat row is
-    /// the base vault's) and runs its configured model. A read and a summary
-    /// alike are held to the list their spawning run froze, unless it admits
-    /// no eligible model (`birth_under_inherited_list`, FIX 4539).
+    /// The dispatcher bound to this job's run on its route, `session`'s room
+    /// or base, at the generation its runner claimed the job at.
+    fn bind<'s>(
+        &self,
+        vault: &'s Vault,
+        session: Option<&'s OffRecordSession<'s>>,
+    ) -> oneiron::Result<HostSelfDispatcher<'s>> {
+        let job = &self.job;
+        job.binding
+            .actor
+            .write_actor()
+            .and_then(|actor| match session {
+                Some(session) => {
+                    HostSelfDispatcher::for_off_record_session(session, actor, job.run.to_hex())
+                }
+                None => HostSelfDispatcher::new(vault, actor, job.run.to_hex()),
+            })
+            .and_then(|dispatcher| dispatcher.with_reader_child(job.task, job.generation))
+    }
+
+    /// The seat a job's model calls are bound to, born under its own run on
+    /// the route `bound`, its dispatcher, captured, as a run's is: on base
+    /// for a canonical job (`run_seat`), where a manifest-backed vault
+    /// refuses a seatless executor, and on its room's route for a job in an
+    /// off-record session (`run_seat_on`, FIX 2594), never base. A session
+    /// job whose seat is not born there runs its configured model, as before
+    /// (`session_seat_or_seatless`). A read and a summary alike are held to
+    /// the list their spawning run froze (`birth_under_inherited_list`, FIX
+    /// 4539), and so is a seatless one's configured model
+    /// ([`Child::held_to_list`]).
     fn seat(
         &self,
         vault: &Vault,
-        session: Option<&OffRecordSession<'_>>,
+        bound: &HostSelfDispatcher<'_>,
         task: &str,
         purpose: CallPurpose,
         min_context_tokens: u64,
         locality: ModelLocality,
     ) -> Result<Option<ModelSeat>, String> {
-        if session.is_some() {
-            return Ok(None);
-        }
-        let inherited = &self.job.binding.listed;
-        let prior = if inherited.is_empty() {
-            None
-        } else {
-            vault
-                .model_seat_receipt(self.job.run)
-                .map_err(|error| error.to_string())?
-        };
-        birth_under_inherited_list(
-            self.job.run,
-            inherited,
-            prior.as_ref().map(|receipt| &receipt.model),
-            |listed| {
-                run_seat(vault, self.provider.as_ref(), self.job.run, |facet| {
-                    SeatTask {
+        let job = &self.job;
+        let born = || -> Result<Option<ModelSeat>, String> {
+            let inherited = &job.binding.listed;
+            let prior = if inherited.is_empty() {
+                None
+            } else {
+                bound
+                    .model_seat_receipt(job.run)
+                    .map_err(|error| error.to_string())?
+            };
+            birth_under_inherited_list(
+                job.run,
+                inherited,
+                prior.as_ref().map(|receipt| &receipt.model),
+                |listed| {
+                    let seat_task = |facet: &str| SeatTask {
                         kind: SeatKind::Child,
-                        warm_scope: format!("reader-run:{}", self.job.run.to_hex()),
+                        warm_scope: format!("reader-run:{}", job.run.to_hex()),
                         task: task.to_owned(),
                         purpose: purpose.clone(),
                         facet: facet.to_owned(),
@@ -603,10 +625,30 @@ impl Child {
                         override_model: None,
                         override_effort: None,
                         listed,
+                    };
+                    match self.session {
+                        None => run_seat(vault, self.provider.as_ref(), job.run, seat_task),
+                        Some(_) => self.provider.run_seat_on(vault, bound, job.run, seat_task),
                     }
-                })
-            },
-        )
+                },
+            )
+        };
+        match self.session {
+            None => born(),
+            Some(_) => Ok(session_seat_or_seatless(job.task, born())),
+        }
+    }
+
+    /// A seatless job runs its configured `model` only when the list its
+    /// spawning run froze admits it (`ensure_inherited_model_list`, FIX 5070
+    /// under FIX 6030's ruling that the engine enforces only the list): one
+    /// off the list ends failed, its reason the refusal naming the list. An
+    /// empty list admits any model, as before.
+    fn held_to_list(&self, model: &ModelId) -> Result<(), ReaderRunEnd> {
+        ensure_inherited_model_list(&self.job.binding.listed, model).map_err(|refused| {
+            tracing::info!(%refused, task = %self.job.task.to_hex(), "a seatless job's configured model is off its inherited list");
+            ReaderRunEnd::Failed(refused.to_string())
+        })
     }
 
     /// The child's run: a fresh sandbox and a dispatcher bound to its job
@@ -627,22 +669,14 @@ impl Child {
             tracing::warn!(%error, task = %job.task.to_hex(), reason, "a reader child did not run");
             ReaderRunEnd::Failed(reason.to_owned())
         };
-        let bound = job
-            .binding
-            .actor
-            .write_actor()
-            .and_then(|actor| match session {
-                Some(session) => {
-                    HostSelfDispatcher::for_off_record_session(session, actor, job.run.to_hex())
-                }
-                None => HostSelfDispatcher::new(vault, actor, job.run.to_hex()),
-            })
-            .and_then(|dispatcher| dispatcher.with_reader_child(job.task, job.generation));
-        let dispatcher = match bound {
+        let dispatcher = match self.bind(vault, session) {
             Ok(dispatcher) => dispatcher.with_agent_verb_door(door),
             Err(error) => return failed("reader_binding_failed", &error),
         };
-        let mut config = match provider.executor_config(vault, job.run, &reader_task_brief(job)) {
+        // Read on the job's route: a session child's first start is its
+        // room's record's.
+        let brief = reader_task_brief(job);
+        let mut config = match provider.executor_config_on(vault, &dispatcher, job.run, &brief) {
             Ok(config) => config,
             Err(error) => return failed("reader_config_failed", &error),
         };
@@ -651,7 +685,7 @@ impl Child {
         };
         let seat = match self.seat(
             vault,
-            session,
+            &dispatcher,
             &config.task,
             purpose,
             1,
@@ -660,10 +694,15 @@ impl Child {
             Ok(seat) => seat,
             Err(error) => return failed("reader_seat_failed", &error),
         };
+        // The seat binds its model and effort into the config and the
+        // executor alike; a seatless child runs its configured model, held
+        // to its inherited list.
         if let Some(seat) = &seat {
             config.model = seat.model().clone();
             config.model_locality = seat.locality();
             config.seat_effort = Some(seat.effort());
+        } else if let Err(end) = self.held_to_list(&config.model) {
+            return end;
         }
         let reactor = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -797,7 +836,19 @@ impl Child {
         if tokens > budget {
             return ReaderRunEnd::Failed(summary_exceeds_window(tokens, window_tokens));
         }
-        let config = match self.provider.executor_config(vault, job.run, "summarize") {
+        // Its config and seat are read on its own route, through a
+        // dispatcher bound to the job as a child's run is.
+        let bound = match self.bind(vault, session) {
+            Ok(bound) => bound,
+            Err(error) => {
+                tracing::warn!(%error, task = %job.task.to_hex(), "a summary's dispatcher did not bind");
+                return failed("reader_binding_failed");
+            }
+        };
+        let config = match self
+            .provider
+            .executor_config_on(vault, &bound, job.run, "summarize")
+        {
             Ok(config) => config,
             Err(error) => {
                 tracing::warn!(%error, task = %job.task.to_hex(), "a summary's config did not bind");
@@ -808,7 +859,7 @@ impl Child {
         // was sized against.
         let seat = match self.seat(
             vault,
-            session,
+            &bound,
             &config.task,
             CallPurpose::Other {
                 name: SUMMARY_PURPOSE_NAME.to_owned(),
@@ -822,6 +873,13 @@ impl Child {
                 return failed("reader_seat_failed");
             }
         };
+        // A seatless summary calls its configured model, held to its
+        // inherited list.
+        if seat.is_none()
+            && let Err(end) = self.held_to_list(&config.model)
+        {
+            return end;
+        }
         let purpose = CallPurpose::Other {
             name: SUMMARY_PURPOSE_NAME.to_owned(),
         };
@@ -910,6 +968,21 @@ impl Child {
             }
         }
     }
+}
+
+/// Default A (FIX 7507, Engine 10-21): a job in an off-record session whose
+/// seat its room's route does not bear, its birth failed, runs its
+/// configured model, as every session job did before it took a seat; that
+/// model is still held to its inherited list ([`Child::held_to_list`]). No
+/// call that runs today stops here.
+fn session_seat_or_seatless(
+    task: EntityId,
+    born: Result<Option<ModelSeat>, String>,
+) -> Option<ModelSeat> {
+    born.unwrap_or_else(|error| {
+        tracing::info!(%error, task = %task.to_hex(), "a session job's seat was not born; it runs its configured model");
+        None
+    })
 }
 
 /// The memory one running child may hold, which `can({read, child})`
