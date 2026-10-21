@@ -7292,6 +7292,10 @@ pub enum ExecutionRuntime {
     Candle,
     #[serde(rename = "endpoint")]
     Endpoint,
+    #[serde(rename = "mlx")]
+    Mlx,
+    #[serde(rename = "coreml")]
+    CoreMl,
 }
 
 /// `oneiron::memory::extraction::types::ExecutionCompute`.
@@ -7303,6 +7307,8 @@ pub enum ExecutionCompute {
     Metal,
     #[serde(rename = "cuda")]
     Cuda,
+    #[serde(rename = "cpu_and_ne")]
+    CpuAndNe,
     #[serde(rename = "opaque")]
     Opaque,
 }

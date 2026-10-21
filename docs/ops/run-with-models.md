@@ -2797,11 +2797,14 @@ measures again.
 
 Each reference case is timed after 250 ms of idle, as a chat spaces its
 turns. An engine replaces the one ranked above it only when its median is at
-least 3% faster and its 95th percentile at most 5% slower. A row is keyed by
-the bundle's stack and reference, the engine, its runtime and artifact, the
-server build, the OS build, that idle, and the window rules: the longest
-window a case may need and `live_window_tokens`. It is measured again when
-any of them moves; a rows file in an older format is measured over. An
+least 3% faster and its 95th percentile at most 5% slower, both timed on the
+same cases. A row is keyed by the bundle's stack and reference, the engine,
+its runtime and artifact, the server build down to the SHA-256 of the server
+executable, the OS build, that idle, the window rules (the longest window a
+case may need, `max_input_tokens` and `live_window_tokens`), and the cases
+it is timed on. It is measured again when any of them moves; a rows file in
+an older format is measured over. If the server executable cannot be read,
+rows are measured at every start and never saved. An
 engine is held only to the reference cases whose live window, special
 tokens included, fits its window; a longer case is skipped, never failed,
 and the row records how many. Candle's window is `max_input_tokens`, so it
@@ -2819,6 +2822,16 @@ Only that one model is loaded. An endpoint slot's worker is the endpoint, and
 its receipts do not name a runtime inside it. A worker loads, warms on one
 short untimed call, and takes work once ready; one whose load or warm-up fails
 takes none until the next start.
+
+`runtime = "auto"`, the default, serves the Candle baseline; a platform
+runtime this machine installs may join it only once its answers clear the
+bundle's reference here, and this build registers none yet.
+`runtime = "candle"` or a named device pins the slot to Candle, and no
+receipt names `auto`. Each call's window is counted once as it is queued,
+and a worker runs only calls whose window fits the window it is qualified
+for: a longer window goes to Candle, whose window is `max_input_tokens`, and
+is never refused for its length, and a long bulk call at the front of the
+queue never holds back the shorter ones behind it.
 
 Calls come in two classes. A live call (the explicit tag door,
 `vault.models.roles.invoke` with a `tag` input) takes a free worker first,

@@ -1001,9 +1001,9 @@ export type TaggingMarkerView = { attempt_ref: string; state: string; checkpoint
 /** `oneiron::tagging::verbs::TaggingFailureView` */
 export type TaggingFailureView = { class: string; code?: string | null; refusal?: string | null }
 /** `oneiron::memory::extraction::types::ExecutionRuntime` */
-export type ExecutionRuntime = "candle" | "endpoint"
+export type ExecutionRuntime = "candle" | "endpoint" | "mlx" | "coreml"
 /** `oneiron::memory::extraction::types::ExecutionCompute` */
-export type ExecutionCompute = "cpu" | "metal" | "cuda" | "opaque"
+export type ExecutionCompute = "cpu" | "metal" | "cuda" | "cpu_and_ne" | "opaque"
 /** `oneiron::memory::extraction::types::ExecutionPick` */
 export type ExecutionPick = "calibrated" | "free" | "shorter_queue" | "fallback" | "pinned"
 /** `oneiron::memory::extraction::types::EncoderExecution` */
