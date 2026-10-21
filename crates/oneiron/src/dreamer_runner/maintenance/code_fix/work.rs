@@ -146,11 +146,13 @@ pub(super) fn enqueue_run_in_txn(
 }
 
 /// The candidates of `pinned` that `settled` holds no run of that stands,
-/// each as its id and kind: one it never ran, and an engine pair it kept
-/// not run at another shadow protocol (FIX 1661/2144).
+/// each as its id and kind: one it never ran, an engine pair it kept not
+/// run at another shadow protocol (FIX 1661/2144), and with `read_granted`
+/// one kept for want of the Coach's Grant (FIX 7031).
 pub(super) fn untried(
     settled: &CodeFixSettled,
     pinned: &[PublisherCandidate],
+    read_granted: bool,
 ) -> Vec<(String, PublisherCandidateKind)> {
     pinned
         .iter()
@@ -158,7 +160,7 @@ pub(super) fn untried(
             !settled
                 .candidates
                 .iter()
-                .any(|run| run.candidate_id == candidate.id && run.tried())
+                .any(|run| run.candidate_id == candidate.id && run.tried(read_granted))
         })
         .map(|candidate| (candidate.id.clone(), candidate.kind.clone()))
         .collect()

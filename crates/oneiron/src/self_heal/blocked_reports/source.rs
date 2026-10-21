@@ -245,8 +245,10 @@ fn canonical_hash(request: &LlmRequest) -> Result<[u8; 32]> {
 /// Keeps `source` for the report `receipt`, in the report's filing commit,
 /// through the side-row wall with the vault's custody door: each secret it
 /// places is a custody handle. A request the run's replay capsule holds stays
-/// there, named by its hash (FIX 1662). A request the wall refuses to keep
-/// is dropped from the row, and the report files without it.
+/// there, named by its hash (FIX 1662); a capsule of the same hash whose
+/// request the wall withheld holds none, so the row keeps it (FIX 6349). A
+/// request the wall refuses to keep is dropped from the row, and the report
+/// files without it.
 pub(super) fn put_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -261,7 +263,13 @@ pub(super) fn put_in_txn(
             .and_then(|request| request.sent.as_mut())
         && crate::code_run::step_replay_capsules_in_txn(vault, &*txn, run)?
             .iter()
-            .any(|capsule| capsule.request_hash == sent.digest)
+            .any(|capsule| {
+                capsule.request_hash == sent.digest
+                    && matches!(
+                        capsule.request,
+                        crate::code_run::CapsuleRequest::Kept { .. }
+                    )
+            })
     {
         sent.kept = None;
     }
