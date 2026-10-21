@@ -404,10 +404,11 @@ pub struct CriticObservation {
     /// the others, whose branch or run reference names the run.
     #[serde(default)]
     pub declared_attempt_ref: Option<EntityId>,
-    /// The verdict claim of the review a declared association found the
-    /// critique in (FIX 5252): the row it derives from, the review the
-    /// caller declared for the run. `None` for the others, and for a stored
-    /// review whose verdict ref does not read.
+    /// The verdict claim of the review that holds the critique, whichever
+    /// association found it (FIX 5252, 6380): the row it derives from, the
+    /// review the caller declared for the run when there is one, else the
+    /// stored review the critique is in. `None` when no stored review holds
+    /// it, or its verdict ref does not read.
     #[serde(default)]
     pub review_verdict_ref: Option<EntityId>,
     pub artifact_id: String,

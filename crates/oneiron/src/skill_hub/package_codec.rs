@@ -342,6 +342,24 @@ impl Vault {
         }
         Ok(Some(package))
     }
+    /// The replicated carrier ASSET a runtime load of `entity`'s package read
+    /// its bytes from, on the load's snapshot (FIX 7017): `None` while the
+    /// local sidecar holds them, which [`Self::runtime_skill_package_in_txn`]
+    /// reads first, as part of the skill's own row.
+    pub(crate) fn runtime_package_carrier_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+        record: &crate::skill::SkillRecord,
+    ) -> Result<Option<EntityId>> {
+        if PACKAGE.contains(&self.store, txn, entity)? {
+            return Ok(None);
+        }
+        record
+            .content_hash
+            .map(|hash| super::source_carrier::source_carrier_id(entity, &hash))
+            .transpose()
+    }
     pub(super) fn hub_baseline_instructions(
         &self,
         txn: &heed::RoTxn<'_>,

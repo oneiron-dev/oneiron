@@ -78,20 +78,29 @@ pub(crate) struct Bm25Config {
     pub(crate) fields: [FieldConfig; BM25_FIELD_COUNT],
 }
 
-/// Query-time recency blend for BM25F keyword ranking.
+/// Query-time recency blend for BM25F keyword ranking. Each row ages by
+/// its entity type's half-life in the default pipeline's table
+/// ([`crate::pipeline::retrieval_recency_half_life_days_for_type`]), so a
+/// keyword search and a pipeline run age a row alike (FIX 7781).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Bm25RecencyConfig {
-    pub(crate) half_life_days: f64,
     pub(crate) boost: f64,
     pub(crate) now_secs: u64,
 }
 
 impl Bm25RecencyConfig {
+    /// The blend a direct keyword search runs by default (ARCH-0031
+    /// `recencyBlend: "enabled-by-default"`): the bootstrap recency weight
+    /// as its boost, aged from `now_secs`.
+    pub(super) fn table_default(now_secs: u64) -> Self {
+        Self {
+            boost: f64::from(crate::store::RetrievalBlendWeights::bootstrap().recency),
+            now_secs,
+        }
+    }
+
     pub(super) fn is_enabled(self) -> bool {
-        self.half_life_days.is_finite()
-            && self.half_life_days > 0.0
-            && self.boost.is_finite()
-            && self.boost > 0.0
+        self.boost.is_finite() && self.boost > 0.0
     }
 }
 

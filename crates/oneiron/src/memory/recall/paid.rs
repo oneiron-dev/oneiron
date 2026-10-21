@@ -46,6 +46,8 @@ use crate::rerank::{RerankCandidate, Reranker};
 use crate::retrieval_depth::{RecallExecution, RecallMediaSeed, RetrievalDeadline};
 use crate::task_verb::sdk::{RecallDoor, RecallRequest};
 
+mod lineage;
+
 /// How many times a door scores a block that changed while it was scored
 /// before it refuses the recall.
 const RERANK_CALLS: u32 = 2;
@@ -112,6 +114,10 @@ pub trait RecallRerankHost: Sync {
 pub struct RerankDocument<'a> {
     pub id: EntityId,
     pub text: &'a str,
+    /// The rows `text` is read from (FIX 7001): the record, the records it
+    /// supersedes and a TURN's messages. `None` when they are not known
+    /// whole; an empty text is read from none.
+    pub sources: Option<&'a [EntityId]>,
 }
 
 /// The rows a block sends with words, judged again before each request a
@@ -428,7 +434,7 @@ impl Memory<'_> {
                 }
                 (Err(error), None) => return Err(error),
             };
-            let (texts, egress) =
+            let (texts, sources, egress) =
                 self.rerank_documents(scope, pin, &block, host.runs_on_device())?;
             if texts.iter().all(String::is_empty) {
                 let mut pack = by_fusion(deadline.as_ref())?;
@@ -438,9 +444,11 @@ impl Memory<'_> {
             let documents: Vec<RerankDocument<'_>> = block
                 .iter()
                 .zip(&texts)
-                .map(|(candidate, text)| RerankDocument {
+                .zip(&sources)
+                .map(|((candidate, text), sources)| RerankDocument {
                     id: candidate.id,
                     text,
+                    sources: sources.as_deref(),
                 })
                 .collect();
             let mut scored = match host.score(
@@ -580,15 +588,16 @@ impl Memory<'_> {
     /// is a text the write door refuses whole; nothing it holds leaves. So is
     /// a row a device-only world keeps (the vault's own flag, whoever reads),
     /// unless the host's model runs on this device (`on_device`). With the
-    /// texts come the rows that leave with words, to be judged again. It
-    /// reads the worlds of the recall's pinned selection (`pin`).
+    /// texts come the rows each is read from (FIX 7001), and the rows that
+    /// leave with words, to be judged again. It reads the worlds of the
+    /// recall's pinned selection (`pin`).
     fn rerank_documents(
         &self,
         scope: &RecallScope,
         pin: &RecallPin,
         block: &[BlockCandidate],
         on_device: bool,
-    ) -> MemoryResult<(Vec<String>, RerankEgress<'_>)> {
+    ) -> MemoryResult<(Vec<String>, lineage::DocumentSources, RerankEgress<'_>)> {
         let worlds = self.pinned_recall_worlds(scope, pin)?;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let lane = match worlds {
@@ -597,12 +606,14 @@ impl Memory<'_> {
         };
         let mut receipt = lane.read_receipt(None, 0)?;
         let mut texts = Vec::with_capacity(block.len());
+        let mut sources = Vec::with_capacity(block.len());
         let mut pinned_worlds = Vec::with_capacity(block.len());
         for candidate in block {
             // The block sets a row with no pin aside before it is taken; its
             // words, read now, would be whatever they had become.
             let Some(revision) = candidate.revision else {
                 texts.push(String::new());
+                sources.push(Some(Vec::new()));
                 pinned_worlds.push(None);
                 continue;
             };
@@ -618,6 +629,10 @@ impl Memory<'_> {
                     .and_then(|item| item.world.as_deref())
                     .and_then(|world| EntityId::from_hex(world).ok()),
             );
+            sources.push(match &item {
+                Some(item) => lineage::item_source_rows(item),
+                None => Some(Vec::new()),
+            });
             let text = item.map_or_else(String::new, |item| match item.predicate {
                 Some(predicate) => format!("{predicate}: {}", item.value_text),
                 None => item.value_text,
@@ -656,7 +671,7 @@ impl Memory<'_> {
             sent,
             refused: AtomicBool::new(false),
         };
-        Ok((texts, egress))
+        Ok((texts, sources, egress))
     }
 }
 

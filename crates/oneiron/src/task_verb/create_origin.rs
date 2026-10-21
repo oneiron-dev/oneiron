@@ -62,7 +62,7 @@ pub(crate) struct TaskCreateOrigin {
 }
 
 impl TaskCreateOrigin {
-    pub(super) const fn parent_attempt(&self) -> Option<AttemptId> {
+    pub(crate) const fn parent_attempt(&self) -> Option<AttemptId> {
         self.parent_attempt
     }
 
@@ -74,11 +74,11 @@ impl TaskCreateOrigin {
         self.team.as_ref()
     }
 
-    pub(super) const fn project_ref(&self) -> Option<EntityId> {
+    pub(crate) const fn project_ref(&self) -> Option<EntityId> {
         self.project_ref
     }
 
-    pub(super) fn run_id(&self) -> Option<String> {
+    pub(crate) fn run_id(&self) -> Option<String> {
         self.run_id.clone()
     }
 }
