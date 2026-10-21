@@ -1,5 +1,5 @@
-//! `self.code.*` (FIX 6867, L11 G1 PR2a, PR2b): a leased agent run's repo
-//! rows.
+//! `self.code.*` (FIX 6867, L11 G1 PR2a, PR2b, PR3b): a leased agent run's
+//! repo rows.
 //!
 //! A call runs only on canonical storage, at an engine executor's call site,
 //! from a run that holds its live lease on an agent try realizing a TASK,
@@ -143,6 +143,12 @@ impl HostSelfDispatcher<'_> {
                 effect,
                 memory.repo_merge_queue_enqueue_for_run(&binding, input),
             ),
+            RepoRunCall::CheckoutBind(input) => {
+                answered(effect, memory.repo_checkout_bind_for_run(&binding, input))
+            }
+            RepoRunCall::Export(input) => {
+                answered(effect, memory.repo_export_for_run(&binding, input))
+            }
         }
     }
 
@@ -213,6 +219,8 @@ impl HostSelfDispatcher<'_> {
         let (repo, git_ref) = match call {
             RepoRunCall::SnapshotsIngest(input) => (input.repo, input.git_ref.clone()),
             RepoRunCall::WorkOpen(input) => (input.repo, input.git_ref.clone()),
+            RepoRunCall::CheckoutBind(input) => (input.repo, input.git_ref.clone()),
+            RepoRunCall::Export(input) => (input.repo, input.git_ref.clone()),
             // A row on the run's own work is gated at that work's repo and
             // ref; a work that is not this run's is refused before any
             // decision is recorded.

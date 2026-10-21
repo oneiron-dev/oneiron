@@ -160,7 +160,7 @@ pub struct RepoMergeQueueEnqueueInput {
 }
 
 /// One snapshot of the admitted repo, filtered to the paths the run reads.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoSnapshotView {
     /// The CODE anchor the run was admitted to.
     pub repo: EntityId,
@@ -183,7 +183,7 @@ pub type RepoSnapshotsIngestOutput = RepoSnapshotView;
 
 /// `self.code.snapshots.read`'s answer: one frozen file, read from its
 /// stored blob.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoSnapshotsReadOutput {
     pub repo: EntityId,
     #[serde(rename = "ref")]
@@ -197,7 +197,7 @@ pub struct RepoSnapshotsReadOutput {
 }
 
 /// `self.code.symbols.definitions`'s answer, in manifest order.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoSymbolsDefinitionsOutput {
     pub repo: EntityId,
     #[serde(rename = "ref")]
@@ -208,7 +208,7 @@ pub struct RepoSymbolsDefinitionsOutput {
 
 /// One work of the run's own: a private view at its queue's green commit.
 /// No host path is shown.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoWorkView {
     /// The work id: the view's own id, minted fresh at each open.
     pub work: EntityId,
@@ -226,7 +226,7 @@ pub struct RepoWorkView {
 }
 
 /// One file of a run's work: its path and its bytes' identity.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoWorkFile {
     pub path: String,
     /// The BLAKE3 hash of the file's bytes, 64 lower-hex characters.
@@ -240,7 +240,7 @@ pub type RepoWorkOpenOutput = RepoWorkView;
 pub type RepoViewsGetOutput = RepoWorkView;
 
 /// `self.code.views.read`'s answer: the file's bytes in the run's work.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoViewsReadOutput {
     pub work: EntityId,
     pub path: String,
@@ -251,7 +251,7 @@ pub struct RepoViewsReadOutput {
 
 /// `self.code.merge_queue.observe`'s answer: the queue the work is pinned
 /// under, as raw Git commits.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoMergeQueueObserveOutput {
     pub work: EntityId,
     pub repo: EntityId,
@@ -268,7 +268,7 @@ pub struct RepoMergeQueueObserveOutput {
 }
 
 /// One of the run's own queue entries: a batch of its exact proposals.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoQueueEntryView {
     /// The batch id, 64 lower-hex characters.
     pub batch: String,
@@ -276,6 +276,7 @@ pub struct RepoQueueEntryView {
     pub proposals: Vec<EntityId>,
     /// The run's declaration it was accepted under, if any.
     pub declaration: Option<EntityId>,
+    #[schemars(with = "String")]
     pub state: BatchState,
     pub base_green: String,
     pub expected_head: String,
@@ -289,7 +290,7 @@ pub struct RepoQueueEntryView {
 pub type RepoMergeQueueEnqueueOutput = RepoQueueEntryView;
 
 /// A run's symbol declaration, as the engine holds it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoSymbolDeclarationView {
     pub work: EntityId,
     /// The declaration id the run names it by: fresh at each declaration,
@@ -313,7 +314,7 @@ pub type RepoSymbolsDeclareOutput = RepoSymbolDeclarationView;
 pub type RepoSymbolsRenewOutput = RepoSymbolDeclarationView;
 
 /// `self.code.symbols.release`'s answer: the declaration it removed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoSymbolsReleaseOutput {
     pub work: EntityId,
     pub declaration: EntityId,
@@ -321,7 +322,7 @@ pub struct RepoSymbolsReleaseOutput {
 }
 
 /// `self.code.proposal_submit`'s answer: the immutable proposal, as stored.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoProposalSubmitOutput {
     /// The engine-minted proposal id.
     pub proposal: EntityId,

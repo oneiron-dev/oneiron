@@ -6149,6 +6149,127 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_repo_anchor_bind(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.anchor.bind")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.anchor.bind", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_snapshots_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.snapshots.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.snapshots.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_snapshots_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.snapshots.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.snapshots.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_symbols_definitions(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.symbols.definitions")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.repo.symbols.definitions", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_views_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.views.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.views.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_views_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.views.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.views.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_merge_queue_observe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.merge_queue.observe")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.repo.merge_queue.observe", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_snapshots_ingest(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.snapshots.ingest")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.snapshots.ingest", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_work_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.work.open")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.work.open", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_symbols_declare(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.symbols.declare")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.symbols.declare", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_symbols_renew(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.symbols.renew")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.symbols.renew", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_symbols_release(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.symbols.release")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.symbols.release", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_proposal_submit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.proposal_submit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.proposal_submit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_merge_queue_enqueue(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.merge_queue.enqueue")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.repo.merge_queue.enqueue", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_checkout_bind(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.checkout.bind")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.checkout.bind", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_export(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.export")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.export", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_agents_base(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.agents.base")?;
         let output = py
