@@ -237,7 +237,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/claim_write.rs` | src | s | 1 fn · 3 crate-vis | — | Claim write-window admission and read-time quarantine share one causal predicate |
 | `src/authority/conversation_training.rs` | src | s | 1 re-export · 11 crate-vis | — | Folds each person's signed "Learn from my conversations" opt-out (FIX 4489, FIX 5502 owner rulings, OF-420) |
 | `src/authority/conversation_training/door.rs` | src | s | 1 struct · 2 fn | ConversationTrainingView | The person's own "Learn from my conversations" opt-out door (FIX 4489, FIX 5502 owner rulings, OF-420)… |
-| `src/authority/conversation_training_vault.rs` | src | m | 1 struct · 3 fn · 13 crate-vis | ConversationLearningView | Folds the vault's signed "Learn from my conversations" setting (FIX 5502 owner rulings, OF-420), and the… |
+| `src/authority/conversation_training_vault.rs` | src | m | 1 struct · 3 fn · 15 crate-vis | ConversationLearningView | Folds the vault's signed "Learn from my conversations" setting (FIX 5502 owner rulings, OF-420), and the… |
 | `src/authority/critical_confirm_door.rs` | src | s | 1 crate-vis | — | Signed critical-claim answers, under the existing host-root owner ceremony |
 | `src/authority/engine_machine.rs` | src | s | 3 fn · 2 crate-vis | — | Host-provisioned software identities for the engine's own MACHINE writers |
 | `src/authority/entry_transition.rs` | src | m | 8 crate-vis | — | Per-entry state transition and the consent predicates |
@@ -2230,7 +2230,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/shared_act/membership.rs` | src | m | 7 fn · 1 re-export · 5 crate-vis | — | Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's… |
 | `src/federation/shared_act/membership/invitation.rs` | src | m | 1 struct · 1 enum · 5 fn · 1 const · 2 crate-vis | SharedInvitation, SharedInvitationState | Invitee acceptance (CROSS-ARCH-0024: "Only an accepted, vault-specific invitation" grants membership) |
 | `src/federation/shared_act/mod.rs` | src | L | 11 struct · 2 enum · 11 fn · 3 const · 2 re-export · 6 crate-vis | DeleteVaultPlan, RemovalExportCopy, RemovalExportDelivery, RemoveOwnerPlan, SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind +5 | Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never… |
-| `src/federation/shared_creation.rs` | src | s | 2 struct · 1 enum · 3 fn · 3 crate-vis | InitialSharedMember, SharedVaultCreation, SharedVaultPreset | Creation-time membership defaults, materialized once as explicit grant/policy rows |
+| `src/federation/shared_creation.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 re-export · 3 crate-vis | InitialSharedMember, SharedVaultCreation, SharedVaultPreset | Creation-time membership defaults, materialized once as explicit grant/policy rows |
+| `src/federation/shared_creation/training_setup.rs` | src | s | 2 struct · 1 enum · 2 fn · 1 crate-vis | SharedTrainingSetup, SharedTrainingSetupAnswer, SharedTrainingSetupQuestion | A shared vault's one training question, asked once at setup (OF-420 T3) |
 | `src/federation/shared_creation_tests.rs` | test | m | — | — | — |
 | `src/federation/stale.rs` | src | m | 1 struct · 1 enum · 9 fn · 3 const · 9 crate-vis | FederationStaleReason, WorldStaleStamp | Terminal-pact per-world stale stamping (FED-04) |
 | `src/federation/tests.rs` | test | XL | — | — | — |
