@@ -16,6 +16,7 @@ use super::types::{AttemptId, AttemptInterventionKind, AttemptRecord, AttemptSta
 use super::validate::{
     append_attempt_event, validate_lease_owner, validate_resume_point, validate_transition_lease,
 };
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 
 /// The intervention actor of a budget hold. Reserved: no other intervention
@@ -76,6 +77,43 @@ impl AttemptQueue<'_> {
         wtxn.commit()?;
         self.store.notify_attempt_observers();
         Ok(record)
+    }
+
+    /// [`Self::hold_for_budget`] with the vault's Owners told in the same
+    /// write (FIX 6148, FIX 7210): the hold, then each Owner's Ask notice
+    /// ([`crate::Vault::notify_attempt_budget_hold`]) in a savepoint of that
+    /// writer, so no crash commits the hold without its notice. A notice that
+    /// is not recorded rolls back its savepoint alone and is logged; the hold
+    /// still commits. A store-only handle holds without a notice.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::hold_for_budget`].
+    pub fn hold_for_budget_with_owner_notice(
+        &self,
+        input: HoldAttemptForBudget,
+    ) -> Result<AttemptRecord> {
+        let Some(vault) = self.vault else {
+            return self.hold_for_budget(input);
+        };
+        let now = input.now;
+        vault.with_write_txn_grouped(|wtxn| {
+            let record = self.hold_for_budget_in_txn(wtxn, input)?;
+            let noticed = (|| -> Result<()> {
+                let mut savepoint = self.store.env.nested_write_txn(wtxn)?;
+                vault.notify_attempt_budget_hold_in_txn(&mut savepoint, record.id, now)?;
+                savepoint.commit()?;
+                Ok(())
+            })();
+            if let Err(error) = noticed {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    attempt = %bytes_to_hex_lower(record.id.as_bytes()),
+                    "a budget hold's owner notice was not recorded; the hold commits"
+                );
+            }
+            Ok(record)
+        })
     }
 
     /// Transaction-composable [`Self::hold_for_budget`].

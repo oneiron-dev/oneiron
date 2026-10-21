@@ -44,7 +44,7 @@ pub(super) const CHECK_CONFIGS: SideTable<String, QueueCheckConfiguration, Named
     SideTable::new(&side_table::MERGE_QUEUE_CHECK_CONFIG);
 
 /// Checker work rows. Key: hex(repo identity) ":" hex64(request digest).
-const CHECK_WORK: SideTable<String, QueueCheckWork, Named> =
+pub(super) const CHECK_WORK: SideTable<String, QueueCheckWork, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_CHECK_WORK);
 
 /// Where a checked initialization stands.
@@ -189,6 +189,9 @@ pub struct QueueCheckWork {
     pub pointers: Option<MergeQueuePointers>,
     /// The quarantine a completed diagnosis kept.
     pub quarantine: Option<Quarantine>,
+    /// A checked init's baseline seal: pending from the checked stage,
+    /// sealed once its tested revision is finalized (G2 PR3).
+    pub baseline_seal: Option<super::QueueRevisionLink>,
 }
 
 impl QueueCheckWork {
@@ -213,6 +216,8 @@ pub(super) struct WorkUpdate<'u> {
     /// The current batch with its new verdict slot, under its key.
     pub(super) batch: Option<(String, &'u MergeBatch)>,
     pub(super) config: Option<&'u QueueCheckConfiguration>,
+    /// The checked baseline's pending seal, kept once (G2 PR3).
+    pub(super) baseline_seal: Option<super::QueueRevisionLink>,
 }
 
 impl WorkUpdate<'_> {
@@ -306,6 +311,7 @@ impl MergeQueue<'_> {
                 verdict_refs: Vec::new(),
                 pointers: None,
                 quarantine: None,
+                baseline_seal: None,
             },
         };
         match config {
@@ -621,6 +627,9 @@ impl Vault {
             {
                 current.verdict_refs.push(verdict);
             }
+            if current.baseline_seal.is_none() {
+                current.baseline_seal = update.baseline_seal;
+            }
         } else {
             status = Some(QueueCheckStatus::Held(authority_lapsed()));
         }
@@ -698,7 +707,7 @@ fn queue_attempt_in_txn(
     Ok(())
 }
 
-fn put_work(
+pub(super) fn put_work(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     work: &QueueCheckWork,
