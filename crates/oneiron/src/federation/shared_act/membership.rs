@@ -5,8 +5,10 @@
 //! Removal is access revocation, never a group rekey. A new member joins only
 //! by accepting an invitation (`invitation`).
 mod invitation;
+mod owner_recovery;
 
 pub use invitation::{SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState};
+pub use owner_recovery::OwnerRecoveryAuthorization;
 
 use super::{
     Effect, RemoveOwnerPlan, SharedActExecutionReceipt, SharedActKind, SharedVaultChange, decode,
@@ -491,37 +493,29 @@ impl Vault {
         )
     }
     /// Proof-of-control recovery (ARCH-0043): a shared vault with no live
-    /// Owner left takes `claimant` as its Owner. The host judges, outside the
-    /// engine, the claimant's proof that they control the organization owning
-    /// the vault, and signs the handover with `issuer`. The engine checks
-    /// what it holds: no live Owner remains, `from` still holds the Owner
-    /// role here, and `claimant` is a live person. `from` leaves with its
-    /// slips revoked, the claimant takes the Owner role, and the host's
-    /// `OwnerHandover` (cause `proof_of_control`) lands in the authority log
-    /// in the same writer as the receipt and its notices.
-    pub fn recover_shared_owner(
+    /// Owner left takes `claimant` as its Owner, on `authorization` (FIX
+    /// 1812): a managed vault's attested account owner, a self-hosted
+    /// vault's live host root, or a stopped self-hosted vault's own host,
+    /// judged again in this writer. The host signs the handover with
+    /// `issuer`. The engine checks what it holds: no live Owner remains,
+    /// `from` still holds the Owner role here, and `claimant` is a live
+    /// person. `from` leaves with its slips revoked, the claimant takes the
+    /// Owner role, and the host's `OwnerHandover` (cause `proof_of_control`)
+    /// lands in the authority log in the same writer as the receipt and its
+    /// notices, keeping the BLAKE3 of the authorization's note (never the
+    /// note), so the log records what the recovery rested on.
+    pub fn recover_shared_owner_authorized(
         &self,
         issuer: &HostSlipIssuer,
         vault_id: u64,
         from: EntityId,
         claimant: EntityId,
+        authorization: &OwnerRecoveryAuthorization,
     ) -> Result<SharedActExecutionReceipt> {
-        self.recover_shared_owner_with_proof(issuer, vault_id, from, claimant, None)
-    }
-    /// [`Vault::recover_shared_owner`], keeping with the signed handover the
-    /// BLAKE3 of the proof of organization control the host judged (`proof`,
-    /// never the proof itself), so the authority log records what the
-    /// recovery rested on.
-    pub fn recover_shared_owner_with_proof(
-        &self,
-        issuer: &HostSlipIssuer,
-        vault_id: u64,
-        from: EntityId,
-        claimant: EntityId,
-        proof: Option<[u8; 32]>,
-    ) -> Result<SharedActExecutionReceipt> {
+        let proof = Some(authorization.note());
         let mut txn = self.store.env.write_txn()?;
         super::check_vault(self, &txn, vault_id)?;
+        authorization.holds_in(self, &txn)?;
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let owners = live_owners(&self.live_act_holders(&txn, vault_id, now)?, None);
         if !owners.is_empty()

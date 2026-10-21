@@ -74,8 +74,8 @@ pub(crate) use rulings::RULING_PREDICATE;
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_act::{
     DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind, EraseAskStatus,
-    NOTIFICATION_PRODUCER_ERASE_ASK, REMOVAL_EXPORT_RETAIN_SECS, RemovalExportCopy,
-    RemovalExportDelivery, RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN,
+    NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS,
+    RemovalExportCopy, RemovalExportDelivery, RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN,
     SHARED_INVITATION_TTL_SECS, SharedActExecution, SharedActExecutionReceipt, SharedActExport,
     SharedActKind, SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState,
     SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,

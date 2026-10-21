@@ -209,6 +209,25 @@ impl Memory<'_> {
             })
     }
 
+    /// [`Self::with_usage_repair_txn`]'s admission alone, in a snapshot of
+    /// its own (FIX 7039): a door asks it before the row's verb hooks fire,
+    /// so no hook fires on a call its writer would refuse. The writer
+    /// admits the caller again when it acts.
+    pub fn usage_repair_admits(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        verb: UsageRepairVerb,
+    ) -> MemoryResult<()> {
+        let txn = self
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        self.usage_repair_caller_in_txn(&txn, owner, verb)
+            .map(drop)
+    }
+
     /// [`Self::with_usage_repair_txn`]'s admission, in its writer.
     fn usage_repair_caller_in_txn(
         &self,

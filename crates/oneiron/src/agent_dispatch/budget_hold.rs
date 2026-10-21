@@ -330,12 +330,45 @@ impl AgentDispatcher<'_> {
         if actor.trim().is_empty() {
             return Err(invalid("a resume names its actor"));
         }
+        self.resume_budget_hold_by(root, now, |_| Ok(actor.to_owned()))
+    }
+
+    /// [`Self::resume_budget_hold`] as the owner `owner` proves (FIX 8197):
+    /// his proof is revalidated in the resuming transaction, and the actor
+    /// the resume records is the person that revalidation names. A revoked
+    /// or lapsed proof resumes nothing.
+    ///
+    /// # Errors
+    ///
+    /// The owner refusal, a run with no hold, or storage errors.
+    pub fn resume_budget_hold_as_owner(
+        &self,
+        root: AttemptId,
+        owner: &crate::consent::AuthenticatedOwner,
+        now: u64,
+    ) -> Result<PartialResultHold> {
+        self.resume_budget_hold_by(root, now, |txn| {
+            owner
+                .revalidate_in_txn(self.vault, txn)
+                .map(|actor| actor.to_hex())
+        })
+    }
+
+    /// The resume, its actor named by `actor` in the resuming transaction.
+    fn resume_budget_hold_by(
+        &self,
+        root: AttemptId,
+        now: u64,
+        actor: impl FnOnce(&heed::RoTxn<'_>) -> Result<String>,
+    ) -> Result<PartialResultHold> {
         let hold = self
             .plan_hold(root)?
             .ok_or_else(|| invalid("run has no budget hold"))?;
         let ready = self.scope_has_spend(root)?;
         let queue = AttemptQueue::new(self.vault);
         let mut wtxn = self.vault.store.env.write_txn()?;
+        let actor = actor(&wtxn)?;
+        let actor = actor.as_str();
         for held in &hold.held {
             let still_held = queue
                 .get_in_write_txn(&wtxn, held.attempt)?

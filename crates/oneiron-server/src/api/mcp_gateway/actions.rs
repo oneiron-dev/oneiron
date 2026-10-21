@@ -48,6 +48,15 @@ pub(crate) async fn execute_mcp_invoke_action(
     connection: &Extensions,
 ) -> Result<Value, McpGatewayError> {
     let auth = actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
+    // A managed vault's attested owner carries no connector credential: his
+    // rows run under this request's own headers and connection, which carry
+    // his attestation (FIX 5466). Any other caller's rows run under the
+    // credential its connector header selected.
+    let row_headers = if auth.managed_owner().is_some() {
+        headers.clone()
+    } else {
+        mcp_proof_headers(headers)?
+    };
     let request = ActionRequest {
         args: args.args,
         idempotency_key: args.idempotency_key,
@@ -56,7 +65,7 @@ pub(crate) async fn execute_mcp_invoke_action(
     let (output, row) = invoke_action(
         server,
         auth,
-        mcp_proof_headers(headers)?,
+        row_headers,
         connection.clone(),
         args.verb.clone(),
         request,

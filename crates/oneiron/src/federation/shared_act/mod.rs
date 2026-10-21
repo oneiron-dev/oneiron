@@ -13,7 +13,10 @@ mod membership;
 pub use erase_ask::{
     EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,
 };
-pub use membership::{SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState};
+pub use membership::{
+    OwnerRecoveryAuthorization, SHARED_INVITATION_TTL_SECS, SharedInvitation,
+    SharedInvitationState,
+};
 
 use super::FederationGrantRole as Role;
 use super::pending_act::{LiveActHolder, check_vault, decode, encode, invalid, key};

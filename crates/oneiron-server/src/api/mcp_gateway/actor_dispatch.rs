@@ -89,11 +89,16 @@ impl McpCallContext {
 
 /// The same connector resolution after the facade or MCP door verified the
 /// caller's holder proof. The token is the bound request's, never an input.
+/// A managed vault's attested owner, with no invocation slip, is his own
+/// call, as on `/mcp` (FIX 5400).
 pub(crate) async fn resolve_mcp_actor_for_auth(
     server: &Arc<SyncServer>,
     auth: &crate::auth::CoreAuth,
     session: Option<oneiron::EntityId>,
 ) -> Result<McpCallContext, McpGatewayError> {
+    if let Some(owner) = super::owner_call::attested_owner_call(server, auth, session) {
+        return owner;
+    }
     let credential = auth
         .invocation_slip()
         .ok_or_else(mcp_proof_error)?

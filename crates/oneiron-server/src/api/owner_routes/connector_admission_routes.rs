@@ -733,23 +733,34 @@ async fn enabled(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<EnabledRequest>, JsonRejection>,
 ) -> OwnerReply<KeyView> {
-    let _owner = owner(&auth, &server)?;
+    // The owner's proof rides into the switch's own transaction and is
+    // revalidated there (FIX 8197).
+    let proof = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let reply = blocking(move || switch_connector(server.vault(), &request)).await?;
+    let reply = blocking(move || switch_connector(server.vault(), &request, &proof)).await?;
     Ok(Json(reply))
 }
 
-fn switch_connector(vault: &Vault, request: &EnabledRequest) -> OwnerResult<KeyView> {
+fn switch_connector(
+    vault: &Vault,
+    request: &EnabledRequest,
+    owner: &oneiron::consent::AuthenticatedOwner,
+) -> OwnerResult<KeyView> {
     let catalog = catalog(vault, &normalize_name(&request.connector))?;
     let record = match (catalog.record.status, request.enabled) {
         (ConnectorKeyStatus::Active, true) | (ConnectorKeyStatus::Suspended, false) => {
             catalog.record
         }
         (ConnectorKeyStatus::Active, false) => vault
-            .suspend_connector_key(&catalog.key, OWNER_OFF_REASON, unix_seconds_now())
+            .suspend_connector_key_as_owner(
+                &catalog.key,
+                OWNER_OFF_REASON,
+                unix_seconds_now(),
+                owner,
+            )
             .map_err(engine)?,
         (ConnectorKeyStatus::Suspended, true) => vault
-            .resume_connector_key(&catalog.key, unix_seconds_now())
+            .resume_connector_key_as_owner(&catalog.key, unix_seconds_now(), owner)
             .map_err(engine)?,
         (ConnectorKeyStatus::Pending, _) => {
             return Err(OwnerError::Refused(

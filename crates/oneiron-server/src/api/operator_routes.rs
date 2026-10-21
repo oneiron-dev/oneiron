@@ -6,13 +6,14 @@
 //!
 //! `POST /v1/operator/shared/recover-owner` is proof-of-control owner recovery
 //! (ARCH-0043, OF-163): a shared vault with no live Owner left takes the
-//! claimant as its Owner. The operator judges the claimant's proof that they
-//! control the organization owning the vault, outside the engine and outside
-//! this route; the engine has no check for that proof and no owner lane takes
-//! it. On a managed vault the attested account owner's own say-so stands in
-//! that judgment's place (FIX 5255): the hosting account is the organization's
-//! control the operator would judge. The engine checks what it holds and signs
-//! the `OwnerHandover` (cause `proof_of_control`) with the host's slip issuer.
+//! claimant as its Owner, on an authenticated recovery authorization the
+//! writer judges again (FIX 1812): on a managed vault the attested account
+//! owner's own say-so (FIX 5255), the hosting account being the
+//! organization's control; on a self-hosted vault its host's live root, which
+//! acts there as the vault's owner (FIX 2222). A hosted operator's root acts
+//! as nobody, so it gets the typed support-grant refusal and recovers no
+//! Owner. The engine checks what it holds and signs the `OwnerHandover`
+//! (cause `proof_of_control`) with the host's slip issuer.
 
 use std::sync::Arc;
 
@@ -24,7 +25,8 @@ use axum::http::request::Parts;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::EntityId;
-use oneiron::federation::SharedActExecutionReceipt;
+use oneiron::authority::HostActionAuthority;
+use oneiron::federation::{OwnerRecoveryAuthorization, SharedActExecutionReceipt};
 use serde::Deserialize;
 
 use super::facade::FacadeApiError;
@@ -45,24 +47,31 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 /// the org-admin setup), admits any owner-grade credential, the owner's own
 /// full slip included; this door narrows it to the root, the test MCP's actor
 /// dispatch applies to "the actual configured root".
-fn operator(headers: &HeaderMap, server: &SyncServer) -> Result<(), ApiError> {
+fn operator(headers: &HeaderMap, server: &SyncServer) -> Result<HostActionAuthority, ApiError> {
     let auth = super::check_api_auth(headers, server)?;
     let root = auth.principal_ref().is_none()
         && auth.verified_slip().is_some_and(|proof| {
             proof.claims().holder_ref == "host" && proof.is_full_vault_owner_grade()
         });
-    if root {
-        Ok(())
-    } else {
-        Err(ApiError::forbidden_scope("operator"))
+    if !root {
+        return Err(ApiError::forbidden_scope("operator"));
+    }
+    // The root acts as the owner its host action names only on a self-hosted
+    // vault; a hosted operator's root gets the typed refusal (FIX 1812).
+    match auth.host_root() {
+        Some(root) => server
+            .vault()
+            .host_action_authority(root)
+            .map_err(super::host_action::host_action_refusal),
+        None => Err(ApiError::forbidden_scope("operator")),
     }
 }
 
 /// Who answers for one owner recovery.
-#[derive(Clone, Copy)]
 enum Recoverer {
-    /// The host operator, on the host's own root credential.
-    Operator,
+    /// A self-hosted vault's host, on its own root credential, acting as the
+    /// owner its host action names.
+    Operator(HostActionAuthority),
     /// A managed vault's account owner, whom his supervisor attested for
     /// this one request (`ManagedOwnerAction`, verified at managed ingress),
     /// with no caller slip of its own: the recovery is his own act, never
@@ -80,7 +89,24 @@ fn recoverer(request: &Parts, server: &SyncServer) -> Result<Recoverer, ApiError
     {
         return Ok(Recoverer::AccountOwner(holder));
     }
-    operator(&request.headers, server).map(|()| Recoverer::Operator)
+    operator(&request.headers, server).map(Recoverer::Operator)
+}
+
+impl Recoverer {
+    /// This recoverer's authorization for the writer (FIX 1812), with the
+    /// BLAKE3 of the note it gave.
+    fn authorization(&self, note: [u8; 32]) -> OwnerRecoveryAuthorization {
+        match self {
+            Self::Operator(action) => OwnerRecoveryAuthorization::SelfHostRoot {
+                action: action.clone(),
+                note,
+            },
+            Self::AccountOwner(holder) => OwnerRecoveryAuthorization::AccountOwner {
+                holder: *holder,
+                note,
+            },
+        }
+    }
 }
 
 /// `POST /v1/operator/shared/recover-owner`'s body.
@@ -133,11 +159,11 @@ async fn recover_shared_owner(
         vault_id,
         from,
         claimant,
-        Some(*digest.as_bytes()),
+        by.authorization(*digest.as_bytes()),
     )
     .await;
     match (&recovered, by) {
-        (Ok(receipt), Recoverer::Operator) => tracing::info!(
+        (Ok(receipt), Recoverer::Operator(_)) => tracing::info!(
             vault_id,
             from = %from.to_hex(),
             claimant = %claimant.to_hex(),
@@ -145,7 +171,7 @@ async fn recover_shared_owner(
             proof_note_blake3 = %note,
             "operator recovered a shared vault's owner on proof of control"
         ),
-        (Err(error), Recoverer::Operator) => tracing::warn!(
+        (Err(error), Recoverer::Operator(_)) => tracing::warn!(
             vault_id,
             code = %error.code,
             proof_note_blake3 = %note,

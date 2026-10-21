@@ -246,14 +246,27 @@ pub(crate) async fn annotate_turn_vad(
     payload: Result<Json<TurnVadAnnotateRequest>, JsonRejection>,
 ) -> Result<Json<TurnVadAnnotateResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
+    // The annotation is written as the caller who made it, through the Gate
+    // (FIX 8222): a hosted operator's root gets its typed refusal before any
+    // lookup, and no caller is written as this host. A person's self-report
+    // is their own statement; any other caller's request cannot select that
+    // trust, so it is written as an inference.
+    let writer = super::core::request_writer(&server, &auth)?;
     let req = json_payload(payload)?;
     let turn_id = parse_entity_id_param(&req.turn_id, "turn_id")?;
     require_entity_type(&server, &turn_id, ENTITY_TYPE_TURN, "turn")?;
 
+    let source = match (VadAnnotationSource::from(req.source), writer.class) {
+        (VadAnnotationSource::UserSelfReport, oneiron::EdgeActorClass::Human) => {
+            VadAnnotationSource::UserSelfReport
+        }
+        _ => VadAnnotationSource::ModelInference,
+    };
+    let actor = oneiron::WriteActor::new(writer.actor, writer.class);
     let vad = req.vad.into_vad()?;
     let annotated_at = req.annotated_at.unwrap_or_else(unix_seconds_now);
-    let annotation = VadAnnotation::new(vad, req.source.into(), annotated_at)
-        .map_err(vad_annotation_core_error)?;
+    let annotation =
+        VadAnnotation::new(vad, source, annotated_at).map_err(vad_annotation_core_error)?;
 
     let stored = if let Some(message_id_hex) = &req.message_id {
         let message_id = parse_entity_id_param(message_id_hex, "message_id")?;
@@ -261,12 +274,12 @@ pub(crate) async fn annotate_turn_vad(
         require_message_in_turn(&server, &turn_id, &message_id)?;
         server
             .vault
-            .annotate_message_vad(&message_id, annotation)
+            .annotate_message_vad_as(&message_id, annotation, actor)
             .map_err(vad_annotation_core_error)?
     } else {
         server
             .vault
-            .annotate_turn_vad(&turn_id, annotation)
+            .annotate_turn_vad_as(&turn_id, annotation, actor)
             .map_err(vad_annotation_core_error)?
     };
 
