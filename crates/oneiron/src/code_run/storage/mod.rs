@@ -5,6 +5,7 @@ mod continuation;
 mod folds;
 mod lift;
 mod program_resume;
+mod read_worlds;
 mod reader_folds;
 mod reader_jobs;
 mod records;
@@ -22,6 +23,9 @@ pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan}
 pub(crate) use self::continuation::{
     StoredRunContinuation, put_run_continuation_row_in_txn, run_continuation_in_txn,
     seed_continuation_run,
+};
+pub(crate) use self::read_worlds::{
+    ReadWorldSeal, ReadWorldSnapshot, ReadWorldUnknown, read_world_snapshot_in_txn,
 };
 pub(crate) use self::reader_folds::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
