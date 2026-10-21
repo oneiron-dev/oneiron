@@ -328,23 +328,14 @@ impl AgentGrantStanding {
         posture: crate::HostingPrivacyPosture,
         txn: &heed::RoTxn<'_>,
     ) -> bool {
-        match crate::federation::shared_vault_creation_for_store_in_txn(store, txn) {
-            Ok(Some(_)) => {}
-            Ok(None) => return false,
-            Err(error) => return lapse_on_check_error(self.id, &error),
-        }
-        match crate::federation::authenticated_grant_membership_for_store_in_txn(
+        grant_pact_standing_lapsed_for_store_in_txn(
             store,
             posture,
             txn,
+            self.id,
             self.grant.scope,
             self.grant.member_ref,
-            self.id,
-        ) {
-            Ok(Some(_)) => false,
-            Ok(None) | Err(Error::Claim(_)) => true,
-            Err(error) => lapse_on_check_error(self.id, &error),
-        }
+        )
     }
 
     /// Whether this Grant alone stands for `agent`'s work under `verb` at
@@ -382,12 +373,35 @@ pub(crate) fn grant_pact_standing_lapsed_in_txn(
     scope: FederationGrantScope,
     member: EntityId,
 ) -> bool {
-    match vault.shared_vault_creation_in_txn(txn) {
+    grant_pact_standing_lapsed_for_store_in_txn(
+        &vault.store,
+        vault.privacy_posture(),
+        txn,
+        id,
+        scope,
+        member,
+    )
+}
+
+/// The one body of the pact half (FIX 7511, 7461, 7548): the Grant `id`,
+/// under `scope` and naming `member`, read through `store` and the posture
+/// its vault opened with.
+fn grant_pact_standing_lapsed_for_store_in_txn(
+    store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    scope: FederationGrantScope,
+    member: EntityId,
+) -> bool {
+    match crate::federation::shared_vault_creation_for_store_in_txn(store, txn) {
         Ok(Some(_)) => {}
         Ok(None) => return false,
         Err(error) => return lapse_on_check_error(id, &error),
     }
-    match vault.authenticated_grant_membership_in_txn(txn, scope, member, id) {
+    match crate::federation::authenticated_grant_membership_for_store_in_txn(
+        store, posture, txn, scope, member, id,
+    ) {
         Ok(Some(_)) => false,
         Ok(None) | Err(Error::Claim(_)) => true,
         Err(error) => lapse_on_check_error(id, &error),
