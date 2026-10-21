@@ -243,11 +243,12 @@ pub(crate) fn unpin_neighbourhood_in_txn(
 
 /// What one branch reads around its passage. `turns` holds each TURN's stored body and frozen
 /// text; `axes` the branch's world, facet, relationship and project, or `None` to list no
-/// claims; `bound` a supplied scope.
+/// claims; `bound` a supplied scope; `thing` the entity a nightly child is cut for (FIX 7497).
 pub(super) struct Passage<'p> {
     pub(super) turns: &'p [(&'p [u8], Option<&'p str>)],
     pub(super) axes: Option<&'p Scope>,
     pub(super) bound: Option<&'p Scope>,
+    pub(super) thing: Option<EntityId>,
 }
 
 /// One branch's neighbourhood at the wake's snapshot, with the claim rows it
@@ -357,7 +358,14 @@ fn fresh_in(
     read: &ScopedRead<'_>,
     passage: &Passage<'_>,
 ) -> Result<(Vec<KnownEntity>, ListedRows)> {
-    let named = named_entities(vault, txn, passage.turns)?;
+    let mut named = named_entities(vault, txn, passage.turns)?;
+    // A nightly child's thing is listed after what its passage names, in
+    // the room the listing leaves, so it never pushes a named entity out.
+    if let Some(thing) = passage.thing
+        && !named.contains(&thing)
+    {
+        named.push(thing);
+    }
     let rows = read.get_entities_parts_in_txn(txn, &named)?;
     let mut entities = Vec::new();
     let mut pinned = Vec::new();
