@@ -1831,6 +1831,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/digest/tests.rs` | test | m | — | — | — |
 | `src/dreamer_runner/maintenance/digest/view.rs` | src | m | 1 struct · 2 fn · 6 crate-vis | ProactivityDigestView | A delivered proactivity digest as one viewer reads it (FIX 6411) |
 | `src/dreamer_runner/maintenance/evaluation.rs` | src | m | 4 struct · 3 fn · 1 const · 2 crate-vis | DreamerTuningConfig, HarnessEvaluation, HarnessEvaluationTarget, RetuneThresholds | Eval-schedule observations over actual immutable config artifact versions |
+| `src/dreamer_runner/maintenance/feedback_triage.rs` | src | s | 1 fn · 1 crate-vis | — | The Coach's feedback triage findings (OF-420 T1) |
 | `src/dreamer_runner/maintenance/fork_promote.rs` | src | m | 1 struct · 1 trait · 1 fn · 2 const | ForkPromoteReport, UpstreamSeat | The project tree fork (ARCH-0079 #task-type, OF-420): a project whose receipts disagree with the vault tree… |
 | `src/dreamer_runner/maintenance/fork_promote/leaf_promote.rs` | src | m | 1 crate-vis | — | The promote step of the project tree fork pass (ARCH-0079 #task-type, OF-420): a type a project's own tree… |
 | `src/dreamer_runner/maintenance/fork_promote/project_upkeep.rs` | src | m | 1 crate-vis | — | Project tree upkeep (ARCH-0079 #task-type, OF-420): a project on a tree of its own keeps reshaping it from… |
@@ -2242,13 +2243,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback/intake/refs.rs` | src | s | 6 crate-vis | — | Strict hexadecimal entity references for the intake row codec |
 | `src/feedback/intake/report.rs` | src | s | 1 crate-vis | — | T2 for universal reports, sharing the bundle intake's cosine normalization |
 | `src/feedback/intake/tests.rs` | test | s | — | — | — |
-| `src/feedback/mod.rs` | src | s | 1 mod · 9 re-export | — | Engine feedback channel: bundle wire contract, consent, dispatch, export |
+| `src/feedback/mod.rs` | src | s | 1 mod · 10 re-export · 1 crate-vis | — | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `src/feedback/preview_store.rs` | src | s | 1 struct · 2 fn | RetainedFeedbackPreview | The feedback previews an owner was shown, kept until they expire (FIX 5212): a send reads back the exact… |
 | `src/feedback/redaction.rs` | src | s | 3 struct · 1 enum · 1 trait · 5 fn | FilteredFeedback, FilteredText, TextFilter, TextFilterError, TextFilterIdentity | The engine text filter (OF-420): the seam every free text crosses before it may leave the vault, and the… |
 | `src/feedback/report.rs` | src | s | 4 struct · 3 enum · 3 fn · 1 const · 2 re-export · 3 crate-vis | ReportDisclosure, ReportIssue, ReportKind, ReportReceipt, ReportRequest, ReportReview, ReportStatus | OF-537: free, actor-bound reports about a durable subject, never a task kind |
 | `src/feedback/report/routing.rs` | src | s | 2 struct · 2 enum · 4 fn · 3 crate-vis | ReportDisclosureChoice, ReportRoute, ReportRoutedPayload, ReportSignature | Maker routing and disclosure |
 | `src/feedback/report/store.rs` | src | s | 3 fn · 4 crate-vis | — | Durable issue identity, entity-local review, and the arrival index |
 | `src/feedback/tests.rs` | test | L | — | — | — |
+| `src/feedback/triage.rs` | src | m | 9 struct · 1 enum · 2 fn · 4 const · 1 re-export · 3 crate-vis | FeedbackTriageBinding, FeedbackTriageContinuation, FeedbackTriageFinding, FeedbackTriageHandoff, FeedbackTriageInput, FeedbackTriageJob, FeedbackTriageOutput, FeedbackTriageResult +2 | Feedback triage custody (OF-420 T1, ARCH-0056 #open-inbox): the sweep that hands each open-inbox note to the… |
+| `src/feedback/triage/owner.rs` | src | m | 6 struct · 1 enum · 4 fn | FeedbackTriageBindingRequest, FeedbackTriageChild, FeedbackTriageHold, FeedbackTriageRun, FeedbackTriageRunRequest, FeedbackTriageStatus, FeedbackTriageStatusRequest | The owner's feedback triage doors: run the sweep now, read a sweep's status, and read or set the skill binding |
 | `src/fusion.rs` | src | s | 1 crate-vis | — | Score fusion kernels, defined in `oneiron-retrieval` |
 | `src/gate/ask_policy.rs` | src | s | 12 crate-vis | — | Manifest-owned operating policy for cross-vault ask confirmation |
 | `src/gate/auto_signals.rs` | src | s | 1 crate-vis | — | Receipt-derived rate and failure streak supplied to the existing auto checker |
