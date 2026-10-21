@@ -10,8 +10,11 @@
 //! through the existing fork/update door and goes in force once the
 //! ordinary gate admits it; old stamps keep naming the version they were
 //! placed at. There is no tree head table: the skill lineage is the head.
+//!
+//! [`load_vault_type_tree_sourced`] reads the vault tree with its head and
+//! the entity rows it read them from, in one snapshot (FIX 7103).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Vault;
 use crate::edge::EdgeKind;
@@ -48,17 +51,117 @@ pub(crate) fn load_team_type_tree_in_txn(
     txn: &heed::RoTxn<'_>,
     project: Option<EntityId>,
 ) -> Result<TaskTypeTree> {
+    tree_in_force_in_txn(vault, txn, project, &mut Reads::Off)
+}
+
+/// [`load_team_type_tree_in_txn`], noting the rows it reads in `reads`.
+fn tree_in_force_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    reads: &mut Reads,
+) -> Result<TaskTypeTree> {
     let vault_skill = team_shape_skill()?;
+    if project.is_some() {
+        // A project's visibility folds rows this module cannot name.
+        reads.unknown();
+    }
     if let Some(project) = project
         && let Some(fork) = project_fork_in_txn(vault, txn, project, vault_skill)?
-        && let Some(tree) = stored_tree_in_txn(vault, txn, &fork)?
+        && let Some(tree) = stored_tree_in_txn(vault, txn, &fork, reads)?
     {
         return Ok(tree);
     }
-    Ok(match vault_head_in_txn(vault, txn, vault_skill)? {
-        Some(head) => stored_tree_in_txn(vault, txn, &head)?.unwrap_or_else(TaskTypeTree::seeded),
+    Ok(match vault_head_in_txn(vault, txn, vault_skill, reads)? {
+        Some(head) => {
+            stored_tree_in_txn(vault, txn, &head, reads)?.unwrap_or_else(TaskTypeTree::seeded)
+        }
         None => TaskTypeTree::seeded(),
     })
+}
+
+/// The vault's task-type tree in force as one read loaded it (FIX 7103):
+/// the tree, the team-shape head it came from and the entity rows the read
+/// took them from, with the head in force for each asked project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourcedTypeTree {
+    /// What [`load_team_type_tree`] loads for the vault.
+    pub tree: TaskTypeTree,
+    /// What [`team_shape_skill_in_force`] names for the vault.
+    pub head: Option<EntityId>,
+    /// The rows the head's selection and the tree's load read: each entity
+    /// the walk along the vault skill's supersession chain read, the head,
+    /// and the replicated source carrier its package came from, if one did.
+    /// `None` when a row read cannot be named. The seed tree is code and
+    /// adds none.
+    pub source_rows: Option<Vec<EntityId>>,
+    /// Each asked project's team-shape head in force, with the rows its
+    /// selection read: `None`, since a project's visibility folds rows this
+    /// read cannot name.
+    pub project_heads: BTreeMap<EntityId, (Option<EntityId>, Option<Vec<EntityId>>)>,
+}
+
+/// [`SourcedTypeTree`] for the vault, and the head in force for each of
+/// `projects`, all from one read transaction.
+///
+/// # Errors
+///
+/// As [`load_team_type_tree`].
+pub fn load_vault_type_tree_sourced(
+    vault: &Vault,
+    projects: &BTreeSet<EntityId>,
+) -> Result<SourcedTypeTree> {
+    let txn = vault.store.env.read_txn()?;
+    let mut reads = Reads::Named(BTreeSet::new());
+    let tree = tree_in_force_in_txn(vault, &txn, None, &mut reads)?;
+    let head = head_in_force_in_txn(vault, &txn, None, &mut reads)?;
+    let mut project_heads = BTreeMap::new();
+    for project in projects {
+        let mut project_reads = Reads::Named(BTreeSet::new());
+        let project_head = head_in_force_in_txn(vault, &txn, Some(*project), &mut project_reads)?;
+        project_heads.insert(*project, (project_head, project_reads.into_rows()));
+    }
+    Ok(SourcedTypeTree {
+        tree,
+        head,
+        source_rows: reads.into_rows(),
+        project_heads,
+    })
+}
+
+/// The entity rows one read of the tree read, for a caller that names them
+/// (FIX 7103). Every other read passes [`Reads::Off`] and keeps nothing.
+enum Reads {
+    Off,
+    /// Every entity row read so far.
+    Named(BTreeSet<EntityId>),
+    /// A row was read that this module cannot name.
+    Unknown,
+}
+
+impl Reads {
+    const fn naming(&self) -> bool {
+        matches!(self, Self::Named(_))
+    }
+
+    fn note(&mut self, id: EntityId) {
+        if let Self::Named(rows) = self {
+            rows.insert(id);
+        }
+    }
+
+    fn unknown(&mut self) {
+        if self.naming() {
+            *self = Self::Unknown;
+        }
+    }
+
+    fn into_rows(self) -> Option<Vec<EntityId>> {
+        match self {
+            Self::Named(rows) => Some(rows.into_iter().collect()),
+            Self::Off | Self::Unknown => None,
+        }
+    }
 }
 
 /// The tree `project` placed in at `version` (`None` is the vault tree): the
@@ -94,7 +197,7 @@ pub(crate) fn load_team_type_tree_at_in_txn(
     }
     for skill in kept_revisions_in_txn(vault, txn, project, team_shape_skill()?)? {
         if vault.get_skill_record_in_txn(txn, &skill)?.is_some()
-            && let Some(tree) = stored_tree_unchecked_in_txn(vault, txn, &skill)?
+            && let Some(tree) = stored_tree_unchecked_in_txn(vault, txn, &skill, &mut Reads::Off)?
             && tree.version == version
         {
             return Ok(Some(tree));
@@ -150,7 +253,9 @@ fn supersession_chain_in_txn(
             EdgeKind::Supersedes,
         )? {
             let peer = peer?;
-            if !seen.contains(&peer) && skill_succession_in_txn(vault, txn, peer, cursor)? {
+            if !seen.contains(&peer)
+                && skill_succession_in_txn(vault, txn, peer, cursor, &mut Reads::Off)?
+            {
                 next = Some(peer);
                 break;
             }
@@ -184,13 +289,28 @@ pub(crate) fn team_shape_skill_in_force_in_txn(
     txn: &heed::RoTxn<'_>,
     project: Option<EntityId>,
 ) -> Result<Option<EntityId>> {
+    head_in_force_in_txn(vault, txn, project, &mut Reads::Off)
+}
+
+/// [`team_shape_skill_in_force_in_txn`], noting the rows it reads in
+/// `reads`.
+fn head_in_force_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    reads: &mut Reads,
+) -> Result<Option<EntityId>> {
     let vault_skill = team_shape_skill()?;
+    if project.is_some() {
+        // A project's visibility folds rows this module cannot name.
+        reads.unknown();
+    }
     if let Some(project) = project
         && let Some(fork) = project_fork_in_txn(vault, txn, project, vault_skill)?
     {
         return Ok(Some(fork));
     }
-    vault_head_in_txn(vault, txn, vault_skill)
+    vault_head_in_txn(vault, txn, vault_skill, reads)
 }
 
 /// Places a spawn once against `tree`: a requested stamp the tree accepts
@@ -253,7 +373,7 @@ pub fn store_team_type_tree(
             return Err(invalid("fork is not in the team-shape skill's lineage"));
         }
         let parent_tree = match vault.get_skill_record_in_txn(txn, &parent)? {
-            Some(_) => stored_tree_unchecked_in_txn(vault, txn, &parent)?
+            Some(_) => stored_tree_unchecked_in_txn(vault, txn, &parent, &mut Reads::Off)?
                 .unwrap_or_else(TaskTypeTree::seeded),
             None => TaskTypeTree::seeded(),
         };
@@ -277,7 +397,9 @@ pub fn store_team_type_tree(
                 .extend(fork_siblings_in_txn(vault, txn, fork, vault_skill).unwrap_or_default());
         }
         for skill in std::iter::once(fork).chain(revisions) {
-            if let Ok(Some(kept)) = stored_tree_unchecked_in_txn(vault, txn, &skill) {
+            if let Ok(Some(kept)) =
+                stored_tree_unchecked_in_txn(vault, txn, &skill, &mut Reads::Off)
+            {
                 scope.push(kept);
             }
         }
@@ -426,7 +548,7 @@ fn in_lineage_in_txn(
             EdgeKind::Supersedes,
         )? {
             let peer = peer?;
-            if skill_succession_in_txn(vault, txn, id, peer)? {
+            if skill_succession_in_txn(vault, txn, id, peer, &mut Reads::Off)? {
                 pending.push(peer);
             }
         }
@@ -445,13 +567,14 @@ fn skill_succession_in_txn(
     txn: &heed::RoTxn<'_>,
     successor: EntityId,
     predecessor: EntityId,
+    reads: &mut Reads,
 ) -> Result<bool> {
     if successor == predecessor {
         return Ok(false);
     }
     let (Some(new), Some(old)) = (
-        live_skill_in_txn(vault, txn, &successor)?,
-        live_skill_in_txn(vault, txn, &predecessor)?,
+        live_skill_in_txn(vault, txn, &successor, reads)?,
+        live_skill_in_txn(vault, txn, &predecessor, reads)?,
     ) else {
         return Ok(false);
     };
@@ -463,13 +586,19 @@ fn skill_succession_in_txn(
 }
 
 /// `id`'s SKILL record when it is a live SKILL; `None` for an entity of
-/// another type, a deleted one or none.
+/// another type, a deleted one or none. An entity whose type it read is
+/// noted in `reads`.
 fn live_skill_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
+    reads: &mut Reads,
 ) -> Result<Option<SkillRecord>> {
-    if vault.get_entity_type_in_txn(txn, id)? != Some(ENTITY_TYPE_SKILL) {
+    let entity_type = vault.get_entity_type_in_txn(txn, id)?;
+    if entity_type.is_some() {
+        reads.note(*id);
+    }
+    if entity_type != Some(ENTITY_TYPE_SKILL) {
         return Ok(None);
     }
     vault.get_skill_record_in_txn(txn, id)
@@ -482,6 +611,7 @@ fn vault_head_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     vault_skill: EntityId,
+    reads: &mut Reads,
 ) -> Result<Option<EntityId>> {
     let mut seen = BTreeSet::new();
     let mut cursor = vault_skill;
@@ -490,6 +620,7 @@ fn vault_head_in_txn(
         let Some(record) = vault.get_skill_record_in_txn(txn, &cursor)? else {
             break;
         };
+        reads.note(cursor);
         if skill_loadable(&record) {
             head = Some(cursor);
         }
@@ -502,7 +633,7 @@ fn vault_head_in_txn(
             EdgeKind::Supersedes,
         )? {
             let peer = peer?;
-            if !seen.contains(&peer) && skill_succession_in_txn(vault, txn, peer, cursor)? {
+            if !seen.contains(&peer) && skill_succession_in_txn(vault, txn, peer, cursor, reads)? {
                 next = Some(peer);
                 break;
             }
@@ -520,9 +651,16 @@ fn stored_tree_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill: &EntityId,
+    reads: &mut Reads,
 ) -> Result<Option<TaskTypeTree>> {
-    match vault.get_skill_record_in_txn(txn, skill)? {
-        Some(record) if skill_loadable(&record) => stored_tree_unchecked_in_txn(vault, txn, skill),
+    let record = vault.get_skill_record_in_txn(txn, skill)?;
+    if record.is_some() {
+        reads.note(*skill);
+    }
+    match record {
+        Some(record) if skill_loadable(&record) => {
+            stored_tree_unchecked_in_txn(vault, txn, skill, reads)
+        }
         _ => Ok(None),
     }
 }
@@ -533,9 +671,15 @@ fn stored_tree_unchecked_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill: &EntityId,
+    reads: &mut Reads,
 ) -> Result<Option<TaskTypeTree>> {
     let record = vault.read_skill_record_in_txn(txn, skill)?;
-    let Some(package) = vault.runtime_skill_package_in_txn(txn, skill, &record)? else {
+    reads.note(*skill);
+    let package = vault.runtime_skill_package_in_txn(txn, skill, &record)?;
+    if reads.naming() {
+        note_carrier_in_txn(vault, txn, skill, &record, package.is_some(), reads);
+    }
+    let Some(package) = package else {
         return Ok(None);
     };
     let Some(file) = package
@@ -549,6 +693,26 @@ fn stored_tree_unchecked_in_txn(
         .map_err(|_| invalid("team-shape type tree does not decode"))?;
     validate_tree(&tree)?;
     Ok(Some(tree))
+}
+
+/// Notes the replicated source carrier that served `skill`'s package, when
+/// one did, by the probe an export names it by (SCAN C022), in the same
+/// read. The skill's own package row is the skill's. A carrier looked up
+/// that served nothing, or a probe that fails, leaves the rows unknown: the
+/// lookup may have read a row it then refused (FIX 7103).
+fn note_carrier_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    record: &SkillRecord,
+    served: bool,
+    reads: &mut Reads,
+) {
+    match vault.export_hub_package_carrier_in_txn(txn, skill, record) {
+        Ok(None) => {}
+        Ok(Some(carrier)) if served => reads.note(carrier),
+        Ok(Some(_)) | Err(_) => reads.unknown(),
+    }
 }
 
 /// A tree is structurally whole: a root, and every parent a stored node.
