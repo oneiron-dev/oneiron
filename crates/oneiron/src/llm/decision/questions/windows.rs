@@ -5,6 +5,7 @@
 
 use super::{
     arrival,
+    reader_authority::{Reader, store_home},
     records::*,
     store::{
         HeadKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL, QUESTION_VERSION, VersionKey,
@@ -289,8 +290,10 @@ pub(super) fn silence_stands(
         return Ok(false);
     }
     let actor = ScopedReadActorKey::new(record.principal.to_hex()).expect("canonical principal");
-    Ok(arrival::readable(store, txn, policy, &actor, &answer.unit)?
-        && arrival::answer_live(store, txn, policy, &actor, answer)?)
+    // FIX 7461: the principal's bare read first, then its own live authority.
+    let reader = Reader::new(store_home(store), record.principal, actor);
+    Ok(reader.readable_in_txn(txn, policy, &answer.unit)?
+        && arrival::answer_live(store, txn, policy, &reader, answer)?)
 }
 
 /// The value hash a silence label pins in place of a fact's.
