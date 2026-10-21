@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "fast": [
+    {
+      "argv": [
+        "cargo",
+        "check",
+        "--locked",
+        "--workspace",
+        "--all-features"
+      ],
+      "env_allowlist": {
+        "CARGO_HOME": "/tmp/queue-check/cargo",
+        "CARGO_TARGET_DIR": "/tmp/queue-check/target",
+        "HOME": "/tmp/queue-check/home",
+        "PATH": "/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin",
+        "RUSTUP_HOME": "/opt/rustup",
+        "RUSTUP_TOOLCHAIN": "1.96"
+      },
+      "platform": {},
+      "declared_outputs": [],
+      "secret_taint_refs": [],
+      "class": "verify"
+    }
+  ],
+  "slow": [
+    {
+      "argv": [
+        "cargo",
+        "check",
+        "--locked",
+        "--workspace",
+        "--all-features"
+      ],
+      "env_allowlist": {
+        "CARGO_HOME": "/tmp/queue-check/cargo",
+        "CARGO_TARGET_DIR": "/tmp/queue-check/target",
+        "HOME": "/tmp/queue-check/home",
+        "PATH": "/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin",
+        "RUSTUP_HOME": "/opt/rustup",
+        "RUSTUP_TOOLCHAIN": "1.96"
+      },
+      "platform": {},
+      "declared_outputs": [],
+      "secret_taint_refs": [],
+      "class": "verify"
+    }
+  ],
+  "contract_outputs": {},
+  "contracts": {
+    "rust_crates": {},
+    "schemas": {},
+    "outputs": []
+  }
+}

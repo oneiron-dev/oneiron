@@ -1156,6 +1156,8 @@ impl ExecutorStorage<'_> {
         };
         let mut sink = self.code_run_output_sink()?;
         sink.write(text.as_bytes())?;
+        // The path names the digest the body is published under (FIX 5399b).
+        sink.finalize_sweep()?;
         let path = crate::engine_executor::store_result_output_path(&sink.digest()?);
         let output = self.publish_code_run_output(path, sink, true, job.run)?;
         let mut from = Vec::with_capacity(members.len());
