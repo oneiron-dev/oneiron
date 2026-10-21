@@ -61,9 +61,11 @@ impl CustodyVaultId {
 /// | `0x03` | `KnownValueIndex`   | the known-value index's master key (KS-3) |
 /// | `0x04` | `KnownValueEntry`   | known-value history entries, by holder (KS-3) |
 /// | `0x05` | `WorldPad`          | world key pads (KS-5, FIX 346)           |
-/// | `0x06` | `CredentialValue`   | reserved: KS-6 credential values         |
+/// | `0x06` | `CredentialValue`   | KS-6 credential values, per generation   |
 /// | `0x07` | `CheckpointPayload` | KS-7 checkpoint payload compartments     |
 /// | `0x08` | `TrainingLink`      | the vault's training link key K (TRAINING-LINK = C) |
+/// | `0x09` | `CustodyTransition` | KS-6 custody transition instances        |
+/// | `0x0a` | `CustodyRequestInput` | KS-6 custody request inputs, whole     |
 ///
 /// A later client adds its variant with its reserved tag, its item width and
 /// secret width, and its corruption label; custody itself stays the same.
@@ -101,6 +103,19 @@ pub(crate) enum CustodyKind {
     /// secret = the 32-byte key its publisher training codes are derived
     /// from (keyed BLAKE3).
     TrainingLink,
+    /// One generation of one credential's value (KS-6): item = the custody
+    /// record's id (16 bytes), generation = the record's rotation
+    /// generation; secret = the value's sealing key (32 bytes). CALLS
+    /// `KS-6 leaf ids`.
+    CredentialValue,
+    /// One custody transition instance (KS-6): item = the credential's id
+    /// (16) then the instance's random id (16), minted before any byte it
+    /// seals, so a credential's carriers are found by its id alone; slot 0;
+    /// secret = the carrier's sealing key (32 bytes).
+    CustodyTransition,
+    /// One custody request's whole protected input (KS-6), every numbered
+    /// part of it under one key: item and secret as a transition's.
+    CustodyRequestInput,
 }
 
 impl CustodyKind {
@@ -111,8 +126,11 @@ impl CustodyKind {
             Self::KnownValueIndex => 0x03,
             Self::KnownValueEntry => 0x04,
             Self::WorldPad => 0x05,
+            Self::CredentialValue => 0x06,
             Self::CheckpointPayload => 0x07,
             Self::TrainingLink => 0x08,
+            Self::CustodyTransition => 0x09,
+            Self::CustodyRequestInput => 0x0a,
         }
     }
 
@@ -123,8 +141,11 @@ impl CustodyKind {
             0x03 => Some(Self::KnownValueIndex),
             0x04 => Some(Self::KnownValueEntry),
             0x05 => Some(Self::WorldPad),
+            0x06 => Some(Self::CredentialValue),
             0x07 => Some(Self::CheckpointPayload),
             0x08 => Some(Self::TrainingLink),
+            0x09 => Some(Self::CustodyTransition),
+            0x0a => Some(Self::CustodyRequestInput),
             _ => None,
         }
     }
@@ -134,7 +155,8 @@ impl CustodyKind {
         match self {
             Self::ClaimDecision => 16,
             Self::BodyInstance => 17,
-            Self::KnownValueEntry => 16,
+            Self::KnownValueEntry | Self::CredentialValue => 16,
+            Self::CustodyTransition | Self::CustodyRequestInput => 32,
             Self::WorldPad => 40,
             Self::CheckpointPayload => 49,
             Self::KnownValueIndex | Self::TrainingLink => 0,
@@ -150,7 +172,10 @@ impl CustodyKind {
             | Self::KnownValueIndex
             | Self::WorldPad
             | Self::CheckpointPayload
-            | Self::TrainingLink => 32,
+            | Self::TrainingLink
+            | Self::CredentialValue
+            | Self::CustodyTransition
+            | Self::CustodyRequestInput => 32,
             Self::KnownValueEntry => 44,
         }
     }
@@ -166,6 +191,9 @@ impl CustodyKind {
             Self::WorldPad => Error::CorruptedIndex("world key pad custody"),
             Self::CheckpointPayload => Error::CorruptedIndex("checkpoint payload custody"),
             Self::TrainingLink => Error::CorruptedIndex("training link key"),
+            Self::CredentialValue => Error::CorruptedIndex("credential value custody"),
+            Self::CustodyTransition => Error::CorruptedIndex("custody transition custody"),
+            Self::CustodyRequestInput => Error::CorruptedIndex("custody request input custody"),
         }
     }
 }

@@ -539,6 +539,8 @@ impl<'a> AgentDispatcher<'a> {
             plan: spawn.plan,
             objectives: spawn.objectives,
             comm,
+            // OF-541: carried as asked; `spawn_intent` above never reads it.
+            direct_spawn: spawn.direct_spawn,
         })
     }
 
