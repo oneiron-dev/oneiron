@@ -63,6 +63,28 @@ async fn repair<T: Send + 'static>(
     .await
 }
 
+/// The usage repair rows' early authority check (FIX 7039): the caller
+/// [`repair`] acts as, and its writer's own admission of it for `verb`
+/// (the owner's own proof on an owner-grade credential, else an agent's own
+/// Grant that names the verb), judged before the row's verb hooks fire. The
+/// writer admits the caller again when it acts.
+pub(super) fn repair_admits(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: UsageRepairVerb,
+) -> MemoryResult<()> {
+    let (actor, class) =
+        super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+    let owner = if auth.is_owner_grade() {
+        Some(owner_proof(auth, server, verb.name())?)
+    } else {
+        None
+    };
+    crate::api::credential_memory(&server.vault, Some(auth), actor, class)
+        .at(auth.locality())
+        .usage_repair_admits(owner.as_ref(), verb)
+}
+
 /// `vault.usage.events.undecodable`: every stored usage event of the
 /// metering scope that does not decode, by its row ref, length and hash.
 pub(crate) async fn vault_usage_events_undecodable(

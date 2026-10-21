@@ -63,6 +63,6 @@ pub use run_binding::{
 };
 pub use spawn_intent::{
     FrozenPackFile, FrozenPatternPack, LeasedSpawnRequest, PlannedIntentView, PlannedLeaderLaunch,
-    PlannedSpawnHost, PlannedSpawnRequest, SpawnPhase,
+    PlannedSpawnHost, PlannedSpawnRequest, SpawnErasure, SpawnPhase,
 };
 pub use stack::{BranchResult, NodeComparison, compare_at_equal_budget};

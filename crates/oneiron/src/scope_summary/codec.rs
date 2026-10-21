@@ -9,8 +9,8 @@ use std::collections::HashSet;
 /// Scope-summary payload. Outside tests the text is the Dreamer's.
 ///
 /// Version 1 names the covered records. Version 2, the Dreamer's composed
-/// body, also names the MESSAGEs its words came from and the composition
-/// memo.
+/// body, also names the MESSAGEs its words came from, the composition memo
+/// and each NOTE it covers at the version read (FIX 6321).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeSummaryBody {
     /// Codec version: 1, or 2 for a composed body.
@@ -35,6 +35,9 @@ pub struct ScopeSummaryBody {
     /// and the composing policy. A declaration whose memo matches a standing
     /// summary reuses it instead of composing again.
     pub memo: Option<[u8; 32]>,
+    /// Each NOTE cover at the version the Dreamer read (version 2, FIX
+    /// 6321): every serve reads each one again.
+    pub notes: Vec<SummarySourceNote>,
 }
 
 /// One MESSAGE a composed summary's words came from.
@@ -43,6 +46,16 @@ pub struct SummarySourceMessage {
     pub id: EntityId,
     /// Content hash of the logical body the Dreamer read.
     pub revision: [u8; 32],
+}
+
+/// One NOTE a composed summary covers, as the Dreamer read it (FIX 6321):
+/// its stored body's content hash and its admitted projection's
+/// fingerprint, as the summary's evidence pinned them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SummarySourceNote {
+    pub id: EntityId,
+    pub revision: [u8; 32],
+    pub projected_text: [u8; 32],
 }
 
 pub(super) fn invalid(reason: &'static str) -> Error {
@@ -148,7 +161,7 @@ pub(super) fn parse_scope(value: &Value) -> Result<ScopeSelector> {
 
 fn validate(body: &ScopeSummaryBody) -> Result<()> {
     match body.v {
-        1 if body.messages.is_empty() && body.memo.is_none() => {}
+        1 if body.messages.is_empty() && body.memo.is_none() && body.notes.is_empty() => {}
         2 if body.memo.is_some() => {}
         _ => return Err(invalid("unsupported scope summary version")),
     }
@@ -163,6 +176,10 @@ fn validate(body: &ScopeSummaryBody) -> Result<()> {
     let unique: HashSet<_> = body.covers.iter().collect();
     if unique.len() != body.covers.len() {
         return Err(invalid("duplicate covered record"));
+    }
+    let pinned: HashSet<_> = body.notes.iter().map(|note| note.id).collect();
+    if pinned.len() != body.notes.len() || !pinned.iter().all(|id| unique.contains(id)) {
+        return Err(invalid("a NOTE pin names no covered record, or one twice"));
     }
     // A summary in no conversation is composed from what it covers: a NOTE
     // set's from its NOTEs, a sitting's from its TURNs and their MESSAGEs
@@ -190,7 +207,7 @@ fn validate(body: &ScopeSummaryBody) -> Result<()> {
 }
 
 const V1_KEYS: [&str; 6] = ["v", "scope", "text", "actor", "covers", "minted_at"];
-const V2_KEYS: [&str; 8] = [
+const V2_KEYS: [&str; 9] = [
     "v",
     "scope",
     "text",
@@ -199,6 +216,7 @@ const V2_KEYS: [&str; 8] = [
     "minted_at",
     "messages",
     "memo",
+    "notes",
 ];
 
 fn hash_hex(hash: &[u8; 32]) -> Value {
@@ -252,6 +270,21 @@ pub fn encode_scope_summary_body(body: &ScopeSummaryBody) -> Result<Vec<u8>> {
             ),
         ));
         entries.push((Value::from("memo"), hash_hex(memo)));
+        entries.push((
+            Value::from("notes"),
+            Value::Array(
+                body.notes
+                    .iter()
+                    .map(|note| {
+                        Value::Array(vec![
+                            Value::from(note.id.to_hex()),
+                            hash_hex(&note.revision),
+                            hash_hex(&note.projected_text),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ));
     }
     let value = Value::Map(entries);
     let mut bytes = Vec::new();
@@ -285,8 +318,8 @@ pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
     let covers = v[4]
         .as_array()
         .ok_or_else(|| invalid("covers must be an array"))?;
-    let (messages, memo) = match (v.get(6), v.get(7)) {
-        (Some(messages), Some(memo)) => {
+    let (messages, memo, notes) = match (v.get(6), v.get(7), v.get(8)) {
+        (Some(messages), Some(memo), Some(notes)) => {
             let messages = messages
                 .as_array()
                 .ok_or_else(|| invalid("messages must be an array"))?;
@@ -300,9 +333,24 @@ pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
                     _ => Err(invalid("source message must be an id and a revision")),
                 })
                 .collect::<Result<_>>()?;
-            (messages, Some(hash(memo)?))
+            let notes = notes
+                .as_array()
+                .ok_or_else(|| invalid("notes must be an array"))?
+                .iter()
+                .map(|pin| match pin.as_array().map(Vec::as_slice) {
+                    Some([note, revision, projected]) => Ok(SummarySourceNote {
+                        id: id(note)?,
+                        revision: hash(revision)?,
+                        projected_text: hash(projected)?,
+                    }),
+                    _ => Err(invalid(
+                        "a NOTE pin must be an id, a revision and a projection",
+                    )),
+                })
+                .collect::<Result<_>>()?;
+            (messages, Some(hash(memo)?), notes)
         }
-        _ => (Vec::new(), None),
+        _ => (Vec::new(), None, Vec::new()),
     };
     let body = ScopeSummaryBody {
         v: v[0]
@@ -328,6 +376,7 @@ pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
             .ok_or_else(|| invalid("minted_at must be a timestamp"))?,
         messages,
         memo,
+        notes,
     };
     validate(&body)?;
     Ok(body)

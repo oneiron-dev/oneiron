@@ -51,9 +51,11 @@ use crate::server::SyncServer;
 /// rechecks in the acting writer; any other person gets their own proof from
 /// their verified human slip, bound to that slip's liveness in the acting
 /// writer (FIX 4328), and the engine's roster, power and role checks
-/// decide. On a managed vault only its owner, attested by its supervisor for
-/// the request, gets a proof, through the owner door; anyone else refuses. An invitee's own slip (FIX 1925) is a person's
-/// proof only at its invitation's doors (`auth::INVITEE_DOORS`).
+/// decide. On a managed vault its owner, attested by its supervisor for the
+/// request, gets a proof through the owner door, and any other person on
+/// their own forwarded slip as here (FIX 5122). An invitee's own slip
+/// (FIX 1925) is a person's proof only at its invitation's doors
+/// (`auth::INVITEE_DOORS`).
 pub(super) fn person(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -70,9 +72,8 @@ pub(super) fn person(
             &["Present your own verified human credential."],
         )
     };
-    if server.managed_issuer.is_some() {
-        return Err(refused());
-    }
+    // A managed vault's forwarded person comes on his own slip (FIX 5122),
+    // judged as on any other install.
     let slip = auth
         .verified_slip()
         .filter(|_| auth.actor_class() == Some("human"))
@@ -418,26 +419,30 @@ pub(crate) async fn vault_authority_handoff_alarms_acknowledge(
 
 /// Proof-of-control owner recovery (ARCH-0043, OF-163), for the host
 /// operator's route alone (`/v1/operator/shared/recover-owner`): no verb row
-/// reaches it, so no agent does. The operator has judged, outside the engine,
-/// the claimant's proof that they control the organization owning the vault,
-/// or a managed vault's attested account owner asked it as his own act.
-/// The engine checks only what it holds (no live Owner left, `from` still an
+/// reaches it, so no agent does. It runs on `authorization` (FIX 1812): a
+/// managed vault's attested account owner's own act, or a self-hosted
+/// vault's host root as the owner it acts as, which the writer judges again.
+/// The engine checks what it holds (no live Owner left, `from` still an
 /// Owner, `claimant` a live person) and signs the handover with the host's
-/// slip issuer, keeping `proof` (the BLAKE3 of the judged proof note, never
-/// the note) with it. It answers the receipt the membership doors answer.
+/// slip issuer, keeping the BLAKE3 of the authorization's note (never the
+/// note) with it. It answers the receipt the membership doors answer.
 pub(crate) async fn operator_recover_shared_owner(
     server: &Arc<SyncServer>,
     vault_id: u64,
     from: oneiron::EntityId,
     claimant: oneiron::EntityId,
-    proof: Option<[u8; 32]>,
+    authorization: oneiron::federation::OwnerRecoveryAuthorization,
 ) -> MemoryResult<SharedActExecutionReceipt> {
     const VERB: &str = "operator.shared.recover_owner";
     off_runtime(server, VERB, move |server| {
         with_slips(server, VERB, |issuer| {
-            Ok(server
-                .vault()
-                .recover_shared_owner_with_proof(issuer, vault_id, from, claimant, proof)?)
+            Ok(server.vault().recover_shared_owner_authorized(
+                issuer,
+                vault_id,
+                from,
+                claimant,
+                &authorization,
+            )?)
         })
     })
     .await

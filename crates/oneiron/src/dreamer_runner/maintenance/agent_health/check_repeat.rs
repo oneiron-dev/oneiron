@@ -216,6 +216,20 @@ pub(super) fn check_repeat_findings(
             ));
         }
     }
+    out.extend(call_check_findings(streams, dispatched, attempts, book));
+    Ok(out)
+}
+
+/// The call half: each call stream's receipts, held against the
+/// `health.check.fails` dial. A live review past its lease runs it alone
+/// over that lease's calls (`targeted`, FIX 8109).
+pub(super) fn call_check_findings(
+    streams: &[CallStream<'_>],
+    dispatched: &Dispatches,
+    attempts: &Attempts,
+    book: &DialBook,
+) -> Vec<Finding> {
+    let mut out = Vec::new();
     for stream in streams {
         let (task, attempt) = stream.owner(dispatched, attempts);
         let fails = book.for_attempt(dispatched, attempt).check_fails;
@@ -272,7 +286,7 @@ pub(super) fn check_repeat_findings(
             ));
         }
     }
-    Ok(out)
+    out
 }
 
 fn finding(
