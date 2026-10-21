@@ -44,7 +44,7 @@ use rand_core::RngCore as _;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::{emit, open_stopped_vault, open_stopped_vault_with, raw_stdin, vault_config};
+use super::{base_vault_config, emit, open_stopped_vault, open_stopped_vault_with, raw_stdin};
 use crate::cli::{
     SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand,
     VaultKeyNamedArgs, VaultKeyResealArgs,
@@ -206,7 +206,7 @@ fn add_device(args: VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
             world_keys::page_seal_vault_id(&config.vault_path)
                 .map_err(|error| anyhow::anyhow!("read the vault's page seal: {error}"))
         })?;
-        let mut vault_config = vault_config(&config);
+        let mut vault_config = base_vault_config(&config);
         vault_config.page_seal = prepare_page_seal(&config, Some(&unlock))?;
         open_stopped_vault_with(&config, vault_config, INSTEAD)?
     } else {
