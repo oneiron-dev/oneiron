@@ -33,6 +33,11 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use rmpv::Value;
 
+mod scan;
+
+pub(super) use self::scan::ReceivePackScanSummary;
+use self::scan::{OutcomeScan, landed_scan_reads};
+
 /// Producer receipt pinning the exact encoded admission/outcome evidence claim body for one
 /// receive-pack operation. Key: operation/evidence id.
 const EVIDENCE: SideTable<EntityId, Vec<u8>, Raw> =
@@ -339,7 +344,8 @@ impl Vault {
     // Only finish_serve calls this production producer, after the single
     // backend has exited, the door window admitted the intent and live refs
     // narrowed it to observed results under the repository lock. An explicit
-    // Noop transport never claims the landed scanner ran.
+    // Noop transport never claims the landed scanner ran. A synthetic
+    // observer journals no intent: its scan is a clean push's.
     #[cfg(test)]
     pub(super) fn record_receive_pack_outcome(
         &self,
@@ -354,9 +360,13 @@ impl Vault {
             outcome,
             status,
             self.store.clock.entity_id()?,
+            ReceivePackScanSummary::Clean,
         )
     }
 
+    /// `summary` is what the push's intent recorded of its scan, the only
+    /// source the outcome's `scan` reads (FIX 8032): `door` is the report
+    /// the intent's recovery rebuilt, never the scan's evidence.
     pub(super) fn record_receive_pack_outcome_at(
         &self,
         stamp: &DoorAdmissionStamp,
@@ -364,6 +374,7 @@ impl Vault {
         outcome: &ReceivePackOutcome,
         status: u16,
         id: EntityId,
+        summary: ReceivePackScanSummary,
     ) -> Result<ReceivePackAttribution> {
         let attribution = ReceivePackAttribution {
             actor_id: EntityId::from_hex(stamp.principal_ref())
@@ -412,15 +423,10 @@ impl Vault {
             ));
         }
         self.require_receive_pack_host(repo_id, stamp.origin_authority.as_ref())?;
-        let scan = match receive_pack_field(&admission, "door_seam")?.as_str() {
-            Some("landed") => "clean",
-            Some("noop") => "not_performed",
-            _ => {
-                return Err(receive_pack_provenance_refused(
-                    "unknown admitted door seam",
-                ));
-            }
-        };
+        let scan = OutcomeScan::of(
+            receive_pack_field(&admission, "door_seam")?.as_str(),
+            summary,
+        )?;
         let body = receive_pack_claim(
             ClaimSubject::Edge {
                 source: actor,
@@ -428,8 +434,8 @@ impl Vault {
                 target: repo_id,
             },
             RECEIVE_PACK_OUTCOME_PREDICATE,
-            receive_pack_fields(vec![
-                ("schema_version", Value::from(1)),
+            scan.outcome_fields(vec![
+                ("schema_version", Value::from(scan.schema_version())),
                 ("operation_id", Value::from(stamp.operation_id.to_hex())),
                 ("actor_id", Value::from(actor.to_hex())),
                 ("repo_id", Value::from(repo_id.to_hex())),
@@ -455,7 +461,7 @@ impl Vault {
                     "staged_objects_dir",
                     Value::from(path_arg(&outcome.staged_objects_dir)?),
                 ),
-                ("scan", Value::from(scan)),
+                ("scan", Value::from(scan.tag())),
                 (
                     "origin_authority",
                     OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref()),
@@ -484,7 +490,7 @@ impl Vault {
             actor_id: actor,
             provenance_claim_id: id,
         };
-        if scan == "clean" {
+        if scan.landed() {
             self.validate_receive_pack_attribution(repo_id, outcome, &attribution)?;
         }
         Ok(attribution)
@@ -510,14 +516,14 @@ impl Vault {
             self.receive_pack_evidence_in_txn(&rtxn, operation, RECEIVE_PACK_ADMISSION_PREDICATE)?;
         let actor = attribution.actor_id;
         let root = Value::from(path_arg(&repo_root.canonicalize()?)?);
-        let observation_matches_seam = matches!(
-            (
-                receive_pack_field(&admission, "door_seam")?.as_str(),
-                receive_pack_field(&admission, "effector_check")?.as_str(),
-                receive_pack_field(&body, "scan")?.as_str()
-            ),
-            (Some("landed"), Some("admitted"), Some("clean"))
+        let seam = (
+            receive_pack_field(&admission, "door_seam")?.as_str(),
+            receive_pack_field(&admission, "effector_check")?.as_str(),
         );
+        // Clean as before marks, or marked with its count (FIX 8032).
+        let scan_reads = landed_scan_reads(&body)?;
+        let observation_matches_seam =
+            scan_reads && matches!(seam, (Some("landed"), Some("admitted")));
         if body.subject
             != (ClaimSubject::Edge {
                 source: actor,
