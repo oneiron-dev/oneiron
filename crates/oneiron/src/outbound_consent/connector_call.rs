@@ -566,8 +566,10 @@ impl Vault {
     /// row keeps the record, so a resume presents the same one; the
     /// credential door rechecks its binding at each send, and a delivered
     /// reply comes back cleared of the value. The caller checked the binding
-    /// before, and wrote the use's record. Beside the outcome, the custody
-    /// presentation the call's send made, if it sent (FIX 7647).
+    /// before, and wrote the use's record. Beside the outcome, or the engine
+    /// error that ended the call, the custody presentation the call's send
+    /// made, if it sent (FIX 7647): an error after the send hands it out
+    /// exactly as an outcome does (FIX 8053).
     pub(crate) fn call_connector_with_secret<H: ConnectorCallHost>(
         &self,
         memory: &Memory<'_>,
@@ -575,11 +577,15 @@ impl Vault {
         invocation: Option<ConnectorCallInvocation>,
         host: &mut H,
         credential: EntityId,
-    ) -> Result<(ConnectorCallOutcome, Option<SentPresentation>), IntentLedgerError> {
-        drop(host.take_sent_presentation());
-        let (outcome, _) =
-            self.start_connector_call(memory, request, invocation, Some(credential), None, host)?;
-        Ok((outcome, host.take_sent_presentation()))
+    ) -> (
+        Result<ConnectorCallOutcome, IntentLedgerError>,
+        Option<SentPresentation>,
+    ) {
+        let _ = host.take_sent_presentation();
+        let outcome = self
+            .start_connector_call(memory, request, invocation, Some(credential), None, host)
+            .map(|(outcome, _)| outcome);
+        (outcome, host.take_sent_presentation())
     }
 
     /// [`Self::call_connector_with_secret`] under the secret grant `grant`
@@ -594,12 +600,16 @@ impl Vault {
         host: &mut H,
         credential: EntityId,
         grant: SecretGrantRef,
-    ) -> Result<(ConnectorCallOutcome, Option<SentPresentation>), IntentLedgerError> {
+    ) -> (
+        Result<ConnectorCallOutcome, IntentLedgerError>,
+        Option<SentPresentation>,
+    ) {
         let (credential, grant) = (Some(credential), Some(grant));
-        drop(host.take_sent_presentation());
-        let (outcome, _) =
-            self.start_connector_call(memory, request, invocation, credential, grant, host)?;
-        Ok((outcome, host.take_sent_presentation()))
+        let _ = host.take_sent_presentation();
+        let outcome = self
+            .start_connector_call(memory, request, invocation, credential, grant, host)
+            .map(|(outcome, _)| outcome);
+        (outcome, host.take_sent_presentation())
     }
 
     /// The body of every call: `credential` is the record a `self.use` call

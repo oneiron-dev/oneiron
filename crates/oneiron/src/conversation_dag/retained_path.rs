@@ -6,7 +6,6 @@
 use super::graph::{self, CANONICAL, HEAD, MIGRATED};
 use crate::edge::EdgeKind;
 use crate::error::{Error, RegistryError, Result};
-use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::store::Store;
@@ -246,9 +245,6 @@ impl SelectedPathSnapshot {
             if !seen.insert(id) {
                 return Err(RegistryError::CycleDetected.into());
             }
-            if reversed.len() >= MAX_ANCESTOR_DEPTH {
-                return Err(Error::IndexOverflow("conversation_dag_walk"));
-            }
             let row = retained_row(store, txn, &id, ENTITY_TYPE_TURN)?;
             match &row {
                 RetainedRow::Absent => return Err(Error::EntityNotFound),
@@ -285,6 +281,10 @@ impl SelectedPathSnapshot {
             cursor = parents.first().copied();
             reversed.push(RetainedTurn { id, row });
         }
+        // Rule 5: the selected path is read whole, however long, and counted.
+        let mut walk = graph::walk_count(store, txn, conversation)?;
+        walk.rows(reversed.len());
+        walk.defer(store);
         reversed.reverse();
         for (n, turn) in reversed.iter().enumerate() {
             if graph::read_id(store, txn, CANONICAL, &turn.id)?
