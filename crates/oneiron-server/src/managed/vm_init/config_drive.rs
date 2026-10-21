@@ -1,17 +1,19 @@
 //! The vault VM's config drive as the root bootstrap reads it: only the typed
 //! files the contract names below
-//! [`VM_GUEST_CONFIG_DIR`](oneiron_vault_contract::vm::VM_GUEST_CONFIG_DIR),
-//! each read whole, at most [`MAX_VM_CONFIG_FILE_BYTES`], once per boot that
-//! serves and before the vault's key goes in. The drive's other files (its
-//! settings, its seal files, the host's addresses) reach the engine as the
-//! image's init maps them; nothing here lists the drive or reads a file the
-//! contract does not name.
+//! [`VM_GUEST_CONFIG_DIR`](oneiron_vault_contract::vm::VM_GUEST_CONFIG_DIR)
+//! (the network plan, and the managed profile's five files of
+//! [`super::profile`]), each read whole, at most [`MAX_VM_CONFIG_FILE_BYTES`],
+//! once per boot that serves and before the vault's key goes in. The drive's
+//! other files (its settings, its seal files, the host's addresses) reach the
+//! engine as the image's init maps them; nothing here lists the drive or
+//! reads a file the contract does not name.
 //!
 //! A known file that is not there (ENOENT) is a choice not made. One that is
 //! there but cannot be read, is not a regular file, is over the bound or is
 //! not in its form refuses the boot; it is never read as absent. No error
 //! carries a file's bytes.
 
+use super::profile::VmManagedProfile;
 use oneiron_vault_contract::vm::{
     MAX_VM_CONFIG_FILE_BYTES, VM_GUEST_NETWORK_FILE, VmGuestNetworkConfig,
 };
@@ -29,6 +31,9 @@ const NETWORK_FORM: &str =
 pub(super) struct VmGuestConfig {
     /// [`VM_GUEST_NETWORK_FILE`]: the guest NIC to set up.
     pub(super) network: Option<VmGuestNetworkConfig>,
+    /// The managed profile's five files (FIX 6809): the engine's own
+    /// managed-profile flags.
+    pub(super) profile: VmManagedProfile,
 }
 
 /// Why a known file on the config drive refused the boot.
@@ -56,6 +61,7 @@ impl VmGuestConfig {
         }
         Ok(Self {
             network: network()?,
+            profile: VmManagedProfile::load()?,
         })
     }
 }
@@ -79,7 +85,7 @@ fn network() -> Result<Option<VmGuestNetworkConfig>, VmConfigFileError> {
 /// One known file's bytes, or `None` when it is not there: looked at without
 /// following a link, so a device, a pipe or a link is refused before it is
 /// opened, then read to at most the bound.
-fn read_known(path: &str) -> Result<Option<Vec<u8>>, VmConfigFileError> {
+pub(super) fn read_known(path: &str) -> Result<Option<Vec<u8>>, VmConfigFileError> {
     let path = Path::new(path);
     let read = |source| VmConfigFileError::Read {
         path: path.to_owned(),

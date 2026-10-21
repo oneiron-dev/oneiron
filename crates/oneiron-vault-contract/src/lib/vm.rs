@@ -27,7 +27,9 @@
 //! each stream to the vault's custody anchor door leaves through
 //! [`VM_ANCHOR_PROXY_PORT`]. A supervisor may also attach one NIC for the
 //! guest's outbound IPv4 (FIX 6808, [`VmTapAttachment`] and
-//! [`VmGuestNetworkConfig`]); every host surface stays on vsock.
+//! [`VmGuestNetworkConfig`]); every host surface stays on vsock. Its config
+//! drive may carry the vault's managed profile too, as five typed files
+//! (FIX 6809, [`VM_MANAGED_PROFILE_REVISION`]).
 //!
 //! The provision connection rides contract version 3 with a build floor, the
 //! first engine revision that ships `oneiron-vm-init`: a host speaks it only
@@ -94,6 +96,35 @@ pub const VM_NETWORK_REVISION: u32 = 1;
 /// The longest typed file the root bootstrap reads whole from the config
 /// drive: a bound on one file's codec, not on what it configures.
 pub const MAX_VM_CONFIG_FILE_BYTES: usize = 16384;
+/// The managed profile's organization hosting id on the config drive
+/// (FIX 6809): exactly 64 hex digits, either case. The root bootstrap passes
+/// it to the engine as `--organization-owner`.
+///
+/// Each of the managed profile's five files holds its one value with at most
+/// one final LF and nothing else, and is read before the vault's key goes in
+/// on a boot that serves. One that is not there gives the engine no flag,
+/// never a `false`; one that is there but not in its form refuses the boot.
+pub const VM_GUEST_ORGANIZATION_OWNER_FILE: &str = "/config/organization-owner";
+/// The managed profile's member-vault choice (FIX 6809): `true` or `false`.
+/// `true` gives the engine a bare `--member-vault`, and `false` no flag, the
+/// engine's own false.
+pub const VM_GUEST_MEMBER_VAULT_FILE: &str = "/config/member-vault";
+/// The managed profile's "Help improve Oneiron" choice (FIX 6809): `true` or
+/// `false`, passed as `--failure-signal-export` with its value, `false`
+/// included.
+pub const VM_GUEST_FAILURE_SIGNAL_EXPORT_FILE: &str = "/config/failure-signal-export";
+/// The managed profile's training choice (FIX 6809), apart from the export
+/// one: `true` or `false`, passed as `--failure-signal-training` with its
+/// value, `false` included.
+pub const VM_GUEST_FAILURE_SIGNAL_TRAINING_FILE: &str = "/config/failure-signal-training";
+/// The managed profile's MRL prefix width (FIX 6809): decimal digits, a
+/// nonzero width a u16 holds, passed as `--fast-dims`. The engine checks it
+/// against the vault's dimensions, as on a node.
+pub const VM_GUEST_FAST_DIMS_FILE: &str = "/config/fast-dims";
+/// The managed profile files' revision (FIX 6809): an image whose root
+/// bootstrap reads the five files and passes the engine their flags names it
+/// as its manifest's `vm_managed_profile_revision`.
+pub const VM_MANAGED_PROFILE_REVISION: u32 = 1;
 /// The vault's fscrypt v2 storage on its own disk: owned by the vault's UID,
 /// mode 0700, encrypted under the provisioned key. It holds the data
 /// directory and the engine's siblings of it (backups, rehearsals).

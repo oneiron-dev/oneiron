@@ -187,6 +187,27 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// the floor with a NIC planned. The TAP, its rules and every name and
 /// address are the supervisor's; the engine defaults none. No `Ping` field is
 /// added and this version stays 3.
+///
+/// VM managed profile (FIX 6809): the config drive's five typed files,
+/// `/config/organization-owner`, `/config/member-vault`,
+/// `/config/failure-signal-export`, `/config/failure-signal-training` and
+/// `/config/fast-dims`
+/// ([`VM_GUEST_ORGANIZATION_OWNER_FILE`](crate::vm::VM_GUEST_ORGANIZATION_OWNER_FILE)
+/// and its four siblings), which `oneiron-vm-init` reads before the vault's
+/// key goes in and passes to an open's or a cold restore's engine as its
+/// managed-profile flags, carry a build floor, at the engine revision they
+/// merged in, proven by the image manifest's required
+/// `vm_managed_profile_revision` 1
+/// ([`VM_MANAGED_PROFILE_REVISION`](crate::vm::VM_MANAGED_PROFILE_REVISION)).
+/// An image before the floor ignores the files, so its vault would start
+/// without its tenancy or its owner's choices: a supervisor checks the
+/// revision, the manifest's hashes and the merge floor before it stages any
+/// of the files, prepares the VMM or hands over the fscrypt key or any
+/// credential, and boots no image before the floor for a profile that needs
+/// one of them. Each file is optional, and one that is not there gives the
+/// engine no flag, never a `false`; one that is there holds its one value and
+/// at most one final LF, or the boot is refused, with no reader of another
+/// form kept. No `Ping` field is added and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

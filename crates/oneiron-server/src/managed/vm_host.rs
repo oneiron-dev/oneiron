@@ -116,7 +116,11 @@ pub struct VaultVmConfig {
     /// `oauth-resource-indicator` and `kit-bundle-public-urls` (the host's
     /// public https origin, and the comma-separated URLs a kit dials) as the
     /// flags of those names. Files a settings path names may sit beside it.
-    /// Without it the guest runs with none of them.
+    /// The guest's bootstrap reads its typed files itself: `network.json`
+    /// (below), and the managed profile's five files (FIX 6809), which give
+    /// the engine its `--organization-owner`, `--member-vault`,
+    /// `--failure-signal-export`, `--failure-signal-training` and
+    /// `--fast-dims`. Without it the guest runs with none of them.
     #[serde(default)]
     pub config_disk: Option<PathBuf>,
     /// The vault's provision binding (FIX 6308): the UID its engine runs as,

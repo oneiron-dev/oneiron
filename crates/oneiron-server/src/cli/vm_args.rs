@@ -9,8 +9,10 @@ use std::path::PathBuf;
 pub struct HostVmArgs {
     /// JSON VM profile: firecracker, kernel, rootfs, vault_disk, state_dir,
     /// vcpus, mem_mib, the provision binding (guest_uid, derivation_owner,
-    /// vault_disk_uuid, fscrypt_key_identifier) and optional boot_args,
-    /// allowed_origins and restore_source_disk.
+    /// vault_disk_uuid, fscrypt_key_identifier), network (the guest NIC's
+    /// tap_name and guest_mac, or null for none) and optional boot_args,
+    /// allowed_origins, artifact_origin, config_disk, outbox and
+    /// restore_source_disk.
     #[arg(long)]
     pub config: PathBuf,
     #[arg(long)]

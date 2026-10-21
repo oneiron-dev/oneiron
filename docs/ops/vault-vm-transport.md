@@ -3,14 +3,16 @@
 A vault VM (`oneiron-server host vm`) can be cold-restored in its guest, and a
 lost restore result can be settled from its disk (FIX 6584). Its engine gets the
 custody anchor door's owner credential and reaches the anchor URL through its
-host (FIX 6517). Its guest can have one NIC for outbound IPv4 (FIX 6808). This
-page is the supervisor's contract: the image floor, the descriptors and who owns
-them, the source drive, the custody anchor channels, the guest network, and the
-decision table for a lost result. The wire lives in
+host (FIX 6517). Its guest can have one NIC for outbound IPv4 (FIX 6808), and
+its engine takes the vault's managed profile from the config drive (FIX 6809).
+This page is the supervisor's contract: the image floor, the descriptors and who
+owns them, the source drive, the custody anchor channels, the guest network, the
+managed profile, and the decision table for a lost result. The wire lives in
 `oneiron_vault_contract::vm_restore` and `oneiron_vault_contract::vm_anchor`,
-and the network's two views in `oneiron_vault_contract::vm`; the native restore
-it carries is `oneiron_vault_contract::restore` and is unchanged, and so is the
-native anchor credential.
+and the network's two views and the profile's files in
+`oneiron_vault_contract::vm`; the native restore it carries is
+`oneiron_vault_contract::restore` and is unchanged, and so is the native anchor
+credential.
 
 ## Image floor: check it before any secret
 
@@ -42,6 +44,13 @@ native anchor credential.
   no NIC. A host library before the floor refuses a profile that names
   `network`, and one at or after it refuses a profile without it, so profiles
   change with the host library.
+- The managed profile (FIX 6809) adds a required manifest field,
+  `vm_managed_profile_revision: 1`. Its floor is the engine commit that merged
+  FIX 6809. An image before it ignores the profile's files, so its vault would
+  start without its tenancy or its owner's choices. The supervisor checks the
+  revision, with the hashes and that floor, before it stages any of the files,
+  prepares the VMM or hands over F, C or A, and boots no image before the floor
+  for a profile that needs one of them.
 
 ## The channel
 
@@ -78,6 +87,10 @@ before it reads anything.
 | Restore | Open's flags plus `--restore --restore-input-fd R --restore-result-fd W` | See the restore order below. |
 | Inspect | `--config`, `--vault-name`, `--fscrypt-key-fd F`, `--restore-marker-identity-fd Q`, `--restore-marker-result-fd S` (no `--listen`, `--credentials-fd`, `--restore` or anchor flags) | Reads F and Q, boots, writes one observation to S, stops the VM and exits. |
 | Anchor (with Open or Restore) | `--custody-anchor-url URL`, and optionally `--custody-anchor-credentials-fd A`, which needs the URL | Reads A once, after the first cold boot's C went to the guest. See the custody anchor channels below. |
+
+Open and Restore give the engine the vault's managed profile the same way:
+from the config drive's typed files (see the managed profile below), never from
+a flag, pipe or descriptor of the runner's. An inspection reads none of them.
 
 Restore order:
 
@@ -286,6 +299,44 @@ A NIC does not replace the custody anchor proxy. The host's loopback is not the
 guest's, so an anchor URL on the host's `127.0.0.1` relay still goes through
 1033.
 
+## Managed profile (FIX 6809)
+
+A vault VM's engine takes the same managed-profile flags a supervisor passes a
+node's child. In a VM they come from five typed files on the config drive,
+which the guest's bootstrap reads itself. There is no generic argument file and
+no shell parser.
+
+| File (`vm::` constant) | Body | The engine gets |
+|---|---|---|
+| `/config/organization-owner` (`VM_GUEST_ORGANIZATION_OWNER_FILE`) | Exactly 64 hex digits, in either case | `--organization-owner <id>`, as written |
+| `/config/member-vault` (`VM_GUEST_MEMBER_VAULT_FILE`) | `true` or `false` | `true`: a bare `--member-vault`. `false`: no flag, the engine's own false |
+| `/config/failure-signal-export` (`VM_GUEST_FAILURE_SIGNAL_EXPORT_FILE`) | `true` or `false` | `--failure-signal-export true` or `--failure-signal-export false` |
+| `/config/failure-signal-training` (`VM_GUEST_FAILURE_SIGNAL_TRAINING_FILE`) | `true` or `false`, apart from the export file | `--failure-signal-training true` or `--failure-signal-training false` |
+| `/config/fast-dims` (`VM_GUEST_FAST_DIMS_FILE`) | Decimal digits: a nonzero width a u16 holds | `--fast-dims <width>` |
+
+- Each body is the whole value, with at most one final LF: no space, CR, sign,
+  prefix, comment or second line. Write the hex in lowercase and end each file
+  with one LF.
+- A file that is not there gives no flag, so the engine's own default stands.
+  It is never read as `false`. Write both failure-signal files from the owner's
+  explicit choices, `false` included.
+- A file that is there but empty, unreadable, not a regular file, over 16384
+  bytes or not in its form refuses the provisioning as `provision_failed`. The
+  refusal names the file, never its bytes.
+- On each boot that serves (an open or a restore, not an inspection) the
+  bootstrap reads all five with `network.json`, before the vault's key goes in.
+  An open's engine and a restore's engine get the same flags.
+- The engine checks the values as it does on a node: `--member-vault` needs
+  `--organization-owner`, a shared vault's organization is its derivation
+  owner, and the width is below the vault's effective dimensions.
+- The image's init passes none of these flags itself.
+
+The supervisor publishes the profile as one set. Under the lock it builds the
+config drive with, it writes the files for the profile it publishes, removes
+the ones whose values became absent, and builds the one drive that an open and
+a restore both boot with. A RAM resume reads no file again, so a changed
+profile takes effect at the next cold boot: drop a published snapshot first.
+
 ## Lost result: decision table
 
 If the same restored guest is still serving, read ctl `restore_status` and
@@ -321,3 +372,7 @@ overwrite.
   reconcile are the supervisor's.
 - **Host network.** The TAP, its rules, DNS sourcing, operator relays and the
   network's activation are the supervisor's (FIX 6808's host half).
+- **Profile publication.** Writing and removing the five profile files under
+  the config drive's lock, building the drive an open and a restore share, and
+  holding back a profile until the image's revision and floor check out are the
+  supervisor's (FIX 6809's LC half, FIX 7081).

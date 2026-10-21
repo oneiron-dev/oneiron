@@ -35,6 +35,9 @@
 //! they plan a network, the bootstrap sets up the NIC the host attached
 //! while it is still root, before the key and before any engine or companion
 //! (FIX 6808, [`network`]); a setup that fails refuses the provisioning.
+//! The managed profile's five files on the drive ([`profile`], FIX 6809)
+//! become the engine's own managed-profile flags, the same for an open and a
+//! cold restore.
 //!
 //! It stays root only to supervise, and to run the outbox companion
 //! `oneiron-vm-outbox` beside the engine ([`outbox`], FIX 5235): started
@@ -52,10 +55,12 @@ mod fscrypt;
 mod layout;
 mod network;
 mod outbox;
+mod profile;
 mod restore;
 
 use self::config_drive::VmGuestConfig;
 use self::fscrypt::{KeyIdentifier, Removal};
+use self::profile::VmManagedProfile;
 use anyhow::Context as _;
 use oneiron_vault_contract::host_adapters::connect_blocking;
 use oneiron_vault_contract::vm::{
@@ -159,11 +164,14 @@ impl InitArgs {
 }
 
 /// A provisioned guest: the held vault root, the installed key's identifier,
-/// the UID the engine runs as, and a cold restore's mounted source drive.
+/// the UID the engine runs as, the config drive's typed files as a serving
+/// boot read them (none for an inspection), and a cold restore's mounted
+/// source drive.
 struct Provisioned {
     root: File,
     identifier: KeyIdentifier,
     uid: u32,
+    guest: VmGuestConfig,
     source: Option<restore::SourceMount>,
 }
 
@@ -215,9 +223,14 @@ fn run() -> anyhow::Result<ExitCode> {
     let status = match boot {
         VmRestoreBoot::Open => {
             drop(restore_channel);
-            run_engine(&args, provisioned.uid, None)
+            run_engine(&args, provisioned.uid, &provisioned.guest.profile, None)
         }
-        VmRestoreBoot::Restore { .. } => run_engine(&args, provisioned.uid, Some(restore_channel)),
+        VmRestoreBoot::Restore { .. } => run_engine(
+            &args,
+            provisioned.uid,
+            &provisioned.guest.profile,
+            Some(restore_channel),
+        ),
         VmRestoreBoot::InspectMarker { identity } => {
             let observation =
                 restore::observe(&provisioned.root, &provisioned.identifier, provisioned.uid);
@@ -294,17 +307,21 @@ fn provision(
     // An inspection makes nothing on the disk: it reads what is there.
     let inspecting = matches!(boot, VmRestoreBoot::InspectMarker { .. });
     let restoring = matches!(boot, VmRestoreBoot::Restore { .. });
-    // A boot that serves reads its config drive's typed files once and sets
-    // up the network they plan while root, before the key goes in and before
-    // anything is made on the disk. An inspection does neither.
-    if !inspecting {
+    // A boot that serves reads its config drive's typed files once, keeping
+    // the managed profile for the engine, and sets up the network they plan
+    // while root, before the key goes in and before anything is made on the
+    // disk. An inspection does neither.
+    let guest = if inspecting {
+        VmGuestConfig::default()
+    } else {
         let failed = VmProvisionFailure::ProvisionFailed;
         let guest = VmGuestConfig::load(args.guest_config_dir.is_some())
             .map_err(|error| Refusal::caused(failed, error))?;
         if let Some(plan) = &guest.network {
             network::configure(plan).map_err(|error| Refusal::caused(failed, error))?;
         }
-    }
+        guest
+    };
     let control = if inspecting {
         layout::existing_control(&root)?
     } else {
@@ -320,6 +337,7 @@ fn provision(
         root,
         identifier,
         uid: frame.binding.guest_uid,
+        guest,
         source: None,
     };
     let uid = provisioned.uid;
@@ -389,12 +407,14 @@ fn remove_key(provisioned: &Provisioned) {
 /// Starts the outbox companion, then the engine as `uid`, and waits for the
 /// engine; then stops the companion, and ends and reaps what is left. The
 /// host's custody anchor header is read before either, and the anchor's
-/// credential taken beside the engine. A cold restore's engine
-/// (`restore_channel`) gets its two restore pipes, and the restore's last
-/// result record goes out before this returns.
+/// credential taken beside the engine. The engine gets the managed
+/// `profile`'s flags, an open's and a cold restore's alike. A cold restore's
+/// engine (`restore_channel`) gets its two restore pipes, and the restore's
+/// last result record goes out before this returns.
 fn run_engine(
     args: &InitArgs,
     uid: u32,
+    profile: &VmManagedProfile,
     restore_channel: Option<File>,
 ) -> anyhow::Result<ExitStatus> {
     // Whatever the engine leaves behind is reparented here, not to PID 1, so
@@ -409,6 +429,7 @@ fn run_engine(
         Vec::new()
     };
     flags.extend(anchor.flags());
+    flags.extend(profile.engine_flags());
     let anchor_fds = anchor.fds();
     // A pipe the engine reads that broke before its end comes back here.
     let (lost_sender, lost) = mpsc::channel();
