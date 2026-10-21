@@ -22830,6 +22830,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CoachHealAuthor",
       "HealDecisions",
       "HealRoute",
       "IssuesRun"
@@ -22841,7 +22842,8 @@
       "crate-vis": 5,
       "enum": 1,
       "fn": 3,
-      "struct": 2
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -23807,7 +23809,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 17,
       "struct": 1
      }
@@ -49534,6 +49536,35 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HealContextPolicy",
+      "HealContextSeed",
+      "HealEvidenceContext",
+      "HealLink",
+      "HealUnavailable"
+     ],
+     "path": "src/self_heal/heal_context.rs",
+     "purpose": "What a heal reads about a failure's recorded cause (OF-418 L2, L10; ARCH-0066 §4, §6)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/heal_context/records.rs",
+     "purpose": "How a heal's context renders what it read (OF-418 L2, L10): the source order of a walk's links, a code run's…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "HealerDeployment",
       "HealerProposalRecord",
       "HealerRegistration",
@@ -49576,9 +49607,9 @@
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 8,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -49707,6 +49738,7 @@
      "path": "src/self_heal/session_text.rs",
      "purpose": "What a session judge reads (FIX 2079): every readable line of the conversations a session window's runs were…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1,
       "struct": 2
@@ -67820,7 +67852,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 37,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68165,7 +68197,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4292,
+   "source_files": 4294,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81077,7 +81109,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/skill_author.rs",
@@ -87008,13 +87040,13 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner/vault_key.rs",
      "purpose": "The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -87026,6 +87058,16 @@
      "purpose": "`oneiron restore` where no vault is yet: the restore on a clean host, its key unlocked the way the owner…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/vault_key/host_unlock.rs",
+     "purpose": "What unlocks a backup's vault key, or a sealed vault's pages, on this host: the unlock the owner names, its…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -93233,7 +93275,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -93611,9 +93653,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 53,
+   "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1001,
+   "source_files": 1002,
    "test_files": 182
   },
   "oneiron-spawn": {
