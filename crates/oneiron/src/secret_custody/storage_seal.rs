@@ -7,17 +7,23 @@
 //!
 //! * opened: [`SecretCustodyRecord`] in memory, its value in the clear,
 //!   wiped by its holder;
-//! * stored: the entity row's body, every field but the value as before and
-//!   the value under `sealed_value`: nonce (12) | AES-256-GCM ciphertext,
-//!   bound to the credential's id, its generation and its role. Every write
-//!   seals before the row is put ([`sealed_body_in_txn`]), in the writer
-//!   that minted the key; an empty value (a revoked record's) is stored
-//!   empty, under no key;
-//! * plaintext DTO: the body codec with `value_bytes`, the owner archive's
-//!   and a protected input's and a transition's body (CALLS `KS-6 archive
-//!   form`), and the form a checkpoint image carries a row in until part 2
-//!   strips it ([`image_credential_carrier`]), which a restored row keeps
-//!   until its next write.
+//! * stored: the entity row's body, stamped
+//!   [`SECRET_CUSTODY_STORED_SCHEMA_VERSION`], every field but the value as
+//!   before and the value under `sealed_value`: nonce (12) | AES-256-GCM
+//!   ciphertext, bound to the credential's id, its generation and its role.
+//!   Every write seals before the row is put ([`sealed_body_in_txn`]), in
+//!   the writer that minted the key; an empty value (a revoked record's) is
+//!   stored empty, under no key;
+//! * plaintext DTO: the body codec with `value_bytes`, stamped
+//!   [`SECRET_CUSTODY_SCHEMA_VERSION`] as on main, the owner archive's and a
+//!   protected input's and a transition's body (CALLS `KS-6 archive form`),
+//!   and the form a checkpoint image carries a row in until part 2 strips it
+//!   ([`image_credential_carrier`]), which a restored row keeps only until
+//!   the restore seals it again (a row it could not seal stays pending, never
+//!   opened from it, [`CUSTODY_RESEAL_PENDING`]).
+//!
+//! A record read from storage comes back stamped as its DTO is, so every
+//! carrier built from it is byte for byte main's.
 //!
 //! A read that needs the value opens it ([`read_opened_in_txn`]) in the
 //! caller's writer, or under the custody read guard its caller took before
@@ -41,7 +47,10 @@ use crate::store::{CredentialLeaf, CustodyKind, Store};
 use crate::vault::Vault;
 
 use super::codec::{BodyValue, decode_custody_map, encode_custody_map};
-use super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
+use super::types::{
+    CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SECRET_CUSTODY_STORED_SCHEMA_VERSION,
+    SecretCustodyRecord, SecretCustodyStatus,
+};
 
 /// The domain a sealed value's associated data opens with.
 const VALUE_AAD_DOMAIN: &[u8] = b"oneiron/credential-value/v2\0";
@@ -137,16 +146,26 @@ fn open_value(
         .map_err(|_| sealed_corrupt())
 }
 
-/// Decodes a stored body: its fields and its value as stored.
+/// Decodes a stored body: its fields and its value as stored. A sealed
+/// value goes only with the stored stamp and a carrier only with the DTO's;
+/// the record comes back stamped as its DTO is.
 pub(crate) fn decode_stored_custody_body(body: &[u8]) -> Result<StoredCustody> {
-    let (record, value) = decode_custody_map(body)?;
-    let value = match value {
-        BodyValue::Sealed(bytes) => StoredValue::Sealed {
+    let (mut record, value) = decode_custody_map(body)?;
+    let value = match (record.schema_version, value) {
+        (SECRET_CUSTODY_STORED_SCHEMA_VERSION, BodyValue::Sealed(bytes)) => StoredValue::Sealed {
             generation: record.rotation_generation,
             bytes,
         },
-        BodyValue::Plain(value) => StoredValue::Carrier(Zeroizing::new(value)),
+        (SECRET_CUSTODY_SCHEMA_VERSION, BodyValue::Plain(value)) => {
+            StoredValue::Carrier(Zeroizing::new(value))
+        }
+        _ => {
+            return Err(super::codec::invalid_body(
+                "unsupported secret custody schema version",
+            ));
+        }
     };
+    record.schema_version = SECRET_CUSTODY_SCHEMA_VERSION;
     Ok(StoredCustody { record, value })
 }
 

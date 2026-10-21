@@ -9,8 +9,8 @@ use crate::error::{Error, Result};
 
 use super::floor::{as_u64, required_value};
 use super::types::{
-    CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SecretBinding, SecretCustodyFloor,
-    SecretCustodyRecord, SecretCustodyStatus, TierBand,
+    CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_STORED_SCHEMA_VERSION,
+    SecretBinding, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
 use crate::error::SecretError;
 
@@ -201,9 +201,11 @@ fn binding_from_value(value: &Value) -> Result<SecretBinding> {
 
 /// What a custody body holds in its value slot (KS-6): the plaintext value
 /// under `value_bytes` (the owner archive's, a protected input's and a
-/// transition's body DTO, and a checkpoint image's carrier form), or the
-/// value sealed under its credential custody key under `sealed_value` (the
-/// stored schema-2 form, CALLS `KS-6 credential schema 2`).
+/// transition's body DTO, and a checkpoint image's carrier form, stamped
+/// with the record's own schema version as before), or the value sealed
+/// under its credential custody key under `sealed_value` (the stored form,
+/// stamped [`SECRET_CUSTODY_STORED_SCHEMA_VERSION`], CALLS `KS-6 credential
+/// schema 2`).
 pub(super) enum BodyValue {
     Plain(Vec<u8>),
     Sealed(Vec<u8>),
@@ -218,16 +220,26 @@ pub fn encode_secret_custody_body(rec: &SecretCustodyRecord) -> Result<Vec<u8>> 
     encode_custody_map(rec, BodyValue::Plain(rec.value_bytes.clone()))
 }
 
-/// Encodes `rec`'s fields with `value` in its value slot.
+/// Encodes `rec`'s fields with `value` in its value slot, stamped as that
+/// form is: the DTO with the record's version, the stored form with the
+/// stored one.
 pub(super) fn encode_custody_map(rec: &SecretCustodyRecord, value: BodyValue) -> Result<Vec<u8>> {
-    let (value_key, value) = match value {
-        BodyValue::Plain(bytes) => (SECRET_CUSTODY_BODY_KEYS[4], Value::Binary(bytes)),
-        BodyValue::Sealed(bytes) => (SECRET_CUSTODY_SEALED_VALUE_KEY, Value::Binary(bytes)),
+    let (schema_version, value_key, value) = match value {
+        BodyValue::Plain(bytes) => (
+            rec.schema_version,
+            SECRET_CUSTODY_BODY_KEYS[4],
+            Value::Binary(bytes),
+        ),
+        BodyValue::Sealed(bytes) => (
+            SECRET_CUSTODY_STORED_SCHEMA_VERSION,
+            SECRET_CUSTODY_SEALED_VALUE_KEY,
+            Value::Binary(bytes),
+        ),
     };
     let map = Value::Map(vec![
         (
             Value::from(SECRET_CUSTODY_BODY_KEYS[0]),
-            Value::from(u64::from(rec.schema_version)),
+            Value::from(u64::from(schema_version)),
         ),
         (
             Value::from(SECRET_CUSTODY_BODY_KEYS[1]),
@@ -306,8 +318,8 @@ pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
 }
 
 /// Decodes a custody body's fields, its value slot apart: the record comes
-/// back with no value bytes. Exactly one of `value_bytes` and
-/// `sealed_value` is present.
+/// back with no value bytes and the schema version the body is stamped
+/// with. Exactly one of `value_bytes` and `sealed_value` is present.
 pub(super) fn decode_custody_map(bytes: &[u8]) -> Result<(SecretCustodyRecord, BodyValue)> {
     use std::io::Cursor;
 

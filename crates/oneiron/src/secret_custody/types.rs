@@ -165,8 +165,9 @@ impl SecretCustodyStatus {
 ///
 /// In memory, `value_bytes` is the opened value, which NEVER leaves this
 /// record into claims / CRDT / export / receipts / logs. `Debug` redacts it.
-/// At rest (schema 2, KS-6) the value is sealed under its generation's
-/// erasable custody key (`storage_seal`); this record is the opened form.
+/// At rest (stored schema 2, KS-6) the value is sealed under its
+/// generation's erasable custody key (`storage_seal`); this record is the
+/// opened form, stamped as its plaintext DTO is.
 /// `policy_floor_snapshot` records the floor at register time for audit;
 /// `manifest_ref` + `declared_paths` are copied from the manifest entry so
 /// downstream consumers (SECRET-03, snapshot exclusion) have a vault-side
@@ -315,10 +316,19 @@ pub const SECRET_CUSTODY_BODY_KEYS: [&str; 13] = [
     "policy_floor_snapshot",
 ];
 
-/// The body schema version stamped at encode time. 2: the value rests
-/// sealed under its generation's custody key (KS-6, CALLS `KS-6 credential
-/// schema 2`); no reader of 1 remains.
-pub const SECRET_CUSTODY_SCHEMA_VERSION: u16 = 2;
+/// The schema version of a record and of its plaintext DTO, the body with
+/// its value in the clear under `value_bytes`: the owner archive's, a
+/// register's protected input's and a transition's body, and a checkpoint
+/// image's carrier. Unchanged by KS-6, so every carrier wire stays byte for
+/// byte as before (CUSTODY_CARRIER_LEAF_WIRE off).
+pub const SECRET_CUSTODY_SCHEMA_VERSION: u16 = 1;
+
+/// The schema version a stored custody row is stamped with (KS-6, CALLS
+/// `KS-6 credential schema 2`): its value sealed under its generation's
+/// custody key, under `sealed_value`. Only the stored form takes it; a
+/// record read from storage comes back stamped
+/// [`SECRET_CUSTODY_SCHEMA_VERSION`], its DTO's.
+pub(crate) const SECRET_CUSTODY_STORED_SCHEMA_VERSION: u16 = 2;
 
 /// The `vault_meta` name-index key prefix mapping a live secret name to its
 /// `EntityId` (`"vault_meta: name -> EntityId"`).
