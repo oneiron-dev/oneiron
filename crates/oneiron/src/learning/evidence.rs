@@ -347,6 +347,25 @@ pub fn withdraw_evidence(
     })
 }
 
+/// [`withdraw_evidence`] inside the caller's write transaction.
+///
+/// # Errors
+///
+/// As [`withdraw_evidence`].
+pub(crate) fn withdraw_evidence_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    cell: &LearningCell,
+    receipt: &str,
+    now: u64,
+) -> Result<Option<Estimate>> {
+    let digest = cell.digest();
+    if !EVIDENCE.delete(&vault.store, wtxn, &(digest, receipt.to_owned()))? {
+        return super::read::own_estimate_in_txn(vault, wtxn, cell);
+    }
+    project_cell_in_txn(vault, wtxn, &digest, now)
+}
+
 /// Registers `cell` with `form` if it is new, and checks the form otherwise.
 /// Returns the cell digest.
 pub(crate) fn ensure_cell_in_txn(

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1127 facade rows, 3904 declarations.
+Census: 1127 facade rows, 3907 declarations.
 Inputs: 1062 of 1127 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1014 of 1127 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -425,6 +425,11 @@ AgentHealthConfidence = Literal["high", "low"]
 AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs"]
 AgentHealthMove = Literal["note", "steer", "budget", "reassign", "ask_coach", "hold"]
 AgentHealthOutcome = Literal["open", "confirmed", "dismissed", "unresolved"]
+class HealthBriefPin(TypedDict):
+    task: EntityId
+    rev: int
+    digest: str
+    observed_at: int
 class AgentHealthPadReadRead(TypedDict):
     state: Literal["read"]
     read: NotRequired[EntityId | None]
@@ -471,8 +476,23 @@ class AgentHealthCoachAsk(TypedDict):
     asked_at: int
     diagnostic: NotRequired[EntityId | None]
     attempt: str
+    observed_brief: NotRequired[HealthBriefPin | None]
     answer: NotRequired[AgentHealthCoachAnswer | None]
     application: NotRequired[AgentHealthCoachApplication | None]
+class HealthReviewReceipt(TypedDict):
+    receipt: str
+    outcome: AgentHealthOutcome
+    by: EntityId
+    by_owner: bool
+    at: int
+    reviewer: str
+    dial: int
+    measured: int
+    diagnostics: list[EntityId]
+    evidence: list[EntityId]
+    observed_brief: NotRequired[HealthBriefPin | None]
+    label: NotRequired[bool | None]
+    projected: bool
 class AgentHealthCard(TypedDict):
     subject: EntityId
     signal: AgentHealthSignal
@@ -500,6 +520,9 @@ class AgentHealthCard(TypedDict):
     opened_at: int
     updated_at: int
     coach: NotRequired[AgentHealthCoachAsk | None]
+    observed_brief: NotRequired[HealthBriefPin | None]
+    reviewer: str
+    review_outcomes: list[HealthReviewReceipt]
 RunTreeStatus = Literal["queued", "running", "paused", "completed", "failed", "cancelled", "abandoned"]
 class RunTreeTimestamps(TypedDict):
     created_at: int
@@ -3307,6 +3330,9 @@ class CallOutcomeRefusedBody(TypedDict):
 class CallOutcomeRefused(TypedDict):
     refused: CallOutcomeRefusedBody
 CallOutcome = Literal["ok"] | CallOutcomeRefused
+class CallAttemptRef(TypedDict):
+    attempt: EntityId
+    generation: int
 class CallReceipt(TypedDict):
     receipt_ref: str
     at: int
@@ -3319,6 +3345,7 @@ class CallReceipt(TypedDict):
     request_digest: str
     result_digest: NotRequired[str | None]
     action_digest: NotRequired[str | None]
+    attempt_ref: NotRequired[CallAttemptRef | None]
     served: list[str]
     served_records: NotRequired[list[RecordRef]]
 class AdmissionStatusRequest(TypedDict):
@@ -13702,7 +13729,7 @@ class SkillPackOutcomeProjection(TypedDict):
     persisted: bool
 class SkillPackCreditRequest(TypedDict):
     receipt_id: str
-ModelRole = Literal["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach"]
+ModelRole = Literal["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach", "browser_planner"]
 ModelTierRef = str
 ModelDisposition = Literal["offline", "served"]
 class ModelBinding(TypedDict):
@@ -18112,6 +18139,7 @@ class WakeRecipePolicy(TypedDict):
     novelty_instruction: str
     typing_instruction: str
     narrative_instruction: str
+    arc_min_new_statements: int
     audit_window_instruction: str
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
@@ -19418,6 +19446,7 @@ class LibraryCard(TypedDict):
     workflow: str
     site: str
     subgoal: str
+    type_ref: str
     params: list[str]
     runs: int
     failures: int
@@ -19680,6 +19709,7 @@ BrowserBatchOutput = BrowserAnswer[BatchOutput]
 class LibraryFindInput(TypedDict):
     site: NotRequired[str | None]
     subgoal: NotRequired[str | None]
+    type_ref: NotRequired[str | None]
 class LibraryFindOutput(TypedDict):
     site: str
     workflows: list[LibraryCard]

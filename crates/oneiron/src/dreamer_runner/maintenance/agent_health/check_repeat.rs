@@ -8,7 +8,10 @@
 //! (`call_refusal_digest`). An input edited between two runs changes the
 //! digest and starts the count again; a run whose inputs were not captured
 //! is never a repeat. Other calls may come between, unlike `loop`; a success
-//! of that check, or a different failure, starts the count again.
+//! of that check, or a different failure, starts the count again. Call
+//! receipts count within one call stream (`call_evidence`, OF-568 L4): the
+//! calls that name one attempt at one generation, whose card names that
+//! attempt's TASK, or those that name none, whose card names no TASK.
 //!
 //! A run's shadow type checks count too: each step's stored report states
 //! its action digest over the program, each declaration file and the checker
@@ -19,11 +22,10 @@ use std::collections::BTreeMap;
 
 use rmpv::Value;
 
-use super::{
-    Attempts, DialBook, Dispatches, Finding, entity, live_attempt, run_loop, settled, task_of,
-};
+use super::call_evidence::CallStream;
+use super::{Attempts, DialBook, Dispatches, Finding, entity, run_loop, settled, task_of};
 use crate::attempt_queue::AttemptState;
-use crate::receipt::{CallOutcome, CallReceipt};
+use crate::receipt::CallOutcome;
 use crate::self_heal::AgentHealthSignal;
 use crate::{EntityId, Result, Vault};
 
@@ -70,11 +72,11 @@ fn check_report_failure(
     Some((digest, failed.then_some((diagnostics, omitted))))
 }
 
-/// Each attempt's run, its tool runs and its shadow checks, then each
-/// agent's call receipts, held against the `health.check.fails` dial.
+/// Each attempt's run, its tool runs and its shadow checks, then each call
+/// stream's receipts, held against the `health.check.fails` dial.
 pub(super) fn check_repeat_findings(
     vault: &Vault,
-    calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
+    streams: &[CallStream<'_>],
     dispatched: &Dispatches,
     attempts: &Attempts,
     book: &DialBook,
@@ -214,13 +216,13 @@ pub(super) fn check_repeat_findings(
             ));
         }
     }
-    for (actor, rows) in calls {
-        let attempt = live_attempt(*actor, dispatched, attempts);
+    for stream in streams {
+        let (task, attempt) = stream.owner(dispatched, attempts);
         let fails = book.for_attempt(dispatched, attempt).check_fails;
         let mut streaks: BTreeMap<(&str, &str), Streak<(&str, &String, &Option<String>)>> =
             BTreeMap::new();
         let mut done = Vec::new();
-        for (id, row) in rows {
+        for (id, row) in &stream.rows {
             let key = (row.verb.as_str(), row.request_digest.as_str());
             // The refusal's kind and its content on its known inputs; `None`
             // once it answered, or when its inputs were not captured.
@@ -260,8 +262,8 @@ pub(super) fn check_repeat_findings(
         done.extend(streaks.into_values());
         for streak in done.into_iter().filter(|streak| streak.count >= fails) {
             out.push(finding(
-                *actor,
-                None,
+                stream.actor,
+                task,
                 attempt,
                 streak.evidence,
                 (streak.from, streak.to),
@@ -295,5 +297,6 @@ fn finding(
         counter: Vec::new(),
         confession: None,
         blocked: false,
+        observed_brief: None,
     }
 }

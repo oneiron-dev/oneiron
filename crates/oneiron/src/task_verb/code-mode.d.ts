@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3957 declarations.
+// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3960 declarations.
 // Replies: 1057 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -114,6 +114,7 @@ declare namespace Sdk {
   type AgentHealthCounter = "results_changed" | "refused_calls" | "queue_wait" | "few_runs";
   type AgentHealthMove = "note" | "steer" | "budget" | "reassign" | "ask_coach" | "hold";
   type AgentHealthOutcome = "open" | "confirmed" | "dismissed" | "unresolved";
+  type HealthBriefPin = { task: EntityId; rev: number; digest: string; observed_at: number };
   type AgentHealthPadRead = { state: "read"; read?: EntityId | null; pads: number } | { state: "pending_review"; request: EntityId } | { state: "declined"; request: EntityId } | { state: "not_covered" } | { state: "refused"; code: string };
   type AgentHealthCoachRoute = "skill_edit" | "prompt_inject" | "neither";
   type AgentHealthSkillTarget = { skill: string; version: string };
@@ -121,8 +122,9 @@ declare namespace Sdk {
   type AgentHealthCoachAnswer = { at: number; pads: AgentHealthPadRead; draft?: AgentHealthCoachDraft | null };
   type AgentHealthApplicationState = "pending" | "admitted" | "rejected";
   type AgentHealthCoachApplication = { by: EntityId; at: number; skill: EntityId; version: string; instructions: string; candidate: EntityId; state: AgentHealthApplicationState; verdict?: EntityId | null; disposition?: string | null; updated_at: number };
-  type AgentHealthCoachAsk = { asked_by: EntityId; asked_at: number; diagnostic?: EntityId | null; attempt: string; answer?: AgentHealthCoachAnswer | null; application?: AgentHealthCoachApplication | null };
-  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null };
+  type AgentHealthCoachAsk = { asked_by: EntityId; asked_at: number; diagnostic?: EntityId | null; attempt: string; observed_brief?: HealthBriefPin | null; answer?: AgentHealthCoachAnswer | null; application?: AgentHealthCoachApplication | null };
+  type HealthReviewReceipt = { receipt: string; outcome: AgentHealthOutcome; by: EntityId; by_owner: boolean; at: number; reviewer: string; dial: number; measured: number; diagnostics: EntityId[]; evidence: EntityId[]; observed_brief?: HealthBriefPin | null; label?: boolean | null; projected: boolean };
+  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[] };
   type RunTreeStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned";
   type RunTreeTimestamps = { created_at: number; updated_at: number };
   type RunTreeFailure = { reason: string };
@@ -681,7 +683,8 @@ declare namespace Sdk {
   type CallReceiptRequest = { receipt_ref: string };
   type CallTransport = "http_facade" | "mcp" | "ws";
   type CallOutcome = "ok" | { refused: { code: string } };
-  type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; served: string[]; served_records?: RecordRef[] };
+  type CallAttemptRef = { attempt: EntityId; generation: number };
+  type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; attempt_ref?: CallAttemptRef | null; served: string[]; served_records?: RecordRef[] };
   type AdmissionStatusRequest = { intent_key: string };
   type AdmissionStatus = { status: "queued" } | { status: "held"; reason?: string | null } | { status: "completed"; result_digest: string } | { status: "refused"; code: string; reason: string } | { status: "interrupted"; reason: string };
   type AdmissionReceipt = { receipt_ref: string; intent_key: string; verb: string; request_digest: string; accepted_at: number; updated_at: number; state: AdmissionStatus };
@@ -2776,7 +2779,7 @@ declare namespace Sdk {
   type SkillPackOutcomeRequest = { attempt_receipt: string; outcome_receipt: string; succeeded: boolean; axis: string; at: number; goal_revision?: string | null };
   type SkillPackOutcomeProjection = { receipt: LateCreditReceipt; persisted: boolean };
   type SkillPackCreditRequest = { receipt_id: string };
-  type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach";
+  type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach" | "browser_planner";
   type ModelTierRef = string;
   type ModelDisposition = "offline" | "served";
   type ModelBinding = { model: ModelId; slot: ModelSlot; tier: ModelTierRef; route_models?: Record<string, ModelId>; disposition?: ModelDisposition | null; reads_audio?: boolean };
@@ -3087,7 +3090,7 @@ declare namespace Sdk {
   type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; duration_ms: number };
   type RecentCounts = { pass: number; miss: number; repair: number; of: number };
   type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
-  type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number };
+  type LibraryCard = { workflow: string; site: string; subgoal: string; type_ref: string; params: string[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
   type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null };
   type ObservationPage = Observation2 & { next?: string | null };
@@ -3616,7 +3619,7 @@ declare namespace Sdk {
   type SievePolicyRequest = Record<string, never>;
   type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: number; max_text_bytes_per_pass: number; date_interest: number; name_interest: number; absolute_date_confidence: number; relative_date_confidence: number; vague_date_confidence: number; name_confidence: number; initial_name_confidence: number; katakana_name_confidence: number; uncertain_low: number; uncertain_high: number };
   type SievePolicySetRequest = { policy: SievePolicy };
-  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; audit_window_instruction: string };
+  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; audit_window_instruction: string };
   type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy };
   type SieveLeaseRequest = { budget_id: string };
   type SieveLeaseCounter = { total_units: number; remaining_units: number; reserved_units: number; updated_at: number };
@@ -3864,7 +3867,7 @@ declare namespace Sdk {
   type BrowserScreenshotOutput = BrowserAnswer<ScreenshotOutput>;
   type BrowserImageOutput = BrowserAnswer<ImageOutput>;
   type BrowserBatchOutput = BrowserAnswer<BatchOutput>;
-  type LibraryFindInput = { site?: string | null; subgoal?: string | null };
+  type LibraryFindInput = { site?: string | null; subgoal?: string | null; type_ref?: string | null };
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type BrowserLibraryFindOutput = BrowserAnswer<LibraryFindOutput>;
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null };
@@ -4189,7 +4192,7 @@ declare namespace self {
     /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.BrowserHandoverOutput | StoredResult>;
     library: {
-      /** The replay library's programs for a site, or the open page's, each card with its lifetime runs and failures, its lineage's recent pass, miss and repair counts (of the last `of`), its strict_misses in a row, held_out, supersedes and seed. */
+      /** The replay library's programs for a site, or the open page's; type_ref (node_id@tree_version) keeps that exact task type. Each card: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
       find(input: Sdk.LibraryFindInput): Promise<Sdk.BrowserLibraryFindOutput | StoredResult>;
       /** Offers a solved run's program to the replay library, refs as locators; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires the program it repairs; seed is provenance. */
       propose(input: Sdk.ProposeInput): Promise<Sdk.BrowserLibraryProposeOutput | StoredResult>;

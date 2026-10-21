@@ -54,13 +54,16 @@ pub enum LimitRow {
     /// Booking requests per minute under the owner's slot-list, hold and book
     /// rules: an authenticated caller past one waits for it to open.
     BookingWindows,
+    /// Deck and slide renders the host runs at once (FIX 7653); past it,
+    /// each caller's render waits its fair turn.
+    RendererWork,
     /// An engine row on this server's vault (`oneiron::limit_ask`), measured
     /// where the engine serves the work, which carries on past it.
     Engine(EngineLimit),
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 22 + EngineLimit::ALL.len()] = [
+    pub const ALL: [Self; 23 + EngineLimit::ALL.len()] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
@@ -83,6 +86,7 @@ impl LimitRow {
         Self::DecisionReads,
         Self::TaskWork,
         Self::BookingWindows,
+        Self::RendererWork,
         Self::Engine(EngineLimit::KeyedFilterJsonBytes),
         Self::Engine(EngineLimit::CodeResultInlineBytes),
         Self::Engine(EngineLimit::CodeResultDiskFloorBytes),
@@ -229,6 +233,7 @@ impl LimitRow {
             Self::DecisionReads => "limits.decision_reads",
             Self::TaskWork => "limits.task_work",
             Self::BookingWindows => "booking.anti_abuse:per_minute",
+            Self::RendererWork => "limits.renderer_work",
             Self::Engine(row) => row.key(),
         }
     }
