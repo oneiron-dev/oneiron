@@ -26257,6 +26257,7 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "CohortProbe",
       "KindProbeCheck",
       "NotWorse",
       "PairedInterval",
@@ -26274,7 +26275,7 @@
       "crate-vis": 4,
       "enum": 4,
       "fn": 10,
-      "struct": 4,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -26297,13 +26298,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/embed/space_probe/ledger.rs",
      "purpose": "A space move check's probe cohort metadata (FIX 6744; ARCH-0053 `#eval-exposure`): the date-cut cohort each…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -95052,6 +95053,7 @@
       "CodeWaitState",
       "CodeWaitTarget",
       "CodeWorkingView",
+      "CohortProbe",
       "CohortRetirement",
       "CohortSummary",
       "ColdAuthorityAuditRow",
@@ -98211,7 +98213,7 @@
      "purpose": "—",
      "surface": {
       "enum": 923,
-      "struct": 2894
+      "struct": 2895
      }
     },
     {
