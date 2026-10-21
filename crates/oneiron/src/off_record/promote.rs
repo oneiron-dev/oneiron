@@ -404,7 +404,12 @@ impl FloorWrites<'_> {
         // base text now, so it owes the vault's tagger a pass and its embedder
         // a vector (ARCH-0004), committed with the promotion. The receipt
         // above answers a retry first, so a retry owes nothing more.
-        crate::tagging::mark_turn_in_txn(vault, wtxn, turn)?;
+        crate::tagging::mark_turn_in_txn(
+            vault,
+            wtxn,
+            turn,
+            crate::memory::extraction::ExtractionWork::Bulk,
+        )?;
         crate::embed::mark_turn_in_txn(vault, wtxn, turn)?;
         // A result MESSAGE lands with its hold on the body (FIX 365).
         self.keep_message_results_in_txn(vault, wtxn, &message_results(&plan.ops))?;
@@ -634,7 +639,12 @@ impl FloorWrites<'_> {
         let grant = PromoteReplayGrant::mint_for(fresh.clone());
         BatchBuilder::promotion_replay(vault, fresh_ops().cloned().collect(), &grant)
             .apply_recording_gate_decisions(wtxn)?;
-        crate::tagging::mark_turn_in_txn(vault, wtxn, turn)?;
+        crate::tagging::mark_turn_in_txn(
+            vault,
+            wtxn,
+            turn,
+            crate::memory::extraction::ExtractionWork::Bulk,
+        )?;
         crate::embed::mark_turn_in_txn(vault, wtxn, turn)?;
         let mut results = message_results(&plan.ops);
         results.retain(|(id, _)| fresh.contains(id));

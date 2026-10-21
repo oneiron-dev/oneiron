@@ -51,6 +51,24 @@ impl EntryAction {
     fn acts(&self) -> bool {
         self.stale || self.replacement.is_some() || self.claim.is_some()
     }
+
+    /// The action with its claim dropped unless `permits` admits the row. A
+    /// stale entry's repair stays: the row's own entry is put back for the
+    /// claim that does admit it.
+    fn permitting(
+        mut self,
+        permits: &mut impl FnMut(&AttemptRecord) -> Result<bool>,
+    ) -> Result<Self> {
+        if let Some(record) = &self.claim
+            && !permits(record)?
+        {
+            if self.stale {
+                self.replacement = Some((ready_key(ready_at(record), record.id), record.id));
+            }
+            self.claim = None;
+        }
+        Ok(self)
+    }
 }
 
 fn check_owner_retained_claim(kind: &str, input: &ClaimAttempt) -> Result<()> {
@@ -242,6 +260,10 @@ impl<'a> AttemptQueue<'a> {
     /// deleted alone: an owner-retained row's dedupe entries leave with it,
     /// and one left naming a missing row reads as no pending attempt and is
     /// replaced by the next enqueue, so no dedupe scan runs under the writer.
+    #[allow(
+        dead_code,
+        reason = "the class-free claim; tagging claims through the matching door (FIX 6755)"
+    )]
     pub(crate) fn claim_owner_retained_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -249,6 +271,22 @@ impl<'a> AttemptQueue<'a> {
         input: ClaimAttempt,
         cutoff: u64,
         plan: &OwnerRetainedPlan,
+    ) -> Result<(ClaimOutcome, bool)> {
+        self.claim_owner_retained_matching_in_txn(wtxn, kind, input, cutoff, plan, |_| Ok(true))
+    }
+
+    /// [`Self::claim_owner_retained_in_txn`], claiming only a row `permits`
+    /// admits; its plan comes from
+    /// [`Self::owner_retained_matching_claim_plan_in_txn`] under the same
+    /// predicate. A row it passes over keeps its readiness.
+    pub(crate) fn claim_owner_retained_matching_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        kind: &str,
+        input: ClaimAttempt,
+        cutoff: u64,
+        plan: &OwnerRetainedPlan,
+        mut permits: impl FnMut(&AttemptRecord) -> Result<bool>,
     ) -> Result<(ClaimOutcome, bool)> {
         check_owner_retained_claim(kind, &input)?;
         let mut repaired = false;
@@ -263,13 +301,15 @@ impl<'a> AttemptQueue<'a> {
             if key_ready_at > cutoff {
                 continue;
             }
-            let action = self.owner_retained_entry_action(
-                wtxn,
-                kind,
-                &input,
-                cutoff,
-                (key_ready_at, key_id, value),
-            )?;
+            let action = self
+                .owner_retained_entry_action(
+                    wtxn,
+                    kind,
+                    &input,
+                    cutoff,
+                    (key_ready_at, key_id, value),
+                )?
+                .permitting(&mut permits)?;
             if action.stale {
                 self.store.attempt_ready.delete(wtxn, key)?;
             }
@@ -310,12 +350,30 @@ impl<'a> AttemptQueue<'a> {
     /// never stops the walk. Those entries are left for their own kind's
     /// claim to repair. The seeks grow with the distinct instants other
     /// kinds' jobs wait at, which is why this walk only reads.
+    #[allow(
+        dead_code,
+        reason = "the class-free plan; tagging plans through the matching door (FIX 6755)"
+    )]
     pub(crate) fn owner_retained_claim_plan_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         kind: &str,
         input: &ClaimAttempt,
         cutoff: u64,
+    ) -> Result<OwnerRetainedPlan> {
+        self.owner_retained_matching_claim_plan_in_txn(txn, kind, input, cutoff, |_| Ok(true))
+    }
+
+    /// [`Self::owner_retained_claim_plan_in_txn`] for a claim of only the
+    /// rows `permits` admits: a row it passes over is no candidate, while
+    /// every repair stays in the plan.
+    pub(crate) fn owner_retained_matching_claim_plan_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &str,
+        input: &ClaimAttempt,
+        cutoff: u64,
+        mut permits: impl FnMut(&AttemptRecord) -> Result<bool>,
     ) -> Result<OwnerRetainedPlan> {
         check_owner_retained_claim(kind, input)?;
         let floor = |ready: u64| {
@@ -356,13 +414,15 @@ impl<'a> AttemptQueue<'a> {
                 continue;
             }
             lower = after(&key);
-            let action = self.owner_retained_entry_action(
-                txn,
-                kind,
-                input,
-                cutoff,
-                (key_ready_at, key_id, &value),
-            )?;
+            let action = self
+                .owner_retained_entry_action(
+                    txn,
+                    kind,
+                    input,
+                    cutoff,
+                    (key_ready_at, key_id, &value),
+                )?
+                .permitting(&mut permits)?;
             if !action.acts() {
                 continue;
             }

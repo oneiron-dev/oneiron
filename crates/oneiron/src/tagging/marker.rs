@@ -1,5 +1,10 @@
 //! The marker row: its kind, payload, dedupe key, derived id and the
 //! in-transaction doors that commit it.
+//!
+//! A marker carries the class its producer names, and is live only when it
+//! was written live under this environment's open, so every marker a past
+//! open left is bulk (FIX 6755). A live write promotes a pending bulk marker
+//! in place, and a bulk write never demotes one.
 
 use std::collections::BTreeMap;
 
@@ -10,6 +15,7 @@ use crate::attempt_queue::{
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
+use crate::memory::extraction::ExtractionWork;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Raw, SideTable};
@@ -219,7 +225,9 @@ pub(super) fn is_checkpoint(value: &str) -> bool {
 }
 
 /// What one marker names: a turn owed one pass by one tagger checkpoint,
-/// and by the stack pinned beside it, if any.
+/// and by the stack pinned beside it, if any; and the class the pass is owed
+/// at, which is no part of what it names: neither its dedupe key nor its id
+/// reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct MarkerPayload {
@@ -227,6 +235,11 @@ pub(super) struct MarkerPayload {
     pub(super) checkpoint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) stack: Option<String>,
+    /// The class its producer named, or a live write promoted it to.
+    pub(super) work: ExtractionWork,
+    /// The open nonce of the environment a live marker was written under (the
+    /// store's `open_nonce`); `None` for a bulk one.
+    pub(super) open: Option<[u8; 16]>,
 }
 
 impl MarkerPayload {
@@ -247,6 +260,30 @@ impl MarkerPayload {
     /// checkpoint and its pinned stack.
     pub(super) fn owed_to(&self, config: &TaggingMarkerConfig) -> bool {
         self.checkpoint == config.checkpoint && self.stack == config.stack
+    }
+
+    /// The class the marker is claimed and called at: live only when it was
+    /// written live under this environment's open, so a live marker a past
+    /// open left, recovered work, is bulk.
+    pub(super) fn effective_work(&self, vault: &Vault) -> ExtractionWork {
+        if self.work == ExtractionWork::Live && self.open == Some(vault.store.open_nonce) {
+            ExtractionWork::Live
+        } else {
+            ExtractionWork::Bulk
+        }
+    }
+}
+
+/// Whether two marker payloads name one marker: the same turn, checkpoint
+/// and stack, whatever class each carries, so a try a live write promoted
+/// still retries the one before it. A payload this build cannot read names
+/// none.
+pub(crate) fn same_marker_identity(a: &[u8], b: &[u8]) -> bool {
+    match (MarkerPayload::decode(a), MarkerPayload::decode(b)) {
+        (Some(a), Some(b)) => {
+            a.turn == b.turn && a.checkpoint == b.checkpoint && a.stack == b.stack
+        }
+        _ => false,
     }
 }
 
@@ -305,21 +342,36 @@ fn free_id(
     Err(Error::IndexOverflow("tagging marker generations"))
 }
 
-/// Commits a marker for `turn`, owed to the tagger `config` arms, in the
-/// caller's write transaction, stamped at `recorded_at`. A live marker with
-/// the same key absorbs the call.
+/// Commits a marker for `turn`, owed to the tagger `config` arms at the
+/// class `work`, in the caller's write transaction, stamped at
+/// `recorded_at`. A pending marker with the same key absorbs the call. A
+/// live call promotes one whose effective class is bulk in place: its state,
+/// instant and lease stay, so a paused one stays paused, a scheduled one
+/// keeps its backoff, and a running call finishes as it began while its next
+/// try is live. A bulk call never demotes one.
 pub(super) fn enqueue_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     turn: EntityId,
     config: &TaggingMarkerConfig,
     recorded_at: u64,
+    work: ExtractionWork,
 ) -> Result<EnqueueOutcome> {
     let queue = AttemptQueue::from_store(&vault.store);
     let key = dedupe_key(&turn, config);
-    // A live marker absorbs the call before any id is drawn for it.
-    if let Some(live) = queue.pending_dedupe_in_txn(wtxn, TAGGING_MARKER_KIND, &key)? {
-        return Ok(EnqueueOutcome::Existing(live));
+    // A pending marker absorbs the call before any id is drawn for it.
+    if let Some(pending) = queue.pending_dedupe_in_txn(wtxn, TAGGING_MARKER_KIND, &key)? {
+        if work == ExtractionWork::Live
+            && let Some(mut payload) = MarkerPayload::decode(&pending.payload)
+            && payload.effective_work(vault) == ExtractionWork::Bulk
+        {
+            payload.work = ExtractionWork::Live;
+            payload.open = Some(vault.store.open_nonce);
+            let promoted =
+                queue.replace_owner_retained_payload_in_txn(wtxn, &pending, payload.encode()?)?;
+            return Ok(EnqueueOutcome::Existing(promoted));
+        }
+        return Ok(EnqueueOutcome::Existing(pending));
     }
     let sequence = MARKER_SEQUENCE
         .get(&vault.store, wtxn, &())?
@@ -348,6 +400,8 @@ pub(super) fn enqueue_marker_in_txn(
         turn,
         checkpoint: config.checkpoint.clone(),
         stack: config.stack.clone(),
+        work,
+        open: (work == ExtractionWork::Live).then_some(vault.store.open_nonce),
     };
     queue.enqueue_with_id_in_txn(
         wtxn,
@@ -415,12 +469,14 @@ impl Vault {
 }
 
 /// The turn doors' half of the outbox rule (a base witness, an off-record
-/// promotion): an armed vault owes the turn a tag pass, committed with the
-/// turn or not at all.
+/// promotion): an armed vault owes the turn a tag pass at the class `work`
+/// names, committed with the turn or not at all. It only writes the marker:
+/// no tagger is called or waited on.
 pub(crate) fn mark_turn_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     turn: EntityId,
+    work: ExtractionWork,
 ) -> Result<()> {
     let Some(tagging) = vault.config.tagging.as_ref() else {
         return Ok(());
@@ -429,7 +485,7 @@ pub(crate) fn mark_turn_in_txn(
     // door: the marker writes only the job tables, and the turn's own write
     // keeps its clock policy whether the vault is armed or not.
     let recorded_at = crate::ports::job_recorded_at_in_txn(&vault.store, wtxn)?;
-    enqueue_marker_in_txn(vault, wtxn, turn, tagging, recorded_at).map(|_| ())
+    enqueue_marker_in_txn(vault, wtxn, turn, tagging, recorded_at, work).map(|_| ())
 }
 
 /// The type of an entity whose document text a turn's tag pass, vector or
@@ -453,10 +509,15 @@ pub(crate) fn text_entity_type_in_txn(
     )
 }
 
+/// The class a publication owes its turns: bulk. A revision published at idle
+/// and a document text write are no chat or voice commit.
+const PUBLICATION_WORK: ExtractionWork = ExtractionWork::Bulk;
+
 /// The indexer's half: a publication that moved the indexed frontier of a
 /// TURN, or of a MESSAGE inside one, marks that turn again in the same
-/// transaction. Both publishers call it: an entity revision published at
-/// idle, and an entity document whose text a write changed.
+/// transaction, at the publication class. Both publishers call it: an entity
+/// revision published at idle, and an entity document whose text a write
+/// changed.
 pub(crate) fn mark_on_publication_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -467,7 +528,7 @@ pub(crate) fn mark_on_publication_in_txn(
         return Ok(());
     }
     match entity_type {
-        ENTITY_TYPE_TURN => mark_turn_in_txn(vault, wtxn, *entity),
+        ENTITY_TYPE_TURN => mark_turn_in_txn(vault, wtxn, *entity, PUBLICATION_WORK),
         ENTITY_TYPE_MESSAGE => {
             let turns = vault.filtered_edge_peers(
                 wtxn,
@@ -477,7 +538,7 @@ pub(crate) fn mark_on_publication_in_txn(
                 Some(ENTITY_TYPE_TURN),
             )?;
             for turn in turns {
-                mark_turn_in_txn(vault, wtxn, turn)?;
+                mark_turn_in_txn(vault, wtxn, turn, PUBLICATION_WORK)?;
             }
             Ok(())
         }

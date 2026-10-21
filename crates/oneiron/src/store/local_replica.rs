@@ -484,7 +484,12 @@ pub(crate) fn owe_promoted_turn_in_txn(
     txn: &mut RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
-    crate::tagging::mark_turn_in_txn(vault, txn, *turn)?;
+    crate::tagging::mark_turn_in_txn(
+        vault,
+        txn,
+        *turn,
+        crate::memory::extraction::ExtractionWork::Bulk,
+    )?;
     crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)
 }
 

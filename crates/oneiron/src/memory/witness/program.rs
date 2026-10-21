@@ -566,7 +566,17 @@ impl Memory<'_> {
                     if matches!(admission.turn, AdmittedTurn::Mint { .. })
                         || admission.has_new_messages()
                     {
-                        crate::tagging::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
+                        // A chat or voice commit owes a live pass; an import,
+                        // held tags and the host executor a bulk one (FIX 6755).
+                        let work = if plan.imported.is_some()
+                            || held.is_some()
+                            || matches!(door, WitnessDoor::HostExecutor)
+                        {
+                            crate::memory::extraction::ExtractionWork::Bulk
+                        } else {
+                            crate::memory::extraction::ExtractionWork::Live
+                        };
+                        crate::tagging::mark_turn_in_txn(self.vault, wtxn, plan.turn_id, work)?;
                         crate::embed::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
                         crate::workspace_roster::stage_project_detection_in_txn(
                             self.vault,

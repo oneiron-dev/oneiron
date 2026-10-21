@@ -24,7 +24,7 @@ use super::provisional;
 use crate::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::error::Result;
-use crate::memory::extraction::SpeakerTarget;
+use crate::memory::extraction::{ExtractionWork, SpeakerTarget};
 use crate::ports::{EdgeDirection, EdgeStoreRead, TombstoneStoreRead};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
@@ -758,7 +758,7 @@ pub(super) fn keyed_text_in_txn(
 
 /// The erase hook, in the erasing transaction, before the graph is torn
 /// down. A TURN loses its tag set; a MESSAGE's turns lose theirs, and each
-/// is owed a new pass over the text it keeps. A MESSAGE's turns are the
+/// is owed a bulk pass over the text it keeps. A MESSAGE's turns are the
 /// ones [`source_turns_in_txn`] finds, so a MESSAGE erased after its window
 /// was demoted still frees the kept turns whose sets list it. An entity a
 /// tag set names is taken out of it, and a provisional entity is retired.
@@ -779,7 +779,7 @@ pub(crate) fn erase_in_txn(
     }
     for turn in source_turns_in_txn(store, txn, id)? {
         replace_in_txn(vault, txn, &turn, None)?;
-        super::mark_turn_in_txn(vault, txn, turn)?;
+        super::mark_turn_in_txn(vault, txn, turn, ExtractionWork::Bulk)?;
         existed = true;
     }
     existed |= strip_in_txn(store, txn, id)?;

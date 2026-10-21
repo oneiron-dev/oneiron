@@ -10,6 +10,7 @@ mod defer;
 mod enqueue_claim;
 mod enqueue_record;
 mod mutate;
+mod owner_retained_payload;
 mod place;
 mod prune;
 mod reads;
