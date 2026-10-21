@@ -40,9 +40,7 @@ use crate::code_run::shadow_runner::{
     ShadowTraceKind, ShadowUnavailable, ShadowUnavailableReason, prepare_shadow_step_source,
 };
 use crate::code_run::{CapsuleHost, ExecutorStepStart, StepReplayCapsule, step_replay_capsules};
-use crate::failure_signals::{
-    CodeFixSource, ReplayFidelity, ShadowRun, code_fix_subject_in, failed_case_in,
-};
+use crate::failure_signals::{CodeFixSource, ReplayFidelity, ShadowRun, code_fix_subject_in};
 use crate::federation::ScopeId;
 use crate::{ContentPart, EntityId, LlmRequest, LlmResponse, Result, Vault};
 
@@ -122,7 +120,8 @@ impl CoachReplay<'_> {
             Ok(grant) => run.grant = Some(grant),
             Err(refused) => return Ok(Err(EngineNotRun::Admission(refused))),
         }
-        let Some(capsule) = failing_capsule(self.vault, source)? else {
+        let chosen = self.snapshot.replay.capsule.as_ref();
+        let Some(capsule) = failing_capsule(self.vault, chosen)? else {
             return Ok(Err(EngineNotRun::NoCapturedStep));
         };
         run.step = Some(ShadowStepIdentity::of(&capsule));
@@ -281,40 +280,27 @@ pub(super) fn read_granted_in_txn(
 }
 
 /// The failing call's captured executor step, kept as its capsule (FIX
-/// 1662's choice of call): the last step the failing attempt captured, or
-/// the one whose request a blocked report names by its hash. `None` when
-/// there is none, or it is a workflow step's: no other step stands in for
-/// it, and a request alone is never an engine comparison.
-fn failing_capsule(vault: &Vault, source: &CodeFixSource) -> Result<Option<StepReplayCapsule>> {
-    let (attempt, digest) = {
-        let txn = vault.store.env.read_txn()?;
-        match source {
-            CodeFixSource::Case { case_ref } => match failed_case_in(vault, &txn, case_ref)? {
-                Some((case, _)) => (
-                    EntityId::from_bytes(*case.failing_attempt_id.as_bytes())?,
-                    None,
-                ),
-                None => return Ok(None),
-            },
-            CodeFixSource::Blocked {
-                receipt,
-                run: Some(run),
-            } => {
-                let digest =
-                    crate::self_heal::blocked_reports::blocked_source_in(vault, &txn, receipt)?
-                        .and_then(|source| source.request)
-                        .and_then(|request| request.sent)
-                        .map(|sent| sent.digest);
-                (*run, digest)
-            }
-            CodeFixSource::Blocked { run: None, .. } => return Ok(None),
-        }
+/// 1662's choice of call): `chosen`, the one the run's source snapshot chose
+/// with its request (OF-380 L1), read again under its step's identity and
+/// its request's hash, never chosen again. `None` when the snapshot chose
+/// none, it is a workflow step's, or it reads under that identity no more:
+/// no other step stands in for it, and a request alone is never an engine
+/// comparison.
+fn failing_capsule(
+    vault: &Vault,
+    chosen: Option<&StepReplayCapsule>,
+) -> Result<Option<StepReplayCapsule>> {
+    let Some(chosen) = chosen.filter(|capsule| capsule.host == CapsuleHost::EngineStep) else {
+        return Ok(None);
     };
-    Ok(step_replay_capsules(vault, attempt)?
+    let identity = ShadowStepIdentity::of(chosen);
+    Ok(step_replay_capsules(vault, chosen.attempt)?
         .into_iter()
-        .rev()
-        .find(|capsule| digest.is_none_or(|digest| capsule.request_hash == digest))
-        .filter(|capsule| capsule.host == CapsuleHost::EngineStep))
+        .find(|again| {
+            ShadowStepIdentity::of(again) == identity
+                && again.request_hash == chosen.request_hash
+                && again.host == CapsuleHost::EngineStep
+        }))
 }
 
 /// The one captured step a pair runs from, read once and cloned into each
