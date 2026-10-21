@@ -29,6 +29,7 @@ mod types;
 
 pub use self::deadline::*;
 pub use self::driver::*;
+pub(crate) use self::driver::{llm_waits_on_owner_act, waits_on_owner_act};
 pub use self::grain::*;
 pub use self::legibility::*;
 pub use self::night_step::NightStepRequestId;

@@ -674,7 +674,8 @@ pub enum DreamerParkCause {
     Cancelled,
     /// It waits on a signal: a budget approval, a seat login, a peer.
     Signal,
-    /// Anything else: a missing route, a refused config, a failed step.
+    /// Anything else: a missing route, a refused config, a failed step only
+    /// an owner act clears.
     Other,
 }
 
@@ -738,19 +739,38 @@ impl DreamerParkCause {
         })
     }
 
-    /// The cause of a park a failed durable step made: its model failure's
-    /// cause, a checkpoint at the wake-pass deadline, or other.
+    /// The cause of a park a failed durable step made (FIX 7382, Engine
+    /// 10-21): a checkpoint at the wake-pass deadline; a provider outage for
+    /// a model call whose provider is down; a private park for a failure
+    /// only an owner act clears (the model failures and engine error kinds
+    /// the wake driver's owner-act checks name); and a Retry, resumed after
+    /// its delay, for any other.
     #[must_use]
     pub fn of_step(error: &crate::llm::DurableStepError) -> Self {
         use crate::llm::DurableStepError;
         match error {
             DurableStepError::Llm(source)
             | DurableStepError::ClassifiedLlm { source, .. }
-            | DurableStepError::SpentLlm { source, .. } => Self::of_llm(source),
+            | DurableStepError::SpentLlm { source, .. } => {
+                if source.is_provider_unavailable() {
+                    Self::ProviderUnavailable
+                } else if crate::dreamer_wake::llm_waits_on_owner_act(source) {
+                    Self::Other
+                } else {
+                    Self::Retry
+                }
+            }
+            DurableStepError::Engine(engine) => {
+                if crate::dreamer_wake::waits_on_owner_act(engine.kind()) {
+                    Self::Other
+                } else {
+                    Self::Retry
+                }
+            }
             DurableStepError::DeadlineHardCut
             | DurableStepError::FinalizeRefused
             | DurableStepError::SpentFinalizeRefused { .. } => Self::Checkpoint,
-            _ => Self::Other,
+            _ => Self::Retry,
         }
     }
 }

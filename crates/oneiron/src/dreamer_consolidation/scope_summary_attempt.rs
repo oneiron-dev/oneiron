@@ -273,6 +273,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 }
                 return Ok(charges.park_for(&other.to_string(), DreamerParkCause::Retry));
             }
+            // Parks Retry unless only an owner act clears it (FIX 7369).
             Err(other) => {
                 return Ok(DreamerAttemptExecution::Park {
                     reason: other.to_string(),
