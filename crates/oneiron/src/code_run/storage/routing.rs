@@ -630,8 +630,8 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
-    /// Stores a complete body as the occurrence run `owner` holds: on the vault with the run's
-    /// descriptor of it (FIX 7283), in a session as a row that holds it on its own.
+    /// Stores a complete body as the occurrence run `owner` holds: on the vault and an on-record
+    /// stretch with the run's descriptor (FIX 7283, 7363), off record as a row that holds it alone.
     pub(crate) fn put_code_run_raw_output(
         &self,
         owner: EntityId,
