@@ -83,7 +83,18 @@ fn decode(input: &Value) -> Result<HealthReviewInput> {
 /// touched.
 pub(crate) fn review(vault: &Vault, input: &Value, now: u64) -> Result<u64> {
     let attempt = match decode(input)? {
-        HealthReviewInput::Nightly => return super::run(vault, now),
+        HealthReviewInput::Nightly => {
+            // Outcome receipts whose learning row did not land go first,
+            // whether or not any scope is reviewed. A failure here is logged
+            // and never stops the review.
+            if let Err(error) = super::outcomes::reproject_pending(vault, now) {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "agent-health review receipts not re-applied"
+                );
+            }
+            return super::run(vault, now);
+        }
         HealthReviewInput::Terminal {
             attempt,
             generation,
@@ -203,6 +214,7 @@ fn review_attempt(vault: &Vault, attempt: AttemptId, now: u64) -> Result<u64> {
         &dispatched,
         &attempts,
         since,
+        now,
     )?);
     land(
         vault,
