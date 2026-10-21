@@ -24,6 +24,7 @@ mod context_pack_filter;
 mod diagnostic_reads;
 mod facet_gate;
 mod graph_reads;
+mod loop_decision_read;
 mod named_reads;
 mod note_visibility;
 mod pinned_reads;
@@ -75,6 +76,7 @@ pub use weave_trigger::WeaveDigestRendered;
 mod access_gate;
 pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
 mod actor_key;
+mod agent_grants;
 pub use actor_key::{CallerLocality, ScopedReadActorKey};
 #[cfg(feature = "sync")]
 mod residence;

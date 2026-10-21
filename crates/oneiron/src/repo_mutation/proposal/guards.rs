@@ -13,6 +13,7 @@ pub(super) fn validate_conflict_in_txn(
     else {
         return Ok(());
     };
+    let (resolved, _) = proposal.ordinary_file()?;
     let claim = vault
         .get_claim_in_txn(txn, open_conflict_claim_id)?
         .ok_or(Error::EntityNotFound)?;
@@ -26,7 +27,7 @@ pub(super) fn validate_conflict_in_txn(
             &RepoRef::parse(&proposal.repo)?,
         )
         || value.branch != *branch_name
-        || !value.conflicted_paths.contains(&proposal.path)
+        || !value.conflicted_paths.iter().any(|path| path == resolved)
     {
         return Err(invalid(
             "resolution does not name its active repository conflict",

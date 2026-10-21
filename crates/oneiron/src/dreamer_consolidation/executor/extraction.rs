@@ -30,53 +30,9 @@ impl ConsolidationExecutor<'_> {
         )
     }
 
-    /// The extraction request over one NOTE (OF-073): the same prompt and
-    /// reply contract, with the NOTE's markdown as the only source. Its
-    /// byte ranges count over that markdown, so the review can check each
-    /// one against the exact text it read.
-    /// `sealed_pad` is a sealed scratchpad's review and how it asks for
-    /// the pad's `keep` lines (ARCH-0032 #scratchpad-marks).
-    pub(in crate::dreamer_consolidation) fn note_request(
-        call: &RoleCall<'_>,
-        note: EntityId,
-        markdown: &str,
-        sealed_pad: Option<PadAsk>,
-        scope: &crate::llm::Scope,
-    ) -> Result<LlmRequest> {
-        let id = bytes_to_hex_lower(note.as_bytes());
-        let mut rule = format!(
-            "The source is one note, not a conversation. Cite it as \
-             {{\"source_id\": \"{id}\", \"byte_range\": [start, end]}}, a range of \
-             UTF-8 bytes of the note's markdown, which starts on the line after its \
-             header. Also give the object a key \"importance\": a number from 0 to 1 \
-             for how much the note itself matters to keep."
-        );
-        match sealed_pad {
-            Some(PadAsk::First { keep }) => {
-                rule.push_str(
-                    " The note is a sealed scratchpad. Blank lines held text its writer \
-                     marked scratch: cite none of them.",
-                );
-                if keep {
-                    rule.push_str(
-                        " A line headed [keep] or [pin keep] states a fact its writer \
-                         asked to keep: extract each one.",
-                    );
-                }
-                rule.push_str(" Decide each other line on its own.");
-            }
-            Some(PadAsk::Missed) => rule.push_str(
-                " The note is a sealed scratchpad, asked again. Blank lines were read \
-                 before or marked scratch: cite none of them. Each line left is headed \
-                 [keep] or [pin keep]: a fact its writer asked to keep that the last \
-                 review grounded no belief in. Extract each one.",
-            ),
-            None => {}
-        }
-        Self::request_over(call, Some(rule), format!("note {id}\n{markdown}"), scope)
-    }
-
-    fn request_over(
+    /// The extraction request over `source`, `source_rule` before it: a
+    /// NOTE review's rule is `note_classification`'s (OF-073).
+    pub(in crate::dreamer_consolidation) fn request_over(
         call: &RoleCall<'_>,
         source_rule: Option<String>,
         source: String,
@@ -308,17 +264,6 @@ impl ConsolidationExecutor<'_> {
         }
         (candidates, waiting)
     }
-}
-
-/// How a sealed scratchpad's review asks for its `keep` lines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::dreamer_consolidation) enum PadAsk {
-    /// The first read: scratch lines blanked; `keep` when a line is marked
-    /// `keep`.
-    First { keep: bool },
-    /// The one re-ask (FIX 2240): only the `keep` lines the last review
-    /// grounded no belief in are left; every other line is blank.
-    Missed,
 }
 
 /// What the correction pack decided for one parsed candidate: the listed
@@ -651,16 +596,14 @@ struct WorkedExample {
 /// An extraction reply in its contract's shape: an object whose
 /// `candidates`, when present, are objects, and whose `persons`, when
 /// present, each name a 32-hex id, a name and at least one 32-hex turn.
-/// `importance` is a NOTE review's, read by that review only. Other keys
-/// are outside the contract and read by no one.
+/// Other keys are outside the contract: a NOTE review reads its own
+/// (`note_classification`), and no one else reads them.
 #[derive(serde::Deserialize)]
 pub(in crate::dreamer_consolidation) struct ExtractionReply {
     #[serde(default, deserialize_with = "objects")]
     pub(in crate::dreamer_consolidation) candidates: Vec<serde_json::Value>,
     #[serde(default)]
     pub(in crate::dreamer_consolidation) persons: Vec<ExtractedPerson>,
-    #[serde(default)]
-    pub(in crate::dreamer_consolidation) importance: Option<serde_json::Value>,
 }
 
 #[derive(serde::Deserialize)]
@@ -689,6 +632,13 @@ fn objects<'de, D: serde::Deserializer<'de>>(
 pub(in crate::dreamer_consolidation) fn extraction_reply(
     response: &LlmResponse,
 ) -> Result<ExtractionReply> {
+    contract_reply(reply_json(response)?)
+}
+
+/// `response`'s text as JSON, mended only as [`extraction_reply`] says.
+pub(in crate::dreamer_consolidation) fn reply_json(
+    response: &LlmResponse,
+) -> Result<serde_json::Value> {
     let text: String = response
         .message
         .content
@@ -699,8 +649,8 @@ pub(in crate::dreamer_consolidation) fn extraction_reply(
         })
         .collect();
     let text = text.trim();
-    let reply = match serde_json::from_str::<serde_json::Value>(text) {
-        Ok(reply) => reply,
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(reply) => Ok(reply),
         Err(error)
             if error.is_eof()
                 && response.finish_reason == FinishReason::Stop
@@ -708,10 +658,17 @@ pub(in crate::dreamer_consolidation) fn extraction_reply(
                 && text.ends_with(']') =>
         {
             serde_json::from_str(&format!("{text}}}"))
-                .map_err(|_| invalid_consolidation("extraction response must be JSON"))?
+                .map_err(|_| invalid_consolidation("extraction response must be JSON"))
         }
-        Err(_) => return Err(invalid_consolidation("extraction response must be JSON")),
-    };
+        Err(_) => Err(invalid_consolidation("extraction response must be JSON")),
+    }
+}
+
+/// `reply` as an extraction reply, refused unless it has the contract's
+/// shape.
+pub(in crate::dreamer_consolidation) fn contract_reply(
+    reply: serde_json::Value,
+) -> Result<ExtractionReply> {
     // A derived struct also reads a JSON array positionally; the contract
     // names objects only.
     let objects = reply.is_object()

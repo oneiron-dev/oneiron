@@ -1,5 +1,7 @@
-//! Budgeted interest-queue spending. A topic is the existing structural
-//! conversation/world/facet partition, not a guessed entity identity.
+//! Budgeted interest-queue spending, one thing per entity or topic (OF-498c,
+//! see `things`): its world, facet and private thread, and the entity a
+//! span's reading bound, else the structural topic. A thing may span
+//! conversations; its children are cut by conversation.
 //!
 //! A Timer wake that names no partition (FIX 336) plans the same spending
 //! at its enqueue: a typed parent, its children and the remainder land in
@@ -19,6 +21,8 @@ use crate::dreamer_runner::{
 use crate::{Result, Vault};
 
 use super::{recipes, sieve};
+
+mod things;
 
 pub(crate) const CONTINUE_ATTEMPT: &str = "dreamer.nightly.continue";
 /// The typed parent a Timer wake with no partition plans its spending under
@@ -155,7 +159,8 @@ pub(crate) fn children_in_txn(
 
 /// The Nightly children under `attempt`: owed rungs for the highest scored
 /// spans, then the structural partitions their turns fall in, in score
-/// order within the policy's limits, their merge, and the spans they spend.
+/// order within the policy's limits, one child per thing inside each, their
+/// merge, and the spans they spend.
 fn plan_children_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -186,12 +191,36 @@ fn plan_children_in_txn(
             .position(|span| plan.turns.iter().any(|turn| turn.turn_id == span.turn))
             .unwrap_or(usize::MAX)
     });
+    // The limit counts topics, as before; every thing a kept topic holds
+    // gets its children, so the night spends the spans it spent before.
     plans.truncate(policy.nightly_children as usize);
+    let audiences = things::audiences_in_txn(vault, txn, &plans)?;
+    let thing_plans = things::plan_things(&plans, &spans, &audiences);
+    let child_plans: Vec<_> = thing_plans
+        .iter()
+        .flat_map(|thing| {
+            let payload = thing.key.payload();
+            thing
+                .children
+                .iter()
+                .map(move |child| (child.clone(), payload))
+        })
+        .collect();
+    tracing::debug!(
+        partitions = plans.len(),
+        things = thing_plans.len(),
+        bound = thing_plans
+            .iter()
+            .filter(|thing| thing.key.entity.is_some())
+            .count(),
+        children = child_plans.len(),
+        "nightly children planned one per thing"
+    );
     let outcomes = enqueue_parented_partition_plans_in_txn(
         vault,
         txn,
         scope,
-        &plans,
+        &child_plans,
         attempt.attempt.id,
         attempt.attempt.run_id.as_deref(),
         now,
@@ -208,14 +237,7 @@ fn plan_children_in_txn(
     crate::dreamer_consolidation::nightly_merge::enqueue_in_txn(
         vault, txn, attempt, children, now,
     )?;
-    let spent: BTreeSet<_> = plans
-        .iter()
-        .flat_map(|plan| plan.turns.iter().map(|turn| turn.turn_id))
-        .collect();
-    for span in spans
-        .iter()
-        .filter(|span| span.owed.is_empty() && spent.contains(&span.turn))
-    {
+    for span in thing_plans.iter().flat_map(|thing| &thing.spans) {
         sieve::spend_consumed_in_txn(&vault.store, txn, span, attempt.attempt.id, now)?;
     }
     Ok(())

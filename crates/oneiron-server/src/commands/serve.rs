@@ -281,7 +281,8 @@ pub(crate) async fn build_server(
                     .filter(|token| !token.is_empty())
                     .map(zeroize::Zeroizing::new),
             }
-        }));
+        }))
+        .with_feedback_triage(config.feedback.triage.clone());
     // `[models] extraction_egress = true` is the owner's opt-in for
     // extraction to leave the device (FIX 6621): the raw `/v1/llm` routes
     // and every door that reads the host's predicate admit it, still within
@@ -378,6 +379,8 @@ pub(crate) struct DesktopWorkers {
         tokio::sync::watch::Sender<bool>,
     )>,
     workers: Vec<tokio::task::JoinHandle<()>>,
+    /// The tagger slot's close, run once every worker has ended (FIX 7383).
+    tagger: Option<crate::oneironer::SlotClose>,
 }
 
 /// Starts every worker the unmanaged serve path runs on `sync_server`, in
@@ -594,6 +597,10 @@ pub(crate) async fn start_desktop_workers(
         None,
         crate::server::admit_every_pass(),
     );
+    let tagger = sync_server
+        .tagger
+        .as_ref()
+        .map(crate::oneironer::TaggerSlot::closer);
     Ok(StartedWorkers {
         server: sync_server,
         artifact_app,
@@ -611,6 +618,7 @@ pub(crate) async fn start_desktop_workers(
             linear_handle,
             tagging,
             workers,
+            tagger,
         },
     })
 }
@@ -655,6 +663,11 @@ impl DesktopWorkers {
         for handle in self.workers {
             handle.abort();
             let _ = handle.await;
+        }
+        // Tagging has ended on both paths (joined above, or aborted and
+        // awaited in the loop): each platform child is shut down and reaped.
+        if let Some(tagger) = self.tagger {
+            tagger.close().await;
         }
         Ok(())
     }

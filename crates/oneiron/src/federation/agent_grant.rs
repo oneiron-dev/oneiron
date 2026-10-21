@@ -306,7 +306,18 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Vec<AgentGrantStanding>> {
+        Ok(self.agent_grants_reporting_in_txn(txn)?.0)
+    }
+
+    /// [`Self::agent_grants_in_txn`], beside the ids of the live
+    /// FEDERATION_GRANT rows that did not decode, which it skips: a reader
+    /// that must count what it could not judge (FIX 7462) names them.
+    pub(crate) fn agent_grants_reporting_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<(Vec<AgentGrantStanding>, Vec<EntityId>)> {
         let mut grants = Vec::new();
+        let mut undecoded = Vec::new();
         for id in self
             .store
             .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
@@ -320,6 +331,7 @@ impl Vault {
                 continue;
             };
             let Ok(grant) = decode_federation_grant_body(&body) else {
+                undecoded.push(id);
                 continue;
             };
             if !grant.owner_agent {
@@ -339,7 +351,7 @@ impl Vault {
                 created_at,
             });
         }
-        Ok(grants)
+        Ok((grants, undecoded))
     }
 
     /// The agent grants as `vault.consent.registry` reviews them: standing

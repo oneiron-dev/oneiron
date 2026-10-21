@@ -43,9 +43,11 @@ mod judge_context;
 mod kept_ask;
 mod neighbourhood;
 pub(crate) mod nightly_merge;
+mod note_classification;
 mod note_parts;
 mod note_review;
 mod note_text;
+mod note_topics;
 mod open_conflict;
 mod parallel;
 mod partition;
@@ -123,6 +125,7 @@ pub use roles::{
 };
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub(crate) use scope_summary_attempt::{ScopeSummaryEvidence, scope_summary_evidence_in_txn};
+pub(crate) use settle::keep_approval::{KeepApproval, KeepAs};
 pub use settle::{
     CONFLICT_SETTLE_DIAL, ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions,
     ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass,

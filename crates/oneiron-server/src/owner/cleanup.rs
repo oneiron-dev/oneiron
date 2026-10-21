@@ -1,16 +1,20 @@
 //! Cleanup review (ARCH-0073): the archive proposals the cleanup job opened,
-//! the digests of what cleanup archived, the job's posture and the done-task
-//! retention dial, and bringing an archived record back.
+//! the digests of what cleanup archived, the runs that archived and what each
+//! held before, the job's posture and the done-task retention dial, bringing
+//! an archived record back, and reverting a whole run (OF-449).
 //!
 //! The job proposes first while ARCH-0066's integrity teeth are open: nothing
 //! is archived until the owner accepts, and the engine refuses the automatic
 //! posture until those teeth close. Archive is the only verb; a record
-//! restored here is the same record, never a copy.
+//! restored here is the same record, never a copy, and the owner keeps it:
+//! cleanup leaves it alone until it changes.
 
 use oneiron::attempt_queue::AttemptId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::vault_cleanup::{
     self, ArchivedEntity, CleanupDigest, CleanupKind, CleanupPosture, CleanupProposal,
+    CleanupRevertEntry, CleanupRevertReason, CleanupRunRecord, CleanupRunRevert,
+    CleanupRunRevertAnswer, CleanupSnapshotEntry,
 };
 use oneiron::{EntityId, ErrorKind, Vault};
 use serde::{Deserialize, Serialize};
@@ -20,6 +24,9 @@ use super::{OwnerError, OwnerResult, entity_id};
 
 /// The `kind` of an archived record, as against a completed attempt.
 const RECORD: &str = "record";
+
+/// What an erased slot reads as, an id slot or a revert's outcome (FIX 7517).
+const ERASED: &str = "erased";
 
 /// Everything the owner reviews about cleanup.
 #[derive(Debug, Serialize)]
@@ -36,6 +43,107 @@ pub(crate) struct CleanupReview {
     /// Everything cleanup archived that is still archived: records and
     /// completed attempts, one restorable view (ARCH-0073 §6).
     pub(crate) archived: Vec<Archived>,
+    /// Every run that archived something, oldest first: each entry as it
+    /// stood before the run archived it, and the run's revert once there is
+    /// one. Send a run's `attempt` to `/cleanup/revert-run` to revert it.
+    pub(crate) runs: Vec<Run>,
+    /// Runs whose record does not read, by attempt; the rest of the review
+    /// still answers.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) unreadable_runs: Vec<String>,
+}
+
+/// One cleanup run that archived something.
+#[derive(Debug, Serialize)]
+pub(crate) struct Run {
+    /// The run's attempt id: what `/cleanup/revert-run` takes.
+    pub(crate) attempt: String,
+    /// `auto_archived` or `proposal_accepted`.
+    pub(crate) decision: &'static str,
+    /// The digest that decision recorded.
+    pub(crate) digest: String,
+    pub(crate) archived_at: String,
+    /// What the run archived, each entry as it stood just before.
+    pub(crate) entries: Vec<Slot<RunEntry>>,
+    /// The stored answer of the run's revert; null until it is reverted.
+    pub(crate) reverted: Option<Reverted>,
+}
+
+/// One entry a run archived.
+#[derive(Debug, Serialize)]
+pub(crate) struct RunEntry {
+    pub(crate) entity: String,
+    pub(crate) kind: &'static str,
+    /// BLAKE3 of the stored bytes the run hid (64 hex). The archive keeps
+    /// them; a revert lifts the mark and writes no body.
+    pub(crate) revision: String,
+    /// The mark in force before the run, hex; null when there was none.
+    pub(crate) before: Option<String>,
+    /// The exact mark the run wrote, hex.
+    pub(crate) after: String,
+}
+
+/// A run's revert, as stored.
+#[derive(Debug, Serialize)]
+pub(crate) struct Reverted {
+    pub(crate) at: String,
+    pub(crate) entries: Vec<Slot<RevertEntry>>,
+}
+
+/// What reverting a whole run did.
+#[derive(Debug, Serialize)]
+pub(crate) struct RunReverted {
+    pub(crate) attempt: String,
+    pub(crate) reverted_at: String,
+    /// True when an earlier revert stored this answer; nothing changed now.
+    pub(crate) repeated: bool,
+    pub(crate) entries: Vec<Slot<RevertEntry>>,
+}
+
+/// What reverting a run did to one entry.
+#[derive(Debug, Serialize)]
+pub(crate) struct RevertEntry {
+    pub(crate) entity: String,
+    pub(crate) kind: &'static str,
+    /// `restored`, `already_restored`, `changed` or `unavailable`.
+    pub(crate) outcome: &'static str,
+    /// Why a `changed` or `unavailable` entry stayed as it is:
+    /// `archived_again`, `unreadable`, `deleted` or `gone`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reason: Option<&'static str>,
+    /// Its stored bytes changed after the run archived them.
+    pub(crate) edited: bool,
+}
+
+/// One slot of a listing: what it names, or its erased form once an erase
+/// reached what it named (FIX 7517). The slot keeps its place, so each list
+/// keeps its count.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub(crate) enum Slot<T> {
+    Live(T),
+    Erased(ErasedSlot),
+}
+
+/// An erased slot: `{"erased": true}`, with no id, kind, hash or mark. A
+/// revert's entry also answers `"outcome": "erased"`: nothing was lifted.
+#[derive(Debug, Serialize)]
+pub(crate) struct ErasedSlot {
+    pub(crate) erased: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) outcome: Option<&'static str>,
+}
+
+impl<T> Slot<T> {
+    fn of<S>(slot: Option<&S>, live: impl FnOnce(&S) -> T) -> Self {
+        match slot {
+            Some(slot) => Self::Live(live(slot)),
+            None => Self::Erased(ErasedSlot {
+                erased: true,
+                outcome: None,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -43,7 +151,7 @@ pub(crate) struct Proposal {
     pub(crate) id: String,
     pub(crate) attempt: String,
     pub(crate) created_at: String,
-    pub(crate) candidates: Vec<Candidate>,
+    pub(crate) candidates: Vec<Slot<Candidate>>,
     /// What accepting archives, by kind.
     pub(crate) impact: Impact,
 }
@@ -70,8 +178,10 @@ pub(crate) struct Digest {
     pub(crate) decision: &'static str,
     pub(crate) posture: &'static str,
     pub(crate) at: String,
+    /// Each archived id; `"erased"` once an erase reached it (FIX 7517).
     pub(crate) archived: Vec<String>,
-    /// Candidates the accept found no longer empty, so left alone.
+    /// Candidates the accept found no longer empty, so left alone;
+    /// `"erased"` as in `archived`.
     pub(crate) skipped: Vec<String>,
 }
 
@@ -92,6 +202,10 @@ pub(crate) struct Accepted {
     pub(crate) proposal: String,
     pub(crate) archived: Vec<String>,
     pub(crate) skipped: Vec<String>,
+    /// Candidates an erase reached before the accept: they name no one, and
+    /// nothing was archived for them (FIX 7517). Absent when there were none.
+    #[serde(skip_serializing_if = "none_erased")]
+    pub(crate) erased: usize,
     pub(crate) digest: String,
 }
 
@@ -121,11 +235,13 @@ pub(crate) fn review(vault: &Vault) -> OwnerResult<CleanupReview> {
                 .find(|row| {
                     row.archived
                         .iter()
+                        .flatten()
                         .any(|id| id.as_bytes() == attempt.as_bytes())
                 })
                 .map(|row| rfc3339_secs(row.at)),
         });
     }
+    let runs = vault_cleanup::cleanup_runs(vault)?;
     Ok(CleanupReview {
         posture: vault_cleanup::cleanup_posture(vault)?.as_str(),
         task_retention_days: vault.task_retention_days()?,
@@ -135,6 +251,8 @@ pub(crate) fn review(vault: &Vault) -> OwnerResult<CleanupReview> {
             .collect(),
         digests: digests.iter().map(digest).collect(),
         archived,
+        runs: runs.runs.iter().map(run_view).collect(),
+        unreadable_runs: runs.unreadable.into_iter().map(attempt_hex).collect(),
     })
 }
 
@@ -151,6 +269,7 @@ pub(crate) fn accept(
         proposal: outcome.proposal.to_hex(),
         archived: hexes(&outcome.archived),
         skipped: hexes(&outcome.skipped),
+        erased: outcome.erased,
         digest: outcome.digest.to_hex(),
     })
 }
@@ -218,6 +337,32 @@ pub(crate) fn restore(
     })
 }
 
+/// Reverts one whole cleanup run, named by the `attempt` of a review `runs`
+/// entry. Each entry answers for itself and a repeat answers as stored. A
+/// run whose proposal still waits, or that ran before runs kept snapshots,
+/// has nothing this door reverts.
+pub(crate) fn revert_run(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    attempt: &str,
+) -> OwnerResult<RunReverted> {
+    let run = AttemptId::from_bytes(entity_id("attempt", attempt)?.as_bytes())?;
+    match vault.revert_cleanup_run_as(owner, run)? {
+        CleanupRunRevertAnswer::Reverted(revert) => Ok(run_reverted(&revert)),
+        CleanupRunRevertAnswer::NoSuchRun => {
+            Err(OwnerError::NotFound("cleanup run", attempt.to_owned()))
+        }
+        CleanupRunRevertAnswer::ProposalOpen(proposal) => Err(OwnerError::Changed(format!(
+            "cleanup run {attempt} has archived nothing yet: its proposal {} waits for review; \
+             reject it instead",
+            proposal.to_hex()
+        ))),
+        CleanupRunRevertAnswer::Unrecorded => Err(OwnerError::Refused(format!(
+            "cleanup run {attempt} ran before runs kept snapshots; restore its entries one by one"
+        ))),
+    }
+}
+
 fn proposal_gone(error: oneiron::Error, proposal: &str) -> OwnerError {
     match error.kind() {
         ErrorKind::VaultCleanupProposalNotFound => OwnerError::Changed(format!(
@@ -236,9 +381,11 @@ fn proposal(row: &CleanupProposal) -> Proposal {
         candidates: row
             .candidates
             .iter()
-            .map(|candidate| Candidate {
-                entity: candidate.entity.to_hex(),
-                kind: candidate.kind.as_str(),
+            .map(|candidate| {
+                Slot::of(candidate.as_ref(), |candidate| Candidate {
+                    entity: candidate.entity.to_hex(),
+                    kind: candidate.kind.as_str(),
+                })
             })
             .collect(),
         impact: Impact {
@@ -257,8 +404,8 @@ fn digest(row: &CleanupDigest) -> Digest {
         decision: row.decision.as_str(),
         posture: row.posture.as_str(),
         at: rfc3339_secs(row.at),
-        archived: hexes(&row.archived),
-        skipped: hexes(&row.skipped),
+        archived: slot_hexes(&row.archived),
+        skipped: slot_hexes(&row.skipped),
     }
 }
 
@@ -270,8 +417,94 @@ fn archived(row: &ArchivedEntity) -> Archived {
     }
 }
 
+fn run_view(row: &CleanupRunRecord) -> Run {
+    Run {
+        attempt: attempt_hex(row.attempt),
+        decision: row.snapshot.decision.as_str(),
+        digest: row.snapshot.digest.to_hex(),
+        archived_at: rfc3339_secs(row.snapshot.at),
+        entries: row
+            .snapshot
+            .entries
+            .iter()
+            .map(|entry| Slot::of(entry.as_ref(), run_entry))
+            .collect(),
+        reverted: row.revert.as_ref().map(|revert| Reverted {
+            at: rfc3339_secs(revert.reverted_at),
+            entries: revert_entries(revert),
+        }),
+    }
+}
+
+fn run_entry(entry: &CleanupSnapshotEntry) -> RunEntry {
+    RunEntry {
+        entity: entry.entity.to_hex(),
+        kind: entry.kind.as_str(),
+        revision: bytes_hex(&entry.revision),
+        before: entry.before.as_deref().map(bytes_hex),
+        after: bytes_hex(&entry.after),
+    }
+}
+
+fn run_reverted(revert: &CleanupRunRevert) -> RunReverted {
+    RunReverted {
+        attempt: attempt_hex(revert.attempt),
+        reverted_at: rfc3339_secs(revert.reverted_at),
+        repeated: revert.repeated,
+        entries: revert_entries(revert),
+    }
+}
+
+/// A revert's answers, each entry an erase reached since answering
+/// `erased`: nothing was lifted for it (FIX 7517).
+fn revert_entries(revert: &CleanupRunRevert) -> Vec<Slot<RevertEntry>> {
+    revert
+        .entries
+        .iter()
+        .map(|entry| match entry {
+            Some(entry) => Slot::Live(revert_entry(entry)),
+            None => Slot::Erased(ErasedSlot {
+                erased: true,
+                outcome: Some(ERASED),
+            }),
+        })
+        .collect()
+}
+
+fn revert_entry(entry: &CleanupRevertEntry) -> RevertEntry {
+    RevertEntry {
+        entity: entry.entity.to_hex(),
+        kind: entry.kind.as_str(),
+        outcome: entry.outcome.as_str(),
+        reason: entry.outcome.reason().map(CleanupRevertReason::as_str),
+        edited: entry.edited,
+    }
+}
+
+fn bytes_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn hexes(ids: &[EntityId]) -> Vec<String> {
     ids.iter().map(EntityId::to_hex).collect()
+}
+
+/// Each id as hex, an erased slot as `"erased"` (FIX 7517).
+fn slot_hexes(ids: &[Option<EntityId>]) -> Vec<String> {
+    ids.iter()
+        .map(|id| {
+            id.as_ref()
+                .map_or_else(|| ERASED.to_owned(), EntityId::to_hex)
+        })
+        .collect()
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if hands the field by reference"
+)]
+fn none_erased(count: &usize) -> bool {
+    *count == 0
 }
 
 fn attempt_hex(attempt: oneiron::attempt_queue::AttemptId) -> String {

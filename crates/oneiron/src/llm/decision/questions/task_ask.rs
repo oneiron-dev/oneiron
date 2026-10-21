@@ -8,12 +8,17 @@ use super::{
         secret_scan_before_put,
     },
 };
+use crate::authority::principal_standing_in_txn;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
+use crate::edge::EdgeActorClass;
+use crate::gate::PolicyManifestResolution;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion,
     DecisionReceipt, DecisionRung, TypedDecision,
 };
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE};
+use crate::vault::live_entity_row_in_txn;
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
     WriteProvenance,
@@ -207,7 +212,9 @@ pub(crate) fn validate_task_answer_unit(
     for principal in [principal, holder] {
         let reader = ScopedReadActorKey::new(principal.to_hex())
             .ok_or(Error::InvariantViolation("canonical ask principal"))?;
-        if !arrival::readable(&vault.store, txn, &policy, &reader, &unit)? {
+        if !arrival::readable(&vault.store, txn, &policy, &reader, &unit)?
+            && !own_authority_readable_in_txn(vault, txn, &policy, principal, &reader, &unit)?
+        {
             return Err(Error::EntityNotFound);
         }
     }
@@ -223,4 +230,61 @@ pub(crate) fn validate_task_answer_unit(
         header.entity_type,
         raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
     ))
+}
+
+/// FIX 7440: `unit` read by `actor` under its own authority in this
+/// snapshot, tried only once `bare_reader`, its bare key, has been refused.
+/// A live owner of the vault reads it under the owner's key. A live agent
+/// (an agent definition, or a base agent's MACHINE) reads it under one live
+/// Grant the owner gave it: each Grant that names it, confers now and was
+/// given by a live owner is judged alone by its own Scope, never met with
+/// another. Any other actor, and an agent with no such Grant, has no other
+/// authority here. No caller location is consulted.
+///
+/// # Errors
+/// A store, fold, clock or decode failure; never absent or refusing
+/// authority.
+fn own_authority_readable_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    policy: &PolicyManifestResolution,
+    actor: EntityId,
+    bare_reader: &ScopedReadActorKey,
+    unit: &EntityId,
+) -> Result<bool> {
+    if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
+        let owner = ScopedReadActorKey::vault_owner(actor);
+        return arrival::readable(&vault.store, txn, policy, &owner, unit);
+    }
+    let class = match live_entity_row_in_txn(&vault.store, txn, &actor)?.live_type() {
+        Some(ENTITY_TYPE_AGENT_DEF) => EdgeActorClass::Agent,
+        Some(ENTITY_TYPE_MACHINE) => EdgeActorClass::System,
+        _ => return Ok(false),
+    };
+    if principal_standing_in_txn(vault, txn, actor, class, "read")?.is_none() {
+        return Ok(false);
+    }
+    let now = vault.instant_in_txn(txn)?.secs();
+    let owners = crate::policy_model::owners_in_txn(vault, txn)?;
+    let grants: Vec<_> = vault
+        .agent_grants_in_txn(txn)?
+        .into_iter()
+        .filter(|standing| {
+            standing.grant.member_ref == actor
+                && standing.grant.confers_at(now)
+                && owners.contains(&standing.delegated_by)
+                && !standing.pact_standing_lapsed_in_txn(vault, txn)
+        })
+        .collect();
+    arrival::readable_with(&vault.store, txn, unit, |body, facets| {
+        grants.iter().any(|standing| {
+            crate::gate::scoped_read_claim_allowed_with_scope(
+                policy,
+                bare_reader,
+                body,
+                facets,
+                Some(&standing.grant.authority_scope),
+            )
+        })
+    })
 }

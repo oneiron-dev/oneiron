@@ -1,4 +1,6 @@
 //! Reversible retention for private queue records; the serialized attempt is never changed.
+use super::marks::{self, CleanupMark};
+use super::run_snapshot::CleanupSnapshotEntry;
 use super::{CleanupCandidate, CleanupKind};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, decode_record};
 use crate::error::{Error, MaintenanceError, Result};
@@ -7,8 +9,6 @@ use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
-const ARCHIVE: SideTable<[u8; 16], [u8; 32], Raw> =
-    SideTable::new(&side_table::VAULT_CLEANUP_ATTEMPT_ARCHIVE);
 const TASK_ARCHIVE: SideTable<TaskAttemptKey, (), Raw> =
     SideTable::new(&side_table::VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE);
 
@@ -38,21 +38,25 @@ impl SideKey for TaskAttemptKey {
     }
 }
 
+/// Whether the queue row `raw` of `id` is archived: a cleanup run's mark
+/// pinned to exactly these bytes.
 pub(crate) fn attempt_is_archived(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: AttemptId,
     raw: &[u8],
 ) -> Result<bool> {
-    Ok(ARCHIVE
-        .get(store, txn, id.as_bytes())?
-        .is_some_and(|marker| marker == *blake3::hash(raw).as_bytes()))
+    Ok(matches!(
+        marks::mark_in_txn(store, txn, id.as_bytes())?,
+        Some(CleanupMark::Archived { revision, .. }) if revision == marks::revision_of(raw)
+    ))
 }
 
-/// Moves an archived attempt's marker to the bytes its row was rewritten to
-/// in this transaction, when the marker archived the row as it stood
-/// (`before`): an erase that rewrites a row in place leaves it archived (FIX
-/// 7076). An absent, unreadable or stale marker stays as it is; none is made.
+/// Moves an attempt's cleanup mark to the bytes its row was rewritten to in
+/// this transaction, when the mark bound the row as it stood (`before`): an
+/// erase that rewrites a row in place leaves it archived by the same run
+/// (FIX 7076), or kept by the owner. An absent, unreadable or stale mark
+/// stays as it is; none is made.
 pub(crate) fn refresh_archived_attempt_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -60,13 +64,14 @@ pub(crate) fn refresh_archived_attempt_in_txn(
     before: &[u8],
     after: &[u8],
 ) -> Result<()> {
-    if ARCHIVE
-        .get_lenient(store, txn, id.as_bytes())?
-        .is_some_and(|marker| marker == *blake3::hash(before).as_bytes())
-    {
-        ARCHIVE.put(store, txn, id.as_bytes(), blake3::hash(after).as_bytes())?;
-    }
-    Ok(())
+    let bound = marks::revision_of(before);
+    let revision = marks::revision_of(after);
+    let Some(moved) = marks::mark_in_txn(store, txn, id.as_bytes())?
+        .and_then(|mark| mark.moved(&bound, &revision))
+    else {
+        return Ok(());
+    };
+    marks::put_in_txn(store, txn, id.as_bytes(), moved)
 }
 
 /// Drops the archive markers of an attempt row that left the ledger, so no
@@ -76,7 +81,7 @@ pub(crate) fn forget_archived_attempt_in_txn(
     txn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
 ) -> Result<()> {
-    ARCHIVE.delete(store, txn, record.id.as_bytes())?;
+    marks::delete_in_txn(store, txn, record.id.as_bytes())?;
     if let Some(task) = &record.task_ref {
         TASK_ARCHIVE.delete(
             store,
@@ -97,7 +102,17 @@ fn eligible(
     raw: &[u8],
 ) -> Result<Option<AttemptRecord>> {
     let days = super::retention::retention_days_in_txn(vault, txn)?;
-    if days == 0 || attempt_is_archived(&vault.store, txn, id, raw)? {
+    if days == 0 {
+        return Ok(None);
+    }
+    // Archived at these bytes, or kept at them by the owner: either way the
+    // arm leaves them alone until the row changes.
+    if matches!(
+        marks::mark_in_txn(&vault.store, txn, id.as_bytes())?,
+        Some(
+            CleanupMark::Archived { revision: bound, .. } | CleanupMark::Kept { revision: bound }
+        ) if bound == marks::revision_of(raw)
+    ) {
         return Ok(None);
     }
     let record = decode_record(raw, id)?;
@@ -136,20 +151,26 @@ pub(super) fn scan(
     Ok(())
 }
 
-pub(super) fn archive(vault: &Vault, txn: &mut heed::RwTxn<'_>, entity: EntityId) -> Result<bool> {
+/// Archives one completed attempt for cleanup run `run` and answers its
+/// snapshot entry, read before the mark is written. None when the attempt is
+/// gone or no longer eligible; nothing is written then.
+pub(super) fn archive(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    entity: EntityId,
+    run: AttemptId,
+) -> Result<Option<CleanupSnapshotEntry>> {
     let id = AttemptId::from_bytes(entity.as_bytes())?;
     let Some(raw) = JobQueueRead::port_job_row(&vault.store, txn, &id)? else {
-        return Ok(false);
+        return Ok(None);
     };
     let Some(record) = eligible(vault, txn, id, &raw)? else {
-        return Ok(false);
+        return Ok(None);
     };
-    ARCHIVE.put(
-        &vault.store,
-        txn,
-        id.as_bytes(),
-        blake3::hash(&raw).as_bytes(),
-    )?;
+    let revision = marks::revision_of(&raw);
+    let before = marks::raw_in_txn(&vault.store, txn, id.as_bytes())?;
+    let after = CleanupMark::Archived { revision, run };
+    marks::put_in_txn(&vault.store, txn, id.as_bytes(), after)?;
     if let Some(task) = record.task_ref {
         TASK_ARCHIVE.put(
             &vault.store,
@@ -161,11 +182,50 @@ pub(super) fn archive(vault: &Vault, txn: &mut heed::RwTxn<'_>, entity: EntityId
             &(),
         )?;
     }
-    Ok(true)
+    Ok(Some(CleanupSnapshotEntry {
+        entity,
+        kind: CleanupKind::CompletedAttempt,
+        revision,
+        before,
+        after: after.encode(),
+    }))
+}
+
+/// Keeps attempt `id` at its current queue row: the owner brought it back,
+/// so retention does not archive those bytes again. A row that is gone is
+/// left unmarked.
+pub(super) fn keep_attempt_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: AttemptId,
+) -> Result<()> {
+    if let Some(raw) = JobQueueRead::port_job_row(&vault.store, txn, &id)? {
+        let revision = marks::revision_of(&raw);
+        marks::put_in_txn(
+            &vault.store,
+            txn,
+            id.as_bytes(),
+            CleanupMark::Kept { revision },
+        )?;
+    }
+    Ok(())
 }
 
 fn task_prefix_bytes(task: &str) -> Vec<u8> {
     [task.as_bytes(), b"/"].concat()
+}
+
+/// Drops every archived-attempt index row of an erased `task` (FIX 7517):
+/// the index is private and keyed by the task's id, so its rows go by that
+/// key. The attempts' own marks stay as they are, archived or kept: this
+/// restores nothing.
+pub(super) fn erase_task_index_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    task: &EntityId,
+) -> Result<()> {
+    TASK_ARCHIVE.delete_from(store, txn, &task_prefix_bytes(&task.to_hex()))?;
+    Ok(())
 }
 
 pub(crate) fn restore_task_attempts(
@@ -180,7 +240,7 @@ pub(crate) fn restore_task_attempts(
         .map(|key| key.attempt)
         .collect();
     for attempt in &attempts {
-        ARCHIVE.delete(&vault.store, txn, attempt)?;
+        marks::delete_in_txn(&vault.store, txn, attempt)?;
     }
     TASK_ARCHIVE.delete_from(&vault.store, txn, &prefix)?;
     Ok(())
@@ -197,7 +257,15 @@ impl Vault {
     pub fn archived_attempts(&self) -> Result<Vec<AttemptId>> {
         let rtxn = self.store.env.read_txn()?;
         let mut out = Vec::new();
-        for (id, _) in ARCHIVE.scan(&self.store, &rtxn)? {
+        for (id, mark) in marks::scan_in_txn(&self.store, &rtxn)? {
+            // A kept mark archives nothing, and a kept record's id is no
+            // attempt.
+            if !matches!(
+                CleanupMark::decode(&mark),
+                Some(CleanupMark::Archived { .. })
+            ) {
+                continue;
+            }
             let attempt = AttemptId::from_bytes(&id)?;
             if let Some(raw) = JobQueueRead::port_job_row(&self.store, &rtxn, &attempt)?
                 && attempt_is_archived(&self.store, &rtxn, attempt, &raw)?
@@ -243,7 +311,7 @@ pub(super) fn restore_archived_attempt_in_txn(
         return Err(not_archived());
     }
     let record = decode_record(&raw, id)?;
-    ARCHIVE.delete(&vault.store, txn, id.as_bytes())?;
+    marks::delete_in_txn(&vault.store, txn, id.as_bytes())?;
     if let Some(task) = record.task_ref {
         TASK_ARCHIVE.delete(
             &vault.store,

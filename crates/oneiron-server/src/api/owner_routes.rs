@@ -61,6 +61,7 @@ mod dreamer_routes;
 mod embedding_space_routes;
 mod export_audit_routes;
 mod federation_connect_routes;
+mod feedback_triage_routes;
 mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
@@ -124,6 +125,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/cleanup/accept", post(accept_cleanup))
         .route("/cleanup/reject", post(reject_cleanup))
         .route("/cleanup/restore", post(restore_archived))
+        .route("/cleanup/revert-run", post(revert_cleanup_run))
         .route("/notes/tombstones", get(note_tombstone_review))
         .route("/notes/tombstones/accept", post(accept_note_tombstone))
         .route("/notes/tombstones/decline", post(decline_note_tombstone))
@@ -172,6 +174,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(pack_preview_routes::routes())
         .merge(cooperative_deletion_routes::routes())
         .merge(federation_connect_routes::routes())
+        .merge(feedback_triage_routes::routes())
         .merge(decision_ask_routes::routes())
         .merge(desktop_takeover_routes::routes())
         .merge(browser_takeover_routes::routes())
@@ -868,6 +871,25 @@ async fn restore_archived(
     })
     .await?;
     Ok(Json(review))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RevertCleanupRun {
+    /// A run's `attempt` from the `runs` list of `GET /v1/owner/cleanup`.
+    attempt: String,
+}
+
+async fn revert_cleanup_run(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<RevertCleanupRun>, JsonRejection>,
+) -> OwnerReply<cleanup::RunReverted> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reverted =
+        blocking(move || cleanup::revert_run(server.vault(), &owner, &request.attempt)).await?;
+    Ok(Json(reverted))
 }
 
 #[derive(Debug, Deserialize)]

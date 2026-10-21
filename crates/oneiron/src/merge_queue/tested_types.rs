@@ -86,6 +86,28 @@ pub struct QueueTestedRevision {
     pub slow: QueueReceiptLink,
     /// The digest of the complete document and blob inventory.
     pub inventory_digest: [u8; 32],
+    /// Each accepted push this tree consumed completely, sorted (G4 PR2):
+    /// its checked root is the push's incoming tip. Empty on every other
+    /// revision, which encodes as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub received_pushes: Vec<CodePushSourceLink>,
+}
+
+/// One accepted push a tested revision consumed completely: its candidate,
+/// its retained source and publication, its base revision and the
+/// candidate's source digest. Only an all-files bundle whose checked tree
+/// is the incoming tip's earns it; a subset or a mixed tree never does.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodePushSourceLink {
+    pub candidate: EntityId,
+    pub provenance: EntityId,
+    pub ref_name: String,
+    pub publication: EntityId,
+    pub old_commit: String,
+    pub new_commit: String,
+    pub base_revision: EntityId,
+    pub candidate_digest: [u8; 32],
 }
 
 /// Which seal a driver step works on.

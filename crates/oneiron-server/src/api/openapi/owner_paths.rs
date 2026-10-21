@@ -161,6 +161,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/cleanup/revert-run",
+        summary: "Revert one whole cleanup run (OF-449): `attempt` (32 hex) names a run from the review's `runs`. Only the archive marks that run wrote are lifted, and each restored entry is kept at its revision so cleanup leaves it until it changes. Every entry answers `restored`, `already_restored`, `changed` or `unavailable` (with `reason`: `archived_again`, `unreadable`, `deleted` or `gone`) and `edited`; a delete or an erase is never undone. A repeat answers the stored result with `repeated: true`. An unknown run is not found; a run whose proposal still waits, or that ran before runs kept snapshots, is refused.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/coach/code-fixes",
         summary: "The Coach's code-fix work, newest first (at most 256).",
@@ -770,6 +776,30 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/feedback/send",
         summary: "Send feedback.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/feedback/triage/binding",
+        summary: "The skill the Coach's feedback triage runs (OF-420): `skill` (32 hex, null until the owner binds one), the `revision` a change names as `seen` (0 while never set) and `set_at`. With no skill bound every triage run fails and its status holds `skill_unbound`.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "put",
+        path: "/feedback/triage/binding",
+        summary: "Binds the SKILL the feedback triage runs (`skill`, 32 hex; null unbinds) at the `seen` revision the owner read; a binding that moved since is refused and nothing changes. Answers the binding.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/feedback/triage/run",
+        summary: "Queues the Coach's feedback sweep now (`{}`), joining one already queued: each open-inbox note not yet handed off gets its own triage job on the bound skill, whose findings land Proposed in the run tray. Answers `{attempt}`; the sweep completing is not each job finishing.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/feedback/triage/status",
+        summary: "One feedback sweep's status (`attempt`, 32 hex): its state and last error, the binding, each source's continuation, each revision it handed off or queued again with its job's state and committed result refs, and the holds (`skill_unbound`, each revision still unacknowledged). Not found when the queue holds no such attempt.",
         row: None,
     },
     OwnerRoute {

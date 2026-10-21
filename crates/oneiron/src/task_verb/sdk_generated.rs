@@ -3307,6 +3307,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.repos.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodeRepoGetRequest,
+                >(),
+            ),
+            (
+                "vault.code.forks.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodeForkGetRequest,
+                >(),
+            ),
+            (
+                "vault.code.ingress.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodePushIngressGetRequest,
+                >(),
+            ),
+            (
                 "vault.code.origin.register",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::OriginRegisterRequest,
@@ -3580,6 +3598,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.merge_queue.check_status",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::merge_queue_doors::MergeQueueCheckStatusRequest,
+                >(),
+            ),
+            (
+                "vault.code.checks.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::CodeCheckReceiptRequest,
                 >(),
             ),
             (
@@ -13811,6 +13835,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.repos.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.forks.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.ingress.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.origin.register" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -14127,6 +14172,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.merge_queue.check_status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checks.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19469,6 +19521,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.import" => {
             let _input: crate::memory::origin_doors::CodeRepoImportRequest = decode(value.clone())?;
         }
+        "vault.code.repos.get" => {
+            let _input: crate::memory::origin_doors::CodeRepoGetRequest = decode(value.clone())?;
+        }
+        "vault.code.forks.get" => {
+            let _input: crate::memory::origin_doors::CodeForkGetRequest = decode(value.clone())?;
+        }
+        "vault.code.ingress.get" => {
+            let _input: crate::memory::origin_doors::CodePushIngressGetRequest =
+                decode(value.clone())?;
+        }
         "vault.code.origin.register" => {
             let _input: crate::memory::origin_doors::OriginRegisterRequest = decode(value.clone())?;
         }
@@ -19635,6 +19697,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.merge_queue.check_status" => {
             let _input: crate::memory::merge_queue_doors::MergeQueueCheckStatusRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.checks.get" => {
+            let _input: crate::memory::merge_queue_doors::CodeCheckReceiptRequest =
                 decode(value.clone())?;
         }
         "vault.code.merge_queue.export_green" => {
@@ -22560,6 +22626,9 @@ pub fn invoke(
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
         "vault.code.import" => encode(vault_code_import(memory, decode(value)?)?),
+        "vault.code.repos.get" => encode(vault_code_repos_get(memory, decode(value)?)?),
+        "vault.code.forks.get" => encode(vault_code_forks_get(memory, decode(value)?)?),
+        "vault.code.ingress.get" => encode(vault_code_ingress_get(memory, decode(value)?)?),
         "vault.code.origin.register" => encode(vault_code_origin_register(memory, decode(value)?)?),
         "vault.code.origin.mirror.get" => {
             encode(vault_code_origin_mirror_get(memory, decode(value)?)?)
@@ -22671,6 +22740,7 @@ pub fn invoke(
         "vault.code.merge_queue.check_status" => {
             encode(vault_code_merge_queue_check_status(memory, decode(value)?)?)
         }
+        "vault.code.checks.get" => encode(vault_code_checks_get(memory, decode(value)?)?),
         "vault.code.merge_queue.export_green" => {
             encode(vault_code_merge_queue_export_green(memory, decode(value)?)?)
         }
@@ -28756,6 +28826,24 @@ pub fn vault_code_import(
 ) -> MemoryResult<crate::memory::origin_doors::CodeRepoImportView> {
     memory.code_repo_import_as(&memory.embedded_owner("vault.code.import")?, input)
 }
+pub fn vault_code_repos_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodeRepoGetRequest,
+) -> MemoryResult<Option<crate::memory::origin_doors::CodeRepoView>> {
+    memory.code_repo_get_as(&memory.embedded_owner("vault.code.repos.get")?, input)
+}
+pub fn vault_code_forks_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodeForkGetRequest,
+) -> MemoryResult<Option<crate::memory::origin_doors::CodeForkView>> {
+    memory.code_fork_get_as(&memory.embedded_owner("vault.code.forks.get")?, input)
+}
+pub fn vault_code_ingress_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodePushIngressGetRequest,
+) -> MemoryResult<Option<crate::memory::origin_doors::CodePushIngressView>> {
+    memory.code_push_ingress_get_as(&memory.embedded_owner("vault.code.ingress.get")?, input)
+}
 pub fn vault_code_origin_register(
     memory: &Memory<'_>,
     input: crate::memory::origin_doors::OriginRegisterRequest,
@@ -29115,6 +29203,12 @@ pub fn vault_code_merge_queue_check_status(
         &memory.embedded_owner("vault.code.merge_queue.check_status")?,
         input,
     )
+}
+pub fn vault_code_checks_get(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::CodeCheckReceiptRequest,
+) -> MemoryResult<Option<crate::memory::merge_queue_doors::CodeCheckReceiptView>> {
+    memory.merge_queue_check_receipt_as(&memory.embedded_owner("vault.code.checks.get")?, input)
 }
 pub fn vault_code_merge_queue_export_green(
     memory: &Memory<'_>,
@@ -29770,7 +29864,7 @@ pub fn ask(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::TaskAskRequest,
 ) -> MemoryResult<crate::task_verb::TaskAskReceipt> {
-    crate::gate::record_references::admit_row_references(
+    crate::task_verb::ask_world_hold::admit_ask_references(
         memory,
         "ask",
         &input,
@@ -29793,7 +29887,7 @@ pub fn tasks_answer(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::TaskAnswerRequest,
 ) -> MemoryResult<crate::task_verb::TaskAskAnswer> {
-    crate::gate::record_references::admit_row_references(
+    crate::task_verb::ask_world_hold::admit_ask_references(
         memory,
         "tasks.answer",
         &input,

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1121 facade rows, 3854 declarations.
-Inputs: 1056 of 1121 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1008 of 1121 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1125 facade rows, 3877 declarations.
+Inputs: 1060 of 1125 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1012 of 1125 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -9991,15 +9991,30 @@ class CodeProposedStamp(TypedDict):
     intent_ref: NotRequired[str | None]
     model_ref: NotRequired[str | None]
     reasoning_effort: NotRequired[str | None]
+class CodeFilePresence(TypedDict):
+    present: bool
+    mode: NotRequired[int | None]
+class CodeFileMetadataEdit(TypedDict):
+    path: str
+    expected: CodeFilePresence
+    replacement: CodeFilePresence
+    new_path: NotRequired[str | None]
+class CodeProposalFileView(TypedDict):
+    path: str
+    changes: list[CodeChangeView]
+    landed: NotRequired[CodeOperationView | None]
+    metadata_edit: NotRequired[CodeFileMetadataEdit | None]
 class CodeProposalView(TypedDict):
     proposal_ref: str
     repo: str
-    path: str
+    operation_kind: str
+    path: NotRequired[str | None]
     message: str
     status: RepoProposalStatus
     proposed: CodeProposedStamp
-    changes: list[CodeChangeView]
+    changes: NotRequired[list[CodeChangeView] | None]
     landed: NotRequired[CodeOperationView | None]
+    files: list[CodeProposalFileView]
     rendered: str
 class CodeSymbolsDeclareRequest(TypedDict):
     repo: EntityId
@@ -10497,6 +10512,116 @@ class CodeRepoImportView(TypedDict):
     state: CodeRepoImportState
     baseline_revision: NotRequired[EntityId | None]
     promotion_receipt: NotRequired[EntityId | None]
+class CodeRepoGetRequest(TypedDict):
+    repo: EntityId
+class CodeRepoImportLink(TypedDict):
+    manifest: EntityId
+    anchor: CodeImportAnchor
+class MergeQueuePointersView(TypedDict):
+    repo: EntityId
+    head_commit: str
+    green_commit: str
+    pending_slow_batch_refs: list[str]
+class CodeIngressRef(TypedDict):
+    provenance: EntityId
+    ref_name: str
+class CodeRunWorkFile(TypedDict):
+    path: str
+    content_hash_blake3: str
+class CodeRunWorkLink(TypedDict):
+    work: EntityId
+    task: EntityId
+    executor_run: EntityId
+    ref_name: str
+    base_green: str
+    base_snapshot: str
+    fork_hash: str
+    files: list[CodeRunWorkFile]
+class CodeRepoView(TypedDict):
+    repo: EntityId
+    project: EntityId
+    served_repo: str
+    imports: list[CodeRepoImportLink]
+    queue: NotRequired[MergeQueuePointersView | None]
+    green_revision: NotRequired[EntityId | None]
+    batch_refs: list[str]
+    check_work_refs: list[str]
+    task_refs: list[EntityId]
+    fork_sessions: list[EntityId]
+    ingress: list[CodeIngressRef]
+    run_works: list[CodeRunWorkLink]
+class CodeForkGetRequest(TypedDict):
+    repo: EntityId
+    fork_session: EntityId
+class CodeDocumentFrontier(TypedDict):
+    document_id: list[int]
+    repo: str
+    path: str
+    version: list[tuple[int, int]]
+    op_fold: list[int]
+    text_hash: list[int]
+    file_presence: NotRequired[CodeFilePresence | None]
+class CodeTreeBlob(TypedDict):
+    git_oid: str
+    content_hash: list[int]
+    size_bytes: int
+    mode: int
+class CodeForkDocumentView(TypedDict):
+    document_id: NotRequired[str | None]
+    path: str
+    base: NotRequired[CodeDocumentFrontier | None]
+    landed: NotRequired[CodeDocumentFrontier | None]
+    target: NotRequired[CodeTreeBlob | None]
+    metadata_edit: NotRequired[CodeFileMetadataEdit | None]
+    proposal_ref: NotRequired[EntityId | None]
+class CodeForkView(TypedDict):
+    repo: EntityId
+    fork_session: EntityId
+    parent_session: EntityId
+    base_revision: EntityId
+    forked_at: int
+    documents: list[CodeForkDocumentView]
+    proposal_refs: list[EntityId]
+    revision_refs: list[EntityId]
+    task_refs: list[EntityId]
+    ingress: NotRequired[CodeIngressRef | None]
+class CodePushIngressGetRequest(TypedDict):
+    repo: EntityId
+    provenance: EntityId
+    ref_name: str
+class ReceivedFileOperation(TypedDict):
+    operation_id: str
+    actor_id: str
+    session_id: str
+    ref_name: str
+    path: str
+    before_hash: list[int]
+    after_hash: list[int]
+    old_mode: NotRequired[int | None]
+    new_mode: NotRequired[int | None]
+    document_edit: bool
+CodePushCandidateState = Literal["pending", "held_base", "held_predecessor", "held_review_policy", "held_shape", "proposed", "rejected", "queued", "quarantined", "rolled_back", "landed", "sealed"]
+class CodePushCandidateView(TypedDict):
+    candidate: EntityId
+    state: CodePushCandidateState
+    reason: NotRequired[str | None]
+    base_revision: NotRequired[EntityId | None]
+    fork_session: NotRequired[EntityId | None]
+    proposal_refs: list[EntityId]
+    batch_refs: list[str]
+    check_work_refs: list[str]
+    revision_refs: list[EntityId]
+class CodePushIngressView(TypedDict):
+    repo: EntityId
+    provenance: EntityId
+    ref_name: str
+    old_oid: NotRequired[str | None]
+    new_oid: NotRequired[str | None]
+    received_at: int
+    published: bool
+    publication: NotRequired[EntityId | None]
+    operations: list[ReceivedFileOperation]
+    candidate: NotRequired[CodePushCandidateView | None]
 class OriginRegisterRequest(TypedDict):
     repo: str
     default_branch: str
@@ -10794,13 +10919,6 @@ class CodeViewMaterializeRequest(TypedDict):
     tested: EntityId
     account: EntityId
     policy: VisibleFilePolicy
-class CodeDocumentFrontier(TypedDict):
-    document_id: list[int]
-    repo: str
-    path: str
-    version: list[tuple[int, int]]
-    op_fold: list[int]
-    text_hash: list[int]
 class CodeViewFile(TypedDict):
     path: str
     content_hash_blake3: str
@@ -11013,11 +11131,6 @@ class MergeQueueRequeueView(TypedDict):
     batch: NotRequired[MergeQueueBatchView | None]
 class MergeQueueRepoRequest(TypedDict):
     repo: EntityId
-class MergeQueuePointersView(TypedDict):
-    repo: EntityId
-    head_commit: str
-    green_commit: str
-    pending_slow_batch_refs: list[str]
 class MergeQueueInitializeRequest(TypedDict):
     repo: EntityId
     baseline_commit: str
@@ -11053,6 +11166,39 @@ class MergeQueueDiagnoseRequest(TypedDict):
 class MergeQueueCheckStatusRequest(TypedDict):
     repo: EntityId
     work_ref: str
+class CodeCheckReceiptRequest(TypedDict):
+    repo: EntityId
+    work_ref: str
+    receipt_ref: str
+class CodeCheckCommandResult(TypedDict):
+    index: int
+    exit_code: NotRequired[int | None]
+    signal: NotRequired[int | None]
+    stdout_blake3: str
+    stderr_blake3: str
+class CodeCheckAttemptView(TypedDict):
+    generation: int
+    phase: QueueCheckPhase
+    commit: str
+    tree: str
+    plan_digest: str
+    inputs_digest: str
+    attempt_id: str
+    attempt_count: int
+    stable_inputs: NotRequired[bool | None]
+    completed: bool
+    tests_passed: NotRequired[bool | None]
+    commands: list[CodeCheckCommandResult]
+    hold: NotRequired[QueueCheckHoldReason | None]
+    configuration_keys: list[str]
+    verdict_ref: NotRequired[str | None]
+    passes: NotRequired[bool | None]
+    reused_from: NotRequired[str | None]
+class CodeCheckReceiptView(TypedDict):
+    repo: EntityId
+    work_ref: str
+    receipt_ref: str
+    receipts: list[CodeCheckAttemptView]
 class MergeQueueGreenExportRequest(TypedDict):
     repo: EntityId
     served_repo: str
@@ -18308,6 +18454,10 @@ class SummarySourceVersion(TypedDict):
     record_hash: NotRequired[list[int] | None]
     frontier: NotRequired[list[int] | None]
     projected_text: NotRequired[list[int] | None]
+class SummaryLineSources(TypedDict):
+    output_start: int
+    output_end: int
+    turn_refs: list[str]
 class SummaryDerivation(TypedDict):
     request: list[int]
     trigger: list[int]
@@ -18321,6 +18471,8 @@ class SummaryDerivation(TypedDict):
     recorded_at: int
     generated_text_hash: list[int]
     generated_keep_hash: list[int]
+    source_set: NotRequired[list[int] | None]
+    line_sources: NotRequired[list[SummaryLineSources] | None]
 class ScopeSummaryMetadata(TypedDict):
     purpose: SummaryPurpose
     keep: str
@@ -18348,7 +18500,8 @@ class SummaryReadView(TypedDict):
     anchors: list[TextAnchor]
     birth: Birth
 class SummaryStatusRequest(TypedDict):
-    attempt: str
+    attempt: NotRequired[str | None]
+    session_ref: NotRequired[str | None]
 class ScopeSummaryResult(TypedDict):
     summary: str
     claim: NotRequired[str | None]
