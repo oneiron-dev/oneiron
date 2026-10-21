@@ -22459,7 +22459,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "re-export": 1
      }
     },
@@ -22522,7 +22522,7 @@
      "path": "src/dreamer_consolidation/resources/write.rs",
      "purpose": "Sealed resource handoff",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "fn": 2,
       "struct": 1
      }
@@ -30801,7 +30801,17 @@
      "path": "src/gate/doors/claim_write.rs",
      "purpose": "Claim write entry seams plus the phase-ordered inner executor",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/doors/claim_write/reference_read.rs",
+     "purpose": "OF-063 (FIX 1218): the typed record refs a CLAIM body names, judged under its writer's own scoped read in…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -31312,7 +31322,7 @@
      "path": "src/gate/record_references.rs",
      "purpose": "OF-063: one check that every record a write names resolves for its writer",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -31939,13 +31949,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "VoiceServingLimits"
+      "VoiceServingLimits",
+      "VoiceServingPolicyReceipt"
      ],
      "path": "src/gate/voice_serving.rs",
      "purpose": "Resolved, narrow-only limits for the generic voice serving seam",
      "surface": {
       "crate-vis": 9,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -35871,9 +35882,9 @@
      "purpose": "Auto-check seam: candidate types, fail-closed verdicts and the bounded host wrapper",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 4,
+      "fn": 6,
       "struct": 5,
       "trait": 1
      }
@@ -46691,7 +46702,7 @@
      "path": "src/policy_model/pattern.rs",
      "purpose": "Substrate-owner pattern rules",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 9,
       "enum": 1,
       "fn": 4,
@@ -46808,7 +46819,7 @@
      "purpose": "Registration data and fail-closed validation: hosted-legal bounds and row checks plus the…",
      "surface": {
       "crate-vis": 4,
-      "fn": 5,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -67307,7 +67318,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 11,
+      "fn": 13,
       "mod": 1,
       "re-export": 2,
       "struct": 6,
@@ -67325,7 +67336,7 @@
      "purpose": "Loopback wire to a separately deployed, always-warm CUDA worker",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -71245,7 +71256,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 146,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72136,7 +72147,7 @@
    },
    "over_bar": 171,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4614,
+   "source_files": 4615,
    "test_files": 902
   },
   "oneiron-android": {
