@@ -3640,7 +3640,7 @@ declare namespace Sdk {
   type SievePolicyRequest = Record<string, never>;
   type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: number; max_text_bytes_per_pass: number; date_interest: number; name_interest: number; absolute_date_confidence: number; relative_date_confidence: number; vague_date_confidence: number; name_confidence: number; initial_name_confidence: number; katakana_name_confidence: number; uncertain_low: number; uncertain_high: number };
   type SievePolicySetRequest = { policy: SievePolicy };
-  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; audit_window_instruction: string };
+  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; audit_window_instruction: string };
   type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy };
   type SieveLeaseRequest = { budget_id: string };
   type SieveLeaseCounter = { total_units: number; remaining_units: number; reserved_units: number; updated_at: number };
@@ -4198,7 +4198,7 @@ declare namespace self {
     spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.AgentSpawnOutput | StoredResult>;
   };
   const browser: {
-    /** Runs one batched browser program for a subgoal, type and expect taking a secret by handle, stopping at the first failing step with a stop_cause and a failed_receipt (missed checks, the page); elapsed_ms times it, duration_ms each effect. */
+    /** Runs one batched browser program for a subgoal, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a stop_cause and failed_receipt; elapsed_ms times it. */
     batch(input: Sdk.BatchInput): Promise<Sdk.BrowserBatchOutput | StoredResult>;
     /** Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next. */
     click(input: Sdk.ClickInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
@@ -4221,7 +4221,7 @@ declare namespace self {
       retire(input: Sdk.LibraryRetireInput): Promise<Sdk.BrowserLibraryRetireOutput | StoredResult>;
       /** The programs retires took out of the replay library for a site, or for the open page's site, the newest first, each with when and why. */
       retired(input: Sdk.LibraryRetiredInput): Promise<Sdk.BrowserLibraryRetiredOutput | StoredResult>;
-      /** Runs a replay library program live, strict (rules only; a step needing a model asks up at zero tokens) or assisted, as its proof allows; secret slots take run-bound handles; a miss returns a failed_receipt; 3 strict misses retire it drift. */
+      /** Runs a replay library program live, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; a miss or no_progress returns a failed_receipt; 3 strict misses retire it drift. */
       run(input: Sdk.LibraryRunInput): Promise<Sdk.BrowserLibraryRunOutput | StoredResult>;
     };
     /** Observes the run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its run-bound handle. */
@@ -4292,7 +4292,7 @@ declare namespace self {
     asks(input: Sdk.EmptyRequest): Promise<Sdk.DecisionAsk[] | StoredResult>;
   };
   const desktop: {
-    /** Runs one batched program of one or more desktop steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, and a long one comes in pages, read on with observe and the batch's next cursor. */
+    /** Runs one batched program of desktop steps for a subgoal, stopping at the first failing step or after 3 acting steps leave the window unchanged; its last observation edits the caller's base, a long one paged, read on with observe and next. */
     batch(input: Sdk.BatchInput): Promise<Sdk.DesktopAnswer<Sdk.BatchOutput> | StoredResult>;
     /** Clicks one window target and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor. */
     click(input: Sdk.ClickInput): Promise<Sdk.DesktopAnswer<Sdk.ObservationPage> | StoredResult>;
