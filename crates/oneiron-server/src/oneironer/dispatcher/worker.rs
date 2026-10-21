@@ -65,7 +65,7 @@ pub(crate) enum WorkerState {
     Ready,
     /// It runs, but its answers do not clear the bundle's reference here.
     Unavailable,
-    /// Its load or warm-up failed: it takes no work in this process.
+    /// Its load failed: it takes no work in this process.
     Failed,
 }
 
@@ -224,10 +224,11 @@ fn bring_up(
     };
     if let Some(input) = warm {
         shared.settle(index, WorkerState::Warming, None);
+        // The warm-up only warms: a failed one leaves the worker taking work,
+        // its calls failing and retrying one by one as an unwarmed one's do.
         let warmed = catch_unwind(AssertUnwindSafe(|| worker.run(&input)));
         if !matches!(warmed, Ok(Ok(_))) {
-            shared.settle(index, WorkerState::Failed, Some("its warm-up call failed"));
-            return None;
+            tracing::warn!(worker = index, "an Oneironer worker's warm-up call failed");
         }
     }
     if let Some(calibrate) = calibrate {
