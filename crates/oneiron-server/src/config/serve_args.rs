@@ -372,7 +372,7 @@ pub struct ServeArgs {
     pub container_runtime_dir: Option<PathBuf>,
 
     /// Managed mode: what the supervisor observed of the guest runtime it
-    /// provisioned for the vault's UID, one of the nine closed spellings
+    /// provisioned for the vault's UID, one of the ten closed spellings
     /// (`oneiron_vault_contract::GUEST_RUNTIME_FACT_ARG`, FIX 7670). It
     /// moves only the browser's readiness, and no fact refuses the start;
     /// without it the supervisor observed none.

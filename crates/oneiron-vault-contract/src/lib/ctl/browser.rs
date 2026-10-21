@@ -14,12 +14,13 @@ pub const GUEST_RUNTIME_FACT_ARG: &str = "--guest-runtime-fact";
 /// What the trusted supervisor observed of the guest runtime it provisioned
 /// for the vault's UID, in closed names. `GuestRuntimeProvisioned` means the
 /// image was imported and the observed preconditions held, never that a
-/// guest started; the other eight name the step that did not hold.
+/// guest started; the other nine name the step that did not hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GuestRuntimeFact {
     GuestRuntimeProvisioned,
     GuestRuntimeDisabled,
+    GuestRuntimeNssUnavailable,
     GuestRuntimeSubidsConflict,
     GuestRuntimeUsernsUnavailable,
     GuestRuntimeUserspaceMissing,
@@ -31,9 +32,10 @@ pub enum GuestRuntimeFact {
 
 impl GuestRuntimeFact {
     /// Every fact, in declaration order.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::GuestRuntimeProvisioned,
         Self::GuestRuntimeDisabled,
+        Self::GuestRuntimeNssUnavailable,
         Self::GuestRuntimeSubidsConflict,
         Self::GuestRuntimeUsernsUnavailable,
         Self::GuestRuntimeUserspaceMissing,
@@ -49,6 +51,7 @@ impl GuestRuntimeFact {
         match self {
             Self::GuestRuntimeProvisioned => "guest_runtime_provisioned",
             Self::GuestRuntimeDisabled => "guest_runtime_disabled",
+            Self::GuestRuntimeNssUnavailable => "guest_runtime_nss_unavailable",
             Self::GuestRuntimeSubidsConflict => "guest_runtime_subids_conflict",
             Self::GuestRuntimeUsernsUnavailable => "guest_runtime_userns_unavailable",
             Self::GuestRuntimeUserspaceMissing => "guest_runtime_userspace_missing",
@@ -60,7 +63,7 @@ impl GuestRuntimeFact {
     }
 }
 
-/// Exactly one of the nine spellings [`GuestRuntimeFact::as_str`] gives,
+/// Exactly one of the ten spellings [`GuestRuntimeFact::as_str`] gives,
 /// with no alias and no other case.
 impl std::str::FromStr for GuestRuntimeFact {
     type Err = String;

@@ -231,10 +231,10 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// ([`GUEST_RUNTIME_FACT_ARG`](crate::GUEST_RUNTIME_FACT_ARG)) carries the
 /// trusted supervisor's one observation of the guest runtime it provisioned
 /// for the vault's UID, in [`GuestRuntimeFact`](crate::GuestRuntimeFact)'s
-/// nine closed spellings, one value per spawn. It carries a build floor, at
+/// ten closed spellings, one value per spawn. It carries a build floor, at
 /// the engine revision it merged in, with no `Ping` revision field: an
 /// engine before it refuses the flag before it touches anything, and one at
-/// or after it refuses a spelling not among the nine, so a supervisor passes
+/// or after it refuses a spelling not among the ten, so a supervisor passes
 /// it only with installed engines at or after the floor. An engine never
 /// requires it: no flag means no observation, never provisioned or disabled.
 /// Provisioned means the image was imported and the observed preconditions
