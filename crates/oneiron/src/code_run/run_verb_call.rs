@@ -239,7 +239,12 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         | RunVerb::SelfCodeViewsRead
         | RunVerb::SelfCodeMergeQueueObserve
         | RunVerb::SelfCodeSnapshotsIngest
-        | RunVerb::SelfCodeWorkOpen) => SelfCall::Repo(
+        | RunVerb::SelfCodeWorkOpen
+        | RunVerb::SelfCodeSymbolsDeclare
+        | RunVerb::SelfCodeSymbolsRenew
+        | RunVerb::SelfCodeSymbolsRelease
+        | RunVerb::SelfCodeProposalSubmit
+        | RunVerb::SelfCodeMergeQueueEnqueue) => SelfCall::Repo(
             super::RepoRunCall::decode(verb, input)?
                 .ok_or_else(|| failure("invalid typed component arguments"))?,
         ),
