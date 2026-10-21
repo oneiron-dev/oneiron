@@ -152,17 +152,26 @@ impl Memory<'_> {
                 &["Propose the change again from the current green commit."],
             ));
         }
+        // A received bundle is ONE queue proposal carrying all its files,
+        // each with its reviewed state change; the caller names none of it.
+        if row.received_candidate().is_some() {
+            return Ok(crate::repo_mutation::received_merge_proposal(
+                self.vault, &row, base_green,
+            )?);
+        }
         let base = self
             .vault
             .mount_repo_ref(&pointer, RepoMountRef::Fork(row.pre_action_fork_hash))?;
-        let expected = base.read_file(&row.path)?.map(<[u8]>::to_vec);
+        let (path, content) = row.ordinary_file()?;
+        let expected = base.read_file(path)?.map(<[u8]>::to_vec);
         Ok(MergeProposal {
             id: row.id.to_hex(),
             base_green: base_green.to_owned(),
             files: vec![MergeFile {
-                path: row.path,
+                path: path.to_owned(),
                 expected,
-                content: Some(row.content),
+                content: Some(content.to_vec()),
+                metadata_edit: None,
             }],
         })
     }
