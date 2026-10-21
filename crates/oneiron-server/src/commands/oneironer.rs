@@ -27,9 +27,7 @@ use clap::{Args, Subcommand, ValueEnum};
 use oneiron::llm::manifest::{
     EncoderDistillationRequest, EncoderExport, ModelManifest, ModelRole, SharedBaseFork,
 };
-use oneiron::memory::extraction::{
-    EncoderInput, EncoderMessage, EncoderTurn, ExtractionEncoder, SpeakerRole,
-};
+use oneiron::memory::extraction::{EncoderInput, EncoderMessage, EncoderTurn, SpeakerRole};
 use serde::Deserialize;
 
 use super::{ensure_existing_vault_for_revoke, init_tracing};

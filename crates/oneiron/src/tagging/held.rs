@@ -220,6 +220,7 @@ pub(crate) fn settle_held_tags_in_txn(
         input_hash,
         try_number,
         call_micros: None,
+        execution: None,
         outcome,
     };
     // As a worker's settlement: the trace is recorded and the marker leaves

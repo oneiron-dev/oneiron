@@ -25,8 +25,7 @@ use std::sync::Mutex;
 use candle_core::{DType, Device, Module};
 use candle_nn::{Linear, VarBuilder, linear};
 use oneiron::ModelId;
-use oneiron::embed::EmbedderLocality;
-use oneiron::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder, NerSpan};
+use oneiron::memory::extraction::{EncoderInput, EncoderOutput, NerSpan};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokenizers::Tokenizer;
@@ -354,6 +353,25 @@ impl LocalTagger {
         self.card.clone()
     }
 
+    /// `oneironer/local@<checkpoint>`: the model every worker of this bundle
+    /// serves, whichever engine runs it.
+    pub(crate) fn model_id(&self) -> &ModelId {
+        &self.model
+    }
+
+    /// One input on this tagger's own engine, with no dispatcher: what its
+    /// worker runs, and what calibration and `oneironer qualify` time, each
+    /// pinned to the engine it names.
+    pub(crate) fn infer(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
+        // Inference errors can contain token ids. Traces retain the failure
+        // class, never a tensor dump or any part of a conversation.
+        self.extract(input)
+            .map_err(|_| oneiron::Error::UpstreamToolFailure {
+                tool: "oneironer-local",
+                code: "native extraction failed".to_owned(),
+            })
+    }
+
     /// The revision of this build's decoder: what a bundle's character head
     /// must declare. A bundle without one declares none.
     pub(crate) fn decode_revision(&self) -> &'static str {
@@ -534,22 +552,4 @@ fn validate_labels(labels: &[String]) -> anyhow::Result<()> {
         );
     }
     Ok(())
-}
-
-impl ExtractionEncoder for LocalTagger {
-    fn model_id(&self) -> &ModelId {
-        &self.model
-    }
-    fn locality(&self) -> EmbedderLocality {
-        EmbedderLocality::OnDevice
-    }
-    fn infer(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
-        // Inference errors can contain token ids. Traces retain the failure
-        // class, never a tensor dump or any part of a conversation.
-        self.extract(input)
-            .map_err(|_| oneiron::Error::UpstreamToolFailure {
-                tool: "oneironer-local",
-                code: "native extraction failed".to_owned(),
-            })
-    }
 }
