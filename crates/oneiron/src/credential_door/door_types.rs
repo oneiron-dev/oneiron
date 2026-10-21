@@ -184,6 +184,46 @@ impl std::fmt::Debug for PushedBlob {
     }
 }
 
+/// How the door read one blob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReceiveBlobKind {
+    /// Valid UTF-8 with no NUL byte: read line by line, as before.
+    Text,
+    /// Any other bytes: the custody automaton, then the release reader.
+    Binary,
+}
+
+/// One detector hit on one pushed blob: where it is and which rule named
+/// it. It carries no byte of the blob, so its `Debug` and every error made
+/// from it are safe to print.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReceiveScanHit {
+    /// The blob's repository-relative path.
+    pub(crate) path: String,
+    /// The blob's object id (hex).
+    pub(crate) oid: String,
+    /// The detector's reason code.
+    pub(crate) reason: &'static str,
+    /// How the blob was read.
+    pub(crate) content_kind: ReceiveBlobKind,
+}
+
+/// What the ONE disposition does with a push's hits (FIX 7608, owner
+/// ruling SECRETS-IN-REPOS = A). It is chosen in exactly one statement of
+/// `binary_scan::resolve_receive_scan_hits`, never by a flag, a dial, a
+/// caller or a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ReceiveScanDisposition {
+    /// Today's refusal with lift advice.
+    Refuse,
+    /// Admit the push with each hit marked in its intent's transaction.
+    #[allow(
+        dead_code,
+        reason = "FIX 7608 A4 order: only the later one-line flip, after the masked readers, chooses it"
+    )]
+    AdmitMarked,
+}
+
 /// The verdict of a pre-receive scan. A verdict is a scan OUTCOME: an
 /// unscannable blob is not a verdict, it is an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,6 +234,15 @@ pub(crate) enum DoorScanVerdict {
     Rejected {
         /// One proposal per offending blob.
         proposals: Vec<SecretLiftProposal>,
+        /// The value-free hits the proposals were made from, one each.
+        hits: Vec<ReceiveScanHit>,
+    },
+    /// The push is admitted with each hit marked (FIX 7608): the transport
+    /// carries the hits to the admitted intent, whose transaction writes
+    /// their marks or refuses the push whole.
+    AdmitMarked {
+        /// The value-free hits to mark.
+        hits: Vec<ReceiveScanHit>,
     },
 }
 

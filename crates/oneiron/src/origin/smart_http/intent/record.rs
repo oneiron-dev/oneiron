@@ -1,5 +1,7 @@
 //! The receive-pack intent's recorder: the one write that journals an
-//! admitted push while pre-receive still blocks every ref effect.
+//! admitted push while pre-receive still blocks every ref effect. A push
+//! admitted with its keys marked (FIX 7608) writes those marks in the same
+//! transaction, so marks and intent commit together or not at all.
 
 use std::path::Path;
 
@@ -20,6 +22,7 @@ use crate::codebase::RepoRef;
 use crate::error::Result;
 use crate::federation::git_push::GitPushRefChange;
 use crate::origin::residence::OriginAuthorityStamp;
+use crate::origin::secret_marks::{admitted_marks, record_receive_secret_marks_in_txn};
 
 impl Vault {
     pub(in crate::origin::smart_http) fn record_receive_pack_intent(
@@ -105,11 +108,20 @@ impl Vault {
         INTENTS.encode_value(&intent)?;
         #[cfg(test)]
         count_journal_bytes(INTENTS.encode_value(&intent));
+        let marks = admitted_marks(door, stamp)?;
         self.with_write_txn_grouped(|wtxn| {
             if INTENTS.contains(&self.store, wtxn, &key)? {
                 return Err(receive_pack_provenance_refused("intent already exists"));
             }
             self.recheck_git_push_in_txn(wtxn, push, repo, changes)?;
+            record_receive_secret_marks_in_txn(
+                self,
+                wtxn,
+                stamp,
+                &key.repo_identity_hex,
+                marks,
+                &door.ref_updates,
+            )?;
             INTENTS.put(&self.store, wtxn, &key, &intent)?;
             Ok(())
         })
