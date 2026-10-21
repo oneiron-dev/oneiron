@@ -160,6 +160,7 @@ pub(super) fn apply_ops_with_origin(
     let text_births = std::mem::take(&mut gate_mode.text_births);
     let births = std::mem::take(&mut gate_mode.births);
     let mut asset_files = std::mem::take(&mut gate_mode.asset_files);
+    let replicated_puts = std::mem::take(&mut gate_mode.replicated_puts);
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let authority_generation = crate::authority::authority_cache_generation(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
@@ -541,7 +542,7 @@ pub(super) fn apply_ops_with_origin(
                 if entity_type != crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
                     materialized_entity_ids.insert(id);
                 }
-                if !replicated {
+                if !(replicated && replicated_puts.contains(&id)) {
                     local_materialized_ids.insert(id);
                 }
             }
