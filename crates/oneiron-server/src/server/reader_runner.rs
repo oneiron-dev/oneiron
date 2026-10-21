@@ -33,8 +33,8 @@ use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, ClaimOutcome, DEFAULT_READER_WINDOW_TOKENS, HostSelfDispatcher, ReaderJob,
     ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderRunEnd, ReaderSpend,
-    RunDeadline, SUMMARY_READ_BYTES_PER_TOKEN, SpawnHostSeat, SummarizeRecipe, SummaryRead,
-    reader_task_brief, summarize_input, summarize_prompt, summary_exceeds_window,
+    RunDeadline, SUMMARY_READ_BYTES_PER_TOKEN, ScopedChildPorts, SpawnHostSeat, SummarizeRecipe,
+    SummaryRead, reader_task_brief, summarize_input, summarize_prompt, summary_exceeds_window,
     summary_token_budget,
 };
 use oneiron::engine_executor::{
@@ -54,6 +54,7 @@ use oneiron::{
 
 use crate::admission::Permit;
 use crate::ai_host::payer_funding::scope_funding;
+use crate::ai_host::scoped_child::{ScopedChildDoor, scoped_child_service};
 use crate::mcp::{McpCodeExecutionHost, McpCodeModeProvider, run_seat};
 
 /// The window a run with no decision clock gives its children: one, fixed
@@ -451,10 +452,19 @@ impl Child {
     /// Runs the child and settles it as its run ended.
     fn run_and_settle(&self, shared: &Shared, vault: &Arc<Vault>) {
         let job = &self.job;
-        let door: Arc<dyn AgentVerbDoor> = Arc::new(crate::api::ReaderChildDoor::new(
-            Arc::clone(vault),
-            shared.seats.caller(job.binding.parent_run),
-        ));
+        // A scoped child's door is its loan, Grant-checked at each call
+        // (FIX 7507); the read child's door never stands in for it.
+        let door: Arc<dyn AgentVerbDoor> = match &job.kind {
+            ReaderJobKind::ScopedAgent { .. } => {
+                Arc::new(ScopedChildDoor::new(Arc::clone(vault), job.clone()))
+            }
+            ReaderJobKind::Read | ReaderJobKind::Summarize { .. } => {
+                Arc::new(crate::api::ReaderChildDoor::new(
+                    Arc::clone(vault),
+                    shared.seats.caller(job.binding.parent_run),
+                ))
+            }
+        };
         let settled = match &self.session {
             None => {
                 let end = self.metered(vault, None, door);
@@ -511,7 +521,16 @@ impl Child {
             return ReaderRunEnd::Failed("reader_meter_unbound".to_owned());
         };
         let end = match &job.kind {
-            ReaderJobKind::Read => self.run(vault, session, backend.as_ref(), &guard, door),
+            ReaderJobKind::Read => self.run(vault, session, backend.as_ref(), &guard, door, None),
+            // A scoped child runs as a read child's run does, with its lent
+            // ports bound; one whose authority or ports do not hold ends
+            // before any call, never as a read child.
+            ReaderJobKind::ScopedAgent { .. } => {
+                match scoped_child_service(vault, self.provider.as_ref(), job) {
+                    Ok(ports) => self.run(vault, session, backend.as_ref(), &guard, door, ports),
+                    Err(end) => end,
+                }
+            }
             ReaderJobKind::Summarize {
                 recipe,
                 window_tokens,
@@ -652,9 +671,9 @@ impl Child {
     }
 
     /// The child's run: a fresh sandbox and a dispatcher bound to its job
-    /// and door, entered again after each yielded slice until it ends or its
-    /// cutoff comes. The cutoff stops the run at its next await; a running
-    /// step is not cut.
+    /// and door, and a scoped child's to its lent `ports`, entered again
+    /// after each yielded slice until it ends or its cutoff comes. The
+    /// cutoff stops the run at its next await; a running step is not cut.
     fn run(
         &self,
         vault: &Vault,
@@ -662,6 +681,7 @@ impl Child {
         backend: &dyn LlmBackend,
         guard: &BudgetGuard,
         door: Arc<dyn AgentVerbDoor>,
+        ports: Option<Arc<dyn ScopedChildPorts>>,
     ) -> ReaderRunEnd {
         let job = &self.job;
         let provider = self.provider.as_ref();
@@ -669,7 +689,13 @@ impl Child {
             tracing::warn!(%error, task = %job.task.to_hex(), reason, "a reader child did not run");
             ReaderRunEnd::Failed(reason.to_owned())
         };
-        let dispatcher = match self.bind(vault, session) {
+        let bound = self
+            .bind(vault, session)
+            .and_then(|dispatcher| match ports {
+                Some(ports) => dispatcher.with_scoped_child_ports(ports),
+                None => Ok(dispatcher),
+            });
+        let dispatcher = match bound {
             Ok(dispatcher) => dispatcher.with_agent_verb_door(door),
             Err(error) => return failed("reader_binding_failed", &error),
         };

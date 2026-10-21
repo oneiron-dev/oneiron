@@ -1,5 +1,6 @@
 //! Code mode's verb-table calls: the run's write origin and the receipt a write keeps.
 
+mod scoped_port;
 mod session_write;
 
 use serde_json::Value;
@@ -69,11 +70,18 @@ impl HostSelfDispatcher<'_> {
     /// `vault.search.bm25` read the room's view on the key the door admits
     /// for its caller (WILL L11-01, `session_verbs`); every other call is
     /// refused.
+    ///
+    /// A scoped child (FIX 7507) calls only the ports its parent lent it,
+    /// on its host's adapters and its own route (`scoped_port`), before
+    /// either rule above: never the session's verbs, nor the host's door.
     pub(super) fn dispatch_agent_verb(
         &self,
         call: SelfAgentVerbCall,
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
+        if self.scoped_child_spec().is_some() {
+            return self.dispatch_scoped_port(call, site);
+        }
         if matches!(self.storage, ExecutorStorage::Session(_)) {
             if let Some(read) = super::session_verbs::session_read(call.verb) {
                 return self.dispatch_session_read(read, &call, site);

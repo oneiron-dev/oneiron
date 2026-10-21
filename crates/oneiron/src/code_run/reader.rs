@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use super::ScopedChildSpec;
 use crate::agent_def::AgentModel;
 use crate::agent_dispatch::SpendScopeId;
 use crate::attempt_queue::AttemptId;
@@ -204,8 +205,9 @@ impl SummarizeRecipe {
     }
 }
 
-/// What a reader job does: a child run that reads its source, or one model
-/// call that summarizes its members, in order, by its recipe. `memo` is the
+/// What a reader job does: a child run that reads its source, one model
+/// call that summarizes its members, in order, by its recipe, or a scoped
+/// child that holds what its host's loan lent it (FIX 7507). `memo` is the
 /// summary's memo key; `window_tokens` the window of the model it runs on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -216,6 +218,9 @@ pub enum ReaderJobKind {
         recipe: SummarizeRecipe,
         memo: [u8; 32],
         window_tokens: u64,
+    },
+    ScopedAgent {
+        spec: ScopedChildSpec,
     },
 }
 
@@ -572,12 +577,23 @@ pub struct ReaderJob {
 
 impl ReaderJob {
     /// Every source the job reads, as its parent delegated it: a child's
-    /// one source, or a summary's members.
+    /// one source, a summary's members, or every input a scoped child was
+    /// lent (`src` among them).
     #[must_use]
     pub fn sources(&self) -> Vec<&DelegatedSource> {
         match &self.kind {
             ReaderJobKind::Read => vec![&self.binding.source],
             ReaderJobKind::Summarize { members, .. } => members.iter().collect(),
+            ReaderJobKind::ScopedAgent { spec } => spec.inputs.values().collect(),
+        }
+    }
+
+    /// What a scoped child was lent (FIX 7507); `None` for every other job.
+    #[must_use]
+    pub const fn scoped_spec(&self) -> Option<&ScopedChildSpec> {
+        match &self.kind {
+            ReaderJobKind::ScopedAgent { spec } => Some(spec),
+            _ => None,
         }
     }
 }
@@ -765,33 +781,4 @@ pub(crate) fn reduce_task_wait_set(
     result.done = reason.is_some();
     result.reason = reason.map(str::to_owned);
     result
-}
-
-/// The child's task text: its ask, its source, the protocol it answers by,
-/// the shape of its finding, and its cutoff.
-#[must_use]
-pub fn reader_task_brief(job: &ReaderJob) -> String {
-    let source = &job.binding.source;
-    let (start, end) = source.range;
-    format!(
-        "You are a reader child of a code run. Read one result of your parent and answer \
-         one question about it.\n\
-         Question: {ask}\n\
-         Source: the result named `src` (handle {handle}), bytes {start} to {end} of your \
-         parent's body. Read it with describe, slice, search, query and chunks on `src` or on a \
-         range ref inside it, `{handle}#<start>-<end>`; every offset is your parent's. No other \
-         result, verb or write is yours.\n\
-         Protocol: store your finding with `store(finding)`, then call \
-         `tasks.update({{task_ref: \"{task}\", resultRef: <its name>}})`. A later report \
-         replaces an earlier one; the latest one stands when your run ends.\n\
-         Finding: one JSON object, {{\"answer\": ..., \"cites\": [[start, end], ...], \
-         \"coverage\": [[start, end], ...], \"partial\": true|false}}, its spans in your \
-         parent's byte offsets: `cites` what the answer rests on, `coverage` what you read. Set \
-         `partial` when you did not read the whole source.\n\
-         Cutoff: unix ms {cutoff}. Report before it; a report after it is refused.",
-        ask = job.ask,
-        handle = source.handle,
-        task = job.task.to_hex(),
-        cutoff = job.binding.child_cutoff_unix_ms,
-    )
 }

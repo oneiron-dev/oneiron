@@ -243,6 +243,16 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn reader_window_tokens(&self) -> Option<u64> {
         None
     }
+    /// The ports scoped child `job` (FIX 7507) runs its lent verbs on: the
+    /// host's registered adapters, each serving exact verbs. The default
+    /// registers none, so a job that lends a port reports it unbound and
+    /// never runs as a read child in its place.
+    fn scoped_child_ports(
+        &self,
+        _job: &oneiron::code_run::ReaderJob,
+    ) -> Option<Arc<dyn oneiron::code_run::ScopedChildPorts>> {
+        None
+    }
     /// The executor configuration for this run, in the vault it lives in.
     fn executor_config(
         &self,

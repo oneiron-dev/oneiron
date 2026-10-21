@@ -5,6 +5,8 @@
 //! scopes are base rows, as the parent's own scope is: units and ids, no
 //! content.
 
+mod scoped;
+
 use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};

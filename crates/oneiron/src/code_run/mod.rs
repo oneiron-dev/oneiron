@@ -25,6 +25,7 @@ mod coordination_codec;
 mod dispatcher;
 mod payload;
 mod reader;
+mod reader_brief;
 mod reader_fold;
 mod replay;
 mod replay_capsule;
@@ -32,6 +33,7 @@ mod repo_calls;
 mod result_read;
 pub(crate) mod run_verb_call;
 mod run_verbs;
+mod scoped_child;
 pub mod shadow_runner;
 mod storage;
 mod support;
@@ -163,14 +165,20 @@ pub use self::reader::{
     SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR, SelfReaderReportCall,
     SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat, SpawnParentBinding, SummarizeEffort,
     SummarizeRecipe, SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet,
-    TaskWaitSetCall, TaskWaitSetResult, reader_task_brief, summary_exceeds_window,
-    summary_exceeds_window_bytes, summary_token_budget,
+    TaskWaitSetCall, TaskWaitSetResult, summary_exceeds_window, summary_exceeds_window_bytes,
+    summary_token_budget,
 };
 pub(crate) use self::reader::{
     reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, reduce_task_wait_set,
     summary_memo_key, summary_task_id, valid_reader_key, vault_ref,
 };
+pub use self::reader_brief::reader_task_brief;
 pub use self::reader_fold::{summarize_input, summarize_prompt};
+pub use self::scoped_child::{
+    SCOPED_CHILD_AUTHORITY_LAPSED, SCOPED_CHILD_PORT_NOT_LENT, SCOPED_CHILD_SERVICE_UNBOUND,
+    ScopedChildCallContext, ScopedChildLoan, ScopedChildPorts, ScopedChildSpec, ScopedInputRead,
+    scoped_child_authority,
+};
 pub use self::storage::ReaderJobs;
 pub(crate) use self::storage::SpendBook;
 #[cfg(test)]
