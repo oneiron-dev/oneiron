@@ -101,7 +101,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/planner_live/team_launch/child.rs` | src | s | 1 fn | — | The leased child's planned launch (DOOR-111 S4c-2, S4c-3): a leased agent's planned intent, launched under… |
 | `src/agent_dispatch/project_conversation.rs` | src | m | 1 struct · 3 fn | ProjectConversationSkills | The skill a project conversation's run loads before it starts (OF-501, ARCH-0067) |
 | `src/agent_dispatch/project_proposal.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | ProjectDetection, ProjectDetectionRun | The house mind's one typed question on a conversation (OF-501, ARCH-0067): does this sound like a project? |
-| `src/agent_dispatch/resident.rs` | src | m | 2 struct · 1 enum · 9 fn · 3 crate-vis | ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode | Persistent resident bindings |
+| `src/agent_dispatch/resident.rs` | src | m | 2 struct · 1 enum · 10 fn · 3 crate-vis | ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode | Persistent resident bindings |
 | `src/agent_dispatch/resident_tests.rs` | test | s | — | — | — |
 | `src/agent_dispatch/room_join.rs` | src | s | 4 crate-vis | — | Room-bound launches (OF-531) |
 | `src/agent_dispatch/run_objectives.rs` | src | s | 1 fn | — | The objectives an agent run confesses against (OF-544), kept with its attempt from its first claim |
