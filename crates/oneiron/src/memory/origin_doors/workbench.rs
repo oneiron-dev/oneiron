@@ -29,24 +29,24 @@ use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 
 /// A served repository as the reads resolve it: its anchor, its stored
 /// local folder and the object store that folder proves.
-struct ServedCodeRepo {
-    repo: EntityId,
-    repo_ref: RepoRef,
+pub(super) struct ServedCodeRepo {
+    pub(super) repo: EntityId,
+    pub(super) repo_ref: RepoRef,
     folder: String,
-    store: String,
+    pub(super) store: String,
 }
 
 impl Memory<'_> {
     /// Whether the caller's credential reads the record `id`; listed as
     /// read either way.
-    fn workbench_readable(&self, id: EntityId) -> MemoryResult<bool> {
+    pub(super) fn workbench_readable(&self, id: EntityId) -> MemoryResult<bool> {
         self.produced_from([id]);
         Ok(self.get_entity(&id.to_hex())?.value.is_some())
     }
 
     /// The selected served repository, once readable: a CODE_ARTIFACT whose
     /// stored pointer is a local folder of a proven object store.
-    fn workbench_repo(&self, repo: EntityId) -> MemoryResult<Option<ServedCodeRepo>> {
+    pub(super) fn workbench_repo(&self, repo: EntityId) -> MemoryResult<Option<ServedCodeRepo>> {
         if self.vault.get_entity_type(&repo)? != Some(ENTITY_TYPE_CODE_ARTIFACT)
             || !self.workbench_readable(repo)?
         {
@@ -362,7 +362,7 @@ impl Memory<'_> {
     /// The tested revisions of this repository's queue chain whose
     /// complete-push links name `candidate`, newest first: the seals it
     /// earned. Walks the stored chain from the exact green seal only.
-    fn workbench_sealed_with(
+    pub(super) fn workbench_sealed_with(
         &self,
         served: &ServedCodeRepo,
         candidate: EntityId,

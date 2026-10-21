@@ -13,6 +13,7 @@ mod read_worlds;
 mod reader_spawn;
 mod repo;
 mod repo_sources;
+mod routed_entry;
 mod session_verbs;
 mod summarize;
 mod team_submit;
@@ -117,6 +118,10 @@ pub struct HostSelfDispatcher<'a> {
     pub(super) reader_spawn: Option<crate::code_run::SpawnHostSeat>,
     /// The reader child's job this run is, when it is one.
     pub(super) reader_child: Option<ReaderChildBinding>,
+    /// The run its host bound this dispatcher to, whose own seat and first
+    /// start the host reads through it on its route (FIX 2594, FIX 7507);
+    /// `None` until a host binds one. No guest call reaches it.
+    bound_run: Option<EntityId>,
     /// The host's planner (OF-541, OF-389): what a planned spawn and the
     /// leader's calls read. Host configuration; no guest call reaches it.
     pub(super) planner: Option<HostPlannerBinding<'a>>,
@@ -278,6 +283,7 @@ impl<'a> HostSelfDispatcher<'a> {
             parked_hooks: RefCell::new(Vec::new()),
             reader_spawn: None,
             reader_child: None,
+            bound_run: None,
             planner: None,
             slip_issuer: None,
             replay_exposures: Vec::new(),

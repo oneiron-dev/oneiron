@@ -69,9 +69,12 @@ impl DreamerFallback {
             tracing::warn!(
                 "the bound Dreamer stopped; its standing questions and due digests run on their own sleepers until shutdown"
             );
+            // The question sleeper's passes read the host's pause too (FIX 7376).
+            let epochs = admission.clone();
             let admit: HousekeepingAdmission = Arc::new(move || super::dreamer::admit(&admission));
+            let epoch_source = move || super::dreamer::pause(&epochs);
             let sleepers = Sleepers(vec![
-                crate::decision_graph::spawn(&server, Arc::clone(&admit)),
+                crate::decision_graph::spawn_with_pause(&server, Arc::clone(&admit), epoch_source),
                 super::home_digests::spawn(&server, admit),
             ]);
             drop(server);

@@ -19,13 +19,29 @@
 //! moderates or deletes a note, and no finding restricts anyone: findings
 //! land Proposed in the owner's run tray.
 //!
+//! Beside the inbox, a sweep walks each GitHub repository the deployment
+//! bound (the `github` child): the host reads each page of its listing and
+//! hands it here, and the page's items take the same write a note does.
+//! Each source keeps its own state, so one that fails holds no other back.
+//!
 //! The triage runs the SKILL the owner bound. Until one is bound, a sweep
-//! fails: it hands off nothing and keeps its continuation.
+//! completes doing nothing: it reads no source, retains and queues nothing,
+//! keeps every continuation and writes no error, and the status shows the
+//! `skill_unbound` hold.
+mod github;
 mod owner;
+mod source;
 
+pub use self::github::{
+    FEEDBACK_TRIAGE_GITHUB_PREFIX, GithubIssueKind, GithubIssuePage, GithubIssueRevision,
+    GithubSweepContinuation,
+};
 pub use self::owner::{
     FeedbackTriageBindingRequest, FeedbackTriageChild, FeedbackTriageHold, FeedbackTriageRun,
     FeedbackTriageRunRequest, FeedbackTriageStatus, FeedbackTriageStatusRequest,
+};
+pub use self::source::{
+    FeedbackTriageSourceError, FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault,
 };
 
 use rmpv::Value;
@@ -81,12 +97,14 @@ const SOURCES: SideTable<String, FeedbackTriageContinuation, Named> =
 )]
 #[serde(deny_unknown_fields)]
 pub struct FeedbackTriageSourceRef {
-    /// The source: [`FEEDBACK_TRIAGE_INBOX_SOURCE`] for the open inbox.
+    /// The source: [`FEEDBACK_TRIAGE_INBOX_SOURCE`] for the open inbox,
+    /// `github:<owner>/<repo>` for a bound GitHub repository.
     pub source: String,
-    /// The item's id in its source: an inbox note's arrival number, in
-    /// decimal.
+    /// The item's id in its source, in decimal: an inbox note's arrival
+    /// number, or a GitHub item's upstream numeric id.
     pub id: String,
-    /// 64 hex: the BLAKE3 of the item's canonical encoding.
+    /// An inbox note's: 64 hex, the BLAKE3 of its canonical encoding. A
+    /// GitHub item's: its `updated_at`, `/`, and that 64-hex digest.
     pub revision: String,
 }
 
@@ -127,19 +145,35 @@ pub struct FeedbackTriageBinding {
     pub set_at: Option<u64>,
 }
 
-/// Where the next sweep resumes one source.
+/// One source's state: where the next sweep resumes it, the walk that last
+/// reached its end, and what stopped it last.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FeedbackTriageContinuation {
     /// The source.
     pub source: String,
     /// The inbox's last arrival number a sweep handed off or found handed
-    /// off; the next sweep reads the notes after it.
+    /// off; the next sweep reads the notes after it. `None` for a GitHub
+    /// source.
     pub after: Option<u64>,
-    /// 32 hex: the sweep that last moved it.
+    /// 32 hex: the sweep that last moved it, or that wrote it first.
     pub sweep: EntityId,
-    /// Vault seconds it last moved.
+    /// Vault seconds it last moved, or was first written.
     pub moved_at: u64,
+    /// A GitHub source's walk: its generation, next page and last ETag.
+    /// `None` for the inbox, and before a GitHub source's first page.
+    pub github: Option<GithubSweepContinuation>,
+    /// Vault seconds a walk last reached the source's end; `None` while
+    /// none has.
+    pub completed_at: Option<u64>,
+    /// 32 hex: the sweep whose walk last reached it.
+    pub completed_by: Option<EntityId>,
+    /// What stopped the source's last walk; cleared once a walk moves it or
+    /// reaches its end.
+    pub error: Option<FeedbackTriageSourceError>,
+    /// Vault seconds the source named for a retry: the sweep leaves it
+    /// until then.
+    pub retry_after: Option<u64>,
 }
 
 /// One revision a sweep handed off.
@@ -205,6 +239,16 @@ pub struct FeedbackTriageOutput {
     pub findings: Vec<FeedbackTriageFinding>,
 }
 
+/// The item one triage job reads, checked against its revision. It is the
+/// source's data, never an instruction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FeedbackTriageItem {
+    /// An open-inbox note, read back from the inbox.
+    Inbox(Box<FeedbackInboxNote>),
+    /// A GitHub issue or pull request, read back from its evidence.
+    Github(Box<GithubIssueRevision>),
+}
+
 /// What one triage job reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FeedbackTriageInput {
@@ -212,8 +256,8 @@ pub struct FeedbackTriageInput {
     pub source_ref: FeedbackTriageSourceRef,
     /// The evidence ASSET the item was retained as.
     pub evidence: EntityId,
-    /// The note, read back from the inbox and checked against its revision.
-    pub note: FeedbackInboxNote,
+    /// The item, as its source holds it.
+    pub item: FeedbackTriageItem,
     /// The SKILL entity bound now.
     pub skill: EntityId,
 }
@@ -373,12 +417,16 @@ pub(crate) fn acknowledge_feedback_triage_in_txn(
     HANDOFFS.put(&vault.store, txn, &key, &row)
 }
 
+/// One revision as its source read it: its name, the exact bytes its
+/// evidence keeps, and when the vault received it.
+struct Revision<'a> {
+    source_ref: FeedbackTriageSourceRef,
+    bytes: &'a [u8],
+    received_at: u64,
+}
+
 /// Hands one inbox note's revision to its own triage job in the caller's
-/// write: retains the note's exact encoding as a host-written ASSET, queues
-/// the job under `sweep`, saves the handoff and moves the inbox
-/// continuation. A revision handed off before answers its handoff, with its
-/// stored result when it has one, and queues nothing. The flag is true only
-/// for a fresh handoff.
+/// write (`hand_off_revision_in_txn`) and moves the inbox continuation.
 pub(crate) fn queue_feedback_triage_revision_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -388,14 +436,39 @@ pub(crate) fn queue_feedback_triage_revision_in_txn(
     now: u64,
 ) -> Result<(FeedbackTriageHandoff, bool)> {
     let (bytes, revision) = inbox_revision(note)?;
-    let source_ref = FeedbackTriageSourceRef::inbox(note.seq, &revision);
-    let sweep_ref = attempt_ref(sweep)?;
-    advance_inbox_in_txn(vault, txn, note.seq, sweep_ref, now)?;
+    advance_inbox_in_txn(vault, txn, note.seq, attempt_ref(sweep)?, now)?;
+    let revision = Revision {
+        source_ref: FeedbackTriageSourceRef::inbox(note.seq, &revision),
+        bytes: &bytes,
+        received_at: note.received_at,
+    };
+    hand_off_revision_in_txn(vault, txn, sweep, run_id, revision, now)
+}
+
+/// The write every source's revision takes, in the caller's transaction:
+/// retains the item's exact encoding as a host-written ASSET, queues its
+/// triage job under `sweep` and saves the handoff. A revision handed off
+/// before answers its handoff, with its stored result when it has one, and
+/// queues nothing. The flag is true only for a fresh handoff.
+fn hand_off_revision_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    sweep: AttemptId,
+    run_id: Option<&str>,
+    revision: Revision<'_>,
+    now: u64,
+) -> Result<(FeedbackTriageHandoff, bool)> {
+    let Revision {
+        source_ref,
+        bytes,
+        received_at,
+    } = revision;
     if let Some(handoff) = handoff_in_txn(vault, txn, &source_ref)? {
         return Ok((handoff, false));
     }
+    let sweep_ref = attempt_ref(sweep)?;
     let evidence = evidence_id(&source_ref)?;
-    retain_evidence_in_txn(vault, txn, &evidence, &bytes, note.received_at, now)?;
+    retain_evidence_in_txn(vault, txn, &evidence, bytes, received_at, now)?;
     let attempt = enqueue_triage_in_txn(vault, txn, &source_ref, evidence, sweep, run_id, now)?;
     let handoff = FeedbackTriageHandoff {
         source_ref,
@@ -423,21 +496,14 @@ fn advance_inbox_in_txn(
     sweep: EntityId,
     now: u64,
 ) -> Result<()> {
-    let source = FEEDBACK_TRIAGE_INBOX_SOURCE.to_owned();
-    if SOURCES
-        .get(&vault.store, txn, &source)?
-        .and_then(|continuation| continuation.after)
-        .is_some_and(|after| after >= seq)
-    {
+    let mut row = source::source_row_in_txn(vault, txn, FEEDBACK_TRIAGE_INBOX_SOURCE, sweep, now)?;
+    if row.after.is_some_and(|after| after >= seq) {
         return Ok(());
     }
-    let continuation = FeedbackTriageContinuation {
-        source: source.clone(),
-        after: Some(seq),
-        sweep,
-        moved_at: now,
-    };
-    SOURCES.put(&vault.store, txn, &source, &continuation)
+    row.after = Some(seq);
+    row.sweep = sweep;
+    row.moved_at = now;
+    SOURCES.put(&vault.store, txn, &row.source, &row)
 }
 
 /// Retains `bytes` as the ASSET `evidence`, unless it holds them already.
@@ -562,28 +628,77 @@ fn requeue_unacknowledged(
     Ok(requeued)
 }
 
+/// Walks the inbox from `after` to its end, a page at a time, each note's
+/// revision handed off in its own write.
+fn sweep_inbox(
+    vault: &Vault,
+    sweep: AttemptId,
+    run_id: Option<&str>,
+    mut after: Option<u64>,
+    now: u64,
+    report: &mut FeedbackTriageSweep,
+) -> Result<()> {
+    loop {
+        let notes = vault.feedback_inbox(after, INBOX_PAGE)?;
+        let Some(last) = notes.last() else {
+            return Ok(());
+        };
+        after = Some(last.seq);
+        for note in &notes {
+            let (_, fresh) = vault.with_write_txn_grouped(|txn| {
+                queue_feedback_triage_revision_in_txn(vault, txn, sweep, run_id, note, now)
+            })?;
+            if fresh {
+                report.handed_off += 1;
+            } else {
+                report.known += 1;
+            }
+        }
+    }
+}
+
+/// The inbox note `source_ref` names, read back from the inbox and checked
+/// against its revision.
+fn inbox_note(vault: &Vault, source_ref: &FeedbackTriageSourceRef) -> Result<FeedbackInboxNote> {
+    let seq = source_ref.inbox_seq()?;
+    let note = vault
+        .feedback_inbox(seq.checked_sub(1), 1)?
+        .into_iter()
+        .next()
+        .filter(|note| note.seq == seq)
+        .ok_or(Error::CorruptedIndex("feedback triage note missing"))?;
+    let (_, revision) = inbox_revision(&note)?;
+    if FeedbackTriageSourceRef::inbox(seq, &revision) != *source_ref {
+        return Err(Error::CorruptedIndex("feedback triage note revision"));
+    }
+    Ok(note)
+}
+
 impl Vault {
-    /// One feedback sweep as the Coach, under a leased `coach.feedback_sweep`
-    /// attempt: every inbox note after the continuation, read to the end a
-    /// page at a time, each new revision handed off in its own write; then
-    /// each unacknowledged revision whose job settled without a result is
-    /// queued again. With no skill bound it fails before it reads: it hands
-    /// off nothing and the continuation stays.
+    /// One feedback sweep's inbox walk as the Coach, under a leased
+    /// `coach.feedback_sweep` attempt: every inbox note after the
+    /// continuation, read to the end a page at a time, each new revision
+    /// handed off in its own write. The inbox's row then records the walk
+    /// that reached its end, or that an engine error stopped it. Each
+    /// unacknowledged revision of any source whose job settled without a
+    /// result is then queued again. With no skill bound it completes doing
+    /// nothing: it reads, retains, queues and writes nothing, and every
+    /// continuation stays. The host walks each bound GitHub source beside
+    /// it ([`Self::feedback_triage_source`]).
     ///
     /// # Errors
     ///
-    /// An attempt that is not this facet's Coach attempt; no bound skill;
-    /// storage errors.
+    /// An attempt that is not this facet's Coach attempt; storage errors.
     pub fn run_coach_feedback_sweep(
         &self,
         attempt: &DreamerAdmittedAttempt,
         now: u64,
     ) -> Result<FeedbackTriageSweep> {
         self.require_coach_attempt(attempt, COACH_FEEDBACK_SWEEP_FACET)?;
-        let mut after = {
+        let after = {
             let txn = self.store.env.read_txn()?;
             if binding_in_txn(self, &txn)?.skill.is_none() {
-                return Err(skill_unbound());
+                return Ok(FeedbackTriageSweep::default());
             }
             SOURCES
                 .get(&self.store, &txn, &FEEDBACK_TRIAGE_INBOX_SOURCE.to_owned())?
@@ -591,37 +706,44 @@ impl Vault {
         };
         let sweep = attempt.status.attempt.id;
         let run_id = attempt.status.attempt.run_id.as_deref();
+        let sweep_ref = attempt_ref(sweep)?;
         let mut report = FeedbackTriageSweep::default();
-        loop {
-            let notes = self.feedback_inbox(after, INBOX_PAGE)?;
-            let Some(last) = notes.last() else {
-                break;
-            };
-            after = Some(last.seq);
-            for note in &notes {
-                let (_, fresh) = self.with_write_txn_grouped(|txn| {
-                    queue_feedback_triage_revision_in_txn(self, txn, sweep, run_id, note, now)
-                })?;
-                if fresh {
-                    report.handed_off += 1;
+        let walked = sweep_inbox(self, sweep, run_id, after, now, &mut report);
+        // The inbox keeps its own state, as each GitHub source does.
+        let marked =
+            source::update_source_row(self, FEEDBACK_TRIAGE_INBOX_SOURCE, sweep_ref, now, |row| {
+                if walked.is_ok() {
+                    row.completed_at = Some(now);
+                    row.completed_by = Some(sweep_ref);
+                    row.error = None;
                 } else {
-                    report.known += 1;
+                    row.error = Some(FeedbackTriageSourceError {
+                        kind: FeedbackTriageSourceErrorKind::Engine,
+                        status: None,
+                        sweep: sweep_ref,
+                        at: now,
+                    });
                 }
-            }
-        }
-        report.requeued = requeue_unacknowledged(self, sweep, run_id, now)?;
+            });
+        // Every source's revisions are queued again, whatever stopped the
+        // inbox.
+        let requeued = requeue_unacknowledged(self, sweep, run_id, now);
+        walked?;
+        marked?;
+        report.requeued = requeued?;
         Ok(report)
     }
 
-    /// What a leased `coach.feedback_triage` job triages: the note its
-    /// revision names, read back from the inbox and checked against that
-    /// revision, with its evidence and the skill bound now; or the result
-    /// committed for it already.
+    /// What a leased `coach.feedback_triage` job triages: the item its
+    /// revision names, an inbox note read back from the inbox or a GitHub
+    /// item read back from its evidence, checked against that revision, with
+    /// its evidence and the skill bound now; or the result committed for it
+    /// already.
     ///
     /// # Errors
     ///
     /// An attempt that is not this facet's Coach attempt or not the
-    /// revision's current job; a job naming no handoff, or a note that no
+    /// revision's current job; a job naming no handoff, or an item that no
     /// longer matches its revision; no bound skill; storage errors.
     pub fn feedback_triage_job(
         &self,
@@ -640,21 +762,15 @@ impl Vault {
             return Err(invalid_job());
         }
         let skill = skill.ok_or_else(skill_unbound)?;
-        let seq = handoff.source_ref.inbox_seq()?;
-        let note = self
-            .feedback_inbox(seq.checked_sub(1), 1)?
-            .into_iter()
-            .next()
-            .filter(|note| note.seq == seq)
-            .ok_or(Error::CorruptedIndex("feedback triage note missing"))?;
-        let (_, revision) = inbox_revision(&note)?;
-        if FeedbackTriageSourceRef::inbox(seq, &revision) != handoff.source_ref {
-            return Err(Error::CorruptedIndex("feedback triage note revision"));
-        }
+        let item = if handoff.source_ref.source == FEEDBACK_TRIAGE_INBOX_SOURCE {
+            FeedbackTriageItem::Inbox(Box::new(inbox_note(self, &handoff.source_ref)?))
+        } else {
+            FeedbackTriageItem::Github(Box::new(github::evidence_issue(self, &handoff)?))
+        };
         Ok(FeedbackTriageJob::Pending(Box::new(FeedbackTriageInput {
             source_ref: handoff.source_ref,
             evidence: handoff.evidence,
-            note,
+            item,
             skill,
         })))
     }

@@ -32,6 +32,17 @@ impl RawValue for PendingGateConsentRecord {
     }
 }
 
+/// One sequence row of the tray, for a reader whose contract is to surface a
+/// corrupt row rather than refuse its read (FIX 7378).
+#[derive(Debug, Clone)]
+pub(crate) enum PendingGateConsentSlot {
+    /// The tray row the sequence row names.
+    Held(PendingGateConsentRecord),
+    /// The sequence row names a claim the tray holds no row for, or whose
+    /// row names another claim id: that row's own index corruption.
+    Corrupt,
+}
+
 /// How a door removes a tray row, as far as its claim's owner-answer
 /// obligation goes (`crate::gate::owner_answer`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,6 +276,39 @@ impl Store {
             }
         }
         Ok(records)
+    }
+
+    /// [`Self::pending_gate_consents_page_in_txn`]'s page with each sequence
+    /// row's claim, where a sequence row the tray does not answer for comes
+    /// back [`PendingGateConsentSlot::Corrupt`] instead of failing the page
+    /// (FIX 7378). Every other failure fails it, as there.
+    pub(crate) fn pending_gate_consent_slots_page_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        cursor: Option<u64>,
+        fence: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<(u64, EntityId, PendingGateConsentSlot)>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let lower = cursor.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
+        let upper = fence.as_ref().map_or(Bound::Unbounded, Bound::Included);
+        let mut slots = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
+        for row in SEQUENCE_INDEX.iter_range(self, txn, lower, upper)? {
+            let (sequence, claim_id) = row?;
+            let slot = match TRAY.get(self, txn, claim_id.as_bytes())? {
+                Some(record) if record.claim_id == *claim_id.as_bytes() => {
+                    PendingGateConsentSlot::Held(record)
+                }
+                _ => PendingGateConsentSlot::Corrupt,
+            };
+            slots.push((sequence, claim_id, slot));
+            if slots.len() == limit {
+                break;
+            }
+        }
+        Ok(slots)
     }
 
     /// The first `limit` pending gate consents, oldest proposal first. A

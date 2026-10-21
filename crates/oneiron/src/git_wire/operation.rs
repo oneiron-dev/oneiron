@@ -76,12 +76,23 @@ pub enum GitWireOperation {
     /// https mirror, leased on the tip read before (FIX 6866). It reads the
     /// local store only; its one effect is on the mirror.
     PublishPush,
+    /// `init --bare` of an outside import's private scratch store (FIX
+    /// 6871). It writes only inside that fresh scratch directory.
+    ImportScratchInit,
+    /// `fetch` of exactly one outside ref into the import scratch store,
+    /// full history (FIX 6871). Its objects and its one ref land in the
+    /// scratch only, never in a served store.
+    ImportFetch,
+    /// `push` of exactly one scratch commit to one served ref through the
+    /// authenticated door (FIX 6871). It reads the scratch store only; the
+    /// door's own receive admission decides its one effect.
+    ImportDoorPush,
     /// `diff-tree` of reviewed commits against their parents: what each
     /// commit an exact publish would expose introduces (FIX 6866).
     ReviewDiffs,
 }
 
-pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 25] = [
+pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 28] = [
     GitWireOperation::ReadConfig,
     GitWireOperation::ConfigureCheckout,
     GitWireOperation::ReadRefs,
@@ -106,6 +117,9 @@ pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 25] = [
     GitWireOperation::MirrorPush,
     GitWireOperation::RemoteRefs,
     GitWireOperation::PublishPush,
+    GitWireOperation::ImportScratchInit,
+    GitWireOperation::ImportFetch,
+    GitWireOperation::ImportDoorPush,
     GitWireOperation::ReviewDiffs,
 ];
 
@@ -137,6 +151,9 @@ impl GitWireOperation {
             Self::MirrorPush => "mirror_push",
             Self::RemoteRefs => "remote_refs",
             Self::PublishPush => "publish_push",
+            Self::ImportScratchInit => "import_scratch_init",
+            Self::ImportFetch => "import_fetch",
+            Self::ImportDoorPush => "import_door_push",
             Self::ReviewDiffs => "review_diffs",
         }
     }
@@ -159,16 +176,18 @@ impl GitWireOperation {
             | Self::MirrorPush
             | Self::RemoteRefs
             | Self::PublishPush
+            | Self::ImportDoorPush
             | Self::ReviewDiffs => GitWireEffectClass::Read,
             Self::WriteBlob | Self::WriteTree | Self::WriteCommit => {
                 GitWireEffectClass::ObjectWrite
             }
-            Self::NotesAdd => GitWireEffectClass::ObjectAndRefWrite,
+            Self::NotesAdd | Self::ImportFetch => GitWireEffectClass::ObjectAndRefWrite,
             Self::PublishRefs => GitWireEffectClass::RefWrite,
             Self::ConfigureCheckout
             | Self::WorktreeAdd
             | Self::WorktreeRemove
-            | Self::WorktreePrune => GitWireEffectClass::WorktreeWrite,
+            | Self::WorktreePrune
+            | Self::ImportScratchInit => GitWireEffectClass::WorktreeWrite,
         }
     }
 
