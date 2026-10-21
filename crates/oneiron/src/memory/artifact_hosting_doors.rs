@@ -76,6 +76,44 @@ impl Memory<'_> {
         })
     }
 
+    /// [`Self::artifact_publish_as`] for the caller this handle serves, with
+    /// no owner proof (FIX 8161): its export is read under the caller's own
+    /// key, so one it cannot read is absent, and the existing outbound Gate
+    /// judges the caller's real actor, a per-artifact standing grant
+    /// included. It widens no grant: the Gate holds what it would hold.
+    pub fn artifact_publish_by_caller(
+        &self,
+        input: ArtifactPublishRequest,
+    ) -> MemoryResult<ArtifactPublishView> {
+        let export_owner = self
+            .vault
+            .resolve_export_owner(&input.artifact, input.export)?
+            .ok_or_else(|| MemoryError::not_found("artifact export is absent or withheld"))?;
+        self.produced_from([export_owner]);
+        if self.get_entity(&export_owner.to_hex())?.value.is_none() {
+            return Err(MemoryError::not_found(
+                "artifact export is absent or withheld",
+            ));
+        }
+        let outcome = self
+            .vault
+            .request_artifact_publish(&ArtifactPublishVerbRequest {
+                artifact: input.artifact,
+                channel: input.channel,
+                export: input.export,
+                serve_tier: input.serve_tier,
+                actor: WriteActor::new(self.actor, self.actor_class),
+                publish_id: input.publish_id,
+                occurred_at: input.occurred_at,
+            })?;
+        Ok(ArtifactPublishView {
+            status: outcome.status,
+            pointer: outcome.pointer,
+            receipt_ref: outcome.receipt.map(|receipt| receipt.receipt_id),
+            gate_decision_ref: outcome.gate_decision_ref,
+        })
+    }
+
     pub fn artifact_pointer_as(
         &self,
         owner: &AuthenticatedOwner,

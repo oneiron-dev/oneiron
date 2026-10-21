@@ -54,7 +54,10 @@ impl Vault {
         }
         if decision == RepoProposalDecision::Approve {
             super::validate_conflict_in_txn(self, &txn, &row)?;
-            if !row.eligible()? {
+            // An explicit catalog's critics still come first. A proposal held
+            // to the vault's policy takes the owner's Approve as that review
+            // (FIX 8268); it records a decision and lands nothing.
+            if row.review.catalog().is_some() && !row.eligible()? {
                 return Err(invalid(
                     "approval requires unanimous independent multi-critic acceptance",
                 ));

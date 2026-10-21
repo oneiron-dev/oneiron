@@ -45,6 +45,7 @@
 //! checks them by handle, and the seat's end erases them.
 
 mod browser_guest;
+mod field_writer;
 mod receipt_evidence;
 mod secret_custody;
 mod session_write;
@@ -54,6 +55,7 @@ mod task_workflow;
 // planner (CUA E4).
 pub(crate) use self::task_workflow::{WorkflowPreflight, preflight_task_workflow};
 
+use self::field_writer::RunFieldWriter;
 use self::receipt_evidence::ReceiptWriter;
 use self::secret_custody::RunSecretCustody;
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
@@ -90,7 +92,8 @@ use oneiron_browser::{
     BrowserSession, DesktopGuest, DesktopSession, EFFECT_CLASSES, FiledWorkflow, FreshGuest,
     GuestLimits, HandleRetention, LibraryCard, PressMode, RetiredCard, RoutineAnswer, RoutineAsk,
     RoutineDecider, RoutineReply, RunOutcome, SecretCustody, SendPolicy, StrictDenial,
-    StrictDenied, SupersedeRefusal, WorkflowLibrary, WorkflowProgram, WorkflowProof,
+    StrictDenied, SupersedeRefusal, TextCheck, TextCheckReply, WorkflowLibrary, WorkflowProgram,
+    WorkflowProof,
 };
 use oneiron_container::{EgressRelay, SessionManifest, SessionTransport};
 use serde_json::Value;
@@ -397,43 +400,17 @@ fn strict_denied(denial: StrictDenial, question: &str, until_ms: Option<u64>) ->
     }
 }
 
-impl RoutineDecider for LadderDecider {
-    fn decide(&mut self, ask: RoutineAsk<'_>) -> Result<RoutineReply, BrowserError> {
-        let (strict, until_ms) = (ask.no_model, ask.until_ms);
-        // Strict: a screenshot is read only from the Local-vision rung up,
-        // so the step goes up before any rung is asked or admitted.
-        if strict && ask.image.is_some() {
-            return Ok(strict_denied(StrictDenial::Image, ask.question, until_ms));
-        }
-        let question = ask.question.to_owned();
-        // A step with no candidates finds its target in the screenshot.
-        let contract = if ask.options.is_empty() {
-            AnswerContract::Box
-        } else {
-            AnswerContract::Choice {
-                options: ask.options,
-            }
-        };
-        let request = AiVerdictRequest {
-            question: question.clone(),
-            contract,
-            evidence: Vec::new(),
-            state: Some(ask.state),
-            // No model: the ladder stops at its rule rung.
-            ceiling: ask.no_model.then_some(DecisionRung::Rule),
-            // A step acts on a live page: at a cut it abstains and goes up.
-            reversibility: AiVerdictReversibility::OutboundEffect,
-            deadline_ms: None,
-            routine: true,
-            image: ask.image.map(|(image, _)| image.to_owned()),
-            misses: ask.misses,
-            until_ms: ask.until_ms,
-        };
-        let input =
-            serde_json::to_value(&request).map_err(|e| BrowserError::Decider(e.to_string()))?;
-        let held = ask
-            .image
-            .map(|(image, png)| HeldImage::new(self.run_id, image, png.to_vec()));
+impl LadderDecider {
+    /// One `ai.verdict` of the run's caller, `input`, with the step's
+    /// screenshot `held` for it: through the asker's door (its connector,
+    /// its credential, or its agent on the run's line), on the server's
+    /// runtime while this thread waits. The verdict's output, or the door's
+    /// refusal; the call's own failure is the decider's.
+    fn verdict(
+        &self,
+        input: Value,
+        held: Option<HeldImage>,
+    ) -> Result<Result<Value, McpGatewayError>, BrowserError> {
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let server = Arc::clone(&self.server);
         let origin = self.origin.clone();
@@ -481,7 +458,48 @@ impl RoutineDecider for LadderDecider {
         let answered = receiver
             .recv()
             .map_err(|_| BrowserError::Decider("the ladder did not answer".to_owned()))?;
-        let (output, _) = match answered {
+        Ok(answered.map(|(output, _)| output))
+    }
+}
+
+impl RoutineDecider for LadderDecider {
+    fn decide(&mut self, ask: RoutineAsk<'_>) -> Result<RoutineReply, BrowserError> {
+        let (strict, until_ms) = (ask.no_model, ask.until_ms);
+        // Strict: a screenshot is read only from the Local-vision rung up,
+        // so the step goes up before any rung is asked or admitted.
+        if strict && ask.image.is_some() {
+            return Ok(strict_denied(StrictDenial::Image, ask.question, until_ms));
+        }
+        let question = ask.question.to_owned();
+        // A step with no candidates finds its target in the screenshot.
+        let contract = if ask.options.is_empty() {
+            AnswerContract::Box
+        } else {
+            AnswerContract::Choice {
+                options: ask.options,
+            }
+        };
+        let request = AiVerdictRequest {
+            question: question.clone(),
+            contract,
+            evidence: Vec::new(),
+            state: Some(ask.state),
+            // No model: the ladder stops at its rule rung.
+            ceiling: ask.no_model.then_some(DecisionRung::Rule),
+            // A step acts on a live page: at a cut it abstains and goes up.
+            reversibility: AiVerdictReversibility::OutboundEffect,
+            deadline_ms: None,
+            routine: true,
+            image: ask.image.map(|(image, _)| image.to_owned()),
+            misses: ask.misses,
+            until_ms: ask.until_ms,
+        };
+        let input =
+            serde_json::to_value(&request).map_err(|e| BrowserError::Decider(e.to_string()))?;
+        let held = ask
+            .image
+            .map(|(image, png)| HeldImage::new(self.run_id, image, png.to_vec()));
+        let output = match self.verdict(input, held)? {
             // Strict: no rung up to the rule ceiling takes the question, as
             // the ladder finds before it runs any.
             Err(error) if strict && error.kind == "model_unavailable" => {
@@ -491,7 +509,7 @@ impl RoutineDecider for LadderDecider {
                 let detail = format!("{}: {}", error.kind, error.message);
                 return Err(BrowserError::Decider(detail));
             }
-            Ok(answered) => answered,
+            Ok(output) => output,
         };
         let verdict: AiVerdict = serde_json::from_value(output.clone())
             .map_err(|e| BrowserError::Decider(e.to_string()))?;
@@ -526,6 +544,10 @@ impl RoutineDecider for LadderDecider {
             until_ms: verdict.until_ms,
             decision: output,
         })
+    }
+
+    fn check_text(&mut self, check: TextCheck<'_>) -> Result<TextCheckReply, BrowserError> {
+        field_writer::check_text(self, check)
     }
 }
 
@@ -758,6 +780,10 @@ impl RunBrowser {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is one host service the call's session takes"
+    )]
     fn call(
         &self,
         verb: AgentVerb,
@@ -766,6 +792,7 @@ impl RunBrowser {
         library: VaultLibrary,
         writer: ReceiptWriter,
         fresh: RunFreshGuest,
+        fields: RunFieldWriter,
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
@@ -786,6 +813,8 @@ impl RunBrowser {
             driver.set_policy(self.guest.policy.clone());
         }
         driver.set_decider(Box::new(decider));
+        // A Fill's writer (CUA E6): role-bound calls on the caller's run.
+        driver.set_field_writer(Box::new(fields));
         driver.set_library(Box::new(library));
         driver.set_receipt_sink(Box::new(writer));
         // The run's secret custody, for this call's caller: the fresh guest
@@ -1034,8 +1063,9 @@ impl RunGuests {
                     by,
                 };
                 let fresh = run.fresh_guest(decider.clone(), memory.invocation(), secrets);
+                let fields = RunFieldWriter::new(server, runtime, &decider.asker);
                 let input = call.input.clone();
-                run.call(call.verb, input, decider, library, writer, fresh)
+                run.call(call.verb, input, decider, library, writer, fresh, fields)
             }
             _ => Err(BrowserError::Unbound),
         };
