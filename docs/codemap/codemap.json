@@ -1398,7 +1398,7 @@
      "path": "src/agent_dispatch/widen_record.rs",
      "purpose": "Exact, durable widen intents",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "struct": 1
      }
     },
@@ -2251,7 +2251,7 @@
      "purpose": "Write-once executor identity for a skill-bearing attempt's terminal receipt",
      "surface": {
       "crate-vis": 2,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -2492,6 +2492,8 @@
       "InterveneOutcome",
       "ManifestEntry",
       "ManifestKind",
+      "PlannedBinding",
+      "PlannedExactness",
       "RetryAttempt",
       "RetryOutcome",
       "SetAttemptResult"
@@ -2500,10 +2502,10 @@
      "purpose": "Durable wire, verb-input, and outcome types for the attempt queue",
      "surface": {
       "crate-vis": 8,
-      "enum": 10,
+      "enum": 11,
       "fn": 24,
       "re-export": 1,
-      "struct": 15
+      "struct": 16
      }
     },
     {
@@ -2541,7 +2543,7 @@
      "path": "src/attempt_queue/validate/field_validators.rs",
      "purpose": "Length caps, error literals, and per-field validators plus lease/manifest mutators",
      "surface": {
-      "crate-vis": 76
+      "crate-vis": 77
      }
     },
     {
@@ -61390,7 +61392,7 @@
       "const": 9,
       "crate-vis": 1,
       "enum": 5,
-      "fn": 55,
+      "fn": 54,
       "re-export": 2,
       "struct": 6
      }
@@ -61409,6 +61411,16 @@
       "const": 4,
       "fn": 7,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_type/split.rs",
+     "purpose": "A type's split (ARCH-0079 #task-type): one child per winner its tasks disagree on",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -71549,7 +71561,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_type": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71726,7 +71738,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4577,
+   "source_files": 4578,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73059,7 +73071,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cua/browser_setup.rs",
@@ -73089,7 +73101,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cua/drift.rs",
@@ -73209,7 +73221,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cua/run.rs",
@@ -73219,7 +73231,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cua/served.rs",
@@ -97236,6 +97248,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/resident_pump/child_pin.rs",
+     "purpose": "A seatless planned child's binding (FIX 2310, OF-541 PR H)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/resident_pump/craft.rs",
      "purpose": "A resident's own craft in its run's task (OF-490): every lesson and failure mode it keeps, learned or…",
      "surface": {
@@ -98607,7 +98629,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 59,
+     "files": 60,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -98679,7 +98701,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1079,
+   "source_files": 1080,
    "test_files": 182
   },
   "oneiron-spawn": {
