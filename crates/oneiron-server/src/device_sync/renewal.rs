@@ -50,8 +50,9 @@ const BINDING_HEADER: &str = "x-oneiron-binding";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long a direct renewal waits for the home's whole answer: the SDK's own
-/// request timeout, kept likewise. A stop never waits it out: it aborts the
-/// renewal ([`Renewal::stop`]).
+/// request timeout, kept likewise. A renewal over the mesh meets it too, from
+/// its dial to the answer's last byte (FIX 8635). A stop never waits it out:
+/// it aborts the renewal ([`Renewal::stop`]).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The pairing again a refusal asks for.
@@ -450,32 +451,42 @@ async fn renew_mesh(
         .header(header::CONNECTION, "close")
         .body(Body::from("{}"))
         .map_err(|e| failed(&e))?;
-    let stream = dialer.dial().await.map_err(|e| failed(&e))?;
-    let (mut sender, connection) =
-        hyper::client::conn::http1::handshake::<_, Body>(hyper_util::rt::TokioIo::new(stream))
+    // The dial, the handshake, the exchange and the connection's drive meet
+    // one request timeout, as a direct renewal does: one that runs past it
+    // fails, the old credential stands and the renewal is tried again
+    // (FIX 8635).
+    let renewal = async {
+        let stream = dialer.dial().await.map_err(|e| failed(&e))?;
+        let (mut sender, connection) =
+            hyper::client::conn::http1::handshake::<_, Body>(hyper_util::rt::TokioIo::new(stream))
+                .await
+                .map_err(|e| failed(&e))?;
+        let exchange = async move {
+            let response = sender.send_request(request).await.map_err(|e| failed(&e))?;
+            let status = response.status();
+            let bytes = to_bytes(
+                Body::new(response.into_body()),
+                oneiron_remote::MAX_REMOTE_RESPONSE_BYTES,
+            )
             .await
             .map_err(|e| failed(&e))?;
-    let exchange = async move {
-        let response = sender.send_request(request).await.map_err(|e| failed(&e))?;
-        let status = response.status();
-        let bytes = to_bytes(
-            Body::new(response.into_body()),
-            oneiron_remote::MAX_REMOTE_RESPONSE_BYTES,
-        )
+            Ok::<_, Failure>((status, bytes))
+        };
+        // The connection is driven here, beside its one exchange, never on a
+        // task of its own, so a renewal aborted at stop leaves none of it
+        // behind.
+        tokio::pin!(exchange, connection);
+        let mut driving = true;
+        Ok::<_, Failure>(loop {
+            tokio::select! {
+                exchanged = &mut exchange => break exchanged?,
+                _ = &mut connection, if driving => driving = false,
+            }
+        })
+    };
+    let (status, bytes) = tokio::time::timeout(REQUEST_TIMEOUT, renewal)
         .await
-        .map_err(|e| failed(&e))?;
-        Ok::<_, Failure>((status, bytes))
-    };
-    // The connection is driven here, beside its one exchange, never on a
-    // task of its own, so a renewal aborted at stop leaves none of it behind.
-    tokio::pin!(exchange, connection);
-    let mut driving = true;
-    let (status, bytes) = loop {
-        tokio::select! {
-            exchanged = &mut exchange => break exchanged?,
-            _ = &mut connection, if driving => driving = false,
-        }
-    };
+        .map_err(|_| Failure::Failed("the renewal over the mesh timed out".to_owned()))??;
     if !status.is_success() {
         let reason = format!(
             "home answered {status}: {}",
