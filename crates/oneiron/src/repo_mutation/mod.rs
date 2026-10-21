@@ -47,9 +47,7 @@ pub(crate) use self::git::canonical_mutation_scope;
 pub(crate) use self::oplog::erase_oplog_actor_in_txn;
 pub(crate) use self::proposal::actor_erase::erase_proposal_actor_in_txn;
 pub(crate) use self::proposal::persist::PreparedRepoProposal;
-pub(crate) use self::received_file::tree::{
-    ReceivedTreeEdit, received_tree_edits, stage_received_tree_edits,
-};
+pub(crate) use self::received_file::tree::{ReceivedTreeEdit, stage_received_tree_edits};
 pub(crate) use self::received_file::{
     ReceivedFilesProposalInput, received_file_operation, received_merge_proposal,
     received_proposal_id,
