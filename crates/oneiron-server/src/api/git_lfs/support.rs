@@ -22,13 +22,16 @@ use std::time::UNIX_EPOCH;
 /// Why the next piece of `oid` stays on this device for the machine `peer`
 /// (FIX 4937, 4939): the body's error, naming the hold's content-free
 /// reason; a check that cannot be read is an integrity hold. `None` while the
-/// piece may go.
+/// piece may go. A lift-marked object's piece goes only while `read` stands
+/// (FIX 2897).
 pub(super) fn lfs_piece_hold(
     vault: &oneiron::Vault,
     oid: oneiron::origin::lfs::LfsOid,
     peer: oneiron::authority::PeerMachine,
+    read: Option<&LfsMarkedRead>,
 ) -> Option<std::io::Error> {
-    let reason = match oneiron::sync::chunks::lfs_object_hold_for(vault, oid, peer) {
+    let reads_marked = read.is_some_and(|read| read.stands(vault, oid));
+    let reason = match oneiron::sync::chunks::lfs_object_hold_as(vault, oid, peer, reads_marked) {
         Ok(None) => return None,
         Ok(Some(hold)) => hold.reason(),
         Err(_) => oneiron::settings::ReleaseHold::Placement.reason(),
@@ -37,6 +40,75 @@ pub(super) fn lfs_piece_hold(
         std::io::ErrorKind::PermissionDenied,
         format!("lfs object kept on this device: {reason}"),
     ))
+}
+
+/// One HTTP read of a lift-marked object (FIX 2897): the caller as its
+/// request authenticated it, and the authority the host built for it, which
+/// is judged again for each piece it releases.
+#[derive(Clone)]
+pub(super) struct LfsMarkedRead {
+    auth: crate::auth::CoreAuth,
+    authority: oneiron::sync::chunks::LfsReadAuthority,
+}
+
+impl LfsMarkedRead {
+    /// The read `auth`'s caller makes of the lift-marked object `oid`, as
+    /// `read` asks: the owner's, by his verified read key, or an agent's its
+    /// read grants. `None` keeps the object withheld, as before.
+    pub(super) fn of(
+        vault: &oneiron::Vault,
+        auth: &crate::auth::CoreAuth,
+        oid: oneiron::origin::lfs::LfsOid,
+        read: Option<&oneiron::sync::chunks::ChunkRead>,
+    ) -> Option<Self> {
+        let authority = lfs_reader(vault, auth)?
+            .lfs_read_authority(oid, read)
+            .ok()??;
+        Some(Self {
+            auth: auth.clone(),
+            authority,
+        })
+    }
+
+    /// The authority the host built.
+    pub(super) fn authority(&self) -> oneiron::sync::chunks::LfsReadAuthority {
+        self.authority
+    }
+
+    /// Whether the read still stands for `oid` now: the caller's credential
+    /// and the read it was built on, judged again, nothing spent or asked.
+    pub(super) fn stands(&self, vault: &oneiron::Vault, oid: oneiron::origin::lfs::LfsOid) -> bool {
+        lfs_reader(vault, &self.auth).is_some_and(|reader| {
+            reader
+                .lfs_read_stands(oid, &self.authority)
+                .unwrap_or(false)
+        })
+    }
+}
+
+/// The handle `auth`'s caller reads a lift-marked object through (FIX 2897):
+/// the owner a host action acts as, else its principal under its class.
+/// `None` for a caller no person or agent stands for: it reads marked objects
+/// as before.
+fn lfs_reader<'a>(
+    vault: &'a oneiron::Vault,
+    auth: &crate::auth::CoreAuth,
+) -> Option<oneiron::memory::Memory<'a>> {
+    let (actor, class) = match crate::api::host_action::host_action_of(vault, auth) {
+        Some(action) => {
+            let actor = action.ok()?.actor();
+            (actor.entity_ref(), actor.actor_class())
+        }
+        None => {
+            let class = match auth.actor_class() {
+                Some("human") | None => oneiron::EdgeActorClass::Human,
+                Some("agent") => oneiron::EdgeActorClass::Agent,
+                Some(_) => return None,
+            };
+            (auth.principal_entity()?, class)
+        }
+    };
+    Some(crate::api::credential_memory(vault, Some(auth), actor, class).at(auth.locality()))
 }
 
 /// The media type a downloaded object body carries. LFS bytes are opaque: this

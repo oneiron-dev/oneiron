@@ -1,7 +1,9 @@
 //! One bounded in-flight have/want transfer, driven by real socket replies.
 
+use super::page::ManifestPages;
 use super::{
-    ChunkSyncRequest, ChunkSyncResponse, MAX_WANT_CHUNKS, decode, encode_chunk_request, invalid,
+    ChunkMark, ChunkSyncRequest, ChunkSyncResponse, MAX_WANT_CHUNKS, decode, encode_chunk_request,
+    invalid,
 };
 use crate::error::Result;
 use crate::origin::lfs::{LfsManifest, LfsOid, LfsPutOutcome};
@@ -13,7 +15,11 @@ use std::io::{Read, Seek, SeekFrom, Write};
 /// Hosts bound concurrency by owning a single transfer per connection.
 pub struct ChunkDownload {
     request: ChunkSyncRequest,
+    /// The manifest's pages as they arrive (FIX 8860).
+    pages: ManifestPages,
     manifest: Option<LfsManifest>,
+    /// The lift mark its source sent with the object (FIX 2897).
+    mark: Option<ChunkMark>,
     spool: File,
     next: usize,
     waiting: Option<[u8; 32]>,
@@ -28,12 +34,17 @@ impl ChunkDownload {
     pub fn new(oid: LfsOid) -> Result<Self> {
         Ok(Self {
             request: ChunkSyncRequest {
+                request: 0,
                 oid: *oid.as_bytes(),
                 selector: Vec::new(),
                 have: Vec::new(),
                 want: None,
+                cursor: None,
+                read: None,
             },
+            pages: ManifestPages::default(),
             manifest: None,
+            mark: None,
             spool: tempfile::tempfile()?,
             next: 0,
             waiting: None,
@@ -43,27 +54,60 @@ impl ChunkDownload {
         })
     }
 
+    /// This transfer under the id `request`, which each of its requests
+    /// carries and each reply must echo (FIX 8864).
+    pub(crate) fn numbered(mut self, request: u64) -> Self {
+        self.request.request = request;
+        self
+    }
+
+    /// The id each of this transfer's requests carries.
+    pub(crate) fn request_id(&self) -> u64 {
+        self.request.request
+    }
+
     /// The first request asks only for the manifest.
     pub fn initial_request(&self) -> Result<Vec<u8>> {
         encode_chunk_request(&self.request)
     }
 
-    /// Accepts one reply and produces the next bounded want, or publishes the
-    /// fully verified object and returns None. Unsolicited/reordered replies fail.
+    /// Accepts one reply and produces the next bounded request, or publishes
+    /// the fully verified object and returns None. Unsolicited/reordered
+    /// replies fail.
     pub fn accept(&mut self, vault: &Vault, bytes: &[u8], now: u64) -> Result<Option<Vec<u8>>> {
-        if self.outcome.is_some() {
+        let reply: ChunkSyncResponse = decode(bytes)?;
+        self.accept_reply(vault, reply, now)
+    }
+
+    /// [`Self::accept`] for a reply already decoded. A manifest comes in
+    /// pages, each asked for by the cursor the one before named (FIX 8860).
+    /// An object its source sent with its lift mark installs marked: its
+    /// scans mark it rather than refuse it (FIX 2897).
+    pub(crate) fn accept_reply(
+        &mut self,
+        vault: &Vault,
+        reply: ChunkSyncResponse,
+        now: u64,
+    ) -> Result<Option<Vec<u8>>> {
+        if self.outcome.is_some() || reply.request() != self.request.request {
             return Err(invalid());
         }
-        let reply: ChunkSyncResponse = decode(bytes)?;
         match (&self.manifest, self.waiting, reply) {
-            (None, None, ChunkSyncResponse::Manifest(bytes)) => {
-                self.manifest = Some(LfsManifest::decode(&bytes)?);
+            (None, None, ChunkSyncResponse::Manifest(page)) => {
+                let mark = page.mark.clone();
+                if let Some(next) = self.pages.take(self.request.request, page)? {
+                    self.request.cursor = Some(next);
+                    return encode_chunk_request(&self.request).map(Some);
+                }
+                self.request.cursor = None;
+                self.manifest = Some(self.pages.manifest()?);
+                self.mark = mark;
             }
-            (Some(manifest), Some(expected), ChunkSyncResponse::Chunks(mut chunks)) => {
-                if chunks.len() != 1 || chunks[0].0 != expected {
+            (Some(manifest), Some(expected), ChunkSyncResponse::Chunks(mut page)) => {
+                if page.next.is_some() || page.chunks.len() != 1 || page.chunks[0].0 != expected {
                     return Err(invalid());
                 }
-                let (_, body) = chunks.pop().expect("one entry");
+                let (_, body) = page.chunks.pop().expect("one entry");
                 let chunk = &manifest.chunks[self.next];
                 if body.len() != chunk.size as usize || blake3::hash(&body).as_bytes() != &expected
                 {
@@ -108,9 +152,14 @@ impl ChunkDownload {
             }
         }
         self.spool.seek(SeekFrom::Start(0))?;
-        self.outcome = Some(vault.install_lfs_manifest(
+        let mark = self
+            .mark
+            .as_ref()
+            .map(|mark| (mark.reason.as_str(), mark.marked_at));
+        self.outcome = Some(vault.install_lfs_manifest_with_mark(
             LfsOid::from_bytes(self.request.oid),
             manifest,
+            mark,
             TimeRange {
                 start: now,
                 end: now,

@@ -701,3 +701,5 @@ fn deliver_file_in_txn(
     row.file = Some(file);
     REVEALS.put(&vault.store, txn, reveal, &row)
 }
+
+mod lfs;

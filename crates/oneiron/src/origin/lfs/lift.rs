@@ -4,7 +4,8 @@
 //! bytes under its oid, which names them: the sweep reads it again as an
 //! upload's install does, in the order its chunks make it, and a hit marks
 //! the object. A marked object is withheld from every reader off this device
-//! (`sync::chunks::lfs_object_withheld`), and the owner gets the proposal.
+//! but the owner and a reader its read admits (`sync::chunks::lfs_object_hold_as`,
+//! FIX 2897), and the owner gets the proposal.
 //! A key inside one chunk is marked with that chunk's ASSET by the records
 //! walk; a key split over two chunks only the object's mark covers.
 
@@ -66,10 +67,48 @@ impl Vault {
     }
 
     /// Whether the lift sweep marked the object `oid`: its bytes hold a hit
-    /// a new upload is refused for, so no reader off this device gets them.
+    /// a new upload is refused for, so no reader off this device gets them
+    /// but one its read admits (FIX 2897).
     pub fn lfs_object_secret_withheld(&self, oid: LfsOid) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         lifted_mark_in_txn(self, &txn, oid)
+    }
+
+    /// The mark on the object `oid`: its reason and when it was made, which
+    /// go with its real bytes to a reader its read admits (FIX 2897).
+    pub(crate) fn lfs_object_mark(&self, oid: LfsOid) -> Result<Option<(String, u64)>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(carrier_mark_in_txn(
+            &self.store,
+            &txn,
+            &side_table::ORIGIN_LFS_OBJECT,
+            oid.as_bytes(),
+            oid.as_bytes(),
+        )?
+        .map(|mark| (mark.reason, mark.marked_at)))
+    }
+
+    /// Marks the object `oid` with the mark its source sent with it, in the
+    /// caller's transaction (FIX 2897): its reason and when it was made, on
+    /// the row and version the sweep marks it by.
+    pub(super) fn carry_lfs_object_mark_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        oid: LfsOid,
+        (reason, marked_at): (&str, u64),
+    ) -> Result<()> {
+        put_carrier_mark_in_txn(
+            &self.store,
+            txn,
+            &side_table::ORIGIN_LFS_OBJECT,
+            oid.as_bytes(),
+            &CarrierMark {
+                version: *oid.as_bytes(),
+                reason: reason.to_owned(),
+                withheld: Vec::new(),
+                marked_at,
+            },
+        )
     }
 }
 
