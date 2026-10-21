@@ -94,14 +94,16 @@ pub(super) fn release_reservations_for_lease(state: &mut BudgetState, record: &L
         .saturating_sub(record.shared_reserved_units);
 }
 
-/// Adds one metered lease's supplied usage to every matched row and partition.
+/// Adds one metered lease's new spend to every matched row and partition.
 ///
-/// Rows meter per-lease matched spend, so they may sum above the global
-/// watermark when producers report per-response absolutes: rows are the
-/// cap/ladder authority for matched traffic while the global meter stays the
-/// total authority. The per-lease amount partitions floor-first — matched
-/// floor headroom in resolved manifest order — and any remainder lands in
-/// the shared partition, so overshoot beyond the slice is recorded as shared
+/// `used_units` is what the global meter gained from this settlement: a
+/// call's own usage, or a cumulative reading's rise over the watermark
+/// (FIX 8624), never the full reading. Each matched row takes the whole of
+/// it, since rows are the cap/ladder authority for matched traffic (caps are
+/// conjunctive), so rows sum above the global total only when one call
+/// matches several. The amount partitions once, floor-first — matched floor
+/// headroom in resolved manifest order — and any remainder lands in the
+/// shared partition, so overshoot beyond the slice is recorded as shared
 /// spend and later admissions saturate-deny rather than any admitted call
 /// being killed.
 pub(super) fn apply_usage_for_lease(
