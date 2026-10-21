@@ -128,13 +128,11 @@ pub(crate) fn classify(facts: &FieldFacts<'_>) -> Option<SecretKind> {
 
 fn secret_field_policy(facts: &FieldFacts<'_>) -> Option<SecretKind> {
     if let Some(tokens) = facts.autocomplete {
-        let tokens: Vec<String> = tokens
-            .split_ascii_whitespace()
-            .map(str::to_ascii_lowercase)
-            .collect();
-        let named = AUTOCOMPLETE
-            .iter()
-            .find(|(token, _)| tokens.iter().any(|t| t == token));
+        let named = AUTOCOMPLETE.iter().find(|(token, _)| {
+            tokens
+                .split_ascii_whitespace()
+                .any(|named| named.eq_ignore_ascii_case(token))
+        });
         if let Some((_, kind)) = named {
             return Some(*kind);
         }
