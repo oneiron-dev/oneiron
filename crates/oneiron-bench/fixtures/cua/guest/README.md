@@ -1,12 +1,12 @@
 # Linux Chromium guest recipe — S1
 
-Run **only on an authorized Linux fleet host**, never on the owner's Mac. This
-recipe reuses `/home/lexi/oneiron/crates/oneiron-container/guest/browser/Dockerfile`
+Run **only on an authorized Linux fleet host**, never on a developer laptop. This
+recipe reuses `crates/oneiron-container/guest/browser/Dockerfile`
 and its `entrypoint.sh chromium` path. It creates no second browser stack or
 Dockerfile. The existing image contains Chromium and the engine's stdio CDP
 transport; there is no debugging TCP port. No image change is needed.
 
-Assumptions: a Linux checkout at `/home/lexi/oneiron`, Docker, Python ≥3.11, curl,
+Assumptions: a Linux checkout at `/srv/oneiron`, Docker, Python ≥3.11, curl,
 sudo and Docker's iptables backend (with a `DOCKER-USER` chain). The subnet
 172.30.91.0/24, ports 8765/8766, bridge `br-cua-s1` and names below must be unused.
 Use an exclusive bench host/lane; don't join unrelated containers to this network.
@@ -18,9 +18,9 @@ stop and translate these rules deliberately; do not omit isolation.
 Use a previously built image on the Linux host:
 
 ```sh
-export REPO=/home/lexi/oneiron
+export REPO=/srv/oneiron
 export FIXTURE="$REPO/crates/oneiron-bench/fixtures/cua"
-export RUN=/home/lexi/cua-s1-run
+export RUN=/srv/cua-s1-run
 export IMAGE="$(docker image inspect oneiron-browser-guest:local --format '{{.Id}}')"
 ```
 
@@ -28,8 +28,8 @@ If that image does not exist, the existing build recipe can build it on the Linu
 build host (never here on the Mac):
 
 ```sh
-cd /home/lexi/oneiron
-export IMAGE="$(/home/lexi/oneiron/crates/oneiron-container/guest/browser/build.sh)"
+cd /srv/oneiron
+export IMAGE="$(crates/oneiron-container/guest/browser/build.sh)"
 ```
 
 Record the resulting `sha256:...` local image id in the S2 run metadata. Use the
@@ -67,7 +67,7 @@ curl --fail --silent --show-error --header "Authorization: Bearer $(cat "$RUN/pr
 
 Wait for health before reset; if the first curl races startup, inspect the log and
 retry health, not server startup. Never start a second copy. For a later private
-input variant, add `--external-data-dir /home/lexi/private-cua-data` to that server
+input variant, add `--external-data-dir /srv/private-cua-data` to that server
 command and keep that directory/logs outside the repository. Don't mount it into
 the guest. PUBLIC will render only the selected task's required inputs.
 

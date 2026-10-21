@@ -71,6 +71,12 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         self.line.waiting()
     }
 
+    /// The crossing in progress while work waits for a permit: its epoch
+    /// ([`WorkLine::crossing_epoch`]). `None` while nobody waits.
+    pub(crate) fn crossing_epoch(&self) -> Option<u64> {
+        self.line.crossing_epoch()
+    }
+
     /// A permit for `key`'s work, now or at its turn.
     pub(crate) async fn admit(&self, key: K) -> Result<Permit, WaitTimedOut> {
         self.admit_in_line(key).await
@@ -85,6 +91,12 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
     ) -> impl Future<Output = Result<Permit, WaitTimedOut>> + Send + 'static {
         self.line
             .admit_in_line_observed(key, crate::api::admission_observer())
+    }
+
+    /// [`Self::admit`] on this thread, at `key`'s place in the same line, for
+    /// work that runs on a blocking worker rather than on the runtime.
+    pub(crate) fn admit_blocking(&self, key: K) -> Result<Permit, WaitTimedOut> {
+        self.line.admit_blocking(key)
     }
 
     /// A permit for the host's own work, given only when no caller waits.
@@ -112,6 +124,10 @@ struct RowCrossing {
 impl LineCrossing for RowCrossing {
     fn crossed(&self, bound: u64, observed: u64) {
         self.questions.ask(self.row, bound, observed);
+    }
+
+    fn drained(&self, epoch: u64) {
+        self.questions.drained(self.row, epoch);
     }
 }
 

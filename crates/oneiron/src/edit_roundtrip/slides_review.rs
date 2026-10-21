@@ -96,6 +96,14 @@ pub trait SlideRenderer: Send + Sync {
     /// One PNG or JPEG per entry of `slides` (1-based numbers in `deck`), in
     /// that order, each rendered from these exact bytes.
     fn render(&self, deck: &[u8], slides: &[u64]) -> Result<Vec<Vec<u8>>>;
+    /// Reserve memory for `bytes` the caller is about to allocate; the
+    /// reservation lives as long as the renderer (FIX 7653). A host's
+    /// renderer refuses one the machine cannot hold, typed; a renderer that
+    /// keeps no account of memory admits every one.
+    fn admit(&self, bytes: u64) -> Result<()> {
+        let _ = bytes;
+        Ok(())
+    }
 }
 
 /// User-configured display words, including the severity words in comments.

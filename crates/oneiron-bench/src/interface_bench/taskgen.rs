@@ -277,9 +277,9 @@ fn mark_holdout_and_smoke(tasks: &mut [BenchTask]) {
             .enumerate()
             .filter_map(|(index, task)| (task.class == class).then_some(index))
             .collect::<Vec<_>>();
-        let holdout_start = indices.len() - indices.len() / 5;
+        let (_, held_out) = freeze_tail(&indices, indices.len() / 5);
         for (class_position, task_index) in indices.iter().enumerate() {
-            if class_position >= holdout_start {
+            if held_out.contains(task_index) {
                 tasks[*task_index].holdout = true;
             }
             if class_position < 2 {
@@ -434,7 +434,7 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
         .map_err(|error| format!("write {}: {error}", path.display()))
 }
 
-pub(super) fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+pub(crate) fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
@@ -456,4 +456,10 @@ where
 {
     let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     serde_json::from_reader(file).map_err(|error| format!("parse {}: {error}", path.display()))
+}
+
+/// Freeze an ordered partition without reshuffling or regenerating its keys.
+pub(crate) fn freeze_tail<T: Clone>(keys: &[T], held_out: usize) -> (Vec<T>, Vec<T>) {
+    let split = keys.len() - held_out;
+    (keys[..split].to_vec(), keys[split..].to_vec())
 }

@@ -87,6 +87,10 @@ pub struct SyncServer {
     /// The machine's memory, leased to work before it allocates (FIX 7649):
     /// the e-sign doors' spooled bodies read whole take their lease here.
     pub(crate) memory: crate::machine::MachineMemory,
+    /// The host's renderer line (`limits.renderer_work`, FIX 7653): every
+    /// deck and slide render takes its turn here, round robin across the
+    /// callers it is for, the host's own wakes behind them.
+    pub(crate) renderer_turns: crate::admission::Admission<oneiron::EntityId>,
     /// OF-520 questions retrieval queries past `config.limits` raised.
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
@@ -412,6 +416,12 @@ impl SyncServer {
             config.limits.decision_reads,
             config.limits.queue_wait(),
         );
+        let renderer_turns = crate::admission::Admission::new(
+            crate::wire_telemetry::LimitRow::RendererWork,
+            Arc::clone(wire_telemetry.limit_questions()),
+            config.limits.renderer_work,
+            config.limits.queue_wait(),
+        );
         // Task work waits in the vault's own line, which the embedded SDK, a
         // code run's own ask and wait and a pumped agent share with the
         // served doors; this server sets its `[limits]` row on it.
@@ -456,6 +466,7 @@ impl SyncServer {
                 &vault,
             )?,
             memory: crate::machine::MachineMemory::new(),
+            renderer_turns,
             wire_telemetry,
             vault,
             root_doc,
