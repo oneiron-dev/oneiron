@@ -1709,6 +1709,14 @@ pub struct HealthSilenceActivity {
         skip_serializing_if = "Option::is_none"
     )]
     pub actor_only_at: Option<u64>,
+    #[serde(rename = "stream_at", default, skip_serializing_if = "Option::is_none")]
+    pub stream_at: Option<u64>,
+    #[serde(
+        rename = "tool_finished_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tool_finished_at: Option<u64>,
     #[serde(
         rename = "other_session",
         default,

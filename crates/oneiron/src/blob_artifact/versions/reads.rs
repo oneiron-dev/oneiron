@@ -28,35 +28,30 @@ impl Vault {
         read_blob_artifact_head_in_txn(&self.store, &rtxn, artifact_id)
     }
 
-    /// Returns the full version tree in append order. Verifies contiguous
-    /// scalar versions, earlier existing parents, and the current head.
+    /// Returns the version tree that stays, in version order. Verifies
+    /// strictly ascending scalar versions, each parent earlier than its
+    /// version, and the current head as the greatest of them. A version a
+    /// response pin's release took (FIX 6225) leaves its gap, and a version
+    /// descending from it names a parent no longer here: no surviving record
+    /// is renumbered or rewritten.
     pub fn blob_artifact_versions(
         &self,
         artifact_id: &EntityId,
     ) -> Result<Vec<BlobArtifactVersion>> {
         let rtxn = self.store.env.read_txn()?;
-        let mut versions = Vec::new();
+        let mut versions: Vec<BlobArtifactVersion> = Vec::new();
         for entry in VERSIONS.iter_from(&self.store, &rtxn, artifact_id.as_bytes())? {
             let ((_, key_version), record) = entry?;
-            let first_version = versions
-                .first()
-                .map_or(record.version, |first: &BlobArtifactVersion| first.version);
-            let expected =
-                versions
+            if key_version != record.version
+                || versions
                     .last()
-                    .map_or(Ok(record.version), |prior: &BlobArtifactVersion| {
-                        prior
-                            .version
-                            .checked_add(1)
-                            .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))
-                    })?;
-            if record.version != expected || key_version != record.version {
+                    .is_some_and(|prior| prior.version >= record.version)
+            {
                 return Err(Error::CorruptedIndex("blob artifact version chain"));
             }
-            if let Some(parent) = record.parent_version
-                && (parent < first_version
-                    || parent >= record.version
-                    || versions.get((parent - first_version) as usize).is_none())
+            if record
+                .parent_version
+                .is_some_and(|parent| parent == 0 || parent >= record.version)
             {
                 return Err(Error::CorruptedIndex("blob artifact version parent"));
             }

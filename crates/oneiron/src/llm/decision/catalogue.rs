@@ -400,6 +400,16 @@ pub const SIEVE_CONFIDENCE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Triage,
 };
 
+/// Do two claims that different children of one night proposed, in one exposure group, state
+/// the same thing (OF-498d)? The fixed choices are same_as, no_link and unresolved; a same_as
+/// only proposes a SameAs status claim, never an applied edge. Keyed by the pair's position in
+/// its call.
+pub const NIGHTLY_LINK: QuestionFamily = QuestionFamily {
+    name: "dreamer.nightly.link",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -443,4 +453,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SIEVE_KIND,
     SIEVE_ENTITY,
     SIEVE_CONFIDENCE,
+    NIGHTLY_LINK,
 ];
