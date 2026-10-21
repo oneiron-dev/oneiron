@@ -64,6 +64,19 @@ pub enum CodeError {
     },
     #[error("sandbox `{backend}` abandoned after bridge loss")]
     SandboxAbandoned { backend: &'static str },
+    /// A foreign guest's proposal spool append would cross the host's disk
+    /// floor (FIX 7650): the disk's measured free space, `available`, is
+    /// short of `needed`, the configured `reserve` plus every admitted write
+    /// still pending and this append. Nothing of the append was written; the
+    /// run fails and proposes nothing. Retry once the disk has room.
+    #[error(
+        "sandbox_proposal_disk_floor: a proposal spool append needs {needed} bytes free, keeping the {reserve}-byte reserve, and the disk has {available}"
+    )]
+    SandboxProposalDiskFloor {
+        needed: u64,
+        available: u64,
+        reserve: u64,
+    },
     /// The sandbox overlay could not be read, or held an entry that would let
     /// a guest write reach past the proposal channel.
     #[error("microVM overlay error: {detail}")]
@@ -264,6 +277,7 @@ impl CodeError {
             Self::MicroVmBackendError { .. } | Self::SandboxAbandoned { .. } => {
                 ErrorKind::MicroVmBackendError
             }
+            Self::SandboxProposalDiskFloor { .. } => ErrorKind::SandboxProposalDiskFloor,
             Self::MicroVmOverlayError { .. } => ErrorKind::MicroVmOverlayError,
             Self::MicroVmCredentialDestinationDenied { .. } => {
                 ErrorKind::MicroVmCredentialDestinationDenied

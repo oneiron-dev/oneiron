@@ -50,6 +50,12 @@ use crate::git_wire::GitOid;
 use crate::secret_custody::{CustodyWrite, MASKED_FILE_BAND, MemberStep};
 use crate::temporal::TimeRange;
 
+mod read;
+pub(crate) use read::{
+    RepoBlobAddress, RepoBlobMarks, RepoMarkFacts, RepoSecretMarkLookup, add_place,
+    repo_secret_marks_for_hash_in_txn,
+};
+
 /// The predicate of one pushed key's mark.
 pub(crate) const REPO_SECRET_MARK_PREDICATE: &str = "repo.secret_mark";
 

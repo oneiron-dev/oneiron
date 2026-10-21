@@ -49,6 +49,7 @@ pub(crate) use audit_windows::{
 };
 mod chunks;
 pub mod evidence;
+pub(crate) mod follower;
 mod policy;
 mod read;
 mod recipes;

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1131 facade rows, 3942 declarations.
+Census: 1131 facade rows, 3944 declarations.
 Inputs: 1066 of 1131 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1018 of 1131 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -1710,7 +1710,11 @@ class TaskWorkflowHandoffUnreadableBody(TypedDict):
     id: EntityId
 class TaskWorkflowHandoffUnreadable(TypedDict):
     unreadable: TaskWorkflowHandoffUnreadableBody
-TaskWorkflowHandoff = Literal["goal_unmet"] | TaskWorkflowHandoffProgram | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+TaskWorkflowHandoff = Literal["goal_unmet", "interrupted"] | TaskWorkflowHandoffProgram | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+class TaskWorkflowOutcomeStartedBody(TypedDict):
+    at: int
+class TaskWorkflowOutcomeStarted(TypedDict):
+    started: TaskWorkflowOutcomeStartedBody
 class TaskWorkflowOutcomeDoneBody(TypedDict):
     receipt_ref: EntityId
 class TaskWorkflowOutcomeDone(TypedDict):
@@ -1720,7 +1724,7 @@ class TaskWorkflowOutcomeHandoffBody(TypedDict):
     receipt_ref: EntityId
 class TaskWorkflowOutcomeHandoff(TypedDict):
     handoff: TaskWorkflowOutcomeHandoffBody
-TaskWorkflowOutcome = Literal["pending"] | TaskWorkflowOutcomeDone | TaskWorkflowOutcomeHandoff
+TaskWorkflowOutcome = Literal["pending"] | TaskWorkflowOutcomeStarted | TaskWorkflowOutcomeDone | TaskWorkflowOutcomeHandoff
 class TaskWorkflowStatus(TypedDict):
     attempt_ref: str
     requested: EntityId
@@ -10829,11 +10833,19 @@ class CodeImportAnchor(TypedDict):
     receive_provenance: EntityId
     snapshot: EntityId
     snapshot_fork_hash: str
+RepoFileProjectionKind = Literal["masked", "opaque"]
+class RepoFileProjectionView(TypedDict):
+    kind: RepoFileProjectionKind
+    source_blob: str
+    copy_blake3: str
+    copy_size_bytes: int
+    way_out: str
 class CodeSnapshotFile(TypedDict):
     path: str
     content_hash_blake3: str
     size_bytes: int
     mode: int
+    projection: NotRequired[RepoFileProjectionView | None]
 class CodeImportManifestFile(TypedDict):
     git_oid: str
     file: CodeSnapshotFile
@@ -11334,6 +11346,7 @@ class CodeViewFileBytes(TypedDict):
     path: str
     bytes: list[int]
     sha256: str
+    projection: NotRequired[RepoFileProjectionView | None]
 class CodeSecretTaintRef(TypedDict):
     secret_ref: str
     rotation_generation: int
@@ -18398,6 +18411,10 @@ class WakeRecipePolicy(TypedDict):
     arc_min_new_statements: int
     arc_child_calls_per_wake: int
     audit_window_instruction: str
+    follower_enabled: bool
+    follower_instruction: str
+    follower_keyframe_instruction: str
+    follower_sizing_bytes_per_token: int
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
 class SieveLeaseRequest(TypedDict):

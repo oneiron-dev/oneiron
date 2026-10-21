@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1131 facade rows, 3924 generated types.
+// UniFFI census: 1131 facade rows, 3926 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1083.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -4587,6 +4587,8 @@ pub enum TaskWorkflowHandoff {
         #[serde(rename = "id")]
         id: String,
     },
+    #[serde(rename = "interrupted")]
+    Interrupted,
 }
 
 /// `oneiron::task_verb::highway_types::TaskWorkflowOutcome`.
@@ -4594,6 +4596,11 @@ pub enum TaskWorkflowHandoff {
 pub enum TaskWorkflowOutcome {
     #[serde(rename = "pending")]
     Pending,
+    #[serde(rename = "started")]
+    Started {
+        #[serde(rename = "at")]
+        at: u64,
+    },
     #[serde(rename = "done")]
     Done {
         #[serde(rename = "receipt_ref")]
@@ -33572,6 +33579,30 @@ pub struct CodeImportAnchor {
     pub snapshot_fork_hash: String,
 }
 
+/// `oneiron::origin::secret_projection::types::RepoFileProjectionKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RepoFileProjectionKind {
+    #[serde(rename = "masked")]
+    Masked,
+    #[serde(rename = "opaque")]
+    Opaque,
+}
+
+/// `oneiron::origin::secret_projection::types::RepoFileProjectionView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoFileProjectionView {
+    #[serde(rename = "kind")]
+    pub kind: RepoFileProjectionKind,
+    #[serde(rename = "source_blob")]
+    pub source_blob: String,
+    #[serde(rename = "copy_blake3")]
+    pub copy_blake3: String,
+    #[serde(rename = "copy_size_bytes")]
+    pub copy_size_bytes: u64,
+    #[serde(rename = "way_out")]
+    pub way_out: String,
+}
+
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotFile`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CodeSnapshotFile {
@@ -33583,6 +33614,12 @@ pub struct CodeSnapshotFile {
     pub size_bytes: u64,
     #[serde(rename = "mode")]
     pub mode: u32,
+    #[serde(
+        rename = "projection",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub projection: Option<RepoFileProjectionView>,
 }
 
 /// `oneiron::memory::origin_doors::import_types::CodeImportManifestFile`.
@@ -35264,6 +35301,12 @@ pub struct CodeViewFileBytes {
     pub bytes: Vec<u8>,
     #[serde(rename = "sha256")]
     pub sha256: String,
+    #[serde(
+        rename = "projection",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub projection: Option<RepoFileProjectionView>,
 }
 
 /// `oneiron::memory::code_view_doors::types::CodeSecretTaintRef`.
@@ -56306,6 +56349,14 @@ pub struct WakeRecipePolicy {
     pub arc_child_calls_per_wake: u32,
     #[serde(rename = "audit_window_instruction")]
     pub audit_window_instruction: String,
+    #[serde(rename = "follower_enabled")]
+    pub follower_enabled: bool,
+    #[serde(rename = "follower_instruction")]
+    pub follower_instruction: String,
+    #[serde(rename = "follower_keyframe_instruction")]
+    pub follower_keyframe_instruction: String,
+    #[serde(rename = "follower_sizing_bytes_per_token")]
+    pub follower_sizing_bytes_per_token: u32,
 }
 
 /// `oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest`.
