@@ -17,8 +17,8 @@ use crate::dreamer_runner::{
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext, DurableStepError,
-    LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, Scope, StepOutcome,
-    TierPrecedence, call_as_step,
+    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat, Scope,
+    StepOutcome, TierPrecedence, call_as_step_checked,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{
@@ -356,7 +356,15 @@ impl ConsolidationExecutor<'_> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
-            let response = match call_as_step(&step, call.backend, self.guard, request).await {
+            let response = match call_as_step_checked(
+                &step,
+                call.backend,
+                self.guard,
+                request,
+                &check_narrative_reply,
+            )
+            .await
+            {
                 Ok(StepOutcome::Finished {
                     response,
                     failure_policy,
@@ -373,7 +381,7 @@ impl ConsolidationExecutor<'_> {
                             ctx.vault,
                             attempt.status.attempt.id,
                             hash,
-                            "nightly narrative requires generation",
+                            NARRATIVE_FALLBACK,
                             &response,
                         );
                     }
@@ -383,10 +391,15 @@ impl ConsolidationExecutor<'_> {
                     return Ok(charges
                         .park_for("durable step trapped for resume", DreamerParkCause::Signal));
                 }
-                Err(DurableStepError::SpentFinalizeRefused { usage })
-                | Err(DurableStepError::SpentSchemaValidation { usage, .. }) => {
+                Err(DurableStepError::SpentFinalizeRefused { usage }) => {
                     charges.record_usage(&usage);
                     return Ok(charges.checkpoint());
+                }
+                // A reply the check refused was paid and never memoized: it
+                // is asked again after its retry delay (FIX 7431).
+                Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
+                    charges.record_usage(&usage);
+                    return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
                 }
                 Err(error) => {
                     return Ok(
@@ -397,18 +410,19 @@ impl ConsolidationExecutor<'_> {
             if ctx.deadline.expired() {
                 return Ok(charges.checkpoint());
             }
-            let narrative: String = response
-                .message
-                .content
-                .iter()
-                .filter_map(|part| match part {
-                    ContentPart::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect();
-            if narrative.trim().is_empty() {
-                return Ok(charges.park_for("empty nightly narrative", DreamerParkCause::Retry));
-            }
+            let narrative = match narrative_text(&response) {
+                Ok(narrative) => narrative,
+                // Only a memo stored before the check can be empty: it goes,
+                // and the Retry asks again (FIX 7431).
+                Err(reason) => {
+                    return charges.park_refused_reply(
+                        ctx.vault,
+                        attempt.status.attempt.id,
+                        hash,
+                        reason,
+                    );
+                }
+            };
             let candidate = ClaimCandidate::new(
                 "dreamer.arc.summary",
                 ClaimSubject::Entity(first.scope_project),
@@ -545,4 +559,34 @@ fn scoped_draft(
 
 fn invalid() -> Error {
     Error::InvalidConfig("invalid nightly merge input".into())
+}
+
+/// Why a narrative step parks on a deterministic fallback.
+const NARRATIVE_FALLBACK: &str = "nightly narrative requires generation";
+/// Why a narrative reply is refused: it holds no text.
+const EMPTY_NARRATIVE: &str = "empty nightly narrative";
+
+/// A narrative reply's text, refused when blank. The step's check and the
+/// landing read it alike (FIX 7431).
+fn narrative_text(response: &LlmResponse) -> std::result::Result<String, &'static str> {
+    let narrative = super::step_charge::reply_text(response);
+    if narrative.trim().is_empty() {
+        Err(EMPTY_NARRATIVE)
+    } else {
+        Ok(narrative)
+    }
+}
+
+/// The narrative step's check (FIX 7431). A deterministic fallback parks at
+/// the site, as before, unless its park would resume as a Retry: that one is
+/// refused here, paid and never memoized, so the Retry asks the model again.
+/// Any other reply is refused when blank.
+fn check_narrative_reply(response: &LlmResponse) -> std::result::Result<(), String> {
+    if super::step_charge::retry_fallback(response) {
+        return Err(NARRATIVE_FALLBACK.to_owned());
+    }
+    if crate::llm::fallback_failure_class(response).is_some() {
+        return Ok(());
+    }
+    narrative_text(response).map(|_| ()).map_err(str::to_owned)
 }

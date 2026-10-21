@@ -21759,6 +21759,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resident_dream/reply.rs",
+     "purpose": "What a resident's dreaming reply must hold to land: a diary entry",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22019,7 +22029,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -22251,6 +22261,16 @@
      "surface": {
       "crate-vis": 21,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/wake_plan/chunks.rs",
+     "purpose": "Rule 5 for a selection retry's source budget (L02-38): `max_sources` is a work size, never a total",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -68077,7 +68097,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 80,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69122,7 +69142,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4370,
+   "source_files": 4372,
    "test_files": 902
   },
   "oneiron-android": {
