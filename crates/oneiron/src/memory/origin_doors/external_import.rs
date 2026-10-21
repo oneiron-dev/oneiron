@@ -20,7 +20,6 @@ use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryErro
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::merge_queue_doors::{MergeQueueCheckWorkView, check_work_view};
-use crate::merge_queue::MergeQueue;
 use crate::repo_mutation::external_import::{
     EXTERNAL_IMPORT_STATUS_ROUTE, ExternalGitSourceHost, ExternalImportLookup,
     ExternalImportReceipt, ExternalImportRequest, ExternalImportStatus, ExternalStatusRoute,
@@ -232,17 +231,16 @@ impl Memory<'_> {
         if candidate.check_work_refs.is_empty() {
             return Ok(Vec::new());
         }
-        let Ok(queue) = MergeQueue::open(self.vault, served.repo_ref.clone()) else {
-            return Ok(Vec::new());
-        };
-        let config = queue.checker_configuration()?;
+        // Read by the served store, never through its null-pinned folder
+        // (FIX 6869).
+        let config = self.vault.queue_check_configuration_of(&served.store)?;
         let mut seen = std::collections::BTreeSet::new();
         let mut checks = Vec::new();
         for work_ref in &candidate.check_work_refs {
             if !seen.insert(work_ref.as_str()) {
                 continue;
             }
-            if let Some(work) = queue.check_work(work_ref)? {
+            if let Some(work) = self.vault.queue_check_work_of(&served.store, work_ref)? {
                 checks.push(check_work_view(config.clone(), work));
             }
         }

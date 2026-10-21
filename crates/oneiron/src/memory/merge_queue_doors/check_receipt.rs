@@ -95,8 +95,8 @@ impl Memory<'_> {
                 MemoryError::bad_request("receipt_ref is not a queue-check inputs reference")
             })?;
         let repo = self.merge_queue_repo(input.repo)?;
-        let queue = self.merge_queue_of(&repo)?;
-        let Some(work) = queue.check_work(&input.work_ref)? else {
+        let store = repo.identity.as_hex();
+        let Some(work) = self.vault.queue_check_work_of(&store, &input.work_ref)? else {
             return Ok(None);
         };
         if work.repo != repo.repo || work.store != repo.identity.as_hex() {

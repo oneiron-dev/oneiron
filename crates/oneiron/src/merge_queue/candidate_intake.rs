@@ -3,7 +3,7 @@
 //! after the queue's own recovery and urgent steps. It opens nothing new:
 //! the enrolled configuration proved this store, the queue's own rows give
 //! its sealed green and Baseline, and matching creates Proposed work only.
-use super::check_store::{CHECK_WORK, QueueCheckConfiguration};
+use super::check_store::QueueCheckConfiguration;
 use super::{MergeQueue, QueueSealTarget};
 use crate::codebase::RepoRef;
 use crate::error::Result;
@@ -92,26 +92,5 @@ impl MergeQueue<'_> {
             green,
             baseline,
         }))
-    }
-
-    /// This queue's batch refs and checker work refs, ids only, in key
-    /// order: the owner's workbench links (G4 PR2). A pure read.
-    ///
-    /// # Errors
-    /// A store failure.
-    pub(crate) fn workbench_refs(&self) -> Result<(Vec<String>, Vec<String>)> {
-        let txn = self.vault.store.env.read_txn()?;
-        let batches = self
-            .repo_batches_in_txn(&txn)?
-            .into_iter()
-            .map(|batch| batch.id)
-            .collect();
-        let prefix = format!("{}:", self.repo.identity().as_hex());
-        let works = CHECK_WORK
-            .scan_from(&self.vault.store, &txn, prefix.as_bytes())?
-            .into_iter()
-            .map(|(_, work)| work.work_ref().to_owned())
-            .collect();
-        Ok((batches, works))
     }
 }

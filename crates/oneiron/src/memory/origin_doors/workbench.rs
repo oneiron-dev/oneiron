@@ -23,7 +23,6 @@ use crate::edge::EdgeKind;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::git_wire::GitWire;
 use crate::memory::merge_queue_doors::MergeQueuePointersView;
-use crate::merge_queue::MergeQueue;
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 
@@ -160,28 +159,32 @@ impl Memory<'_> {
         }
         drop(txn);
         run_works.sort_by_key(|work| work.work);
-        let (queue, green_revision, batch_refs, check_work_refs) =
-            match MergeQueue::open(self.vault, served.repo_ref.clone()) {
-                Ok(queue) => {
-                    let pointers = queue
-                        .pointers()
-                        .ok()
-                        .map(|pointers| MergeQueuePointersView {
-                            repo: served.repo,
-                            head_commit: pointers.head,
-                            green_commit: pointers.green,
-                            pending_slow_batch_refs: pointers.pending_slow,
-                        });
-                    let green = queue
-                        .green_revision()
-                        .ok()
-                        .and_then(Result::ok)
-                        .map(|green| green.revision_id());
-                    let (batches, works) = queue.workbench_refs()?;
-                    (pointers, green, batches, works)
-                }
-                Err(_) => (None, None, Vec::new(), Vec::new()),
-            };
+        // A served anchor's queue is its bound source as it stands; a
+        // missing one reads not ready, and its refs read by store (FIX 6869).
+        let (queue, green_revision) = match self
+            .vault
+            .open_queue_for_artifact(served.repo, &served.repo_ref)
+        {
+            Ok(queue) => {
+                let pointers = queue
+                    .pointers()
+                    .ok()
+                    .map(|pointers| MergeQueuePointersView {
+                        repo: served.repo,
+                        head_commit: pointers.head,
+                        green_commit: pointers.green,
+                        pending_slow_batch_refs: pointers.pending_slow,
+                    });
+                let green = queue
+                    .green_revision()
+                    .ok()
+                    .and_then(Result::ok)
+                    .map(|green| green.revision_id());
+                (pointers, green)
+            }
+            Err(_) => (None, None),
+        };
+        let (batch_refs, check_work_refs) = self.vault.queue_workbench_refs_of(&served.store)?;
         let mut ingress = BTreeSet::new();
         let mut fork_sessions = BTreeSet::new();
         for (provenance, row) in self.vault.received_code_ingress_rows(&served.store)? {
@@ -367,7 +370,10 @@ impl Memory<'_> {
         served: &ServedCodeRepo,
         candidate: EntityId,
     ) -> MemoryResult<Vec<EntityId>> {
-        let Ok(queue) = MergeQueue::open(self.vault, served.repo_ref.clone()) else {
+        let Ok(queue) = self
+            .vault
+            .open_queue_for_artifact(served.repo, &served.repo_ref)
+        else {
             return Ok(Vec::new());
         };
         let mut next: Option<CodeRevision> = queue

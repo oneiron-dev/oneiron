@@ -105,7 +105,7 @@ pub enum QueueCheckRequest {
 impl QueueCheckRequest {
     /// The request's identity: the same init, check or diagnosis maps to
     /// the same work row. A refresh is the same request asked again.
-    fn digest(&self) -> Result<String> {
+    pub(super) fn digest(&self) -> Result<String> {
         let identity = match self {
             Self::Initialize {
                 baseline_commit,
@@ -192,6 +192,10 @@ pub struct QueueCheckWork {
     /// A checked init's baseline seal: pending from the checked stage,
     /// sealed once its tested revision is finalized (G2 PR3).
     pub baseline_seal: Option<super::QueueRevisionLink>,
+    /// A served import's checked init: the import its queue source froze
+    /// (FIX 6869). `None` on every other work and every native init.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<super::ServedQueueSource>,
 }
 
 impl QueueCheckWork {
@@ -282,10 +286,13 @@ impl MergeQueue<'_> {
     /// answered as it stands; a new, held, unconfigured or refreshed one is
     /// queued as a new generation. `approve` mints the owner's queued
     /// approval in this writer, for a configuration created or renewed.
+    /// An init's served `source` is frozen on its new row in this writer;
+    /// an existing row keeps its own and is never retargeted (FIX 6869).
     pub(super) fn submit_check_work(
         &self,
         repo: EntityId,
         request: QueueCheckRequest,
+        source: Option<super::ServedQueueSource>,
         config: ConfigWrite,
         need: Option<QueueCheckNeed>,
         approve: impl FnOnce(&heed::RoTxn<'_>, &str) -> Result<QueuedCheckApproval>,
@@ -294,6 +301,13 @@ impl MergeQueue<'_> {
         let store = &self.vault.store;
         let mut txn = store.env.write_txn()?;
         let mut work = match CHECK_WORK.get(store, &txn, &key)? {
+            Some(work) if work.source != source => {
+                return Err(Error::Refused(
+                    "this init request is frozen to another served import; ask again at that \
+                     import's commit, or at another"
+                        .to_owned(),
+                ));
+            }
             Some(work) => work,
             None => QueueCheckWork {
                 schema_version: 1,
@@ -312,6 +326,7 @@ impl MergeQueue<'_> {
                 pointers: None,
                 quarantine: None,
                 baseline_seal: None,
+                source,
             },
         };
         match config {

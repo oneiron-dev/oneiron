@@ -22,11 +22,20 @@ impl Memory<'_> {
     ) -> MemoryResult<MergeQueueCheckWorkView> {
         self.merge_queue_owner(owner)?;
         let repo = self.merge_queue_repo(input.repo)?;
-        let queue = self.merge_queue_of(&repo)?;
+        // A served anchor's import becomes its queue source here (FIX 6869).
+        let prepared = self.vault.prepare_queue_initialization(
+            owner,
+            repo.repo,
+            &repo.repo_ref,
+            &input.baseline_commit,
+            input.contract_baseline_ref.as_deref(),
+        )?;
+        let queue = prepared.queue;
         let work = queue.request_initialization(
             repo.repo,
             &input.baseline_commit,
             input.contract_baseline_ref,
+            prepared.source,
             |txn, digest| owner.queue_check_approval_in_txn(self.vault, txn, repo.repo, digest),
         )?;
         Ok(check_work_view(queue.checker_configuration()?, work))
@@ -78,11 +87,16 @@ impl Memory<'_> {
     ) -> MemoryResult<MergeQueueCheckWorkView> {
         self.merge_queue_owner(owner)?;
         let repo = self.merge_queue_repo(input.repo)?;
-        let queue = self.merge_queue_of(&repo)?;
-        let work = queue
-            .check_work(&input.work_ref)?
+        // Read by the admitted store, so no materialized tree is needed.
+        let store = repo.identity.as_hex();
+        let work = self
+            .vault
+            .queue_check_work_of(&store, &input.work_ref)?
             .ok_or_else(|| MemoryError::not_found("merge queue checker work not found"))?;
-        Ok(check_work_view(queue.checker_configuration()?, work))
+        Ok(check_work_view(
+            self.vault.queue_check_configuration_of(&store)?,
+            work,
+        ))
     }
 }
 

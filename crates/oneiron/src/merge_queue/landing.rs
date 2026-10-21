@@ -92,6 +92,7 @@ impl MergeQueue<'_> {
         if head == batch.expected_head {
             return Err(invalid("landing did not create a commit"));
         }
+        self.pin_served_queue_head(queue, &head)?;
         queue.pointers.head = head.clone();
         queue.pointers.pending_slow.push(batch.id.clone());
         queue.intent = None;
