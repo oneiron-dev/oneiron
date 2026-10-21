@@ -231,6 +231,10 @@ pub enum LiveDeckRefusal {
     /// Live nodes have no retained binding to project over.
     UnboundNodes,
     Encoding,
+    /// A size the input declares, measured before it is allocated, is more
+    /// than the host can hold now: its free memory, its address space, or
+    /// its allocator. A resource floor, never a count limit.
+    MemoryFloor,
 }
 
 impl LiveDeckRefusal {
@@ -247,6 +251,7 @@ impl LiveDeckRefusal {
             Self::HeadAdvanced => "head_advanced",
             Self::UnboundNodes => "unbound_nodes",
             Self::Encoding => "encoding",
+            Self::MemoryFloor => "memory_floor",
         }
     }
 }

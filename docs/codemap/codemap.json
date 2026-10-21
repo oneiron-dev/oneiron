@@ -2298,7 +2298,17 @@
      "path": "src/attempt_queue/payload_erase.rs",
      "purpose": "An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/payload_erase/response.rs",
+     "purpose": "An agent dispatch's payload text in checkpoint images (FIX 7115, KEY STORE = A): its attempt row is a…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -14211,7 +14221,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 7,
       "re-export": 24
      }
@@ -15002,7 +15012,17 @@
      "path": "src/code_run/storage/wait_holders.rs",
      "purpose": "Who held each code-run wait's reply (FIX 5718, KEY STORE = A; Engine ruling 2): one durable row per run a…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/wait_holders/response.rs",
+     "purpose": "A wait's replies in checkpoint images (FIX 6588, KEY STORE = A): each delivery a run was given and each…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -20025,7 +20045,7 @@
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -25414,7 +25434,7 @@
      "purpose": "Tournament wire types, their validating constructors, and the pinned bounds",
      "surface": {
       "const": 4,
-      "crate-vis": 10,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 12,
       "struct": 14
@@ -42533,6 +42553,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/room/export_roots.rs",
+     "purpose": "The threads an off-record room's copy carries, for its export's audit and notices (FIX 6427, 6681), split…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -42844,6 +42874,16 @@
      "purpose": "A chart frame's chart in the body's `charts` root, keyed by the frame's identity (ARCH-0077: \"Ordered…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/pptx/doc/chart/categories.rs",
+     "purpose": "A chart's category sets in the body's `charts` root (ARCH-0077 :597, \"Chart categories and series | Ordered…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -45005,6 +45045,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ConnectorCallInput"
+     ],
+     "path": "src/outbound_consent/connector_call_input.rs",
+     "purpose": "A connector call whose connector asked for input, kept on the call's own row (ONE-2510, FIX 3837; canon…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/outbound_consent/connector_call_output.rs",
      "purpose": "A connector call's reply after its send (FIX 7646, FIX 7647): the host that sent it cleared it of the…",
@@ -45089,7 +45143,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -49412,7 +49466,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/landing.rs",
@@ -49521,7 +49575,7 @@
      "path": "src/recovery/checkpoint/response_rows.rs",
      "purpose": "The row-held responses a checkpoint carries (KS-2B1, FIX 5683 part B1): a turn program's STEP bodies, LLM…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -51524,17 +51578,31 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "EngineScan",
       "ScanCheck"
      ],
      "path": "src/scan_check.rs",
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
      "surface": {
-      "const": 4,
+      "const": 2,
       "crate-vis": 9,
-      "enum": 1,
-      "fn": 4,
+      "fn": 3,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EngineScan"
+     ],
+     "path": "src/scan_check/engine_scan.rs",
+     "purpose": "The engine scans whose tables grow with use (rule 5), each with its closed code, the threshold it asks past…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -52698,7 +52766,17 @@
      "path": "src/self_heal/blocked_reports/source.rs",
      "purpose": "A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/blocked_reports/source/response.rs",
+     "purpose": "A blocked report's captured requests in checkpoint images (FIX 6708, KEY STORE = A): each receipt row and…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -56101,6 +56179,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/deferred_approval.rs",
+     "purpose": "An approved tradeoff that cannot admit yet (FIX 8848)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -56116,6 +56204,16 @@
       "enum": 1,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/judge_binding.rs",
+     "purpose": "The judge a kept score was measured by (FIX 8846)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -56136,7 +56234,7 @@
      "path": "src/skill_optimize/gate/live.rs",
      "purpose": "Live goal-axis measurement of a proposal (ARCH-0053: \"Primary axes are measured online.\" \"Offline axes run…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -56207,6 +56305,16 @@
       "crate-vis": 10,
       "fn": 11,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/tradeoff_capacity.rs",
+     "purpose": "Tradeoff rule counts against the resolved policy limits (FIX 8771, 8847)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -56968,7 +57076,17 @@
      "path": "src/store/body_envelope/response.rs",
      "purpose": "Row-held response bodies under body custody (KS-2B1, FIX 5683 part B1; owner KEY STORE = A)",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/response/shared_wait.rs",
+     "purpose": "A wait's settled reply, shared by every holder of the wait (FIX 6588, KEY STORE = A): one holder's erase…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -57493,7 +57611,27 @@
      "path": "src/store/key_custody/head.rs",
      "purpose": "The sealed custody head (KS-4, FIX 5685): the latest live entries of one lineage and every retirement fact…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/head/pad_scope.rs",
+     "purpose": "World pad compartments (KS-5, FIX 6706, L04 half): one world's pads, live and retired, sealed apart from…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/head/scope.rs",
+     "purpose": "Who reads each compartment of a custody head, who its keys are wrapped to, and what a restore opens it with",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -57547,13 +57685,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "mod": 1,
       "re-export": 1
      }
@@ -57784,7 +57922,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "mod": 1,
       "re-export": 17
      }
@@ -64772,7 +64910,7 @@
      "path": "src/vault_cleanup/attempt_retention.rs",
      "purpose": "Reversible retention for private queue records; the serialized attempt is never changed",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 3
      }
     },
@@ -64829,7 +64967,7 @@
      "path": "src/vault_cleanup/marks.rs",
      "purpose": "Cleanup marks keyed by id16: a run's archive mark on a completed attempt, and the owner's kept mark on an…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -65475,7 +65613,7 @@
      "path": "src/verbs/connector_call.rs",
      "purpose": "`connector.call` and `connector.schema` (ONE-2510): one tool of one catalogued connector, called by name…",
      "surface": {
-      "const": 1,
+      "const": 2,
       "enum": 3,
       "fn": 9,
       "struct": 6
@@ -68800,7 +68938,7 @@
      "path": "src/workspace_roster/rooms/audience_notices.rs",
      "purpose": "What a private thread's members are told, and the audience its own view shows them (owner ruling 2026-10-20…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1
      }
     },
@@ -70795,7 +70933,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -70977,7 +71115,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 137,
+     "files": 138,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71607,14 +71745,14 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71642,7 +71780,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71866,7 +72004,7 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
     "scan_check": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -71915,7 +72053,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -71999,7 +72137,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 47,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72034,7 +72172,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 132,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72267,7 +72405,7 @@
    },
    "over_bar": 171,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4627,
+   "source_files": 4640,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76814,7 +76952,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArtifactError",
@@ -78918,7 +79056,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Conversion",
@@ -78939,6 +79077,16 @@
      "purpose": "Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office…",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/convert/chart.rs",
+     "purpose": "A chart payload settled into the form its export writes (OF-510): the plots Change Chart Type lays out…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -79004,13 +79152,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/live/held/chart.rs",
      "purpose": "A chart frame's data as the live model holds it: its chart part, its plots in document order, and each…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -79237,7 +79385,7 @@
      "path": "src/live/pptx.rs",
      "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 7,
       "fn": 27,
       "re-export": 3,
@@ -79258,9 +79406,27 @@
      "path": "src/live/pptx/chart.rs",
      "purpose": "A live chart's model (ARCH-0077, \"One deck, one document\": \"Ordered category and series ids over one…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 2,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CategoryField",
+      "ChartCategories",
+      "ChartCategory"
+     ],
+     "path": "src/live/pptx/chart/categories.rs",
+     "purpose": "A chart's categories (ARCH-0077 :597, \"Chart categories and series | Ordered ids over one canonical dataset",
+     "surface": {
+      "crate-vis": 14,
+      "enum": 1,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -79269,9 +79435,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/live/pptx/chart_ops.rs",
-     "purpose": "Chart edits applied by series identity; a whole chart written over the chart a node holds lowered to the…",
+     "purpose": "Chart edits applied by series and category identity; a whole chart written over the chart a node holds…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/pptx/chart_ops/categories.rs",
+     "purpose": "Category edits applied by point identity, a whole set written over the one a chart or series holds lowered…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -79315,13 +79491,33 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/live/reshape.rs",
      "purpose": "Shape changes to a written table or chart at export (OF-510)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/chart.rs",
+     "purpose": "A written chart's rewrite over its retained part (OF-510, FIX 3492, FIX 3493): its plots, axes and series…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/dataset.rs",
+     "purpose": "A rewritten chart's rebuilt workbook (OF-510, FIX 3493, FIX 6714): the dataset its data sheet holds (each…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -79331,7 +79527,17 @@
      "path": "src/live/reshape/layout.rs",
      "purpose": "How a rewritten chart's live series take its held ones (OF-510, FIX 3492): the plots Change Chart Type lays…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/points.rs",
+     "purpose": "A rewritten chart's category points (OF-510, FIX 3493): a multi-level category slot written from its levels…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -79368,6 +79574,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/live/reshape/workbook/range.rs",
+     "purpose": "A chart reference's cells as the workbook edit reads them: a direct one-row or one-column range on one…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/live/svg_fallback.rs",
      "purpose": "A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster…",
      "surface": {
@@ -79385,9 +79601,29 @@
      "path": "src/native_patch/chart.rs",
      "purpose": "Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native_patch/chart/cache.rs",
+     "purpose": "A series cache written in place (FIX 7987): only the points whose values the write changes, and the count…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native_patch/chart/categories.rs",
+     "purpose": "Multi-level categories (`c:multiLvlStrRef`, FIX 3493): a hierarchy's cache read level by level, leaf first…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -79407,7 +79643,7 @@
      "path": "src/native_patch/mod.rs",
      "purpose": "Native tables and bounded classic charts (ARCH-0077 \"Creation operation\", \"Chart and table edits\")",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 1,
       "re-export": 1,
@@ -79439,7 +79675,17 @@
      "path": "src/native_patch/workbook.rs",
      "purpose": "The embedded workbook: direct A1 ranges, a SpreadsheetML cell reader, and a writer that rebuilds only the…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native_patch/workbook/cells.rs",
+     "purpose": "A worksheet's cells written in place (FIX 7987): a written cell keeps its own attributes and children (its…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -79864,14 +80110,14 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 38,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "The live deck body (ARCH-0077, \"Multiplayer: the target body shape\"; OF-510), built last in the deck chain"
     },
     "native_patch": {
-     "files": 5,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -79927,9 +80173,9 @@
      "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its named cell style…"
     }
    },
-   "over_bar": 10,
+   "over_bar": 9,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 115,
+   "source_files": 125,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -93228,7 +93474,7 @@
      "path": "src/connector_elicitation.rs",
      "purpose": "The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -100205,6 +100451,7 @@
       "CaseDecision",
       "CatalogSeed",
       "CatastropheClass",
+      "CategoryField",
       "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
@@ -100236,6 +100483,8 @@
       "ChannelSubscriptionRow",
       "ChannelSubscriptions",
       "ChannelSubscriptionsRequest",
+      "ChartCategories",
+      "ChartCategory",
       "ChartEdit",
       "ChartKind",
       "ChartSeries",
@@ -103691,8 +103940,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 958,
-      "struct": 2991
+      "enum": 959,
+      "struct": 2993
      }
     },
     {

@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1187 code-mode rows (1147 host rows, 40 run rows), 4022 declarations.
+// Census: 1187 code-mode rows (1147 host rows, 40 run rows), 4025 declarations.
 // Replies: 1067 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -2966,7 +2966,7 @@ declare namespace Sdk {
   type LiveVoiceToolRequest = { session_ref: string; call: ConnectorCallRequest };
   type ConnectorToolResult = { source: string; foreign: boolean; content: unknown; structured_content?: unknown | null; is_error: boolean; rpc_error?: unknown | null };
   type ConnectorQuestion = { key: string; message: string; requested_schema: unknown };
-  type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[]; approval_digest?: string | null } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; expires_at_ms: number; reasons?: string[] };
+  type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[]; approval_digest?: string | null } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; call_ref?: string | null; source: string; foreign: boolean; questions: ConnectorQuestion[]; live_until_ms: number; reasons?: string[] };
   type LiveVoiceToolReply = { processed: LiveVoiceProcessed; reply: ConnectorCallReply };
   type LiveVoiceSessionRequest = { session_ref: string };
   type AnonymousChatRequestTarget = "house_mind" | "plain_model";
@@ -3116,7 +3116,7 @@ declare namespace Sdk {
   type ConnectorSchemaRequest = { name: string; tool: string };
   type ConnectorSchemaReply = { source: string; foreign: boolean; input_schema?: unknown | null; destructive?: boolean | null; reasons?: string[] };
   type ConnectorCallStatusRequest = { call_ref: string };
-  type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[]; approval_digest?: string | null } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply };
+  type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[]; approval_digest?: string | null } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply } | { state: "awaiting_input"; call_ref: string; name: string; tool: string; generation: number; asked: number; uncertain?: boolean; reply: ConnectorCallReply };
   type OpenInput = { url: string };
   type TakeoverRecord = { by: string; asked?: string | null; taken_at_ms: number; returned_at_ms: number; inputs: number };
   type WindowSwitchCause = "opened" | "closed";
@@ -3467,7 +3467,9 @@ declare namespace Sdk {
   type TableMerge = { first_row: NodeId; first_column: NodeId; last_row: NodeId; last_column: NodeId };
   type TableBody = { rows: NodeId[]; columns: NodeId[]; cells?: Record<string, Record<string, string>>; merges?: TableMerge[] };
   type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar";
-  type ChartSeries = { id?: NodeId | null; name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null };
+  type ChartCategory = { id?: NodeId | null; levels?: (string | null)[] };
+  type ChartCategories = { level_count?: number; points?: ChartCategory[] };
+  type ChartSeries = { id?: NodeId | null; name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null };
   type ChartSource = "workbook" | "literal" | "cached";
   type ConnectorPreset = "straight" | "elbow" | "curved";
   type ConnectorEnd = { node: NodeId; site: number };
@@ -3477,7 +3479,7 @@ declare namespace Sdk {
   type PathPoint = { x: Coord; y: Coord };
   type PathCommand = { move_to: { to: PathPoint } } | { line_to: { to: PathPoint } } | { arc_to: { w_r: Coord; h_r: Coord; st_ang: Coord; sw_ang: Coord } } | { quad_bez_to: { control: PathPoint; to: PathPoint } } | { cubic_bez_to: { control1: PathPoint; control2: PathPoint; to: PathPoint } } | "close";
   type GeomPath = { w?: number | null; h?: number | null; fill?: PathFill | null; stroke?: boolean | null; extrusion_ok?: boolean | null; commands: PathCommand[] };
-  type NodePayload = { picture: { image: AssetRef } } | { held_picture: { media: HeldMedia } } | { table: TableBody } | { chart: { family: ChartKind; categories: string[]; series: ChartSeries[]; source?: ChartSource } } | { connector: { preset?: ConnectorPreset | null; start?: ConnectorEnd | null; end?: ConnectorEnd | null } } | { smart_art: { nodes: SmartArtNode[] } } | { ole: { prog_id?: string | null; preview?: HeldMedia | null } } | { custom_geometry: { paths: GeomPath[] } };
+  type NodePayload = { picture: { image: AssetRef } } | { held_picture: { media: HeldMedia } } | { table: TableBody } | { chart: { family: ChartKind; categories: ChartCategories; series: ChartSeries[]; source?: ChartSource } } | { connector: { preset?: ConnectorPreset | null; start?: ConnectorEnd | null; end?: ConnectorEnd | null } } | { smart_art: { nodes: SmartArtNode[] } } | { ole: { prog_id?: string | null; preview?: HeldMedia | null } } | { custom_geometry: { paths: GeomPath[] } };
   type Run = { text: string; bold?: boolean | null; italic?: boolean | null; size?: number | null; latin?: string | null };
   type Paragraph = { id: NodeId; level: number; runs: Run[] };
   type TextBody = { paragraphs: Paragraph[] };
@@ -3491,7 +3493,7 @@ declare namespace Sdk {
   type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null } | { op: "mark"; block: string; at: number; len: number; mark: DocxMark; on: boolean };
   type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "define_format"; id: string; format: XlsxFormat } | { op: "set_format"; sheet: string; cell: string; format: string } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null } | { op: "add_sheet"; sheet: string; at?: number | null } | { op: "rename_sheet"; sheet: string; name: string } | { op: "move_sheet"; sheet: string; at: number } | { op: "delete_sheet"; sheet: string } | { op: "set_sheet_visibility"; sheet: string; visibility: XlsxSheetVisibility } | { op: "insert_rows"; sheet: string; at: number; count: number } | { op: "delete_rows"; sheet: string; at: number; count: number } | { op: "insert_columns"; sheet: string; at: number; count: number } | { op: "delete_columns"; sheet: string; at: number; count: number };
   type TableEdit = { insert_row: { id?: NodeId | null; after?: NodeId | null } } | { insert_column: { id?: NodeId | null; after?: NodeId | null } } | { delete_row: { row: NodeId } } | { delete_column: { column: NodeId } } | { move_row: { row: NodeId; after?: NodeId | null } } | { move_column: { column: NodeId; after?: NodeId | null } } | { set_cell: { row: NodeId; column: NodeId; text: string } } | { merge: TableMerge } | { unmerge: TableMerge };
-  type ChartEdit = { insert_series: { id?: NodeId | null; after?: NodeId | null; name?: string; values?: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null } } | { delete_series: { series: NodeId } } | { move_series: { series: NodeId; after?: NodeId | null } } | { set_series_name: { series: NodeId; name: string } } | { set_series_values: { series: NodeId; values: (number | null)[] } } | { set_series_family: { series: NodeId; family?: ChartKind | null } } | { set_series_x: { series: NodeId; x?: (number | null)[] | null } } | { set_family: { family: ChartKind } } | { set_categories: { categories: string[] } } | { set_source: { source: ChartSource } };
+  type ChartEdit = { insert_series: { id?: NodeId | null; after?: NodeId | null; name?: string; values?: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null } } | { delete_series: { series: NodeId } } | { move_series: { series: NodeId; after?: NodeId | null } } | { set_series_name: { series: NodeId; name: string } } | { set_series_values: { series: NodeId; values: (number | null)[] } } | { set_series_family: { series: NodeId; family?: ChartKind | null } } | { set_series_x: { series: NodeId; x?: (number | null)[] | null } } | { set_family: { family: ChartKind } } | { set_categories: { categories: ChartCategories } } | { set_series_categories: { series: NodeId; categories?: ChartCategories | null } } | { insert_category: { owner?: NodeId | null; id?: NodeId | null; after?: NodeId | null; levels?: (string | null)[] } } | { delete_category: { owner?: NodeId | null; category: NodeId } } | { move_category: { owner?: NodeId | null; category: NodeId; after?: NodeId | null } } | { set_category_levels: { owner?: NodeId | null; category: NodeId; levels: (string | null)[] } } | { reserve_categories: { ids: NodeId[] } } | { set_source: { source: ChartSource } };
   type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { set_preset: { node: NodeId; preset: Preset } } | { set_payload: { node: NodeId; payload: NodePayload } } | { edit_table: { node: NodeId; edits: TableEdit[] } } | { edit_chart: { node: NodeId; edits: ChartEdit[] } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } };
   type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] } | { format: "pptx"; ops: DeckOp[] };
   type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
@@ -3534,8 +3536,9 @@ declare namespace Sdk {
   type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
   type NodeMove = { node: NodeId; old_parent?: NodeId | null; new_parent?: NodeId | null; old_index?: number | null; new_index?: number | null; cross_slide: boolean };
   type OpaqueChange = { part: string; base?: number[] | null; proposal?: number[] | null };
-  type SeriesField = "name" | "values" | "family" | "x" | "order" | "existence";
-  type Conflict = { both_moved: { node: NodeId } } | { deleted_vs_edited: { node: NodeId; deleted_by_head: boolean } } | { text_vs_text: { node: NodeId } } | { geometry_vs_reparent: { node: NodeId } } | { both_replaced_opaque: { part: string } } | { payload_vs_payload: { node: NodeId } } | { cell_vs_cell: { node: NodeId; row: NodeId; column: NodeId } } | { series_vs_series: { node: NodeId; series: NodeId; field: SeriesField } };
+  type SeriesField = "name" | "values" | "family" | "x" | "categories" | "order" | "existence";
+  type CategoryField = "levels" | "order" | "existence";
+  type Conflict = { both_moved: { node: NodeId } } | { deleted_vs_edited: { node: NodeId; deleted_by_head: boolean } } | { text_vs_text: { node: NodeId } } | { geometry_vs_reparent: { node: NodeId } } | { both_replaced_opaque: { part: string } } | { payload_vs_payload: { node: NodeId } } | { cell_vs_cell: { node: NodeId; row: NodeId; column: NodeId } } | { series_vs_series: { node: NodeId; series: NodeId; field: SeriesField } } | { category_vs_category: { node: NodeId; owner?: NodeId | null; category: NodeId; field: CategoryField } };
   type RelationshipChange = { source: string; id: string; kind: string; before?: string | null; after?: string | null };
   type SlideRender = { slide: NodeId; part: string; fingerprint: number[] };
   type RenderSide = { version: number; state_hash: number[]; export_key: number[]; slides: SlideRender[] };
@@ -4157,7 +4160,7 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
   answer(input: Sdk.ConnectorAnswerRequest): Promise<Sdk.ConnectorCallReply | StoredResult>;
   /** Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data. */
   call(input: Sdk.ConnectorCallRequest): Promise<Sdk.ActAnswer<Sdk.ConnectorCallReply> | StoredResult>;
-  /** Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it. */
+  /** Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it. */
   call_status(input: Sdk.ConnectorCallStatusRequest): Promise<Sdk.ConnectorCallStatus | StoredResult>;
   /** Every live catalogued connector whose name or summary matches the query. */
   list(input: Sdk.ConnectorListRequest): Promise<Sdk.ConnectorEntry[] | StoredResult>;

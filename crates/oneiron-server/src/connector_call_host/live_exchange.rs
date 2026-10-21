@@ -5,12 +5,17 @@
 //! ends unanswered, on the gate ledger (FIX 3840): receipt-only, ids,
 //! digests and dispositions, never an answer. A receipt that cannot be
 //! written is logged; the answer has gone or not either way.
-
-use std::sync::mpsc::RecvTimeoutError;
+//!
+//! The worker keeps the call's row current (FIX 3837): each next round (its
+//! generation and count, never the questions' text), the delivery once the
+//! connector answers the call, and, when the exchange ends unanswered, the
+//! round standing with its delivery uncertain. A round never lapses: the worker waits for its answer as long
+//! as the exchange lives.
 
 use oneiron::outbound_consent::{
     ConnectorElicitationReceipt, ElicitationDisposition, ElicitationEgress,
 };
+use oneiron::outbound_intent_ledger::IntentLedgerError;
 use zeroize::Zeroizing;
 
 use super::*;
@@ -41,7 +46,7 @@ pub(super) fn hand_over(
     let awaiting = ConnectorAwaitingInput {
         handle: registered.handle.clone(),
         questions,
-        expires_at_ms: registered.expires_at_ms,
+        live_until_ms: registered.live_until_ms,
     };
     let receipts = AnswerReceipts {
         vault: Arc::downgrade(declared.vault),
@@ -54,7 +59,6 @@ pub(super) fn hand_over(
         commands: registered.commands,
         registry: Arc::downgrade(declared.registry),
         handle: registered.handle,
-        deadline: registered.deadline,
         generation: 0,
         asked: awaiting.questions.len(),
         kept,
@@ -298,7 +302,7 @@ pub(super) enum Next {
 }
 
 /// The thread that owns one live exchange once its send returned: it waits
-/// for an answer to each round until the round's deadline, sends it, and
+/// for an answer to each round as long as the exchange lives, sends it, and
 /// reads what the connector says next.
 pub(super) struct Worker {
     session: LiveSession,
@@ -308,7 +312,6 @@ pub(super) struct Worker {
     /// every question set's channel.
     registry: Weak<ConnectorElicitationRegistry>,
     handle: String,
-    deadline: Instant,
     generation: u64,
     /// How many questions the current round asks.
     asked: usize,
@@ -324,20 +327,15 @@ pub(super) struct Worker {
 
 impl Worker {
     fn run(mut self) {
+        // The connector answered the call: its row keeps the delivery.
+        let mut delivered = false;
         loop {
-            let left = self.deadline.saturating_duration_since(Instant::now());
-            // A round that lapsed, or a server going away (or a call that
-            // left no one to answer, FIX 3844), cancels the questions.
-            let command = match self.commands.recv_timeout(left) {
-                Ok(command) => command,
-                Err(RecvTimeoutError::Timeout) => {
-                    self.cancel(ElicitationDisposition::Expired);
-                    break;
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    self.cancel(ElicitationDisposition::Cancel);
-                    break;
-                }
+            // A server going away, or a call that left no one to answer
+            // (FIX 3844), cancels the questions. A round never lapses
+            // (FIX 3837).
+            let Ok(command) = self.commands.recv() else {
+                self.cancel(ElicitationDisposition::Cancel);
+                break;
             };
             match self.answer(&command.responses) {
                 Next::Asked(mut questions) => {
@@ -352,32 +350,81 @@ impl Worker {
                     let advanced = self.registry.upgrade().and_then(|registry| {
                         registry.advance(&self.handle, self.generation, &questions)
                     });
-                    let Some((deadline, expires_at_ms)) = advanced else {
+                    let Some((live_until_ms, call_ref)) = advanced else {
                         let _ = command.reply.send(WorkerEvent::Failed {
                             sent: true,
-                            reason: "connector_question_lapsed",
+                            reason: "connector_question_gone",
                         });
                         self.cancel(ElicitationDisposition::Cancel);
                         break;
                     };
-                    self.deadline = deadline;
+                    // The row keeps the round before its caller sees it.
+                    let (handle, generation, asked) =
+                        (self.handle.as_str(), self.generation, questions.len());
+                    self.keep_row(call_ref, |vault, call_ref| {
+                        vault.keep_connector_input_round(
+                            call_ref,
+                            handle,
+                            generation,
+                            asked,
+                            live_until_ms,
+                        )
+                    });
                     let _ = command.reply.send(WorkerEvent::Question {
                         questions,
-                        expires_at_ms,
+                        live_until_ms,
                     });
                 }
                 Next::Over(mut event) => {
                     if let Some(kept) = &self.kept {
                         clear_event(&mut event, &kept.sent());
                     }
+                    if matches!(event, WorkerEvent::Result(_)) {
+                        let call_ref = self.bound_call();
+                        let handle = self.handle.as_str();
+                        self.keep_row(call_ref, |vault, call_ref| {
+                            vault.settle_connector_input(call_ref, handle)
+                        });
+                        delivered = true;
+                    }
                     let _ = command.reply.send(event);
                     break;
                 }
             }
         }
+        // An exchange that ended unanswered leaves the questions standing,
+        // their delivery uncertain (FIX 3837).
+        if !delivered {
+            let (call_ref, handle) = (self.bound_call(), self.handle.as_str());
+            self.keep_row(call_ref, |vault, call_ref| {
+                vault.mark_connector_input_uncertain(call_ref, handle)
+            });
+        }
         self.session.end();
         if let Some(registry) = self.registry.upgrade() {
             registry.finish(&self.handle);
+        }
+    }
+
+    /// The call whose row keeps this exchange's questions, once bound.
+    fn bound_call(&self) -> Option<EntityId> {
+        self.registry
+            .upgrade()
+            .and_then(|registry| registry.call_ref(&self.handle))
+    }
+
+    /// Writes the call `call_ref`'s row through `write`, when the row is
+    /// bound and the vault still stands; a write that fails is logged.
+    fn keep_row(
+        &self,
+        call_ref: Option<EntityId>,
+        write: impl FnOnce(&Vault, &EntityId) -> Result<bool, IntentLedgerError>,
+    ) {
+        let (Some(vault), Some(call_ref)) = (self.receipts.vault.upgrade(), call_ref) else {
+            return;
+        };
+        if let Err(error) = write(&vault, &call_ref) {
+            tracing::warn!(%error, "connector call questions not kept");
         }
     }
 

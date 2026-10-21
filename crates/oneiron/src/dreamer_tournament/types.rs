@@ -21,6 +21,8 @@ pub const DREAMER_TOURNAMENT_MAX_ROUNDS_K: u16 = 2;
 
 pub const DREAMER_TOURNAMENT_MIN_FANOUT_M: u16 = 2;
 
+/// The widest arm a claim-authoring campaign may choose (M=2/3). The runner
+/// itself caps no width.
 pub const DREAMER_TOURNAMENT_MAX_FANOUT_M: u16 = 3;
 
 pub(super) const MAX_TOURNAMENT_RUN_ID_BYTES: usize = 128;
@@ -32,8 +34,6 @@ pub(super) const MAX_TOURNAMENT_ARTIFACT_ID_BYTES: usize = 128;
 pub(super) const MAX_TOURNAMENT_STRATEGY_BYTES: usize = 128;
 
 pub(super) const MAX_TOURNAMENT_JUDGE_TEXT_BYTES: usize = 8192;
-
-pub(super) const MAX_TOURNAMENT_EVIDENCE_REFS: usize = 64;
 
 pub(super) const MAX_TOURNAMENT_EVIDENCE_REF_BYTES: usize = 256;
 
@@ -416,11 +416,15 @@ pub enum DreamerTournamentStopReason {
     Consensus,
     RoundCap,
     ExhaustedRounds,
+    /// A round discarded every candidate. The run failed: its critiques and
+    /// discarded-branch evidence are kept, and no winner claim is written.
+    AllDiscarded,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DreamerTournamentRunResult {
-    pub winner: DreamerTournamentWinner,
+    /// `None` when the run failed with every candidate discarded.
+    pub winner: Option<DreamerTournamentWinner>,
     pub rounds_executed: u16,
     pub stop_reason: DreamerTournamentStopReason,
     pub branch_evidence: Vec<DreamerTournamentBranchEvidence>,
