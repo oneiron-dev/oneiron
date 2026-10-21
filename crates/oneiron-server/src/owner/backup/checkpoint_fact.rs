@@ -9,11 +9,20 @@
 //! artifact is pruned, never before. A fact that was not signed, or did not
 //! land, is logged and absent: the backup stands without it, and nothing
 //! requires one.
+//!
+//! A fact can still outlive its artifact: a crash between the fact landing
+//! and the artifact's rename, an artifact already gone when a prune reaches
+//! it, or a fact that would not go. Each prune first sweeps this label's
+//! facts whose artifact is gone (FIX 7359, [`sweep`]). A vault VM's outbox
+//! then retires the host's copy, as it does any backup file the guest
+//! removed.
 
 use std::path::Path;
 
 use oneiron::recovery::checkpoint::BackupSnapshotReceipt;
 use oneiron_vault_contract::backup_handoff::write_private_file;
+
+use super::{BackupPlan, FILE_SUFFIX, sync_dir};
 
 /// The suffix of a backup's checkpoint fact: `<artifact>.cpfact`.
 const CHECKPOINT_FACT_SUFFIX: &str = ".cpfact";
@@ -47,7 +56,7 @@ pub(super) fn publish(dir: &Path, artifact: &str, receipt: &BackupSnapshotReceip
 
 /// Removes the checkpoint fact beside `artifact` in `dir`, once the artifact
 /// is gone. One that is not there is gone already; one that will not go is
-/// logged and stays, which no listing reads.
+/// logged and stays, which no listing reads, until a later prune's [`sweep`].
 pub(super) fn remove(dir: &Path, artifact: &str) {
     match std::fs::remove_file(dir.join(fact_name(artifact))) {
         Ok(()) => {}
@@ -57,5 +66,91 @@ pub(super) fn remove(dir: &Path, artifact: &str) {
             error = %error,
             "a checkpoint fact whose backup is gone did not go"
         ),
+    }
+}
+
+/// Removes this label's checkpoint facts whose artifact is gone, at the start
+/// of each prune (FIX 7359). A fact goes only where nothing at all is at its
+/// artifact's exact path: an entry of any kind there keeps it, and so does
+/// an error reading that path. The holds are read and each fact goes while
+/// the vault's writer is held, as a prune's backups do, so a standing legal
+/// hold keeps these too. The caller holds the backup lock, so no fact goes
+/// while its artifact is still landing. A sweep that fails is logged and
+/// fails nothing else; the next prune sweeps again. A swept fact is not one
+/// of the backups a prune names.
+pub(super) fn sweep(vault: &oneiron::Vault, plan: &BackupPlan) {
+    if let Err(error) = sweep_orphans(vault, plan) {
+        tracing::warn!(
+            reason = "backup_checkpoint_fact_sweep_failed",
+            error = %format!("{error:#}"),
+            "checkpoint facts whose backup is gone were not swept; the next prune sweeps again"
+        );
+    }
+}
+
+fn sweep_orphans(vault: &oneiron::Vault, plan: &BackupPlan) -> anyhow::Result<()> {
+    let entries = match std::fs::read_dir(&plan.dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let prefix = format!("{}-", plan.label);
+    let suffix = fact_name(FILE_SUFFIX);
+    let mut orphans = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let file = entry.file_name();
+        // This label's `<artifact>.cpfact`, a plain file, not a link: its
+        // artifact's name is its own less the one suffix.
+        let Some(artifact) = file
+            .to_str()
+            .filter(|name| name.starts_with(&prefix) && name.ends_with(&suffix))
+            .and_then(|name| name.strip_suffix(CHECKPOINT_FACT_SUFFIX))
+        else {
+            continue;
+        };
+        let plain = matches!(entry.file_type(), Ok(kind) if kind.is_file());
+        if plain && artifact_gone(&plan.dir, artifact) {
+            orphans.push(artifact.to_owned());
+        }
+    }
+    if orphans.is_empty() {
+        return Ok(());
+    }
+    vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<()> {
+        if holds.keeps_backups() {
+            return Ok(());
+        }
+        let mut swept = false;
+        for artifact in &orphans {
+            // Read again under the writer: only the artifact's absence lets
+            // its fact go.
+            if artifact_gone(&plan.dir, artifact) {
+                remove(&plan.dir, artifact);
+                swept = true;
+            }
+        }
+        if swept {
+            sync_dir(&plan.dir)?;
+        }
+        Ok(())
+    })?
+}
+
+/// Whether nothing at all is at `dir/<artifact>`, a link included: the one
+/// proof a fact's artifact is gone. An error reading it is logged, and keeps
+/// the fact.
+fn artifact_gone(dir: &Path, artifact: &str) -> bool {
+    match std::fs::symlink_metadata(dir.join(artifact)) {
+        Ok(_) => false,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => {
+            tracing::warn!(
+                reason = "backup_checkpoint_fact_kept",
+                error = %error,
+                "a checkpoint fact stays: whether its backup is there could not be read"
+            );
+            false
+        }
     }
 }
