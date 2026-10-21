@@ -3,10 +3,13 @@
 //! marker; once a later try of the same attempt resolves that conflict and
 //! every output answering it stands, the marker closes through the existing
 //! close door under the handoff's fence, as a granted correction's markers
-//! do. A refused or unstanding close leaves it open, and the outputs stand
-//! either way. A created output keeps its binding in its provenance, so a
-//! replay that meets the output again still closes the marker.
-use std::collections::BTreeMap;
+//! do. A replay that meets only some of those outputs again closes it too
+//! (FIX 7380): one stood in its write, none was held, pended or rejected
+//! there, and every one still stands. A refused or unstanding close leaves
+//! it open, and the outputs stand either way. A created output keeps its
+//! binding in its provenance, so a replay that meets the output again still
+//! closes the marker.
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 use crate::claim::{ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED};
@@ -110,33 +113,36 @@ fn field<'v>(value: &'v Value, key: &str) -> Option<&'v Value> {
     }
 }
 
-/// Closes the open marker each of `answers` names once every output it
-/// needs stood in this write: `stood` maps each head the write landed or met
-/// to the evidence its candidate cited, and the close cites that evidence.
-/// A marker a standing answer already names, a gone, closed or refused one,
-/// and an output held, pended or rejected close nothing. Best effort: a
-/// close that fails is logged by a closed code and its kind, and leaves the
-/// marker open.
+/// Closes the open marker each of `answers` names once its outputs stand
+/// (FIX 7380): at least one stood in this write, none of the others is in
+/// `unmet` (met by this write but held, pended or rejected there), and
+/// every one stands at the close's read. `stood` maps each head the write
+/// landed or met to the evidence its candidate cited; an output this write
+/// did not meet cites the turn evidence its stored claim cites. A marker a
+/// standing answer already names, and a gone, closed or refused one, close
+/// nothing. Best effort: a close that fails is logged by a closed code and
+/// its kind, and leaves the marker open.
 pub(super) fn close_resolved_outputs(
     vault: &Vault,
     run: &DreamerRunContext,
     fence: &ConsolidationFence,
     answers: &[ResolvedConflictOutput],
     stood: &BTreeMap<EntityId, Vec<EntityId>>,
+    unmet: &BTreeSet<EntityId>,
 ) {
     for answer in answers {
-        let Some(cited) = answer
+        let met = answer
             .outputs
             .iter()
-            .map(|output| stood.get(output))
-            .collect::<Option<Vec<_>>>()
-        else {
+            .any(|output| stood.contains_key(output));
+        let blocked = answer
+            .outputs
+            .iter()
+            .any(|output| !stood.contains_key(output) && unmet.contains(output));
+        if !met || blocked {
             continue;
-        };
-        let mut evidence: Vec<EntityId> = cited.into_iter().flatten().copied().collect();
-        evidence.sort_unstable();
-        evidence.dedup();
-        let (reason, kind) = match close_answer(vault, run, fence, answer, evidence) {
+        }
+        let (reason, kind) = match close_answer(vault, run, fence, answer, stood) {
             Ok(None) => continue,
             Ok(Some(refused)) => refused,
             Err(error) => ("close_read_failed", Some(error.kind())),
@@ -154,31 +160,43 @@ pub(super) fn close_resolved_outputs(
 /// engine error behind it, when one refused it.
 type CloseRefusal = (&'static str, Option<crate::error::ErrorKind>);
 
-/// One answer's close. `Ok(None)`: it closed, or had nothing to close.
+/// One answer's close. `Ok(None)`: it closed, or had nothing to close. It
+/// cites what each output's candidate cited in this write (`stood`), and
+/// for an output this write did not meet, the turn evidence its stored
+/// claim cites.
 fn close_answer(
     vault: &Vault,
     run: &DreamerRunContext,
     fence: &ConsolidationFence,
     answer: &ResolvedConflictOutput,
-    evidence: Vec<EntityId>,
+    stood: &BTreeMap<EntityId, Vec<EntityId>>,
 ) -> Result<Option<CloseRefusal>> {
-    // The marker and every output from one read; each output's revision
-    // holds the close's fence to the output as it stood.
-    let (marker, outputs) = {
+    // The marker, every output and its evidence from one read; each output's
+    // revision holds the close's fence to the output as it stood.
+    let (marker, outputs, mut evidence) = {
         let txn = vault.store.env.read_txn()?;
         let marker = vault.get_claim_in_txn(&txn, &answer.marker)?;
         let mut outputs = Vec::new();
+        let mut evidence: Vec<EntityId> = Vec::new();
         for output in &answer.outputs {
-            let standing = vault
+            let body = vault
                 .get_claim_in_txn(&txn, output)?
-                .is_some_and(|body| crate::claim::claim_surfaceable(&body));
-            match RowRevision::read_in(vault, &txn, output)? {
-                Some(revision) if standing => outputs.push((*output, revision)),
+                .filter(crate::claim::claim_surfaceable);
+            match (body, RowRevision::read_in(vault, &txn, output)?) {
+                (Some(body), Some(revision)) => {
+                    outputs.push((*output, revision));
+                    match stood.get(output) {
+                        Some(cited) => evidence.extend_from_slice(cited),
+                        None => evidence.extend(stored_turn_refs(&body)),
+                    }
+                }
                 _ => return Ok(Some(("output_not_standing", None))),
             }
         }
-        (marker, outputs)
+        (marker, outputs, evidence)
     };
+    evidence.sort_unstable();
+    evidence.dedup();
     let Some(marker) = marker else {
         return Ok(None);
     };
@@ -226,4 +244,25 @@ fn close_answer(
         fence.released(*output);
     }
     Ok(refused)
+}
+
+/// The turn evidence `body`'s own write cited: the refs of the consolidation
+/// envelope it keeps as its candidate evidence. None for a body without one,
+/// or one that does not decode.
+fn stored_turn_refs(body: &crate::ClaimBody) -> Vec<EntityId> {
+    body.evidence
+        .as_ref()
+        .and_then(|evidence| {
+            field(
+                evidence,
+                crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+            )
+        })
+        .and_then(|stored| {
+            crate::dreamer_consolidation::decode_consolidation_evidence(stored)
+                .ok()
+                .flatten()
+        })
+        .map(|envelope| envelope.refs)
+        .unwrap_or_default()
 }

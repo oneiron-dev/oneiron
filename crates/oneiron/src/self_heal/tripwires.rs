@@ -13,7 +13,7 @@ use crate::{
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-fn draft(
+pub(super) fn draft(
     id: &str,
     class: DiagnosticEventClass,
     source: DiagnosticSourceKind,
@@ -159,7 +159,7 @@ impl TripwireBounds {
     /// A positive window and positive thresholds. A large threshold is the
     /// owner's to set; `Vault::tripwire_bounds` asks past
     /// `limits.tripwire_threshold`.
-    fn valid(self) -> bool {
+    pub(super) fn valid(self) -> bool {
         self.window_secs > 0
             && self.consent_depth > 0
             && self.actor_writes > 0
@@ -285,7 +285,7 @@ impl DeterministicDetector for RetrievalRegressionDetector {
         )
     }
 }
-fn observation<T: Serialize>(
+pub(super) fn observation<T: Serialize>(
     source_ref: EntityId,
     kind: &'static str,
     observed_at: u64,
@@ -440,15 +440,12 @@ impl Vault {
         Ok(Some(bounds))
     }
     /// Read the stored ARCH-0037 records, never caller-authored telemetry labels.
-    /// `limit` selects the newest runs; every miss among them is observed, and
-    /// past `limits.detector_observations` the detector asks and reads on.
-    pub fn run_retrieval_miss_detector(&self, scope: &str, limit: usize) -> Result<Vec<EntityId>> {
-        if limit == 0 {
-            return Ok(vec![]);
-        }
+    /// Every stored run is read and every miss among them observed: past
+    /// `limits.detector_observations` the detector asks and reads on.
+    pub fn run_retrieval_miss_detector(&self, scope: &str) -> Result<Vec<EntityId>> {
         let observations: Vec<_> = self
             .store
-            .retrieval_runs(limit)?
+            .retrieval_runs(usize::MAX)?
             .iter()
             .filter_map(DiagnosticObservation::from_retrieval_run)
             .collect();
@@ -457,15 +454,20 @@ impl Vault {
         self.capture_tier1_point_producer(&ids)?;
         Ok(ids)
     }
+    /// Reads the window `query` selects by its time, kinds and filters to
+    /// completion and projects it whole. Its row limit is not a cut: a
+    /// detector's result is never a partial window.
     pub fn run_receipt_tripwires(
         &self,
         scope: &str,
         query: ReceiptQuery,
         end: u64,
     ) -> Result<Vec<EntityId>> {
-        let capacity = query.limit;
-        let receipts = self.receipts(query)?;
-        self.project_receipt_tripwires_with_capacity(scope, &receipts, end, Some(capacity))
+        let receipts = self.receipts(ReceiptQuery {
+            limit: usize::MAX,
+            ..query
+        })?;
+        self.project_receipt_tripwires(scope, &receipts, end)
     }
     /// Projects a scoped receipt slice whole; also used by receipt adapters.
     pub fn project_receipt_tripwires(
@@ -474,25 +476,9 @@ impl Vault {
         receipts: &[ReceiptRecord],
         end: u64,
     ) -> Result<Vec<EntityId>> {
-        self.project_receipt_tripwires_with_capacity(scope, receipts, end, None)
-    }
-    fn project_receipt_tripwires_with_capacity(
-        &self,
-        scope: &str,
-        receipts: &[ReceiptRecord],
-        end: u64,
-        capacity: Option<usize>,
-    ) -> Result<Vec<EntityId>> {
         let Some(bounds) = self.tripwire_bounds()? else {
             return Ok(vec![]);
         };
-        if capacity
-            .is_some_and(|limit| (limit as u64) < bounds.consent_depth.max(bounds.actor_writes))
-        {
-            return Err(crate::Error::InvalidConfig(
-                "receipt query cannot reach the configured tripwire bounds".into(),
-            ));
-        }
         // Every receipt is projected: past `limits.detector_receipt_rows` the
         // window asks and reads on.
         let _ = self.measure_limit(EngineLimit::DetectorReceiptRows, receipts.len() as u64);

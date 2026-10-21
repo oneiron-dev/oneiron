@@ -7,6 +7,8 @@ mod hooks;
 mod observe;
 mod park_cause;
 
+pub(crate) use self::park_cause::{llm_waits_on_owner_act, waits_on_owner_act};
+
 use std::future::poll_fn;
 use std::panic::AssertUnwindSafe;
 use std::pin::pin;
