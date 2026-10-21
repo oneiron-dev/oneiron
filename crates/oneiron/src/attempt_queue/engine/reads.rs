@@ -505,15 +505,13 @@ pub(super) fn retries_the_same_attempt(child: &AttemptRecord, parent: &AttemptRe
         && child.dedupe_key == parent.dedupe_key
         && child.dedupe_actor_ref == parent.dedupe_actor_ref
 }
-/// The payload half of [`retries_the_same_attempt`]: byte equality, except
-/// for a tagging marker, whose pending row a live write promotes in place
-/// (FIX 6755), so its tries compare by the marker they name.
+/// The payload half of [`retries_the_same_attempt`]: byte equality, or for a
+/// tagging marker, whose pending row a live write promotes in place (FIX
+/// 6755), the marker both tries name.
 fn retries_the_same_payload(child: &AttemptRecord, parent: &AttemptRecord) -> bool {
-    if child.kind == crate::tagging::TAGGING_MARKER_KIND {
-        crate::tagging::same_marker_identity(&child.payload, &parent.payload)
-    } else {
-        child.payload == parent.payload
-    }
+    child.payload == parent.payload
+        || (child.kind == crate::tagging::TAGGING_MARKER_KIND
+            && crate::tagging::same_marker_identity(&child.payload, &parent.payload))
 }
 /// Resolves the OF-193 Dreamer root for one stamped run id using the durable
 /// run index.  A branch-only run climbs parent links with the same bounded,

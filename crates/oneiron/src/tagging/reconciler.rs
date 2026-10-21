@@ -495,9 +495,10 @@ impl TaggingReconciler {
     ///
     /// A ready live marker is claimed before any bulk one (FIX 6755): bulk is
     /// planned only from a read that found no live marker ready, and leased
-    /// only if nothing has committed since that read; otherwise the claim is
-    /// planned again, so a live marker committed meanwhile goes first. A
-    /// payload this build cannot read is claimed as live, to be failed.
+    /// only if nothing has committed since that read or the writer finds no
+    /// live marker ready either; otherwise the claim is planned again, so a
+    /// live marker committed meanwhile goes first. A payload this build
+    /// cannot read is claimed as live, to be failed.
     fn claim(&self) -> Result<Option<AttemptRecord>> {
         let queue = AttemptQueue::from_store(&self.vault.store);
         let attempt = |now| ClaimAttempt {
@@ -541,12 +542,28 @@ impl TaggingReconciler {
             let mut txn = self.vault.store.env.write_txn()?;
             #[cfg(test)]
             self.vault.test_hooks().run_after_tagging_claim_writer();
-            // The writer right after the read commits as its next id.
-            if fence.is_some_and(|read| read.checked_add(1) != Some(txn.id())) {
-                txn.abort();
-                continue;
-            }
             let now = self.stamp_in_txn(&txn)?;
+            // The writer right after the read commits as its next id. Past any
+            // other commit, the writer looks for a ready live marker itself, so
+            // a busy store cannot keep bulk planning forever.
+            if fence.is_some_and(|read| read.checked_add(1) != Some(txn.id())) {
+                let mut ready = false;
+                queue.owner_retained_matching_claim_plan_in_txn(
+                    &txn,
+                    TAGGING_MARKER_KIND,
+                    &attempt(now),
+                    now,
+                    |record| {
+                        let claims = self.claims_live(record);
+                        ready |= claims;
+                        Ok(claims)
+                    },
+                )?;
+                if ready {
+                    txn.abort();
+                    continue;
+                }
+            }
             let (claimed, repaired) = queue.claim_owner_retained_matching_in_txn(
                 &mut txn,
                 TAGGING_MARKER_KIND,
