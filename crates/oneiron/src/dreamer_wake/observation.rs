@@ -31,7 +31,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 
 use super::deadline::WakePassDeadline;
-use super::types::{RunWakePass, WakePassStop, WakeTrigger};
+use super::types::{ClaimAuthoringFallback, RunWakePass, WakePassStop, WakeTrigger};
 
 pub(super) use self::checkpoint::{LaterWake, resume_checkpoints_for_wake};
 pub(crate) use self::checkpoint::{checkpoint_resumable_in_txn, record_checkpoint_in_txn};
@@ -101,6 +101,9 @@ pub struct WakeObservedEnd {
     pub elapsed_ms: u64,
     /// Why it stopped; `None` when it returned an error.
     pub stop: Option<String>,
+    /// Why its claims were authored single-pass under a promoted default
+    /// (FIX 897), when they were.
+    pub claim_authoring_fallback: Option<ClaimAuthoringFallback>,
 }
 
 /// The `a` row: one attempt generation a pass admitted.
@@ -398,11 +401,12 @@ pub(super) fn start_wake_observation(
 }
 
 /// Closes the observation `deadline` carries once every worker settled,
-/// errors included (`stop` is `None` then).
+/// errors included (`stop` and `claim_authoring_fallback` are `None` then).
 pub(super) fn finish_wake_observation(
     vault: &Vault,
     deadline: &WakePassDeadline,
     stop: Option<WakePassStop>,
+    claim_authoring_fallback: Option<ClaimAuthoringFallback>,
 ) {
     let Some(wake) = deadline.wake_ref() else {
         return;
@@ -411,6 +415,7 @@ pub(super) fn finish_wake_observation(
         unix_ms: crate::unix_millis_now(),
         elapsed_ms: deadline.elapsed_ms(),
         stop: stop.map(|stop| stop_name(stop).to_owned()),
+        claim_authoring_fallback,
     };
     let written = vault.with_write_txn_grouped(|wtxn| {
         let key = wake_key(wake);

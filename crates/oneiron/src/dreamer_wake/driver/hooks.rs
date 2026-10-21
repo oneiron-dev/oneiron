@@ -96,6 +96,7 @@ impl DreamerWakeDriver<'_> {
                         landed: 0,
                         sources_truncated: 0,
                         stop: WakePassStop::HookSkipped,
+                        claim_authoring_fallback: None,
                     })
                 }
             },

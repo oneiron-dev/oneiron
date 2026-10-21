@@ -1,5 +1,6 @@
 //! Single wake-pass assembly and engine delegation.
 use oneiron::attempt_queue::{AttemptLandingReserve, LANDING_RESERVE_PERCENT};
+use oneiron::dreamer_wake::ClaimAuthoringSelection;
 use oneiron::{
     BudgetGuard, DreamerConsolidationScope, DreamerWakeDriver, RunWakePass, Vault,
     WakeCancellation, WakePassDeadline, WakePassReport, WakeTrigger,
@@ -90,6 +91,11 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     let contribution_host = factory
         .contribution_replay_host(vault, &guard)
         .map_err(PassRunError::PreAdmission)?;
+    // The claim-authoring campaign its consolidation admissions re-read
+    // (FIX 897), asked before the executors borrow the factory.
+    let claim_authoring = factory
+        .claim_authoring_selector(vault)
+        .map_err(PassRunError::PreAdmission)?;
     let mut driver = DreamerWakeDriver::new(vault, pass_budget_id.to_owned(), deadline)
         .with_budget_guard(guard.clone());
     if let Some(author) = config.milestones.clone() {
@@ -101,6 +107,13 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     if let Some(host) = &contribution_host {
         driver = driver.with_contribution_host(&**host);
     }
+    driver = match claim_authoring {
+        ClaimAuthoringSelection::None => driver,
+        ClaimAuthoringSelection::Bound(selector) => driver.with_claim_authoring_selector(selector),
+        ClaimAuthoringSelection::Ambiguous { roots } => {
+            driver.with_ambiguous_claim_authoring(roots)
+        }
+    };
     let executors = if scope == DreamerConsolidationScope::Macro {
         let buckets = oneiron::DreamerRunnerStore::new(vault)
             .macro_bucket_count()

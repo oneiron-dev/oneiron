@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
-use oneiron::dreamer_wake::{TurnProgramExecutor, TurnProgramRuntime};
+use oneiron::dreamer_wake::{ClaimAuthoringSelection, TurnProgramExecutor, TurnProgramRuntime};
 use oneiron::{BudgetGuard, Result, Vault, WavePlanner, WriteActor};
 
 use super::attachment::{LinkedShutdown, PassAttachment};
@@ -97,6 +97,10 @@ impl<F: PassExecutorFactory> PassExecutorFactory for ProgramExecutorFactory<F> {
         guard: &BudgetGuard,
     ) -> Result<Option<Box<dyn ContributionReplayHost + Send + Sync>>> {
         self.inner.contribution_replay_host(vault, guard)
+    }
+
+    fn claim_authoring_selector(&self, vault: &Vault) -> Result<ClaimAuthoringSelection> {
+        self.inner.claim_authoring_selector(vault)
     }
 
     fn linked_shutdown(&self) -> Option<Arc<dyn LinkedShutdown>> {

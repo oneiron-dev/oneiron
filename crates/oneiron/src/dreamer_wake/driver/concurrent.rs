@@ -58,7 +58,7 @@ impl DreamerWakeDriver<'_> {
                 );
                 worker.guard = self.guard.clone();
                 worker.milestones = self.milestones.clone();
-                worker.tournament_candidate = self.tournament_candidate.clone();
+                worker.claim_authoring = self.claim_authoring.clone();
                 worker.consolidation_only = index != 0;
                 if index == 0 {
                     worker.skill_optimizer = self.skill_optimizer.as_ref().map(|optimizer| {
@@ -138,6 +138,7 @@ impl DreamerWakeDriver<'_> {
             landed: 0,
             sources_truncated: 0,
             stop: WakePassStop::QueueEmpty,
+            claim_authoring_fallback: None,
         };
         for report in reports {
             let report = report?;
@@ -153,6 +154,9 @@ impl DreamerWakeDriver<'_> {
             if report.stop != WakePassStop::QueueEmpty {
                 aggregate.stop = report.stop;
             }
+            aggregate.claim_authoring_fallback = aggregate
+                .claim_authoring_fallback
+                .or(report.claim_authoring_fallback);
         }
         Ok(aggregate)
     }

@@ -2,6 +2,8 @@
 
 use std::sync::{Mutex, OnceLock, PoisonError};
 
+use serde::{Deserialize, Serialize};
+
 use crate::Vault;
 use crate::attempt_queue::{
     AttemptCancelReceiptKind, AttemptId, AttemptQueue, AttemptRecord, AttemptResumePoint,
@@ -94,8 +96,18 @@ pub enum WakePassStop {
     HookSkipped,
 }
 
+/// Why a pass authored its claims single-pass under a promoted
+/// claim-authoring default (FIX 897). Never a refusal: the pass ran.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimAuthoringFallback {
+    /// Several bound campaigns carry the default, in root order; none is
+    /// chosen for the host (Engine 10-18).
+    AmbiguousCampaigns { roots: Vec<AttemptId> },
+}
+
 /// Wake-pass tally.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WakePassReport {
     pub admitted: u32,
     pub completed: u32,
@@ -113,6 +125,9 @@ pub struct WakePassReport {
     /// sources exist. A truncation, never a refusal.
     pub sources_truncated: u32,
     pub stop: WakePassStop,
+    /// Set when the pass's consolidation admissions fell back to
+    /// single-pass under a promoted default, with why.
+    pub claim_authoring_fallback: Option<ClaimAuthoringFallback>,
 }
 
 /// Terminal execution outcome one executor reports for one admitted attempt.

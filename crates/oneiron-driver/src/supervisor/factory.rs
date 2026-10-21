@@ -11,7 +11,7 @@ use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, Connector
 use oneiron::dreamer_runner::maintenance::{
     CoachLiveSlice, CoachSkillOptimizer, ContributionReplayHost,
 };
-use oneiron::dreamer_wake::{WeaveRecipeExecutor, WeaveRecipeRuntime};
+use oneiron::dreamer_wake::{ClaimAuthoringSelection, WeaveRecipeExecutor, WeaveRecipeRuntime};
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::skill_optimize::{HeldOutReplayNotes, SkillOptimizeAuthor};
@@ -138,6 +138,14 @@ pub trait PassExecutorFactory {
         _guard: &BudgetGuard,
     ) -> Result<Option<Box<dyn ContributionReplayHost + Send + Sync>>> {
         Ok(None)
+    }
+
+    /// The claim-authoring campaign this pass's consolidation admissions
+    /// re-read (FIX 897), asked before the pass borrows its executors. The
+    /// default binds none: with no promoted default the pass authors
+    /// single-pass, and with one its consolidation admission refuses.
+    fn claim_authoring_selector(&self, _vault: &Vault) -> Result<ClaimAuthoringSelection> {
+        Ok(ClaimAuthoringSelection::None)
     }
 
     /// The attachment host's lifecycle signal, not another shutdown owner.

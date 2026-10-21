@@ -42,6 +42,7 @@ use oneiron_driver::{
 
 use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extraction_egress};
 
+mod claim_authoring;
 mod compaction_check;
 mod free_time;
 mod run_log;
@@ -846,6 +847,15 @@ impl PassExecutorFactory for ObservedFactory {
                 guard.read().limit_units,
             ),
         )))
+    }
+
+    /// The claim-authoring campaign the pass's consolidation admissions
+    /// re-read (FIX 897), under the binding policy.
+    fn claim_authoring_selector(
+        &self,
+        vault: &Vault,
+    ) -> oneiron::Result<oneiron::dreamer_wake::ClaimAuthoringSelection> {
+        Ok(claim_authoring::claim_authoring_selection(vault))
     }
 
     /// The host's gate, asked as each pass starts and held until it ends. A

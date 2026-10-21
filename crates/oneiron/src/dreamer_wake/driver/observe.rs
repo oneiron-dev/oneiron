@@ -23,7 +23,10 @@ impl DreamerWakeDriver<'_> {
         report: std::result::Result<&WakePassReport, &crate::Error>,
     ) {
         let stop = report.ok().map(|report| report.stop);
-        observation::finish_wake_observation(self.vault, &self.deadline, stop);
+        let fallback = report
+            .ok()
+            .and_then(|report| report.claim_authoring_fallback.clone());
+        observation::finish_wake_observation(self.vault, &self.deadline, stop, fallback);
         self.deadline.bind_wake(None);
         if report.is_ok_and(|report| report.parked > 0) {
             self.vault.store.notify_proactivity_changes();
