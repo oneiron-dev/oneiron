@@ -392,6 +392,15 @@ pub trait JsCodeModeRuntime {
         ))
     }
 
+    /// Lends the host's measured disk floor the foreign steps' proposed
+    /// files spool on (FIX 7650). A runtime with no isolated foreign lane
+    /// spools nothing, so it keeps none.
+    fn bind_proposal_spool(
+        &mut self,
+        _spool: std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>,
+    ) {
+    }
+
     /// Executes one generated JS REPL step inside the sandbox boundary.
     fn run_step(
         &mut self,

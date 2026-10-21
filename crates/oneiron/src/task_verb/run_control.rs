@@ -169,12 +169,7 @@ impl Memory<'_> {
         key: Option<&ScopedReadActorKey>,
         record: &AttemptRecord,
     ) -> MemoryResult<()> {
-        let owner = match (key, self.presented_credential()) {
-            (Some(key), _) => key.facets_owner_exempt_in(self.vault(), txn)?,
-            (None, Some(slip)) => self.slip_is_owner_in(txn, slip)?,
-            (None, None) => false,
-        };
-        if owner {
+        if self.vault_owner_standing_in(txn, key)? {
             return Ok(());
         }
         let Some(task) = record
@@ -190,6 +185,22 @@ impl Memory<'_> {
         };
         self.highway_task_actor_in(txn, task, TaskActorVerb::Owner, RUN_CONTROL_FIX)?;
         Ok(())
+    }
+
+    /// Whether this surface's caller stands as the vault owner in `txn`: by
+    /// `key`, his credential's own read key, or, for his credential that
+    /// grants no read, by that slip. Run control and run cancel (FIX 8219)
+    /// take the owner override alike.
+    pub(super) fn vault_owner_standing_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: Option<&ScopedReadActorKey>,
+    ) -> MemoryResult<bool> {
+        Ok(match (key, self.presented_credential()) {
+            (Some(key), _) => key.facets_owner_exempt_in(self.vault(), txn)?,
+            (None, Some(slip)) => self.slip_is_owner_in(txn, slip)?,
+            (None, None) => false,
+        })
     }
 
     /// Whether `slip` is the vault owner's own credential in `txn`, by the

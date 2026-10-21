@@ -7,9 +7,9 @@
 //! every reader that serves or scores an `actor.*` row (`claim_surfaceable`,
 //! the writer's head reads, the resident pack loader) admits only Auto or
 //! Approved rows. The writer builds the body, as [`super::write_actor_claim`]
-//! does: `src` is Observed (the dreaming observed its own trace), the lineage
-//! meet is Generated (the note is model-written prose), and the evidence
-//! names the dreaming attempt the note came from. That evidence shape is what
+//! does: `src` and the lineage meet are both Generated (the note is
+//! model-written prose, FIX 8641), and the evidence names the dreaming
+//! attempt the note came from. That evidence shape is what
 //! [`is_resident_craft_candidate`] recognizes, so validation admits a
 //! Proposed row of exactly this shape and no other.
 //!
@@ -46,7 +46,7 @@ use crate::temporal::TimeRange;
 use super::evidence::KEY_AT;
 use super::invalid;
 use super::rows::{ACTOR_NOTE_MAX_BYTES, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON};
-use super::validate::actor_claim_lineage;
+use super::validate::{actor_claim_lineage, native_actor_source};
 use super::write::{require_actor_entity, scope_with_lineage};
 
 const KEY_LANE: &str = "lane";
@@ -204,7 +204,7 @@ pub(crate) fn write_resident_craft_candidates_in_txn(
             continue;
         };
         if body.lifecycle != ClaimLifecycleStatus::Active
-            || body.source != Some(ClaimSource::Observed)
+            || !native_actor_source(body.source)
             || !(matches!(
                 body.approval,
                 ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed
@@ -237,7 +237,7 @@ pub(crate) fn write_resident_craft_candidates_in_txn(
             body.evidence = Some(evidence.clone());
             body.scope = Some(scope.clone());
             body.valid_from = Some(at);
-            body.source = Some(ClaimSource::Observed);
+            body.source = Some(ClaimSource::Generated);
             vault.put_reserved_claim_in_txn(
                 wtxn,
                 &id,
@@ -252,15 +252,16 @@ pub(crate) fn write_resident_craft_candidates_in_txn(
 }
 
 /// Whether `body` is a resident-dreaming candidate as
-/// [`write_resident_craft_candidates_in_txn`] writes it: a Proposed, Observed
-/// lesson or failure mode of Generated lineage whose evidence is exactly the
-/// dreaming attempt and its time.
+/// [`write_resident_craft_candidates_in_txn`] writes it: a Proposed lesson or
+/// failure mode of a native source (Generated as written, FIX 8641) and
+/// Generated lineage whose evidence is exactly the dreaming attempt and its
+/// time.
 pub(super) fn is_resident_craft_candidate(body: &ClaimBody) -> bool {
     if !matches!(
         body.predicate.as_str(),
         PREDICATE_ACTOR_LESSON | PREDICATE_ACTOR_FAILURE_MODE
     ) || body.approval != ClaimApprovalStatus::Proposed
-        || body.source != Some(ClaimSource::Observed)
+        || !native_actor_source(body.source)
         || actor_claim_lineage(body) != Some(ClaimSource::Generated)
     {
         return false;
@@ -388,7 +389,7 @@ fn answer_in_txn(
             continue;
         }
         if row.lifecycle == ClaimLifecycleStatus::Active
-            && row.source == Some(ClaimSource::Observed)
+            && native_actor_source(row.source)
             && row.predicate == body.predicate
             && row.value == body.value
             && (row.approval == ClaimApprovalStatus::Auto || is_approved_craft_verdict(&row))
@@ -470,7 +471,7 @@ fn answer_in_txn(
     verdict_body.evidence = Some(Value::Map(evidence));
     verdict_body.scope = Some(scope_with_lineage(None, ClaimSource::Generated));
     verdict_body.valid_from = Some(at);
-    verdict_body.source = Some(ClaimSource::Observed);
+    verdict_body.source = Some(ClaimSource::Generated);
     vault.put_reserved_claim_in_txn(
         wtxn,
         &verdict_id,
@@ -625,15 +626,15 @@ struct VerdictStamp {
 }
 
 /// The verdict `body` is, or `None` for any other row: an Approved or
-/// Rejected, Observed lesson or failure mode of Generated lineage whose
-/// evidence is exactly the candidate's dreaming evidence plus the candidate,
-/// its hash, the verdict its approval says, the owner and the receipt, each
-/// once.
+/// Rejected lesson or failure mode of a native source and Generated lineage
+/// whose evidence is exactly the candidate's dreaming evidence plus the
+/// candidate, its hash, the verdict its approval says, the owner and the
+/// receipt, each once.
 fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
     if !matches!(
         body.predicate.as_str(),
         PREDICATE_ACTOR_LESSON | PREDICATE_ACTOR_FAILURE_MODE
-    ) || body.source != Some(ClaimSource::Observed)
+    ) || !native_actor_source(body.source)
         || actor_claim_lineage(body) != Some(ClaimSource::Generated)
     {
         return None;
