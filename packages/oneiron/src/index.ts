@@ -1991,6 +1991,12 @@ export class Oneiron {
         /** Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork. */
         get: (input: Facade.CodeForkGetRequest): Facade.CodeForkView | null => this.#call(() => this.#client.vaultCodeForksGet(input) as Facade.CodeForkView | null),
       },
+      imports: {
+        /** Fetch one exact outside source and send it through the existing authenticated Git door; retain source and receive links without approval or enqueue. */
+        create: (input: Facade.ExternalImportRequest): Facade.ExternalImportReceipt => this.#call(() => this.#client.vaultCodeImportsCreate(input) as Facade.ExternalImportReceipt),
+        /** Read one external import and its actual receive, aggregate candidate and checker work. Local only; never fetches, pushes or runs checks. */
+        get: (input: Facade.ExternalImportLookup): Facade.ExternalImportStatus | null => this.#call(() => this.#client.vaultCodeImportsGet(input) as Facade.ExternalImportStatus | null),
+      },
       ingress: {
         /** Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance. */
         get: (input: Facade.CodePushIngressGetRequest): Facade.CodePushIngressView | null => this.#call(() => this.#client.vaultCodeIngressGet(input) as Facade.CodePushIngressView | null),

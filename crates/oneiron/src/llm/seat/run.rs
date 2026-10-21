@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{ModelSeat, SeatChoiceReceipt, SeatDecisions, SeatKind, SeatPool, SeatTask, invalid};
+use crate::code_run::ExecutorStorage;
 use crate::llm::ModelLocality;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::task_type::TaskTypeRef;
@@ -153,6 +154,54 @@ impl Vault {
         self.birth_run_seat(run_id, binding, task, decisions)
     }
 
+    /// [`Self::birth_model_seat`] for a run whose rows go where `storage`,
+    /// the route its run captured, puts them (FIX 2594). A canonical run's
+    /// seat is born as [`Self::birth_model_seat`] births it. A session-bound
+    /// run's pin, with its task hash, why and receipt, is read and written
+    /// on its room's route alone, never base while the room is off record,
+    /// under a warm scope its room qualifies (`room_warm_scope`), so two
+    /// rooms never share a warm prefix. The model catalog, manifest and
+    /// policy are still read from this vault.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::birth_model_seat`]'s, and a refusal when `storage` is another
+    /// vault's.
+    pub(crate) fn birth_model_seat_on(
+        &self,
+        storage: &ExecutorStorage<'_>,
+        run_id: EntityId,
+        task: &SeatTask,
+        decisions: &SeatDecisions,
+    ) -> Result<ModelSeat> {
+        if storage.vault_id() != self.vault_id() {
+            return Err(invalid("a run seat's route is another vault's"));
+        }
+        let Some(room) = storage.session_ref() else {
+            return self.birth_model_seat(run_id, task, decisions);
+        };
+        let task = SeatTask {
+            warm_scope: room_warm_scope(room, &task.warm_scope),
+            ..task.clone()
+        };
+        self.birth_seat(
+            RunSeatBinding::Generic,
+            &task,
+            decisions,
+            || storage.seat_pin_read(|txn, dbs| RUN_SEATS.get(&dbs, txn, &run_id)),
+            |row| {
+                storage.seat_pin_write(|txn, read, write| {
+                    // The route's own writer serializes a second birth, as
+                    // the base writer does below.
+                    if RUN_SEATS.contains(&read, txn, &run_id)? {
+                        return Err(invalid("run seat was concurrently bound"));
+                    }
+                    RUN_SEATS.put(&write, txn, &run_id, row)
+                })
+            },
+        )
+    }
+
     fn birth_run_seat(
         &self,
         run_id: EntityId,
@@ -160,14 +209,45 @@ impl Vault {
         task: &SeatTask,
         decisions: &SeatDecisions,
     ) -> Result<ModelSeat> {
+        self.birth_seat(
+            binding,
+            task,
+            decisions,
+            || {
+                let txn = self.store.env.read_txn()?;
+                RUN_SEATS.get(&self.store, &txn, &run_id)
+            },
+            |row| {
+                let mut txn = self.store.env.write_txn()?;
+                // Single-vault writer serialization keeps a second birth from
+                // overwriting a run pin if another handle reached this key first.
+                if RUN_SEATS.contains(&self.store, &txn, &run_id)? {
+                    return Err(invalid("run seat was concurrently bound"));
+                }
+                RUN_SEATS.put(&self.store, &mut txn, &run_id, row)?;
+                txn.commit()?;
+                Ok(())
+            },
+        )
+    }
+
+    /// The one birth every run seat shares, wherever its pin lives: `prior`
+    /// reads the run's stored pin, which a resume loads again, and `pin`
+    /// commits a new one, refusing when another birth reached it first. A
+    /// birth whose pin does not commit leaves its fresh seat cold.
+    fn birth_seat(
+        &self,
+        binding: RunSeatBinding,
+        task: &SeatTask,
+        decisions: &SeatDecisions,
+        prior: impl FnOnce() -> Result<Option<StoredRunSeat>>,
+        pin: impl FnOnce(&StoredRunSeat) -> Result<()>,
+    ) -> Result<ModelSeat> {
         let mut pool = self
             .model_seats
             .lock()
             .map_err(|_| invalid("seat pool poisoned"))?;
-        let txn = self.store.env.read_txn()?;
-        let prior = RUN_SEATS.get(&self.store, &txn, &run_id)?;
-        drop(txn);
-        if let Some(row) = prior {
+        if let Some(row) = prior()? {
             if row.binding != binding {
                 return Err(invalid("stored run seat was born under another binding"));
             }
@@ -175,17 +255,7 @@ impl Vault {
         }
         let seat = pool.birth(self, task, decisions)?;
         let row = StoredRunSeat::from_seat(task, binding, &seat)?;
-        let result = (|| {
-            let mut txn = self.store.env.write_txn()?;
-            // Single-vault writer serialization keeps a second birth from
-            // overwriting a run pin if another handle reached this key first.
-            if RUN_SEATS.contains(&self.store, &txn, &run_id)? {
-                return Err(invalid("run seat was concurrently bound"));
-            }
-            RUN_SEATS.put(&self.store, &mut txn, &run_id, &row)?;
-            txn.commit()?;
-            Ok(())
-        })();
+        let result = pin(&row);
         if result.is_err()
             && !seat.receipt.reused
             && let Some(saved) = pool.seats.iter_mut().find(|saved| saved.id == seat.id)
@@ -240,12 +310,33 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         run_id: EntityId,
     ) -> Result<Option<StoredRunSeat>> {
-        let row = RUN_SEATS.get(&self.store, txn, &run_id)?;
-        if let Some(row) = &row
-            && (row.version != 1 || row.receipt.why.trim().is_empty())
-        {
-            return Err(invalid("invalid stored run seat"));
-        }
-        Ok(row)
+        checked_pin(RUN_SEATS.get(&self.store, txn, &run_id)?)
     }
+}
+
+impl ExecutorStorage<'_> {
+    /// [`Vault::model_seat_receipt`] on the route the run captured: a
+    /// session-bound run's receipt is read from its room's view, where its
+    /// seat birth put it.
+    pub(crate) fn model_seat_receipt(&self, run_id: EntityId) -> Result<Option<SeatChoiceReceipt>> {
+        let row = self.seat_pin_read(|txn, dbs| RUN_SEATS.get(&dbs, txn, &run_id))?;
+        Ok(checked_pin(row)?.map(|row| row.receipt))
+    }
+}
+
+/// A stored pin as a receipt read takes it: refused when its version or its
+/// why does not hold.
+fn checked_pin(row: Option<StoredRunSeat>) -> Result<Option<StoredRunSeat>> {
+    if let Some(row) = &row
+        && (row.version != 1 || row.receipt.why.trim().is_empty())
+    {
+        return Err(invalid("invalid stored run seat"));
+    }
+    Ok(row)
+}
+
+/// The warm scope a session-bound run's seat is born under: its run's own,
+/// qualified by its room, so no seat of one room is warm for another's.
+fn room_warm_scope(room: &str, scope: &str) -> String {
+    format!("{scope}@room:{room}")
 }

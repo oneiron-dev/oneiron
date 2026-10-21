@@ -3319,6 +3319,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.imports.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::ExternalImportRequest,
+                >(),
+            ),
+            (
+                "vault.code.imports.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::ExternalImportLookup,
+                >(),
+            ),
+            (
                 "vault.code.ingress.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::CodePushIngressGetRequest,
@@ -13849,6 +13861,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.imports.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.imports.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.ingress.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19527,6 +19553,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.forks.get" => {
             let _input: crate::memory::origin_doors::CodeForkGetRequest = decode(value.clone())?;
         }
+        "vault.code.imports.create" => {
+            let _input: crate::memory::origin_doors::ExternalImportRequest = decode(value.clone())?;
+        }
+        "vault.code.imports.get" => {
+            let _input: crate::memory::origin_doors::ExternalImportLookup = decode(value.clone())?;
+        }
         "vault.code.ingress.get" => {
             let _input: crate::memory::origin_doors::CodePushIngressGetRequest =
                 decode(value.clone())?;
@@ -22628,6 +22660,8 @@ pub fn invoke(
         "vault.code.import" => encode(vault_code_import(memory, decode(value)?)?),
         "vault.code.repos.get" => encode(vault_code_repos_get(memory, decode(value)?)?),
         "vault.code.forks.get" => encode(vault_code_forks_get(memory, decode(value)?)?),
+        "vault.code.imports.create" => encode(vault_code_imports_create(memory, decode(value)?)?),
+        "vault.code.imports.get" => encode(vault_code_imports_get(memory, decode(value)?)?),
         "vault.code.ingress.get" => encode(vault_code_ingress_get(memory, decode(value)?)?),
         "vault.code.origin.register" => encode(vault_code_origin_register(memory, decode(value)?)?),
         "vault.code.origin.mirror.get" => {
@@ -28837,6 +28871,24 @@ pub fn vault_code_forks_get(
     input: crate::memory::origin_doors::CodeForkGetRequest,
 ) -> MemoryResult<Option<crate::memory::origin_doors::CodeForkView>> {
     memory.code_fork_get_as(&memory.embedded_owner("vault.code.forks.get")?, input)
+}
+pub fn vault_code_imports_create(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::ExternalImportRequest,
+) -> MemoryResult<crate::memory::origin_doors::ExternalImportReceipt> {
+    memory.code_external_import_create_as(
+        &memory.external_import_proof("vault.code.imports.create"),
+        input,
+    )
+}
+pub fn vault_code_imports_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::ExternalImportLookup,
+) -> MemoryResult<Option<crate::memory::origin_doors::ExternalImportStatus>> {
+    memory.code_external_import_get_as(
+        &memory.external_import_proof("vault.code.imports.get"),
+        input,
+    )
 }
 pub fn vault_code_ingress_get(
     memory: &Memory<'_>,

@@ -250,6 +250,21 @@ pub trait McpCodeModeProvider: Send + Sync {
         run_id: EntityId,
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig>;
+    /// [`Self::executor_config`] for a run its host entered through `bound`,
+    /// the dispatcher it bound to the run on the run's own route: what the
+    /// config reads from the run's record (its first start) is read there,
+    /// so a session-bound run reads its room's record, never base's. The
+    /// default reads nothing of the record: it answers
+    /// [`Self::executor_config`].
+    fn executor_config_on(
+        &self,
+        vault: &Vault,
+        _bound: &GatedActorWrite<'_>,
+        run_id: EntityId,
+        task: &str,
+    ) -> oneiron::Result<EngineExecutorConfig> {
+        self.executor_config(vault, run_id, task)
+    }
     /// The model the code-mode template runs on, read without entering a
     /// run (FIX 4659). The default reads it from the config of a run keyed
     /// by `caller`, which nothing enters; a provider that holds its template
@@ -756,7 +771,25 @@ pub(crate) fn run_seat(
     run_id: EntityId,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
-    seat_for(vault, provider, run_id, None, task)
+    seat_for(vault, provider, run_id, SeatPin::Base(None), task)
+}
+
+impl dyn McpCodeModeProvider + '_ {
+    /// [`run_seat`] for a run its host bound on `bound`'s route (FIX 2594):
+    /// the same eligibility and effort rules, its prior receipt read and its
+    /// seat born on that route, so a session-bound run's pin is its room's,
+    /// never base's. A reader child and a summary job in an off-record
+    /// session are each born on one this way; a canonical one's route is
+    /// base, as [`run_seat`]'s is.
+    pub(crate) fn run_seat_on(
+        &self,
+        vault: &Vault,
+        bound: &GatedActorWrite<'_>,
+        run_id: EntityId,
+        task: impl FnOnce(&str) -> SeatTask,
+    ) -> Result<Option<ModelSeat>, String> {
+        seat_for(vault, self, run_id, SeatPin::Routed(bound), task)
+    }
 }
 
 /// An agent run's seat (DOOR-111 S5), born as `run_seat` births one and
@@ -769,25 +802,37 @@ pub(crate) fn task_run_seat(
     type_ref: &TaskTypeRef,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
-    seat_for(vault, provider, run_id, Some(type_ref), task)
+    seat_for(vault, provider, run_id, SeatPin::Base(Some(type_ref)), task)
 }
 
-/// The one birth both seats share: generic, or stamped with `type_ref`.
+/// Where a run's seat pin is read and born: the base vault, generic or
+/// stamped with the type its dispatch carried, or the route its host bound
+/// the run's dispatcher on, generic.
+enum SeatPin<'p, 'd> {
+    Base(Option<&'p TaskTypeRef>),
+    Routed(&'p GatedActorWrite<'d>),
+}
+
+/// The one birth every seat shares, wherever `pin` puts it. The model
+/// catalog and manifest are the vault's own; the run's prior receipt is read
+/// where its pin lives.
 fn seat_for(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     run_id: EntityId,
-    type_ref: Option<&TaskTypeRef>,
+    pin: SeatPin<'_, '_>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let has_seat = vault
         .model_manifest()
         .map_err(|error| error.to_string())?
         .is_some()
-        || vault
-            .model_seat_receipt(run_id)
-            .map_err(|error| error.to_string())?
-            .is_some();
+        || match &pin {
+            SeatPin::Base(_) => vault.model_seat_receipt(run_id),
+            SeatPin::Routed(bound) => bound.model_seat_receipt(run_id),
+        }
+        .map_err(|error| error.to_string())?
+        .is_some();
     if !has_seat {
         return Ok(None);
     }
@@ -798,9 +843,12 @@ fn seat_for(
         .seat_facet()
         .ok_or("manifest-backed run requires a capability profile")?;
     let task = task(facet);
-    match type_ref {
-        Some(type_ref) => vault.birth_task_model_seat(run_id, type_ref, &task, decisions),
-        None => vault.birth_model_seat(run_id, &task, decisions),
+    match pin {
+        SeatPin::Base(Some(type_ref)) => {
+            vault.birth_task_model_seat(run_id, type_ref, &task, decisions)
+        }
+        SeatPin::Base(None) => vault.birth_model_seat(run_id, &task, decisions),
+        SeatPin::Routed(bound) => bound.birth_model_seat(vault, run_id, &task, decisions),
     }
     .map(Some)
     .map_err(|error| error.to_string())

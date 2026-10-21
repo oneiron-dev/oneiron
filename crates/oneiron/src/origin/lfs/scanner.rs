@@ -415,3 +415,25 @@ fn denied(reason: &'static str) -> Error {
         reason_codes: vec!["gate.secret_scan.detected", reason],
     })
 }
+
+/// [`CredentialStream::custody`] as a detector over one whole byte run
+/// (G7-BINARY, FIX 6871): the reason a provider key or private-key armor in
+/// `bytes` names, or none. Only the custody reading's own detection becomes
+/// a reason; every other failure propagates and is never read as clean. The
+/// stream and its LFS caller are unchanged.
+///
+/// # Errors
+/// A failure that is not the custody reading's own detection.
+pub(crate) fn find_custody_credential(bytes: &[u8]) -> Result<Option<&'static str>> {
+    let mut stream = CredentialStream::custody();
+    match stream.feed(bytes).and_then(|()| stream.finish()) {
+        Ok(()) => Ok(None),
+        Err(Error::Gate(GateError::GateWriteRejected {
+            outcome: "deny",
+            reason_codes,
+        })) if reason_codes.len() == 2 && reason_codes[0] == "gate.secret_scan.detected" => {
+            Ok(Some(reason_codes[1]))
+        }
+        Err(error) => Err(error),
+    }
+}

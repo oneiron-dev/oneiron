@@ -491,6 +491,25 @@ impl Vault {
         Ok(Ok(PushCandidateBase { revision, anchor }))
     }
 
+    /// [`Self::resolve_push_candidate_base`] for an outside import's named
+    /// base (FIX 6871): the one tested revision `old` names exactly, or the
+    /// hold's reason code. A pure read; it attaches nothing.
+    ///
+    /// # Errors
+    /// A store or object store failure.
+    pub(crate) fn exact_push_base_revision(
+        &self,
+        wire: &GitWire<'_>,
+        repo: &GitWireRepo,
+        queue: &CandidateQueue,
+        old: &GitOid,
+    ) -> Result<std::result::Result<EntityId, String>> {
+        Ok(self
+            .resolve_push_candidate_base(wire, repo, queue, old)?
+            .map(|base| base.revision.revision_id)
+            .map_err(|held| held.reason))
+    }
+
     /// Whether an earlier received ref of `store` resolved to the incoming
     /// tip `old`: the push it continues has no sealed revision yet.
     fn received_predecessor_pending(&self, store: &str, old: &GitOid) -> Result<bool> {
