@@ -109,13 +109,39 @@ struct ThreadWalk {
 }
 
 /// The walk [`private_threads_readable_with_read_in`] judges, through
-/// `dbs`; `None` where it denies every viewer.
+/// `dbs`; `None` where it denies every viewer. Every record it reaches is
+/// read, however many (rule 5): past its threshold row the walk asks
+/// whether everything is okay, counted on every way out, a deny and an
+/// error included. No count denies it.
 fn thread_walk_in(
     vault: &Vault,
     dbs: &crate::store::StoreRead<'_>,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     raw: &[u8],
+) -> Result<Option<ThreadWalk>> {
+    let mut count = ScanCount::start(
+        &vault.store,
+        txn,
+        EngineScan::PrivateThreadAncestryRecords,
+        id.as_bytes(),
+    )?;
+    let mut seen = BTreeMap::from([(id, true)]);
+    let walk = thread_walk_seen_in(vault, dbs, txn, id, raw, &mut seen);
+    count.rows(seen.len());
+    count.defer(&vault.store);
+    walk
+}
+
+/// The walk [`thread_walk_in`] counts, each record it reaches in `seen`,
+/// by whether it was walked as a source of the words read.
+fn thread_walk_seen_in(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+    seen: &mut BTreeMap<EntityId, bool>,
 ) -> Result<Option<ThreadWalk>> {
     // Each pending record is walked as a source of the words read (`true`)
     // or as a place alone (`false`).
@@ -133,7 +159,6 @@ fn thread_walk_in(
     }
     // A record walked as a place is walked again once it is reached as a
     // source; one walked as a source is not walked again.
-    let mut seen = BTreeMap::from([(id, true)]);
     let mut placed = BTreeSet::new();
     let mut reached = BTreeSet::new();
     while let Some((id, revision, source)) = pending.pop() {
@@ -148,9 +173,6 @@ fn thread_walk_in(
                 }
             }
         };
-        if seen.len() > MAX_ANCESTOR_DEPTH {
-            return Err(state("private thread ancestry bound"));
-        }
         let h = EntityMetadataHeader::parse(&bytes)
             .ok_or(Error::CorruptedIndex("thread ancestor header"))?;
         if h.entity_type == ENTITY_TYPE_CONVERSATION {
@@ -186,14 +208,7 @@ fn thread_walk_in(
                 }
             }
             // FIX 5545: the turn answered is a place.
-            let answered = edge_ids(
-                dbs,
-                txn,
-                &id,
-                EdgeKind::RepliesTo,
-                false,
-                MAX_ANCESTOR_DEPTH,
-            )?;
+            let answered = counted_edge_ids(dbs, txn, &id, EdgeKind::RepliesTo, false)?;
             pending.extend(answered.into_iter().map(|id| (id, None, false)));
             &[EdgeKind::SpawnedBy]
         } else {
@@ -207,7 +222,7 @@ fn thread_walk_in(
             ]
         };
         for kind in kinds {
-            let next = edge_ids(dbs, txn, &id, *kind, false, MAX_ANCESTOR_DEPTH)?;
+            let next = counted_edge_ids(dbs, txn, &id, *kind, false)?;
             pending.extend(next.into_iter().map(|id| (id, None, source)));
         }
         let mut covers = vec![crate::scope_summary::body_covers_in_txn(

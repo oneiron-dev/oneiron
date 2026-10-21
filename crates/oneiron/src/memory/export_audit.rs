@@ -5,13 +5,13 @@
 //! and never a thread, a member or a word of it. The copy itself is never
 //! narrowed: the Owner's export carries every private thread, plaintext.
 //! Each private thread it carries whose audience does not hold the Owner now
-//! tells its members, once per copy, as the thread's own notices do.
+//! tells its members, once per copy, as the thread's own notices do; one
+//! gone since the copy read it tells the members its binding then and the
+//! vault's edits now name (FIX 6681).
 //!
 //! Export is never gated: the row and the notices are written after the
 //! copy is made, in a write of their own, and whatever they meet is logged
 //! and never withholds the copy.
-
-use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,7 @@ use crate::batch::export::{ExportDiaryRead, WholeVaultExportReceipt};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::side_table::{self, Named, SideTable};
-use crate::workspace_roster::ThreadNotice;
+use crate::workspace_roster::ExportThreadRoots;
 
 /// The `format` of an off-record room's talk, which its door answers as
 /// JSON.
@@ -80,7 +80,7 @@ const EXPORT_RECEIPTS: SideTable<u64, ExportReceipt, Named> =
 
 /// One copy a door made, for [`record_export`]: its audit row but the id
 /// and time, beside the root of each thread a TURN the copy carries is of,
-/// read in the copy's own snapshot.
+/// with its binding, read in the copy's own snapshot (FIX 6681).
 pub(crate) struct ExportCopy {
     pub(crate) scope: ExportAuditScope,
     pub(crate) exporter: EntityId,
@@ -90,7 +90,7 @@ pub(crate) struct ExportCopy {
     pub(crate) by: String,
     pub(crate) diary_reads: Vec<ExportDiaryRead>,
     pub(crate) act: Option<OwnerAct>,
-    pub(crate) thread_roots: BTreeSet<EntityId>,
+    pub(crate) thread_roots: ExportThreadRoots,
 }
 
 impl ExportCopy {
@@ -101,7 +101,7 @@ impl ExportCopy {
         exporter: EntityId,
         format: &str,
         diary_reads: Vec<ExportDiaryRead>,
-        thread_roots: BTreeSet<EntityId>,
+        thread_roots: ExportThreadRoots,
     ) -> Self {
         Self {
             scope: ExportAuditScope::WholeVault,
@@ -119,7 +119,7 @@ impl ExportCopy {
     /// The Owner `exporter`'s copy of an off-record room's talk, carrying a
     /// turn of each thread in `thread_roots`. Its door has not encoded the
     /// talk yet, so it has no length or digest.
-    pub(crate) fn off_record_room(exporter: EntityId, thread_roots: BTreeSet<EntityId>) -> Self {
+    pub(crate) fn off_record_room(exporter: EntityId, thread_roots: ExportThreadRoots) -> Self {
         Self {
             scope: ExportAuditScope::OffRecordRoom,
             exporter,
@@ -169,9 +169,11 @@ fn export_receipts_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<Vec
 /// id from the vault's clock, and, for each private thread it carries whose
 /// audience does not hold its exporter now, that thread's members' notice
 /// of it, in one write of its own. A root base does not hold is read in the
-/// published overlay of the live off-record stretch that holds it. Best
-/// effort: whatever this meets is logged and never reaches the copy's door,
-/// and a row not written still lets the notices go.
+/// published overlay of the live off-record stretch that holds it; one gone
+/// since the copy read it, from the binding that read resolved and the
+/// edits base holds now (FIX 6681). Best effort: whatever this meets is
+/// logged and never reaches the copy's door, and a row not written still
+/// lets the notices go.
 pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) {
     let export = match vault.new_entity_id() {
         Ok(export) => export,
@@ -219,23 +221,13 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) {
                 "export served without its audit row"
             );
         }
-        for root in thread_roots {
-            match crate::workspace_roster::thread_has_member_now_in(vault, txn, root, exporter) {
-                Ok(true) => {}
-                Ok(false) => crate::workspace_roster::notify_thread_members_in_txn(
-                    vault,
-                    txn,
-                    root,
-                    exporter,
-                    ThreadNotice::VaultExported { export },
-                ),
-                Err(error) => tracing::warn!(
-                    thread = %root.to_hex(),
-                    %error,
-                    "export notice: the exporter's place in the thread not read"
-                ),
-            }
-        }
+        crate::workspace_roster::notify_exported_threads_in_txn(
+            vault,
+            txn,
+            &thread_roots,
+            exporter,
+            export,
+        );
         Ok(())
     });
     if let Err(error) = written {
@@ -279,7 +271,7 @@ pub(crate) fn record_raw_export(
 /// Records the whole-vault JSON bundle `json` a raw `Vault` door encoded
 /// for the embedded owner ([`record_export`]), with its length and digest,
 /// `roots` being the root of each thread a TURN it carries is of.
-pub(crate) fn record_raw_json_export(vault: &Vault, json: &[u8], roots: BTreeSet<EntityId>) {
+pub(crate) fn record_raw_json_export(vault: &Vault, json: &[u8], roots: ExportThreadRoots) {
     let exporter = match crate::vault::embedded_owner_actor_id() {
         Ok(exporter) => exporter,
         Err(error) => {

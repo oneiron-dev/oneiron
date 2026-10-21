@@ -182,6 +182,10 @@ pub(crate) use rooms::{
     AUDIENCE_EDIT_BOUND, erase_audience_actor_in_txn, erase_audience_edit,
     reject_audience_edit_delete, reject_audience_edit_unlink, scrub_room_audience,
 };
+pub(crate) use rooms::{
+    ExportThreadRoots, THREAD_NOTICE_PRODUCER, notify_exported_threads_in_txn,
+    notify_thread_members_in_txn,
+};
 pub use rooms::{
     MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN, ThreadAudienceAddRequest, ThreadAudienceHistory,
     ThreadAudienceOpenFullHistoryRequest, ThreadAudienceReceipt, ThreadAudienceRemoveRequest,
@@ -206,9 +210,6 @@ pub use rooms::{
     RoomSpeakingRole, RoomStanding, RoomThread, RoomThreadAudienceEvent, RoomThreadAudienceOp,
     RoomThreadList, RoomThreadPage, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk,
     RoomTrunkHeader, RoomTrunkItem, RoomTurn, RoomWaitKind,
-};
-pub(crate) use rooms::{
-    THREAD_NOTICE_PRODUCER, notify_thread_members_in_txn, thread_has_member_now_in,
 };
 pub(crate) use rooms::{VaultStanding, private_root_of_room_in, vault_standing_in};
 #[cfg(feature = "sync")]

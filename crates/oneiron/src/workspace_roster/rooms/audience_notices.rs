@@ -22,7 +22,11 @@
 //!
 //! A thread's members are read from its root on base, or, for a root only
 //! a live off-record stretch's published overlay holds, from that overlay
-//! composed with base, its audience still read on base.
+//! composed with base, its audience still read on base. An export's audit
+//! reads a thread whose root is gone since the copy read it, its row
+//! deleted or its stretch closed, from the binding the copy's own read
+//! resolved, its edits and erasures read on base as they stand then (FIX
+//! 6681): never a list of members kept from the copy.
 //!
 //! # The member list
 //!
@@ -30,7 +34,9 @@
 //! that audience, and each walk-in that entered and each opened history,
 //! read from the thread's own edits, whatever of its talk they read.
 
-use super::audience::{names_actor_in, resolved_root_in, root_audience_in, thread_binding};
+use super::audience::{
+    ThreadBinding, names_actor_in, resolved_root_in, root_audience_in, thread_binding,
+};
 use super::audience_events::{AudienceOp, fold_audience_in};
 use super::liveness::{RoomThread, RoomThreadAudienceEvent, RoomThreadAudienceOp};
 use super::*;
@@ -38,11 +44,58 @@ use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use std::collections::BTreeMap;
 
 /// The producer a private thread's notices are recorded under; a read
 /// admits such a notice to its recipient and the thread's readers alone
 /// (FIX 6473).
 pub(crate) const THREAD_NOTICE_PRODUCER: &str = "rooms.private_thread";
+
+/// The private threads an Owner's copy carries (FIX 6427), each root with
+/// its binding as the copy's own read resolved it (FIX 6681): what its
+/// audit reads a thread gone since from, never a list of its members.
+/// Never serialized; its debug form shows counts alone.
+#[derive(Clone, Default)]
+pub(crate) struct ExportThreadRoots(BTreeMap<EntityId, Option<ThreadBinding>>);
+
+impl ExportThreadRoots {
+    /// Reads, in the copy's own read `dbs` and `txn`, the binding of each
+    /// root not read yet that resolves there as a live root
+    /// ([`resolved_root_in`]). A root that does not resolve, or whose read
+    /// fails, logged, keeps its id alone: its audit reads it as it stands.
+    pub(crate) fn capture_in(&mut self, dbs: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>) {
+        for (root, binding) in &mut self.0 {
+            if binding.is_some() {
+                continue;
+            }
+            match resolved_root_in(dbs, txn, *root) {
+                Ok(resolved) => *binding = resolved,
+                Err(error) => tracing::warn!(
+                    thread = %root.to_hex(),
+                    %error,
+                    "export: a carried thread's root not read"
+                ),
+            }
+        }
+    }
+}
+
+impl Extend<EntityId> for ExportThreadRoots {
+    fn extend<I: IntoIterator<Item = EntityId>>(&mut self, roots: I) {
+        for root in roots {
+            self.0.entry(root).or_insert(None);
+        }
+    }
+}
+
+impl std::fmt::Debug for ExportThreadRoots {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExportThreadRoots")
+            .field("roots", &self.0.len())
+            .field("resolved", &self.0.values().flatten().count())
+            .finish()
+    }
+}
 
 /// What a private thread's members are told (FIX 6381, 6383; owner ruling
 /// RT-EXPORT). Each names what it tells of, so a notice is written once per
@@ -148,7 +201,7 @@ pub(crate) fn notify_thread_members_in_txn(
     actor: EntityId,
     notice: ThreadNotice,
 ) {
-    let audience = match thread_members_now_in(vault, txn, root) {
+    let audience = match thread_members_now_in(vault, txn, root, None) {
         Ok(members) => members,
         Err(error) => {
             tracing::warn!(
@@ -160,6 +213,59 @@ pub(crate) fn notify_thread_members_in_txn(
             return;
         }
     };
+    tell_audience_in_txn(vault, txn, root, actor, notice, audience);
+}
+
+/// Tells the members of each private thread `roots` names, which the Owner
+/// `exporter`'s copy `export` carries, of it, in the audit's `txn`, unless
+/// that thread's audience now names him (FIX 6427): one read of its members
+/// decides both. A thread base or a live stretch still holds is read as it
+/// stands; one whose root is gone since the copy read it is read from the
+/// binding that read resolved ([`lost_root_members_in`], FIX 6681).
+/// Best-effort, as [`notify_thread_members_in_txn`] is.
+pub(crate) fn notify_exported_threads_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    roots: &ExportThreadRoots,
+    exporter: EntityId,
+    export: EntityId,
+) {
+    let notice = ThreadNotice::VaultExported { export };
+    for (root, lost) in &roots.0 {
+        let members = match thread_members_now_in(vault, txn, *root, lost.as_ref()) {
+            Ok(members) => members,
+            Err(error) => {
+                tracing::warn!(
+                    thread = %root.to_hex(),
+                    %error,
+                    "export notice: the thread's members not read"
+                );
+                continue;
+            }
+        };
+        match names_actor_in(vault, txn, &members, exporter) {
+            Ok(false) => tell_audience_in_txn(vault, txn, *root, exporter, notice, members),
+            Ok(true) => {}
+            Err(error) => tracing::warn!(
+                thread = %root.to_hex(),
+                %error,
+                "export notice: the exporter's place in the thread not read"
+            ),
+        }
+    }
+}
+
+/// Tells `audience`, the members now of the private thread rooted at
+/// `root`, and each live pen it admits through its PERSON anchor, `notice`
+/// of `actor`'s act, in `txn`, as [`notify_thread_members_in_txn`] tells.
+fn tell_audience_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    root: EntityId,
+    actor: EntityId,
+    notice: ThreadNotice,
+    audience: BTreeSet<EntityId>,
+) {
     // A pen not read is told nothing more; the audience it names still is.
     let members = match with_anchored_pens_in(vault, txn, &audience) {
         Ok(members) => members,
@@ -316,37 +422,26 @@ fn with_anchored_pens_in(
     Ok(members)
 }
 
-/// Whether the audience now of the private thread rooted at `root` names
-/// `person` ([`names_actor_in`]), read as [`notify_thread_members_in_txn`]
-/// reads its members: on base, or in the published overlay of the live
-/// off-record stretch that holds a root base does not. No one is in a public
-/// thread, or a root that is no live private root. Read only; an Owner's
-/// export asks it before it tells a thread (FIX 6427).
-pub(crate) fn thread_has_member_now_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    root: EntityId,
-    person: EntityId,
-) -> Result<bool> {
-    let members = thread_members_now_in(vault, txn, root)?;
-    names_actor_in(vault, txn, &members, person)
-}
-
 /// Everyone in the audience of the private thread rooted at `root` now; no
 /// one for a root that is no live private root. A root base does not hold
 /// is read in the published overlay of the live off-record stretch that
-/// holds it, if any ([`overlay_thread_members_now_in`]).
+/// holds it, if any ([`overlay_thread_members_now_in`]). A root whose row
+/// base keeps deleted, or that neither base nor a live stretch holds, is
+/// read from `lost`, its binding as an export's own read resolved it
+/// ([`lost_root_members_in`]).
 fn thread_members_now_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     root: EntityId,
+    lost: Option<&ThreadBinding>,
 ) -> Result<BTreeSet<EntityId>> {
     let body = match live_entity_row_in_txn(&vault.store, txn, &root)? {
         LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_TURN,
             body,
         } => body,
-        LiveEntityRow::Absent => return overlay_thread_members_now_in(vault, txn, root),
+        LiveEntityRow::Absent => return overlay_thread_members_now_in(vault, txn, root, lost),
+        LiveEntityRow::DeletedShell => return lost_root_members_in(vault, txn, root, lost),
         _ => return Ok(BTreeSet::new()),
     };
     let Some(binding) = thread_binding(&body)?.filter(|binding| binding.root == root) else {
@@ -363,16 +458,18 @@ fn thread_members_now_in(
 /// only a live off-record stretch's published overlay holds (Engine
 /// 10-20 17:4x): the stretch is found by the registry's lock-free lookup,
 /// the root read strictly in its overlay composed with base, and its
-/// audience folded on base, where every edit is. No one when no live
-/// stretch holds it, or it is no private root there. Read only: nothing is
+/// audience folded on base, where every edit is. No one when it is no
+/// private root there. A root no live stretch holds, its stretch closed,
+/// is read from `lost` ([`lost_root_members_in`]). Read only: nothing is
 /// staged in the overlay.
 fn overlay_thread_members_now_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     root: EntityId,
+    lost: Option<&ThreadBinding>,
 ) -> Result<BTreeSet<EntityId>> {
     let Some(overlay) = vault.store.off_record_sessions.overlay_holding(&root)? else {
-        return Ok(BTreeSet::new());
+        return lost_root_members_in(vault, txn, root, lost);
     };
     let view = vault.store.session_view(overlay)?;
     match resolved_root_in(&view.read(), txn, root)? {
@@ -381,6 +478,27 @@ fn overlay_thread_members_now_in(
             audience: Some(seed),
             ..
         }) => Ok(fold_audience_in(vault, txn, room, root, &seed)?.current()),
+        _ => Ok(BTreeSet::new()),
+    }
+}
+
+/// Everyone in the audience now of the private thread rooted at `root`, a
+/// root gone since an export's own read resolved `lost`, its binding (FIX
+/// 6681): the seed it names with every edit and erasure base holds now
+/// folded in ([`fold_audience_in`]), so no one erased since comes back.
+/// No one without it, or for a public thread.
+fn lost_root_members_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    root: EntityId,
+    lost: Option<&ThreadBinding>,
+) -> Result<BTreeSet<EntityId>> {
+    match lost {
+        Some(ThreadBinding {
+            room,
+            audience: Some(seed),
+            ..
+        }) => Ok(fold_audience_in(vault, txn, *room, root, seed)?.current()),
         _ => Ok(BTreeSet::new()),
     }
 }

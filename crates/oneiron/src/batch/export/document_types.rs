@@ -89,9 +89,10 @@ pub struct WholeVaultExportReceipt {
     /// The rows the archive is derived from, as its snapshot read them
     /// (DEC-0005), for a host that judges it again before it leaves.
     pub(crate) sources: Vec<crate::entity_id::EntityId>,
-    /// The root of each thread a TURN the archive carries is of, for the
-    /// export's audit and notices (FIX 6427). Never serialized.
-    pub(crate) thread_roots: std::collections::BTreeSet<crate::entity_id::EntityId>,
+    /// The root of each thread a TURN the archive carries is of, with its
+    /// binding as the snapshot read it, for the export's audit and notices
+    /// (FIX 6427, 6681). Never serialized.
+    pub(crate) thread_roots: crate::workspace_roster::ExportThreadRoots,
 }
 
 impl WholeVaultExportReceipt {

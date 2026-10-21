@@ -107,13 +107,12 @@ pub(crate) fn validate_local_turns(
         if header.entity_type != crate::registry::ENTITY_TYPE_TURN {
             continue;
         }
-        for room in crate::conversation_dag::edge_ids(
+        for room in crate::conversation_dag::counted_edge_ids(
             store,
             txn,
             turn,
             crate::EdgeKind::ChildOf,
             false,
-            crate::limits::MAX_ANCESTOR_DEPTH,
         )? {
             let Some(raw) =
                 crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &room)?
@@ -568,13 +567,12 @@ impl Vault {
         if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE {
             return Ok(None);
         }
-        let authors = crate::conversation_dag::edge_ids(
+        let authors = crate::conversation_dag::counted_edge_ids(
             &self.store,
             &txn,
             &message,
             crate::EdgeKind::AuthoredBy,
             false,
-            crate::limits::MAX_ANCESTOR_DEPTH,
         )?;
         if authors != [proof.actor] {
             return Err(denied());

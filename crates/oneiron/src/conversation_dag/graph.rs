@@ -194,6 +194,41 @@ pub(crate) fn all_edge_ids(
     Ok(ids)
 }
 
+/// Every `kind` edge of `id`, one way, however many, for a read outside a
+/// DAG walk that once refused past its cap (rule 5): [`all_edge_ids`],
+/// counted for this one neighborhood. Past its threshold row it asks
+/// whether everything is okay; no count refuses it, and the count is kept
+/// on an error too.
+pub(crate) fn counted_edge_ids(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    kind: EdgeKind,
+    incoming: bool,
+) -> Result<Vec<EntityId>> {
+    let scope = [
+        &[edge_direction(incoming) as u8][..],
+        id.as_bytes(),
+        &[kind as u8][..],
+    ]
+    .concat();
+    // The count only observes: a threshold row that does not read never
+    // fails the read, or the write (`validate_local_turns`) it serves.
+    let mut rows = match ScanCount::start(store, txn, EngineScan::AudienceEdgeRows, &scope) {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "audience edge scan threshold unreadable; counting without one"
+            );
+            ScanCount::start_at(EngineScan::AudienceEdgeRows, &scope, u64::MAX)
+        }
+    };
+    let ids = all_edge_ids(store, txn, id, kind, incoming, &mut rows);
+    rows.defer(store);
+    ids
+}
+
 /// Whether `id` has any `kind` edge, one way. The first row answers, checked
 /// as [`edge_ids`] checks each row.
 pub(crate) fn has_edge(
